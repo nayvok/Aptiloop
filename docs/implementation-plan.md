@@ -1,74 +1,141 @@
-# План реализации MVP
+# Implementation plan v2
 
-## Этап 0. Исследование и решения
+Статус: выполняется  
+Baseline: `eeb0e3e`  
+Принцип: tests first, additive migrations, usable Day 1 before breadth.
 
-- Зафиксировать версии Node, npm, Codex, OpenCode и актуальные package versions.
-- Проверить official Codex SDK/app-server/exec и OpenCode SDK/headless server.
-- Создать PRODUCT, DESIGN, architecture и security notes.
-- Self-review: пройти 24 acceptance criteria и убрать неподтверждённые provider claims.
+## Phase 0. Audit and safety baseline
 
-Проверка: документы существуют; providers.md ссылается только на реальные интерфейсы.
+- [x] Git history/status, architecture, schema, seed, routes, adapters, prompts,
+      tests and docs inspected.
+- [x] Existing UI and active-session navigation reproduced in browser.
+- [x] `1 Issue` traced to the already-fixed theme hydration mismatch; current
+      runtime has no page/console error.
+- [x] Isolated migrate/seed twice, format, lint, typecheck, 160 fast tests and
+      production build passed.
+- [x] External versions/health checked without claiming generation smoke.
+- [ ] Add safe DB backup/preflight; never mutate the second candidate DB.
 
-## Этап 1. Foundation
+Commit: `docs: specify versioned unit learning flow`.
 
-- Инициализировать Git, npm workspaces, Turbo, strict shared tsconfig, ESLint/Prettier.
-- Создать `apps/web`, `apps/orchestrator` и packages из архитектуры.
-- Поднять Hono health endpoint и Next shell.
-- Создать Drizzle schema, SQL migration, database client и идемпотентный seed.
-- Добавить `.env.example`, `.gitignore`, structured logger, graceful shutdown.
-- Реализовать `MockAgentProvider` и provider status API.
+## Phase 1. Contracts, migration and versioned curriculum
 
-Проверка: install, db:migrate, db:seed, dev, health, typecheck, first commit.
+1. Write failing tests for CurriculumVersion status/revision, unit order,
+   immutable publish, clone revision and historical snapshot.
+2. Add Zod contracts for source/depth/unit/day/week/version/snapshot/progress.
+3. Add append-only `0001_curriculum_units.sql` and Drizzle schema.
+4. Backfill a legacy version and snapshots for existing sessions.
+5. Seed published v2 and detailed Day 1 units by stable IDs; never update a
+   published content hash in place.
+6. Add repository draft/publish/clone/list/path operations.
 
-## Этап 2. Learning core
+Verification: database/shared/curriculum/learning-core tests, migration fixture,
+typecheck.  
+Commit: `feat: version curriculum and snapshot sessions`.
 
-- Описать curriculum types и seed первой недели.
-- Реализовать session creation, step state machine и answer persistence.
-- Реализовать deterministic mastery, hint penalties, review selection.
-- Добавить mistake journal и flashcard candidate lifecycle/export.
-- Покрыть unit и repository integration tests.
+## Phase 2. Session unit engine and restart recovery
 
-Проверка: day 1 создаётся из seed; ответ сохраняется; completion обновляет mastery и flashcards.
+1. Write guard matrix for locked/ready/in-progress/completed/skipped.
+2. Persist learner current session, current unit and per-unit payload/progress.
+3. Add start/resume/abandon, save draft, toggle checklist, submit evidence and
+   complete unit repository operations.
+4. Enforce one global active session and allow a new session after completion.
+5. Return active session by `/api/learning/sessions/current` and resolve
+   `/session` without a query ID.
+6. Persist/reload dialogue, exercise, test and review history.
 
-## Этап 3. Agent chat и providers
+Verification: repository and orchestrator restart integration tests.  
+Commit: `feat: persist guided unit progression`.
 
-- Создать versioned prompt library и prompt contract tests.
-- Реализовать SSE endpoint, abort/cancel, conversation persistence и event normalization.
-- Подключить OpenCode SDK/server adapter с model listing/status.
-- Подключить Codex app-server stdio adapter с read-only Reviewer policy и честным status fallback.
-- Валидировать Reviewer/interview/summary JSON через Zod с одной repair-попыткой.
+## Phase 3. Guided Path and lesson UI
 
-Проверка: mock stream/error/retry; unavailable providers; optional real-provider smoke commands documented.
+1. Inspect shadcn ecosystem before custom primitives; reuse existing Phosphor,
+   CVA and semantic shadcn patterns.
+2. Make `/` the detailed Path and remove Agents from primary navigation.
+3. Build unit renderer for Briefing, Study, Recall, Teacher Dialogue, Quiz,
+   Code Reading, Exercise handoff, Review status and Summary.
+4. Add checklist persistence, draft recovery, beforeunload warning, loading,
+   retry, cancel and explicit provider/model status.
+5. Add accessible current/locked/completed semantics and one primary CTA.
+6. Add focused component tests for every Day 1 surface.
 
-## Этап 4. Exercises
+Verification: web unit/component tests, keyboard/mobile checks.  
+Commit: `feat: build the guided day one path`.
 
-- Создать автономное упражнение week-01/day-02/group-by и ещё компактные metadata для недели.
-- Реализовать safe workspace resolver, immutable baseline и `git diff --no-index`.
-- Реализовать operation-ID allowlist, test/typecheck runners, output cap, timeout и cancellation.
-- Реализовать Zed adapter/fallback, attempts, hints и read-only review endpoint.
+## Phase 4. Provider and security integration
 
-Проверка: traversal rejected; diff changes after edit; tests recorded; reviewer cannot patch.
+1. Fix `npm start` propagation of computed OpenCode endpoint.
+2. Use exact WEB_ORIGIN and JSON content-type checks on mutations.
+3. Add explicit turn cancellation and evict failed/cancelled provider sessions.
+4. Call structured-output validation with bounded repair for review/report.
+5. Connect configured Reviewer to real diff/test context; Mock remains fallback.
+6. Remove executable/path mutations from browser settings boundary.
+7. Minimize exercise process environment and revalidate stored paths.
 
-## Этап 5. Product UI
+Verification: provider contract, orchestrator integration, origin/content-type,
+cancel/retry/read-only tests; optional real-provider smoke recorded separately.  
+Commit: `fix: enforce provider and process boundaries`.
 
-- App shell: sidebar, breadcrumb/top bar, theme, provider health.
-- Pages: Dashboard, Daily Session, Agent Chat, Exercise, Knowledge Map, Mistake Journal, Interview, Flashcards, Settings.
-- TanStack Query boundary, React Hook Form + Zod on forms.
-- Loading skeletons, empty/error states, keyboard/focus and reduced motion.
-- Component tests for required surfaces.
+## Phase 5. Exercise correction and deterministic completion
 
-Проверка: responsive browser pass; light/dark; no hardcoded non-semantic colors; shadcn review.
+1. Copy exercise template to per-attempt workspace.
+2. Keep server-owned baseline identity and reviewed diff hash.
+3. Require non-empty diff and tests before review.
+4. Require changed diff/new tests after `changes_requested`.
+5. Run `learning-core` mastery from evidence; aggregate mistakes across sessions.
+6. Persist summary and editable/taggable flashcard candidates.
 
-## Этап 6. E2E и hardening
+Verification: pass/fail/fix integration, no workspace mutation by Reviewer,
+mastery/mistake/card assertions.  
+Commit: `feat: require learner correction before completion`.
 
-- Playwright acceptance scenario from Dashboard through completion/card creation.
-- Security tests: origin, path traversal, operation allowlist, redaction, reviewer policy.
-- Production builds, disabled-provider states, orchestrator start/stop.
-- Complete README, AGENTS and seven docs; validate AGENTS ≤300 lines.
-- Clean reinstall, migrate, seed, lint, typecheck, all tests, e2e, build.
-- Search repository for forbidden Pi, IDE, AnkiConnect and secrets; review Git diff.
-- Create logical Conventional Commits.
+## Phase 6. Curriculum editor and Interview
 
-## Definition of done
+1. Add draft version/week/day/unit CRUD, up/down ordering, duplicate, preview,
+   publish, archive and clone revision.
+2. Add authoring validation and immutable published guards.
+3. Replace free chat Interview with setup, one-question flow, transcript, report
+   and deterministic evidence.
 
-Каждый пункт финального отчёта содержит фактически выполненную команду и результат. Непроверенная реальная авторизация внешнего провайдера отмечается как ручной smoke test, а не как «работает».
+Verification: editor and interview integration/component/E2E scenarios.  
+Commits: `feat: add curriculum revision editor`,
+`feat: build structured interview workflow`.
+
+## Phase 7. Design system, themes and accessibility
+
+1. Replace brown/amber tokens with cool neutral + emerald semantic palette.
+2. Add activity tokens, AA contrast tests and success foreground token.
+3. Synchronize light/dark/system choice without hydration flash.
+4. Add skip link, aria-current, named progress, 44px primary controls and
+   correctly associated form errors/live regions.
+5. Run shadcn component review after custom UI changes.
+
+Verification: component tests, light/dark/system screenshots, desktop/tablet/
+mobile browser pass, reduced motion.  
+Commit: `feat: refresh the accessible learning interface`.
+
+## Phase 8. Isolated E2E and acceptance
+
+1. Give Playwright unique file SQLite and copied workspace; never reuse shared
+   dev servers or remove repository `.git` directories.
+2. Test full Day 1, failed tests, fix, review, summary artefacts and exact
+   restart recovery.
+3. Test curriculum revision snapshot and Interview.
+4. Clean install, migrate, seed, format, lint, typecheck, fast tests, E2E and
+   production build.
+5. Perform Mock, available/unavailable OpenCode/Codex, streaming/cancel, Zed,
+   diff/tests/read-only review, theme and secret/forbidden-feature audits.
+6. Update README, AGENTS and all required docs with only verified claims.
+
+Commit: `test: verify the local learning workflow`, then
+`docs: publish the acceptance audit`.
+
+## Stop/go gates
+
+- No schema mutation before verified backups of candidate local DBs.
+- No UI completion CTA without matching server-side completion guard.
+- No provider marked connected without live health; no smoke marked passed
+  without an actual request.
+- No Day 2 breadth before Day 1 restart E2E passes.
+- No final completion claim while lint/typecheck/fast/E2E/build or acceptance
+  evidence is missing; unverified items are reported explicitly.
