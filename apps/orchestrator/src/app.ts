@@ -116,7 +116,10 @@ const settingsSchema = z.object({
   theme: z.enum(["system", "light", "dark"]),
 });
 type AppSettings = z.infer<typeof settingsSchema>;
-const settingsMutationSchema = settingsSchema.omit({ zedExecutable: true });
+const settingsMutationSchema = settingsSchema.omit({
+  workspaceRoot: true,
+  zedExecutable: true,
+});
 
 const chatSchema = z.object({
   role: AgentRoleSchema.default("teacher"),

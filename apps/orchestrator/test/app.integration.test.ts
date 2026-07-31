@@ -165,11 +165,13 @@ describe("orchestrator vertical flow", () => {
       method: "PUT",
       body: JSON.stringify({
         ...settings,
+        workspaceRoot: "C:/browser-controlled-workspace",
         zedExecutable: "browser-controlled-program",
       }),
     });
     expect(saved.status).toBe(200);
     expect(await state.repository.getSetting("zedExecutable")).toBeNull();
+    expect(await state.repository.getSetting("workspaceRoot")).toBeNull();
 
     const updated = await request(app, "/api/settings");
     const updatedSettings = (await updated.json()) as Record<string, unknown>;
