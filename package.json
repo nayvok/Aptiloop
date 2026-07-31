@@ -1,0 +1,40 @@
+{
+  "name": "dev-learning-harness",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@11.12.1",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "start": "node scripts/dev-local.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "npm run test:fast && npm run test:e2e",
+    "test:fast": "turbo run test",
+    "test:e2e": "npm run test:e2e --workspace=@dlh/web",
+    "db:generate": "npm run db:generate --workspace=@dlh/database",
+    "db:migrate": "npm run db:migrate --workspace=@dlh/database",
+    "db:seed": "npm run db:seed --workspace=@dlh/database",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:fast && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^26.1.0",
+    "eslint": "^10.0.0",
+    "prettier": "^3.9.0",
+    "turbo": "^2.10.0",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.0"
+  }
+}
