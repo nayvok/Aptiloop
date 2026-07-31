@@ -1,0 +1,13 @@
+.git
+.data
+.next
+.turbo
+coverage
+dist
+node_modules
+playwright-report
+test-results
+*.log
+*.sqlite*
+workspaces/exercises/**/.git
+workspaces/exercises/**/node_modules
