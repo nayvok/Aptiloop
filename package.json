@@ -22,6 +22,7 @@
     "test:fast": "turbo run test",
     "test:e2e": "npm run test:e2e --workspace=@dlh/web",
     "db:generate": "npm run db:generate --workspace=@dlh/database",
+    "db:backup": "npm run db:backup --workspace=@dlh/database",
     "db:migrate": "npm run db:migrate --workspace=@dlh/database",
     "db:seed": "npm run db:seed --workspace=@dlh/database",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:fast && npm run build"

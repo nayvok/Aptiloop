@@ -1,9 +1,20 @@
 import { drizzle } from "drizzle-orm/node-sqlite";
+import {
+  SessionSnapshotSchema,
+  UnitProgressPayloadSchema,
+  UnitProgressSchema,
+} from "@dlh/shared";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+
+import {
+  createInitialProgressPayload,
+  normalizeSessionSnapshotV2,
+  toIsoDateTime,
+} from "./snapshot-contract.js";
 
 function createDrizzleDatabase(sqlite: DatabaseSync) {
   return drizzle({ client: sqlite });
@@ -144,6 +155,104 @@ function finalizeVersionedCurriculumBackfill(
   }
 }
 
+function finalizeSnapshotContractV2(connection: DatabaseConnection): void {
+  const snapshots = connection.sqlite
+    .prepare(
+      "SELECT id, snapshot_json FROM session_snapshots WHERE schema_version < 2",
+    )
+    .all() as Array<{ id: string; snapshot_json: string }>;
+  const updateSnapshot = connection.sqlite.prepare(
+    `UPDATE session_snapshots
+     SET schema_version = 2, content_hash = ?, snapshot_json = ?
+     WHERE id = ?`,
+  );
+  for (const row of snapshots) {
+    const normalized = normalizeSessionSnapshotV2(
+      JSON.parse(row.snapshot_json),
+    );
+    const hashable = { ...normalized };
+    Reflect.deleteProperty(hashable, "contentHash");
+    const contentHash = sha256Json(hashable);
+    const snapshot = SessionSnapshotSchema.parse({ ...hashable, contentHash });
+    updateSnapshot.run(
+      contentHash,
+      JSON.stringify(canonicalize(snapshot)),
+      row.id,
+    );
+  }
+
+  const progressRows = connection.sqlite
+    .prepare(
+      `SELECT id, unit_id, unit_type, status, progress_json, started_at,
+              completed_at, skipped_at, updated_at
+       FROM unit_progress`,
+    )
+    .all() as Array<{
+    id: string;
+    unit_id: string;
+    unit_type: Parameters<typeof createInitialProgressPayload>[0];
+    status: "locked" | "ready" | "in_progress" | "completed" | "skipped";
+    progress_json: string;
+    started_at: number | null;
+    completed_at: number | null;
+    skipped_at: number | null;
+    updated_at: number;
+  }>;
+  const updateProgress = connection.sqlite.prepare(
+    `UPDATE unit_progress
+     SET progress_json = ?, started_at = ?, completed_at = ?, skipped_at = ?
+     WHERE id = ?`,
+  );
+  for (const row of progressRows) {
+    let storedPayload: unknown;
+    try {
+      storedPayload = JSON.parse(row.progress_json);
+    } catch {
+      storedPayload = null;
+    }
+    const parsedPayload = UnitProgressPayloadSchema.safeParse(storedPayload);
+    const payload = parsedPayload.success
+      ? parsedPayload.data
+      : createInitialProgressPayload(row.unit_type);
+    const startedAt =
+      row.status === "in_progress" && row.started_at === null
+        ? row.updated_at
+        : row.started_at;
+    const completedAt =
+      row.status === "completed" && row.completed_at === null
+        ? row.updated_at
+        : row.completed_at;
+    const skippedAt =
+      row.status === "skipped" && row.skipped_at === null
+        ? row.updated_at
+        : row.skipped_at;
+    const validated = UnitProgressSchema.parse({
+      unitId: row.unit_id,
+      unitType: row.unit_type,
+      status: row.status,
+      payload,
+      startedAt: startedAt === null ? null : toIsoDateTime(startedAt),
+      completedAt: completedAt === null ? null : toIsoDateTime(completedAt),
+      skippedAt: skippedAt === null ? null : toIsoDateTime(skippedAt),
+      updatedAt: toIsoDateTime(row.updated_at),
+    });
+    updateProgress.run(
+      JSON.stringify(validated.payload),
+      startedAt,
+      completedAt,
+      skippedAt,
+      row.id,
+    );
+  }
+
+  const storedSnapshots = connection.sqlite
+    .prepare("SELECT snapshot_json FROM session_snapshots")
+    .all() as Array<{ snapshot_json: string }>;
+  for (const row of storedSnapshots) {
+    SessionSnapshotSchema.parse(JSON.parse(row.snapshot_json));
+  }
+}
+
 export function migrateDatabase(
   connection: DatabaseConnection,
   directory = migrationsDirectory,
@@ -172,6 +281,9 @@ export function migrateDatabase(
       connection.sqlite.exec(readFileSync(join(directory, file), "utf8"));
       if (id === "0001_versioned_curriculum") {
         finalizeVersionedCurriculumBackfill(connection);
+      }
+      if (id === "0002_snapshot_contract_and_hints") {
+        finalizeSnapshotContractV2(connection);
       }
       connection.sqlite
         .prepare("INSERT INTO __dlh_migrations (id, applied_at) VALUES (?, ?)")

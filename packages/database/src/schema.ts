@@ -708,6 +708,41 @@ export const learnerState = sqliteTable("learner_state", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+export const hintUsagesV2 = sqliteTable(
+  "hint_usages_v2",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => learningSessions.id, { onDelete: "cascade" }),
+    unitId: text("unit_id").notNull(),
+    questionAttemptId: text("question_attempt_id").references(
+      () => answerAttempts.id,
+      { onDelete: "set null" },
+    ),
+    exerciseAttemptId: text("exercise_attempt_id").references(
+      () => exerciseAttempts.id,
+      { onDelete: "set null" },
+    ),
+    level: integer("level").notNull(),
+    reason: text("reason").notNull(),
+    content: text("content"),
+    usedAt: integer("used_at").notNull(),
+  },
+  (table) => [
+    index("hint_usages_v2_session_unit_idx").on(
+      table.sessionId,
+      table.unitId,
+      table.usedAt,
+    ),
+    index("hint_usages_v2_exercise_attempt_idx").on(
+      table.exerciseAttemptId,
+      table.usedAt,
+    ),
+    check("hint_usages_v2_level_check", sql`${table.level} between 0 and 5`),
+  ],
+);
+
 // Short aliases keep repository call sites readable while preserving the explicit SQL table names.
 export const mastery = masteryScores;
 export const conversations = agentConversations;
@@ -744,6 +779,7 @@ export const schema = {
   sessionSnapshots,
   unitProgress,
   learnerState,
+  hintUsagesV2,
 };
 
 export type Topic = typeof topics.$inferSelect;
@@ -762,3 +798,4 @@ export type CurriculumUnit = typeof curriculumUnits.$inferSelect;
 export type SessionSnapshot = typeof sessionSnapshots.$inferSelect;
 export type UnitProgress = typeof unitProgress.$inferSelect;
 export type LearnerState = typeof learnerState.$inferSelect;
+export type HintUsageV2 = typeof hintUsagesV2.$inferSelect;

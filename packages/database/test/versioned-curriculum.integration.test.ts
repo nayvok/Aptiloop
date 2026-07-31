@@ -1,8 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { SessionSnapshotSchema, UnitProgressSchema } from "@dlh/shared";
 
 import {
   createCurriculumAuthoringRepository,
@@ -10,6 +11,9 @@ import {
   createLearningRepository,
   migrateDatabase,
   openDatabase,
+  discoverDatabaseCandidates,
+  resolveDatabaseProjectRoot,
+  seedDatabase,
   type DatabaseConnection,
 } from "../src/index.js";
 
@@ -70,8 +74,12 @@ describe("versioned curriculum migration", () => {
       )
       .get() as { snapshot_json: string; content_hash: string } | undefined;
     expect(snapshot).toBeDefined();
-    expect(JSON.parse(snapshot?.snapshot_json ?? "null")).toMatchObject({
-      schemaVersion: 1,
+    expect(
+      SessionSnapshotSchema.parse(
+        JSON.parse(snapshot?.snapshot_json ?? "null"),
+      ),
+    ).toMatchObject({
+      schemaVersion: 2,
       day: { stableId: "legacy-day" },
     });
     expect(snapshot?.content_hash).toBeTruthy();
@@ -122,7 +130,10 @@ describe("curriculum authoring", () => {
       stableId: "summary",
       type: "summary",
       title: "Summary",
-      completionCriteria: [{ kind: "acknowledged" }],
+      description: "Finish",
+      completionCriteria: [{ type: "acknowledgement" }],
+      depthLevel: "foundation",
+      payload: { type: "summary", prompts: [] },
     });
     const second = await repository.addUnit({
       versionId: draft.id,
@@ -130,7 +141,10 @@ describe("curriculum authoring", () => {
       stableId: "briefing",
       type: "briefing",
       title: "Briefing",
-      completionCriteria: [{ kind: "acknowledged" }],
+      description: "Begin",
+      completionCriteria: [{ type: "acknowledgement" }],
+      depthLevel: "foundation",
+      payload: { type: "briefing", scope: [] },
     });
     await repository.reorderUnits({
       versionId: draft.id,
@@ -152,7 +166,10 @@ describe("curriculum authoring", () => {
         stableId: "late",
         type: "study",
         title: "Late mutation",
-        completionCriteria: [{ kind: "acknowledged" }],
+        description: "Late",
+        completionCriteria: [{ type: "acknowledgement" }],
+        depthLevel: "foundation",
+        payload: { type: "study", body: "Late" },
       }),
     ).rejects.toThrow(/immutable/i);
 
@@ -205,7 +222,10 @@ describe("snapshot sessions", () => {
       stableId: "u1",
       type: "briefing",
       title: "Start",
-      completionCriteria: [{ kind: "acknowledged" }],
+      description: "Start here",
+      completionCriteria: [{ type: "acknowledgement" }],
+      depthLevel: "foundation",
+      payload: { type: "briefing", scope: [] },
     });
     const published = await authoring.publishVersion(draft.id);
 
@@ -220,6 +240,12 @@ describe("snapshot sessions", () => {
     expect(started.unitProgress).toEqual([
       expect.objectContaining({ unitId: unit.id, status: "ready" }),
     ]);
+    expect(SessionSnapshotSchema.parse(started.snapshot)).toEqual(
+      started.snapshot,
+    );
+    expect(UnitProgressSchema.parse(started.unitProgress[0])).toEqual(
+      started.unitProgress[0],
+    );
     const resumed = await learning.getCurrentVersionedSession();
     expect(resumed?.session.id).toBe(started.session.id);
 
@@ -241,11 +267,115 @@ describe("snapshot sessions", () => {
       sessionId: started.session.id,
       unitId: unit.id,
       status: "in_progress",
-      progress: { draft: "saved" },
+      progress: {
+        type: "briefing",
+        acknowledged: true,
+        checkedItemIds: [],
+      },
     });
     expect(
       (await learning.getVersionedSession(started.session.id)).unitProgress[0],
-    ).toMatchObject({ status: "in_progress", progress: { draft: "saved" } });
+    ).toMatchObject({
+      status: "in_progress",
+      payload: { type: "briefing", acknowledged: true },
+    });
+  });
+});
+
+describe("versioned curriculum seed", () => {
+  it("is immutable and idempotent and exposes the 12-unit Day 1 path", async () => {
+    const { connection } = tempConnection();
+    migrateDatabase(connection);
+
+    const first = seedDatabase(connection, undefined, 1_000);
+    const versionBefore = connection.sqlite
+      .prepare(
+        "SELECT status, content_hash, updated_at FROM curriculum_versions WHERE id = 'curriculum-foundation-v2-r1'",
+      )
+      .get();
+    const second = seedDatabase(connection, undefined, 2_000);
+    const versionAfter = connection.sqlite
+      .prepare(
+        "SELECT status, content_hash, updated_at FROM curriculum_versions WHERE id = 'curriculum-foundation-v2-r1'",
+      )
+      .get();
+
+    expect(second).toEqual(first);
+    expect(versionAfter).toEqual(versionBefore);
+    const authoring = createCurriculumAuthoringRepository(connection);
+    const path = await authoring.getActivePath("curriculum-foundation");
+    const dayOne = path?.weeks[0]?.days.find(
+      (day) => day.stableId === "w1d1-values-types-objects",
+    );
+    expect(path?.version.id).toBe("curriculum-foundation-v2-r1");
+    expect(dayOne?.units).toHaveLength(12);
+    expect(dayOne?.units[0]).toMatchObject({
+      stableId: "w1d1-u01-briefing",
+      orderIndex: 0,
+    });
+  });
+
+  it("records persisted hint usage at levels zero through five", async () => {
+    const { connection } = tempConnection();
+    migrateDatabase(connection);
+    seedDatabase(connection, undefined, 1_000);
+    let id = 0;
+    const learning = createLearningRepository(connection, {
+      id: () => `hint-${++id}`,
+      now: () => 2_000,
+    });
+    const authoring = createCurriculumAuthoringRepository(connection);
+    const path = await authoring.getActivePath("curriculum-foundation");
+    const day = path?.weeks[0]?.days[0];
+    const unit = day?.units[0];
+    if (!day || !unit) throw new Error("Seeded Day 1 is missing");
+    const session = await learning.startOrResumeVersionedSession({
+      dayId: day.id,
+    });
+    const storedSnapshot = SessionSnapshotSchema.parse(
+      JSON.parse(
+        (
+          connection.sqlite
+            .prepare(
+              "SELECT snapshot_json FROM session_snapshots WHERE session_id = ?",
+            )
+            .get(session.session.id) as { snapshot_json: string }
+        ).snapshot_json,
+      ),
+    );
+    const storedProtectedQuestion = storedSnapshot.units
+      .flatMap((candidate) => candidate.questions)
+      .find((question) => question.referenceAnswer !== null);
+    const exposedQuestion = session.snapshot.units
+      .flatMap((candidate) => candidate.questions)
+      .find((question) => question.id === storedProtectedQuestion?.id);
+    expect(storedProtectedQuestion?.referenceAnswer).toBeTruthy();
+    expect(exposedQuestion?.referenceAnswer).toBeNull();
+
+    await learning.recordHintUsage({
+      sessionId: session.session.id,
+      unitId: unit.id,
+      level: 0,
+      reason: "Learner requested orientation",
+    });
+    await learning.recordHintUsage({
+      sessionId: session.session.id,
+      unitId: unit.id,
+      level: 5,
+      reason: "Explicit give-up after an attempt",
+    });
+    await expect(
+      learning.recordHintUsage({
+        sessionId: session.session.id,
+        unitId: unit.id,
+        level: 6,
+        reason: "Invalid",
+      }),
+    ).rejects.toThrow(/level/i);
+    expect(await learning.listHintUsages(session.session.id)).toEqual([
+      expect.objectContaining({ level: 0, unitId: unit.id }),
+      expect.objectContaining({ level: 5, unitId: unit.id }),
+    ]);
   });
 });
 
@@ -280,6 +410,22 @@ describe("database backup", () => {
     } finally {
       backup.close();
     }
+  });
+
+  it("discovers root databases when invoked from the database workspace", () => {
+    const directory = mkdtempSync(join(tmpdir(), "dlh-backup-root-"));
+    cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
+    const candidate = join(directory, ".data", "dev-learning-harness.sqlite");
+    const connection = openDatabase(candidate);
+    connection.close();
+    const moduleUrl = pathToFileURL(
+      join(directory, "packages", "database", "src", "backup.ts"),
+    ).href;
+
+    const projectRoot = resolveDatabaseProjectRoot(moduleUrl);
+
+    expect(resolve(projectRoot)).toBe(resolve(directory));
+    expect(discoverDatabaseCandidates(projectRoot)).toEqual([candidate]);
   });
 });
 

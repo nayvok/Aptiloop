@@ -1,5 +1,17 @@
 import { randomUUID } from "node:crypto";
 import {
+  SessionSnapshotSchema,
+  UnitProgressPayloadSchema,
+  UnitProgressSchema,
+  UnitSchema,
+  UnitStatusSchema,
+  UnitTypeSchema,
+  type SessionSnapshot,
+  type UnitProgress as ContractUnitProgress,
+  type UnitProgressPayload,
+  type UnitStatus,
+} from "@dlh/shared";
+import {
   and,
   asc,
   desc,
@@ -36,8 +48,11 @@ import {
   type AnswerAttempt,
   type Flashcard,
   type LearningSession,
-  type UnitProgress,
 } from "./schema.js";
+import {
+  createInitialProgressPayload,
+  toIsoDateTime,
+} from "./snapshot-contract.js";
 
 export type IdFactory = () => string;
 export type Clock = () => number;
@@ -140,18 +155,8 @@ export interface CompleteSessionInput {
 
 export interface VersionedSessionDetail {
   session: LearningSession;
-  snapshot: Record<string, unknown> & {
-    schemaVersion: number;
-    contentHash: string;
-    day: { id: string; stableId: string; title: string };
-    units: Array<{ id: string; stableId: string; type: string }>;
-  };
-  unitProgress: Array<
-    UnitProgress & {
-      progress: Record<string, unknown>;
-      payload: Record<string, unknown>;
-    }
-  >;
+  snapshot: SessionSnapshot;
+  unitProgress: ContractUnitProgress[];
 }
 
 function parseJson<T>(
@@ -499,41 +504,15 @@ export class LearningRepository {
     if (!week || !day)
       throw new Error("Published curriculum graph is incomplete");
     const capturedAt = this.#now();
-    const snapshotCore = {
-      schemaVersion: 1,
-      curriculumId: dayRow.curriculum_id,
-      curriculumVersionId: dayRow.version_id,
-      curriculumRevision: dayRow.revision,
-      curriculumTitle: dayRow.curriculum_title,
-      week: {
-        id: week.id,
-        stableId: week.stableId,
-        orderIndex: week.orderIndex,
-        title: week.title,
-        description: week.description,
-      },
-      day: {
-        id: day.id,
-        stableId: day.stableId,
-        orderIndex: day.orderIndex,
-        title: day.title,
-        description: day.description,
-        goal: day.goal,
-        estimatedMinutes: day.estimatedMinutes,
-        prerequisites: day.prerequisites,
-        expectedOutcomes: day.expectedOutcomes,
-        depthLevel: day.depthLevel,
-        outOfScope: day.outOfScope,
-        topics: day.topics,
-      },
-      units: day.units.map((unit) => ({
+    const snapshotUnits = day.units.map((unit) =>
+      UnitSchema.parse({
         id: unit.id,
         stableId: unit.stableId,
         type: unit.type,
-        orderIndex: unit.orderIndex,
+        order: unit.orderIndex + 1,
         title: unit.title,
-        description: unit.description,
-        estimatedMinutes: unit.estimatedMinutes,
+        description: unit.description ?? unit.title,
+        estimatedMinutes: unit.estimatedMinutes ?? 0,
         objectives: unit.objectives,
         checklist: unit.checklist,
         sources: unit.sources,
@@ -543,13 +522,45 @@ export class LearningRepository {
         completionCriteria: unit.completionCriteria,
         unlockRules: unit.unlockRules,
         optional: unit.optional,
-        depthLevel: unit.depthLevel,
+        depthLevel: unit.depthLevel ?? "foundation",
         payload: unit.payload,
-      })),
-      capturedAt,
+      }),
+    );
+    const snapshotCore = {
+      schemaVersion: 2,
+      curriculumId: dayRow.curriculum_id,
+      curriculumVersionId: dayRow.version_id,
+      curriculumRevision: dayRow.revision,
+      curriculumTitle: dayRow.curriculum_title,
+      week: {
+        id: week.id,
+        stableId: week.stableId,
+        order: week.orderIndex + 1,
+        title: week.title,
+        description: week.description,
+      },
+      day: {
+        id: day.id,
+        stableId: day.stableId,
+        order: day.orderIndex + 1,
+        title: day.title,
+        description: day.description ?? day.goal,
+        goal: day.goal,
+        estimatedMinutes: day.estimatedMinutes,
+        prerequisites: day.prerequisites,
+        expectedOutcomes: day.expectedOutcomes,
+        depthLevel: day.depthLevel,
+        outOfScope: day.outOfScope,
+        topics: day.topics,
+      },
+      units: snapshotUnits,
+      capturedAt: toIsoDateTime(capturedAt),
     };
     const contentHash = hashCanonicalJson(snapshotCore);
-    const snapshot = { ...snapshotCore, contentHash };
+    const snapshot = SessionSnapshotSchema.parse({
+      ...snapshotCore,
+      contentHash,
+    });
     const sessionId = this.#id();
     withTransaction(this.#connection, () => {
       const compatibilityDay = this.#connection.sqlite
@@ -604,7 +615,7 @@ export class LearningRepository {
           `INSERT INTO session_snapshots
            (id, session_id, schema_version, curriculum_id, curriculum_version_id,
             curriculum_day_id, content_hash, snapshot_json, created_at)
-           VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, 2, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           this.#id(),
@@ -620,15 +631,17 @@ export class LearningRepository {
         `INSERT INTO unit_progress
          (id, session_id, unit_id, unit_type, status, progress_json, started_at,
           completed_at, skipped_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, '{}', NULL, NULL, NULL, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
       );
       for (const unit of day.units) {
+        const unitType = UnitTypeSchema.parse(unit.type);
         insertProgress.run(
           this.#id(),
           sessionId,
           unit.id,
-          unit.type,
+          unitType,
           unit.id === firstRequired.id ? "ready" : "locked",
+          JSON.stringify(createInitialProgressPayload(unitType)),
           capturedAt,
         );
       }
@@ -682,29 +695,28 @@ export class LearningRepository {
     if (!sessionRow || !snapshotRow) {
       throw new Error(`Unknown versioned learning session: ${sessionId}`);
     }
-    const parsed = JSON.parse(
-      snapshotRow.snapshot_json,
-    ) as VersionedSessionDetail["snapshot"];
-    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.units)) {
-      throw new Error("Invalid stored session snapshot");
-    }
+    const storedSnapshot = SessionSnapshotSchema.parse(
+      JSON.parse(snapshotRow.snapshot_json),
+    );
+    const parsed = SessionSnapshotSchema.parse({
+      ...storedSnapshot,
+      units: storedSnapshot.units.map((unit) => ({
+        ...unit,
+        referenceAnswer: null,
+        questions: unit.questions.map((question) => ({
+          ...question,
+          referenceAnswer: null,
+        })),
+      })),
+    });
     const progressRows = this.#connection.sqlite
-      .prepare(
-        `SELECT p.* FROM unit_progress p
-         WHERE p.session_id = ?
-         ORDER BY CASE p.unit_id ${parsed.units
-           .map(
-             (unit, index) =>
-               `WHEN '${unit.id.replaceAll("'", "''")}' THEN ${index}`,
-           )
-           .join(" ")} ELSE 2147483647 END`,
-      )
+      .prepare(`SELECT p.* FROM unit_progress p WHERE p.session_id = ?`)
       .all(sessionId) as Array<{
       id: string;
       session_id: string;
       unit_id: string;
       unit_type: string;
-      status: UnitProgress["status"];
+      status: UnitStatus;
       progress_json: string;
       started_at: number | null;
       completed_at: number | null;
@@ -724,38 +736,54 @@ export class LearningRepository {
         curriculumDayV2Id: sessionRow.curriculum_day_v2_id,
       },
       snapshot: parsed,
-      unitProgress: progressRows.map((row) => {
-        const progress = parseJson(
-          row.progress_json,
-          "unit_progress.progress_json",
-          (value): value is Record<string, unknown> =>
-            !!value && typeof value === "object" && !Array.isArray(value),
-        );
-        return {
-          id: row.id,
-          sessionId: row.session_id,
-          unitId: row.unit_id,
-          unitType: row.unit_type,
-          status: row.status,
-          progressJson: row.progress_json,
-          startedAt: row.started_at,
-          completedAt: row.completed_at,
-          skippedAt: row.skipped_at,
-          updatedAt: row.updated_at,
-          progress,
-          payload: progress,
-        };
-      }),
+      unitProgress: progressRows
+        .map((row) =>
+          UnitProgressSchema.parse({
+            unitId: row.unit_id,
+            unitType: row.unit_type,
+            status: row.status,
+            payload: JSON.parse(row.progress_json),
+            startedAt:
+              row.started_at === null ? null : toIsoDateTime(row.started_at),
+            completedAt:
+              row.completed_at === null
+                ? null
+                : toIsoDateTime(row.completed_at),
+            skippedAt:
+              row.skipped_at === null ? null : toIsoDateTime(row.skipped_at),
+            updatedAt: toIsoDateTime(row.updated_at),
+          }),
+        )
+        .sort(
+          (left, right) =>
+            parsed.units.findIndex((unit) => unit.id === left.unitId) -
+            parsed.units.findIndex((unit) => unit.id === right.unitId),
+        ),
     };
   }
 
   async updateUnitProgress(input: {
     sessionId: string;
     unitId: string;
-    status: UnitProgress["status"];
-    progress?: Record<string, unknown>;
+    status: UnitStatus;
+    progress?: UnitProgressPayload;
   }): Promise<VersionedSessionDetail["unitProgress"][number]> {
     const now = this.#now();
+    const unitRow = this.#connection.sqlite
+      .prepare(
+        "SELECT unit_type, progress_json FROM unit_progress WHERE session_id = ? AND unit_id = ?",
+      )
+      .get(input.sessionId, input.unitId) as
+      { unit_type: string; progress_json: string } | undefined;
+    if (!unitRow) throw new Error("Unknown session unit progress");
+    const unitType = UnitTypeSchema.parse(unitRow.unit_type);
+    const status = UnitStatusSchema.parse(input.status);
+    const payload = UnitProgressPayloadSchema.parse(
+      input.progress ?? JSON.parse(unitRow.progress_json),
+    );
+    if (payload.type !== unitType) {
+      throw new Error("Unit progress payload type must match its unit type");
+    }
     const result = this.#connection.sqlite
       .prepare(
         `UPDATE unit_progress
@@ -769,13 +797,13 @@ export class LearningRepository {
                        WHERE s.id = unit_progress.session_id AND s.status = 'active')`,
       )
       .run(
-        input.status,
-        stringifyJson(input.progress ?? {}, "unit progress"),
-        input.status,
+        status,
+        stringifyJson(payload, "unit progress"),
+        status,
         now,
-        input.status,
+        status,
         now,
-        input.status,
+        status,
         now,
         now,
         input.sessionId,
@@ -789,6 +817,86 @@ export class LearningRepository {
     );
     if (!progress) throw new Error("Updated unit progress disappeared");
     return progress;
+  }
+
+  async recordHintUsage(input: {
+    sessionId: string;
+    unitId: string;
+    level: number;
+    reason: string;
+    questionAttemptId?: string | null;
+    exerciseAttemptId?: string | null;
+    content?: string | null;
+  }) {
+    if (!Number.isInteger(input.level) || input.level < 0 || input.level > 5) {
+      throw new Error("Hint level must be an integer between 0 and 5");
+    }
+    if (!input.reason.trim()) throw new Error("Hint usage reason is required");
+    const progress = this.#connection.sqlite
+      .prepare(
+        "SELECT 1 FROM unit_progress WHERE session_id = ? AND unit_id = ?",
+      )
+      .get(input.sessionId, input.unitId);
+    if (!progress)
+      throw new Error("Hint unit does not belong to the session snapshot");
+    if (input.questionAttemptId) {
+      const attempt = this.#connection.sqlite
+        .prepare(
+          "SELECT 1 FROM answer_attempts WHERE id = ? AND session_id = ?",
+        )
+        .get(input.questionAttemptId, input.sessionId);
+      if (!attempt)
+        throw new Error("Question attempt does not belong to the session");
+    }
+    if (input.exerciseAttemptId) {
+      const attempt = this.#connection.sqlite
+        .prepare(
+          "SELECT 1 FROM exercise_attempts WHERE id = ? AND session_id = ?",
+        )
+        .get(input.exerciseAttemptId, input.sessionId);
+      if (!attempt)
+        throw new Error("Exercise attempt does not belong to the session");
+    }
+    const id = this.#id();
+    this.#connection.sqlite
+      .prepare(
+        `INSERT INTO hint_usages_v2
+         (id, session_id, unit_id, question_attempt_id, exercise_attempt_id,
+          level, reason, content, used_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.sessionId,
+        input.unitId,
+        input.questionAttemptId ?? null,
+        input.exerciseAttemptId ?? null,
+        input.level,
+        input.reason.trim(),
+        input.content ?? null,
+        this.#now(),
+      );
+    return this.#connection.sqlite
+      .prepare(
+        `SELECT id, session_id AS sessionId, unit_id AS unitId,
+                question_attempt_id AS questionAttemptId,
+                exercise_attempt_id AS exerciseAttemptId, level, reason, content,
+                used_at AS usedAt
+         FROM hint_usages_v2 WHERE id = ?`,
+      )
+      .get(id);
+  }
+
+  async listHintUsages(sessionId: string) {
+    return this.#connection.sqlite
+      .prepare(
+        `SELECT id, session_id AS sessionId, unit_id AS unitId,
+                question_attempt_id AS questionAttemptId,
+                exercise_attempt_id AS exerciseAttemptId, level, reason, content,
+                used_at AS usedAt
+         FROM hint_usages_v2 WHERE session_id = ? ORDER BY used_at, id`,
+      )
+      .all(sessionId);
   }
 
   async getReferenceAnswer(

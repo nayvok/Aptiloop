@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { openDatabase } from "./database.js";
 
@@ -14,6 +15,15 @@ export interface DatabaseBackupResult {
   backupPath: string;
   source: DatabaseHealth;
   backup: DatabaseHealth;
+}
+
+export function resolveDatabaseProjectRoot(
+  databaseModuleUrl: string,
+  configuredRoot?: string,
+): string {
+  return configuredRoot
+    ? resolve(configuredRoot)
+    : fileURLToPath(new URL("../../../", databaseModuleUrl));
 }
 
 export function inspectDatabase(path: string): DatabaseHealth {

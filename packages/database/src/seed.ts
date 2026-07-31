@@ -1,8 +1,12 @@
 import { weekOneCurriculum, type CurriculumWeek } from "@dlh/curriculum";
 
 import { withTransaction, type DatabaseConnection } from "./database.js";
+import {
+  seedVersionedCurriculum,
+  type VersionedSeedResult,
+} from "./versioned-seed.js";
 
-export interface SeedResult {
+export interface SeedResult extends VersionedSeedResult {
   weeks: number;
   days: number;
   topics: number;
@@ -21,6 +25,10 @@ export function seedCurriculum(
     topics: 0,
     questions: 0,
     exercises: 0,
+    curriculumVersions: 0,
+    versionedWeeks: 0,
+    versionedDays: 0,
+    versionedUnits: 0,
   };
   const topicIds = new Set<string>();
 
@@ -180,6 +188,7 @@ export function seedCurriculum(
   });
 
   result.topics = topicIds.size;
+  Object.assign(result, seedVersionedCurriculum(connection));
   return result;
 }
 
