@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 
+import { validateOpenCodeEndpoint } from "@dlh/opencode-provider/config";
+
 try {
   process.loadEnvFile?.(".env");
 } catch (error) {
@@ -8,30 +10,31 @@ try {
   }
 }
 
-const endpoint = process.env.OPENCODE_ENDPOINT ?? "http://127.0.0.1:4096";
+const endpoint = validateOpenCodeEndpoint(
+  process.env.OPENCODE_ENDPOINT ?? "http://127.0.0.1:4096",
+);
+const appEnvironment = { ...process.env, OPENCODE_ENDPOINT: endpoint };
 const endpointUrl = new URL(endpoint);
-const loopbackEndpoint =
-  endpointUrl.hostname === "localhost" ||
-  endpointUrl.hostname === "::1" ||
-  endpointUrl.hostname.startsWith("127.");
+const endpointHostname =
+  endpointUrl.hostname === "[::1]" ? "::1" : endpointUrl.hostname;
 let ownedOpenCode;
 let app;
 let stopping = false;
 
-function spawnCommand(command, args) {
+function spawnCommand(command, args, env = process.env) {
   if (process.platform === "win32") {
     return spawn(
       process.env.ComSpec ?? "cmd.exe",
       ["/d", "/s", "/c", command, ...args],
       {
-        env: process.env,
+        env,
         stdio: "inherit",
         windowsHide: true,
       },
     );
   }
   return spawn(command, args, {
-    env: process.env,
+    env,
     stdio: "inherit",
   });
 }
@@ -67,20 +70,16 @@ function stop(exitCode = 0) {
   process.exitCode = exitCode;
 }
 
-if (!loopbackEndpoint) {
-  console.warn(
-    `[local] OpenCode не запущен автоматически: endpoint не loopback (${endpoint}).`,
-  );
-} else if (await isOpenCodeReady()) {
+if (await isOpenCodeReady()) {
   console.log(`[local] OpenCode уже доступен: ${endpoint}`);
 } else {
   console.log(
-    `[local] Запускаю OpenCode: ${endpointUrl.hostname}:${endpointUrl.port || "80"}`,
+    `[local] Запускаю OpenCode: ${endpointHostname}:${endpointUrl.port || "80"}`,
   );
   ownedOpenCode = spawnCommand("opencode", [
     "serve",
     "--hostname",
-    endpointUrl.hostname,
+    endpointHostname,
     "--port",
     endpointUrl.port || "80",
   ]);
@@ -97,11 +96,11 @@ if (!loopbackEndpoint) {
 
 app = process.env.npm_execpath
   ? spawn(process.execPath, [process.env.npm_execpath, "run", "dev"], {
-      env: process.env,
+      env: appEnvironment,
       stdio: "inherit",
       windowsHide: true,
     })
-  : spawnCommand("npm", ["run", "dev"]);
+  : spawnCommand("npm", ["run", "dev"], appEnvironment);
 app.on("error", (error) => {
   console.error(`[local] Не удалось запустить приложение: ${error.message}`);
   stop(1);

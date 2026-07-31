@@ -26,7 +26,10 @@ import {
   resolveWorkspacePath,
 } from "@dlh/exercise-core";
 import { exportFlashcards } from "@dlh/learning-core";
-import { OpenCodeAgentProvider } from "@dlh/opencode-provider";
+import {
+  OpenCodeAgentProvider,
+  validateOpenCodeEndpoint,
+} from "@dlh/opencode-provider";
 import { getLatestPrompt } from "@dlh/prompt-library";
 import {
   AgentRoleSchema,
@@ -40,6 +43,9 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 
 const sourceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const defaultOpenCodeEndpoint = "http://127.0.0.1:4096";
+const defaultWebOrigin = "http://127.0.0.1:3000";
+const mutationMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const dimensions = [
   "understanding",
   "explanation",
@@ -62,6 +68,7 @@ export interface AppOptions {
   databasePath?: string;
   connection?: DatabaseConnection;
   providers?: Partial<Record<ProviderId, AgentProvider>>;
+  webOrigin?: string;
 }
 
 interface AttemptRecord {
@@ -72,15 +79,23 @@ interface AttemptRecord {
   baselineHash: string;
 }
 
+interface ProviderSessionRecord {
+  providerId: ProviderId;
+  provider: AgentProvider;
+  providerSessionId: string;
+  conversationId: string;
+}
+
 interface AppState {
   connection: DatabaseConnection;
   repository: LearningRepository;
   projectRoot: string;
   defaultWorkspaceRoot: string;
   providers: Record<ProviderId, AgentProvider>;
-  providerSessions: Map<
+  providerSessions: Map<string, ProviderSessionRecord>;
+  activeProviderTurns: Map<
     string,
-    { providerSessionId: string; conversationId: string }
+    { key: string; session: ProviderSessionRecord }
   >;
 }
 
@@ -101,6 +116,7 @@ const settingsSchema = z.object({
   theme: z.enum(["system", "light", "dark"]),
 });
 type AppSettings = z.infer<typeof settingsSchema>;
+const settingsMutationSchema = settingsSchema.omit({ zedExecutable: true });
 
 const chatSchema = z.object({
   role: AgentRoleSchema.default("teacher"),
@@ -128,18 +144,24 @@ export function createApp(options: AppOptions = {}) {
   seedCurriculum(connection);
 
   const repository = createLearningRepository(connection);
+  const allowedWebOrigin = validateWebOrigin(
+    options.webOrigin ?? process.env.WEB_ORIGIN ?? defaultWebOrigin,
+  );
   const persistedOpenCodeEndpoint = readSettingSync<string>(
     connection,
     "opencodeBaseUrl",
   );
-  const opencodeEndpoint =
-    process.env.OPENCODE_ENDPOINT ?? persistedOpenCodeEndpoint ?? undefined;
+  const opencodeEndpoint = validateOpenCodeEndpoint(
+    process.env.OPENCODE_ENDPOINT ??
+      persistedOpenCodeEndpoint ??
+      defaultOpenCodeEndpoint,
+  );
   const defaultProviders: Record<ProviderId, AgentProvider> = {
     mock: new MockAgentProvider(),
     codex: new CodexProvider({ cwd: projectRoot }),
     opencode: new OpenCodeAgentProvider({
       directory: projectRoot,
-      ...(opencodeEndpoint ? { endpoint: opencodeEndpoint } : {}),
+      endpoint: opencodeEndpoint,
     }),
   };
   const state: AppState = {
@@ -152,6 +174,7 @@ export function createApp(options: AppOptions = {}) {
     ),
     providers: { ...defaultProviders, ...options.providers },
     providerSessions: new Map(),
+    activeProviderTurns: new Map(),
   };
   const app = new Hono();
 
@@ -172,9 +195,13 @@ export function createApp(options: AppOptions = {}) {
         403,
       );
     }
+    const isMutation = mutationMethods.has(context.req.method.toUpperCase());
     const origin = context.req.header("Origin");
-    if (origin && !isAllowedOrigin(origin)) {
+    if ((isMutation && !origin) || (origin && origin !== allowedWebOrigin)) {
       return context.json({ error: "Origin is not allowed" }, 403);
+    }
+    if (isMutation && !isJsonContentType(context.req.header("Content-Type"))) {
+      return context.json({ error: "JSON content type is required" }, 415);
     }
     await next();
   });
@@ -389,6 +416,8 @@ export function createApp(options: AppOptions = {}) {
         providerSessionId: session.id,
       });
       storedSession = {
+        providerId,
+        provider,
         providerSessionId: session.id,
         conversationId: conversation.id,
       };
@@ -401,12 +430,21 @@ export function createApp(options: AppOptions = {}) {
       role: "user",
       content: body.message,
     });
+    context.header("X-DLH-Agent-Session-Id", activeProviderSessionId);
+    state.activeProviderTurns.set(activeProviderSessionId, {
+      key,
+      session: storedSession,
+    });
     return streamSSE(context, async (stream) => {
       let assistantContent = "";
       let failedMessage: string | undefined;
+      let terminalReason: "completed" | "failed" | "cancelled" | undefined;
+      let streamThrew = false;
       const toolEvents: AgentEvent[] = [];
       const onAbort = () => {
-        void provider.cancelSession(activeProviderSessionId).catch(() => {});
+        void cancelAndEvictProviderSession(state, key, storedSession).catch(
+          () => {},
+        );
       };
       context.req.raw.signal.addEventListener("abort", onAbort, { once: true });
       try {
@@ -420,6 +458,9 @@ export function createApp(options: AppOptions = {}) {
             assistantContent = event.content;
           }
           if (event.type === "error") failedMessage = event.error.message;
+          if (event.type === "session.completed") {
+            terminalReason = event.reason;
+          }
           if (
             event.type === "tool.started" ||
             event.type === "tool.completed"
@@ -437,16 +478,48 @@ export function createApp(options: AppOptions = {}) {
                   : event;
           await stream.writeSSE({ data: JSON.stringify(clientEvent) });
         }
+      } catch (error) {
+        streamThrew = true;
+        throw error;
       } finally {
         context.req.raw.signal.removeEventListener("abort", onAbort);
+        const activeTurn = state.activeProviderTurns.get(
+          activeProviderSessionId,
+        );
+        if (activeTurn?.session === storedSession) {
+          state.activeProviderTurns.delete(activeProviderSessionId);
+        }
+        if (
+          streamThrew ||
+          failedMessage ||
+          terminalReason === "failed" ||
+          terminalReason === "cancelled"
+        ) {
+          evictProviderSession(state, key, storedSession);
+        }
         await persistAgentResponse(state, {
           conversationId,
           content: assistantContent || failedMessage || "Ответ был отменён.",
           toolEvents,
-          status: failedMessage ? "failed" : "completed",
+          status:
+            terminalReason === "cancelled"
+              ? "cancelled"
+              : failedMessage || streamThrew || terminalReason === "failed"
+                ? "failed"
+                : "completed",
         });
       }
     });
+  });
+
+  app.delete("/api/agent/sessions/:id/turn", async (context) => {
+    const providerSessionId = context.req.param("id");
+    const active = state.activeProviderTurns.get(providerSessionId);
+    if (!active) {
+      return context.json({ error: "Unknown active agent session" }, 404);
+    }
+    await cancelAndEvictProviderSession(state, active.key, active.session);
+    return context.json({ cancelled: true });
   });
 
   app.get("/api/agent/history", (context) => {
@@ -569,7 +642,9 @@ export function createApp(options: AppOptions = {}) {
 
   app.get("/api/exercise-attempts/:id/diff", async (context) => {
     const attempt = requireAttempt(state.connection, context.req.param("id"));
-    const diff = await getExerciseDiff(attempt.workspacePath);
+    const diff = await getExerciseDiff(attempt.workspacePath, {
+      expectedBaselineHash: attempt.baselineHash,
+    });
     return context.json({
       diff: diff.patch,
       changed: diff.hasChanges,
@@ -620,7 +695,9 @@ export function createApp(options: AppOptions = {}) {
 
   app.post("/api/exercise-attempts/:id/reviews", async (context) => {
     const attempt = requireAttempt(state.connection, context.req.param("id"));
-    const before = await getExerciseDiff(attempt.workspacePath);
+    const before = await getExerciseDiff(attempt.workspacePath, {
+      expectedBaselineHash: attempt.baselineHash,
+    });
     if (!before.hasChanges) {
       return context.json(
         { error: "Review requires a learner-authored diff" },
@@ -628,7 +705,9 @@ export function createApp(options: AppOptions = {}) {
       );
     }
     const result = mockReviewResult;
-    const after = await getExerciseDiff(attempt.workspacePath);
+    const after = await getExerciseDiff(attempt.workspacePath, {
+      expectedBaselineHash: attempt.baselineHash,
+    });
     if (before.patch !== after.patch) {
       throw new Error("Reviewer boundary violation: workspace changed");
     }
@@ -653,10 +732,7 @@ export function createApp(options: AppOptions = {}) {
 
   app.post("/api/exercise-attempts/:id/open", async (context) => {
     const attempt = requireAttempt(state.connection, context.req.param("id"));
-    const configured =
-      (await state.repository.getSetting<string>("zedExecutable")) ??
-      process.env.ZED_EXECUTABLE ??
-      "zed";
+    const configured = process.env.ZED_EXECUTABLE ?? "zed";
     const plan = buildZedOpenPlan(attempt.workspacePath, {
       executable: configured,
     });
@@ -783,10 +859,22 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.put("/api/settings", async (context) => {
-    const body = settingsSchema.parse(await context.req.json());
-    const endpoint = new URL(body.opencodeBaseUrl);
-    if (!["127.0.0.1", "localhost", "[::1]"].includes(endpoint.hostname)) {
-      return context.json({ error: "OpenCode endpoint must be loopback" }, 400);
+    const parsed = settingsMutationSchema.parse(await context.req.json());
+    const body = {
+      ...parsed,
+      opencodeBaseUrl: validateOpenCodeEndpoint(parsed.opencodeBaseUrl),
+    };
+    const previousOpenCodeProvider = state.providers.opencode;
+    for (const [key, session] of state.providerSessions) {
+      if (session.providerId === "opencode") {
+        evictProviderSession(state, key, session);
+      }
+    }
+    if (
+      "shutdown" in previousOpenCodeProvider &&
+      typeof previousOpenCodeProvider.shutdown === "function"
+    ) {
+      await previousOpenCodeProvider.shutdown();
     }
     await Promise.all(
       Object.entries(body).map(([key, value]) =>
@@ -817,16 +905,53 @@ export function createApp(options: AppOptions = {}) {
   };
 }
 
-function isAllowedOrigin(origin: string): boolean {
+function validateWebOrigin(origin: string): string {
   try {
     const url = new URL(origin);
-    return (
-      url.protocol === "http:" &&
-      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-    );
+    if (
+      url.protocol !== "http:" ||
+      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.pathname !== "/" ||
+      url.search !== "" ||
+      url.hash !== ""
+    ) {
+      throw new Error("WEB_ORIGIN must be an HTTP loopback origin");
+    }
+    return url.origin;
   } catch {
-    return false;
+    throw new Error("WEB_ORIGIN must be an HTTP loopback origin");
   }
+}
+
+function isJsonContentType(contentType: string | undefined): boolean {
+  return (
+    contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json"
+  );
+}
+
+function evictProviderSession(
+  state: AppState,
+  key: string,
+  session: ProviderSessionRecord,
+): void {
+  if (state.providerSessions.get(key) === session) {
+    state.providerSessions.delete(key);
+  }
+  const activeTurn = state.activeProviderTurns.get(session.providerSessionId);
+  if (activeTurn?.session === session) {
+    state.activeProviderTurns.delete(session.providerSessionId);
+  }
+}
+
+async function cancelAndEvictProviderSession(
+  state: AppState,
+  key: string,
+  session: ProviderSessionRecord,
+): Promise<void> {
+  evictProviderSession(state, key, session);
+  await session.provider.cancelSession(session.providerSessionId);
 }
 
 async function defaultModel(provider: AgentProvider): Promise<string> {
@@ -937,7 +1062,9 @@ async function readSettings(state: AppState) {
   const defaults = {
     workspaceRoot: state.defaultWorkspaceRoot,
     zedExecutable: process.env.ZED_EXECUTABLE ?? "zed",
-    opencodeBaseUrl: process.env.OPENCODE_ENDPOINT ?? "http://127.0.0.1:4096",
+    opencodeBaseUrl: validateOpenCodeEndpoint(
+      process.env.OPENCODE_ENDPOINT ?? defaultOpenCodeEndpoint,
+    ),
     teacherProvider: "mock" as const,
     teacherModel: "mock-deterministic",
     reviewerProvider: "mock" as const,
@@ -951,11 +1078,15 @@ async function readSettings(state: AppState) {
     theme: "system" as const,
   };
   const entries = await Promise.all(
-    Object.keys(defaults).map(async (key) => [
-      key,
-      (await state.repository.getSetting(key)) ??
-        defaults[key as keyof typeof defaults],
-    ]),
+    Object.keys(defaults).map(async (key) => {
+      const defaultValue = defaults[key as keyof typeof defaults];
+      return [
+        key,
+        key === "zedExecutable"
+          ? defaultValue
+          : ((await state.repository.getSetting(key)) ?? defaultValue),
+      ];
+    }),
   );
   return settingsSchema.parse(Object.fromEntries(entries));
 }
