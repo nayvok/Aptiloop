@@ -992,3 +992,8 @@ export function getCurriculumWeek(weekId: string): CurriculumWeek | undefined {
 }
 
 export default curriculum;
+
+// Versioned curriculum is additive: legacy exports/default above remain stable for
+// existing seed/orchestrator consumers until they migrate to the v2 graph.
+export * from "./versioned-types.js";
+export * from "./version-2.js";
