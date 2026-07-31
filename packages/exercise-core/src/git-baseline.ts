@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import { createSanitizedChildEnvironment } from "./child-environment.js";
 import { resolveWorkspacePath } from "./workspace-path.js";
 
 const BASELINE_MARKER = "dev-learning-harness-baseline.json";
@@ -42,6 +43,26 @@ interface BaselineMarker {
   readonly version: 1;
   readonly commit: string;
 }
+
+export type GetExerciseDiffOptions =
+  | {
+      readonly expectedBaselineHash: string;
+      readonly expectedBaselineCommit?: never;
+      readonly allowMarkerBaseline?: false;
+      readonly maxOutputBytes?: number;
+    }
+  | {
+      readonly expectedBaselineCommit: string;
+      readonly expectedBaselineHash?: never;
+      readonly allowMarkerBaseline?: false;
+      readonly maxOutputBytes?: number;
+    }
+  | {
+      readonly allowMarkerBaseline: true;
+      readonly expectedBaselineHash?: never;
+      readonly expectedBaselineCommit?: never;
+      readonly maxOutputBytes?: number;
+    };
 
 /** Creates one private Git repository per exercise and records an immutable baseline commit. */
 export async function ensureExerciseBaseline(
@@ -98,15 +119,38 @@ export async function ensureExerciseBaseline(
  */
 export async function getExerciseDiff(
   exerciseRoot: string,
-  maxOutputBytes = DEFAULT_DIFF_CAP,
+  options?: GetExerciseDiffOptions,
 ): Promise<ExerciseDiff> {
+  const maxOutputBytes = options?.maxOutputBytes ?? DEFAULT_DIFF_CAP;
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new TypeError("maxOutputBytes must be a positive integer.");
   }
   const root = await requireExerciseDirectory(exerciseRoot);
-  const marker = await readBaselineMarker(root);
   await assertRepositoryRoot(root);
-  await verifyCommit(root, marker.commit);
+  const marker = await readBaselineMarker(root);
+  const expectedBaseline =
+    options === undefined
+      ? undefined
+      : "expectedBaselineHash" in options
+        ? options.expectedBaselineHash
+        : "expectedBaselineCommit" in options
+          ? options.expectedBaselineCommit
+          : undefined;
+  if (expectedBaseline === undefined && options?.allowMarkerBaseline !== true) {
+    throw new ExerciseGitError(
+      "Expected baseline identity is required unless marker fallback is explicitly allowed.",
+    );
+  }
+  const baselineCommit = expectedBaseline ?? marker.commit;
+  if (!/^[0-9a-f]{40,64}$/u.test(baselineCommit)) {
+    throw new ExerciseGitError("Server-owned baseline identity is invalid.");
+  }
+  if (expectedBaseline !== undefined && marker.commit !== expectedBaseline) {
+    throw new ExerciseGitError(
+      "Exercise marker does not match the server-owned baseline.",
+    );
+  }
+  await verifyCommit(root, baselineCommit);
 
   const tracked = await runGit(
     root,
@@ -117,7 +161,7 @@ export async function getExerciseDiff(
       "--binary",
       "--src-prefix=a/",
       "--dst-prefix=b/",
-      marker.commit,
+      baselineCommit,
       "--",
       ".",
     ],
@@ -158,7 +202,7 @@ export async function getExerciseDiff(
   }
 
   return Object.freeze({
-    baselineCommit: marker.commit,
+    baselineCommit,
     patch,
     hasChanges: patch.length > 0 || untrackedFiles.length > 0,
     untrackedFiles: Object.freeze(untrackedFiles),
@@ -268,10 +312,16 @@ async function assertRepositoryRoot(root: string): Promise<void> {
 
 async function readBaselineMarker(root: string): Promise<BaselineMarker> {
   try {
-    const raw = await readFile(
-      path.join(root, ".git", BASELINE_MARKER),
-      "utf8",
-    );
+    const markerPath = path.join(root, ".git", BASELINE_MARKER);
+    const markerItem = await lstat(markerPath);
+    if (!markerItem.isFile() || markerItem.isSymbolicLink()) {
+      throw new Error("baseline marker must be a regular file");
+    }
+    const canonicalMarkerPath = await realpath(markerPath);
+    if (!samePath(markerPath, canonicalMarkerPath)) {
+      throw new Error("baseline marker reparse points are not allowed");
+    }
+    const raw = await readFile(canonicalMarkerPath, "utf8");
     const parsed: unknown = JSON.parse(raw);
     if (
       typeof parsed !== "object" ||
@@ -317,7 +367,7 @@ async function runGit(
     "diff.external=",
     ...operationArgs,
   ];
-  const env = { ...process.env };
+  const env = createSanitizedChildEnvironment();
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
   delete env.GIT_INDEX_FILE;

@@ -11,6 +11,45 @@ const cwd = await mkdtemp(path.join(tmpdir(), "dlh-process-runner-"));
 afterAll(async () => await rm(cwd, { recursive: true, force: true }));
 
 describe("AllowedProcessRunner", () => {
+  it("does not inherit provider credentials or other secret environment values", async () => {
+    const runner = new AllowedProcessRunner(
+      {
+        environment: {
+          executable: process.execPath,
+          args: [
+            "-e",
+            "process.stdout.write(JSON.stringify({ path: Boolean(process.env.PATH), token: process.env.OPENAI_API_KEY, password: process.env.DLH_TEST_PASSWORD, auth: process.env.PROVIDER_AUTH }))",
+          ],
+        },
+      },
+      {
+        baseEnv: {
+          PATH: process.env.PATH,
+          SystemRoot: process.env.SystemRoot,
+          OPENAI_API_KEY: "provider-secret",
+          DLH_TEST_PASSWORD: "password-secret",
+          PROVIDER_AUTH: "auth-secret",
+        },
+      },
+    );
+
+    const result = await runner.run("environment", { cwd });
+    expect(JSON.parse(result.stdout)).toEqual({ path: true });
+  });
+
+  it("rejects explicitly configured secret-shaped environment variables", () => {
+    expect(
+      () =>
+        new AllowedProcessRunner({
+          unsafe: {
+            executable: process.execPath,
+            args: ["--version"],
+            env: { PROVIDER_TOKEN: "must-not-leak" },
+          },
+        }),
+    ).toThrow("Sensitive child environment variable is not allowed");
+  });
+
   it("runs only the fixed executable and arguments configured by the server", async () => {
     const runner = new AllowedProcessRunner({
       unit: {

@@ -1,6 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
+import {
+  assertSafeEnvironmentName,
+  createSanitizedChildEnvironment,
+} from "./child-environment.js";
+
 export interface AllowedProcessDefinition {
   readonly executable: string;
   readonly args: readonly string[];
@@ -31,6 +36,8 @@ export interface ProcessResult {
 export interface ProcessRunnerOptions {
   readonly defaultTimeoutMs?: number;
   readonly defaultMaxOutputBytes?: number;
+  /** Source environment to sanitize. Defaults to process.env. */
+  readonly baseEnv?: Readonly<NodeJS.ProcessEnv>;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -40,6 +47,7 @@ export class AllowedProcessRunner {
   readonly #commands: ReadonlyMap<string, Readonly<AllowedProcessDefinition>>;
   readonly #defaultTimeoutMs: number;
   readonly #defaultMaxOutputBytes: number;
+  readonly #baseEnv: Readonly<NodeJS.ProcessEnv>;
 
   constructor(
     commands: Readonly<Record<string, AllowedProcessDefinition>>,
@@ -53,6 +61,11 @@ export class AllowedProcessRunner {
       options.defaultMaxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
       "defaultMaxOutputBytes",
     );
+    this.#baseEnv = Object.freeze(
+      createSanitizedChildEnvironment(
+        options.baseEnv === undefined ? {} : { source: options.baseEnv },
+      ),
+    );
 
     const entries = Object.entries(commands).map(([id, command]) => {
       if (!/^[a-z][a-z0-9:_-]*$/u.test(id))
@@ -61,6 +74,7 @@ export class AllowedProcessRunner {
       command.args.forEach((argument) =>
         validateProcessToken(argument, "argument"),
       );
+      Object.keys(command.env ?? {}).forEach(assertSafeEnvironmentName);
       const frozen: Readonly<AllowedProcessDefinition> = Object.freeze({
         executable: command.executable,
         args: Object.freeze([...command.args]),
@@ -165,7 +179,7 @@ export class AllowedProcessRunner {
       try {
         child = spawn(command.executable, [...command.args], {
           cwd: options.cwd,
-          env: { ...process.env, ...command.env },
+          env: { ...this.#baseEnv, ...command.env },
           detached: process.platform !== "win32",
           shell: false,
           windowsHide: true,

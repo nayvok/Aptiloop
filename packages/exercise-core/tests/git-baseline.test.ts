@@ -50,7 +50,10 @@ describe.skipIf(!gitAvailable)("exercise Git baseline", () => {
     execFileSync("git", ["-C", root, "add", "answer.ts"]);
     await writeFile(path.join(root, "notes.txt"), "independent attempt\n");
 
-    const diff = await getExerciseDiff(root);
+    const baseline = await ensureExerciseBaseline(root);
+    const diff = await getExerciseDiff(root, {
+      expectedBaselineHash: baseline.commit,
+    });
     expect(diff.hasChanges).toBe(true);
     expect(diff.patch).toContain("-export const answer = 1;");
     expect(diff.patch).toContain("+export const answer = 2;");
@@ -71,7 +74,7 @@ describe.skipIf(!gitAvailable)("exercise Git baseline", () => {
       "diff.external",
       `${process.execPath} ${maliciousScript}`,
     ]);
-    await getExerciseDiff(root);
+    await getExerciseDiff(root, { expectedBaselineHash: baseline.commit });
     await expect(readFile(marker, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -80,11 +83,58 @@ describe.skipIf(!gitAvailable)("exercise Git baseline", () => {
   it("caps review output", async () => {
     const root = await temporaryDirectory();
     await writeFile(path.join(root, "answer.ts"), "baseline\n");
-    await ensureExerciseBaseline(root);
+    const baseline = await ensureExerciseBaseline(root);
     await writeFile(path.join(root, "large.txt"), "x".repeat(10_000));
-    const diff = await getExerciseDiff(root, 128);
+    const diff = await getExerciseDiff(root, {
+      expectedBaselineHash: baseline.commit,
+      maxOutputBytes: 128,
+    });
     expect(Buffer.byteLength(diff.patch)).toBeLessThanOrEqual(128);
     expect(diff.truncated).toBe(true);
+  });
+
+  it("rejects a learner-tampered marker instead of changing the server-owned baseline", async () => {
+    const root = await temporaryDirectory();
+    await writeFile(path.join(root, "answer.ts"), "baseline\n");
+    const baseline = await ensureExerciseBaseline(root);
+    await writeFile(path.join(root, "answer.ts"), "learner change\n");
+    execFileSync("git", [
+      "-C",
+      root,
+      "-c",
+      "user.name=Tamper",
+      "-c",
+      "user.email=tamper@localhost.invalid",
+      "commit",
+      "--all",
+      "--message=tampered baseline",
+    ]);
+    const tamperedCommit = execFileSync(
+      "git",
+      ["-C", root, "rev-parse", "HEAD"],
+      { encoding: "utf8" },
+    ).trim();
+    await writeFile(
+      path.join(root, ".git", "dev-learning-harness-baseline.json"),
+      `${JSON.stringify({ version: 1, commit: tamperedCommit })}\n`,
+    );
+
+    await expect(
+      getExerciseDiff(root, { expectedBaselineHash: baseline.commit }),
+    ).rejects.toThrow("does not match the server-owned baseline");
+  });
+
+  it("requires an explicit opt-in before falling back to a workspace marker", async () => {
+    const root = await temporaryDirectory();
+    await writeFile(path.join(root, "answer.ts"), "baseline\n");
+    const baseline = await ensureExerciseBaseline(root);
+
+    await expect(getExerciseDiff(root)).rejects.toThrow(
+      "Expected baseline identity is required",
+    );
+    await expect(
+      getExerciseDiff(root, { allowMarkerBaseline: true }),
+    ).resolves.toMatchObject({ baselineCommit: baseline.commit });
   });
 });
 
