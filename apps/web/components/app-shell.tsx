@@ -119,11 +119,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 setTheme(resolvedTheme === "dark" ? "light" : "dark")
               }
             >
-              {resolvedTheme === "dark" ? (
-                <SunIcon aria-hidden />
-              ) : (
-                <MoonIcon aria-hidden />
-              )}
+              <SunIcon aria-hidden className="hidden dark:block" />
+              <MoonIcon aria-hidden className="block dark:hidden" />
             </Button>
           </div>
         </header>

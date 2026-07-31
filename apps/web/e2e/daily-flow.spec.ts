@@ -18,6 +18,31 @@ test.afterEach(async () => {
   await rm(path.join(exerciseRoot, ".git"), { recursive: true, force: true });
 });
 
+test("hydrates a stored dark theme without an icon mismatch", async ({
+  page,
+}) => {
+  const hydrationErrors: string[] = [];
+  page.on("console", (message) => {
+    if (
+      message.type() === "error" &&
+      message.text().includes("hydrated but some attributes")
+    ) {
+      hydrationErrors.push(message.text());
+    }
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem("theme", "dark");
+  });
+
+  await page.goto("/");
+
+  await expect(page.locator("html")).toHaveClass(/dark/u);
+  await expect(
+    page.getByRole("button", { name: "Переключить тему" }),
+  ).toBeVisible();
+  expect(hydrationErrors).toEqual([]);
+});
+
 test("completes a learning day through diff, review, mastery, and cards", async ({
   page,
 }) => {
