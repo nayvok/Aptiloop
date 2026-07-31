@@ -14,6 +14,11 @@ import {
 
 import { withTransaction, type DatabaseConnection } from "./database.js";
 import {
+  canonicalJson,
+  CurriculumAuthoringRepository,
+  hashCanonicalJson,
+} from "./authoring-repository.js";
+import {
   agentConversations,
   agentMessages,
   answerAttempts,
@@ -31,6 +36,7 @@ import {
   type AnswerAttempt,
   type Flashcard,
   type LearningSession,
+  type UnitProgress,
 } from "./schema.js";
 
 export type IdFactory = () => string;
@@ -130,6 +136,22 @@ export interface CompleteSessionInput {
   mistakes?: readonly MistakeInput[];
   flashcards?: readonly FlashcardCandidateInput[];
   completedAt?: number;
+}
+
+export interface VersionedSessionDetail {
+  session: LearningSession;
+  snapshot: Record<string, unknown> & {
+    schemaVersion: number;
+    contentHash: string;
+    day: { id: string; stableId: string; title: string };
+    units: Array<{ id: string; stableId: string; type: string }>;
+  };
+  unitProgress: Array<
+    UnitProgress & {
+      progress: Record<string, unknown>;
+      payload: Record<string, unknown>;
+    }
+  >;
 }
 
 function parseJson<T>(
@@ -246,6 +268,16 @@ export class LearningRepository {
         .prepare("SELECT id FROM curriculum_days WHERE id = ?")
         .get(input.dayId);
       if (!day) throw new Error(`Unknown curriculum day: ${input.dayId}`);
+      const globalActive = this.#connection.sqlite
+        .prepare(
+          "SELECT id, day_id FROM learning_sessions WHERE status = 'active' ORDER BY updated_at DESC LIMIT 1",
+        )
+        .get() as { id: string; day_id: string } | undefined;
+      if (globalActive && globalActive.day_id !== input.dayId) {
+        throw new Error(
+          `Another learning session is already active: ${globalActive.id}`,
+        );
+      }
       const active = this.#connection.sqlite
         .prepare(
           "SELECT id FROM learning_sessions WHERE day_id = ? AND status = 'active' ORDER BY started_at DESC LIMIT 1",
@@ -262,6 +294,15 @@ export class LearningRepository {
            VALUES (?, ?, 'active', 'questions', ?, ?, NULL, ?)`,
         )
         .run(newId, input.dayId, input.idempotencyKey ?? null, now, now);
+      this.#connection.sqlite
+        .prepare(
+          `INSERT INTO learner_state (id, current_learning_session_id, updated_at)
+           VALUES ('default', ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             current_learning_session_id = excluded.current_learning_session_id,
+             updated_at = excluded.updated_at`,
+        )
+        .run(newId, now);
       return newId;
     });
     return this.getSession(id);
@@ -366,6 +407,388 @@ export class LearningRepository {
         ),
       })),
     };
+  }
+
+  async startOrResumeVersionedSession(input: {
+    dayId: string;
+    idempotencyKey?: string;
+  }): Promise<VersionedSessionDetail> {
+    const current = await this.getCurrentVersionedSession();
+    if (current) {
+      if (current.snapshot.day.id !== input.dayId) {
+        throw new Error(
+          `Another learning session is already active: ${current.session.id}`,
+        );
+      }
+      return current;
+    }
+
+    if (input.idempotencyKey) {
+      const existing = this.#connection.sqlite
+        .prepare(
+          "SELECT id, curriculum_day_v2_id FROM learning_sessions WHERE idempotency_key = ?",
+        )
+        .get(input.idempotencyKey) as
+        { id: string; curriculum_day_v2_id: string | null } | undefined;
+      if (existing) {
+        if (existing.curriculum_day_v2_id !== input.dayId) {
+          throw new Error(
+            "Idempotency key is already associated with another day",
+          );
+        }
+        return this.getVersionedSession(existing.id);
+      }
+    }
+
+    const dayRow = this.#connection.sqlite
+      .prepare(
+        `SELECT d.*, w.stable_id AS week_stable_id, w.title AS week_title,
+                w.order_index AS week_order_index,
+                v.curriculum_id, v.revision, v.status AS version_status,
+                v.content_hash AS version_content_hash, c.title AS curriculum_title,
+                c.active_version_id
+         FROM curriculum_days_v2 d
+         JOIN curriculum_weeks w ON w.id = d.week_id
+         JOIN curriculum_versions v ON v.id = d.version_id
+         JOIN curricula c ON c.id = v.curriculum_id
+         WHERE d.id = ?`,
+      )
+      .get(input.dayId) as
+      | (Record<string, unknown> & {
+          id: string;
+          version_id: string;
+          stable_id: string;
+          title: string;
+          description: string | null;
+          goal: string;
+          estimated_minutes: number;
+          prerequisites_json: string;
+          expected_outcomes_json: string;
+          depth_level: string;
+          out_of_scope_json: string;
+          topics_json: string;
+          week_id: string;
+          week_stable_id: string;
+          week_title: string;
+          week_order_index: number;
+          curriculum_id: string;
+          revision: number;
+          version_status: string;
+          version_content_hash: string;
+          curriculum_title: string;
+          active_version_id: string | null;
+        })
+      | undefined;
+    if (!dayRow)
+      throw new Error(`Unknown versioned curriculum day: ${input.dayId}`);
+    if (
+      dayRow.version_status !== "published" ||
+      dayRow.active_version_id !== dayRow.version_id
+    ) {
+      throw new Error(
+        "A learning session can only start from the active published version",
+      );
+    }
+
+    const authoring = new CurriculumAuthoringRepository(this.#connection);
+    const graph = await authoring.getVersionGraph(dayRow.version_id);
+    const week = graph.weeks.find(
+      (candidate) => candidate.id === dayRow.week_id,
+    );
+    const day = week?.days.find((candidate) => candidate.id === dayRow.id);
+    if (!week || !day)
+      throw new Error("Published curriculum graph is incomplete");
+    const capturedAt = this.#now();
+    const snapshotCore = {
+      schemaVersion: 1,
+      curriculumId: dayRow.curriculum_id,
+      curriculumVersionId: dayRow.version_id,
+      curriculumRevision: dayRow.revision,
+      curriculumTitle: dayRow.curriculum_title,
+      week: {
+        id: week.id,
+        stableId: week.stableId,
+        orderIndex: week.orderIndex,
+        title: week.title,
+        description: week.description,
+      },
+      day: {
+        id: day.id,
+        stableId: day.stableId,
+        orderIndex: day.orderIndex,
+        title: day.title,
+        description: day.description,
+        goal: day.goal,
+        estimatedMinutes: day.estimatedMinutes,
+        prerequisites: day.prerequisites,
+        expectedOutcomes: day.expectedOutcomes,
+        depthLevel: day.depthLevel,
+        outOfScope: day.outOfScope,
+        topics: day.topics,
+      },
+      units: day.units.map((unit) => ({
+        id: unit.id,
+        stableId: unit.stableId,
+        type: unit.type,
+        orderIndex: unit.orderIndex,
+        title: unit.title,
+        description: unit.description,
+        estimatedMinutes: unit.estimatedMinutes,
+        objectives: unit.objectives,
+        checklist: unit.checklist,
+        sources: unit.sources,
+        questions: unit.questions,
+        misconceptions: unit.misconceptions,
+        referenceAnswer: unit.referenceAnswer,
+        completionCriteria: unit.completionCriteria,
+        unlockRules: unit.unlockRules,
+        optional: unit.optional,
+        depthLevel: unit.depthLevel,
+        payload: unit.payload,
+      })),
+      capturedAt,
+    };
+    const contentHash = hashCanonicalJson(snapshotCore);
+    const snapshot = { ...snapshotCore, contentHash };
+    const sessionId = this.#id();
+    withTransaction(this.#connection, () => {
+      const compatibilityDay = this.#connection.sqlite
+        .prepare("SELECT id FROM curriculum_days WHERE id = ?")
+        .get(day.id);
+      if (!compatibilityDay) {
+        const minimum = this.#connection.sqlite
+          .prepare(
+            "SELECT COALESCE(MIN(week_number), 0) - 1 AS week_number FROM curriculum_days",
+          )
+          .get() as { week_number: number };
+        this.#connection.sqlite
+          .prepare(
+            `INSERT INTO curriculum_days
+             (id, slug, week_number, day_number, title, summary, estimated_minutes,
+              goals_json, sources_json, created_at, updated_at)
+             VALUES (?, ?, ?, 1, ?, ?, ?, ?, '[]', ?, ?)`,
+          )
+          .run(
+            day.id,
+            `versioned-${day.id}`,
+            minimum.week_number,
+            day.title,
+            day.description ?? day.goal,
+            day.estimatedMinutes,
+            stringifyJson(day.expectedOutcomes, "snapshot goals"),
+            capturedAt,
+            capturedAt,
+          );
+      }
+      const firstRequired =
+        day.units.find((unit) => !unit.optional) ?? day.units[0];
+      if (!firstRequired) throw new Error("Cannot start a day without units");
+      this.#connection.sqlite
+        .prepare(
+          `INSERT INTO learning_sessions
+           (id, day_id, status, current_step, idempotency_key, started_at,
+            completed_at, updated_at, curriculum_day_v2_id)
+           VALUES (?, ?, 'active', ?, ?, ?, NULL, ?, ?)`,
+        )
+        .run(
+          sessionId,
+          day.id,
+          firstRequired.stableId,
+          input.idempotencyKey ?? null,
+          capturedAt,
+          capturedAt,
+          day.id,
+        );
+      this.#connection.sqlite
+        .prepare(
+          `INSERT INTO session_snapshots
+           (id, session_id, schema_version, curriculum_id, curriculum_version_id,
+            curriculum_day_id, content_hash, snapshot_json, created_at)
+           VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          this.#id(),
+          sessionId,
+          dayRow.curriculum_id,
+          dayRow.version_id,
+          day.id,
+          contentHash,
+          canonicalJson(snapshot),
+          capturedAt,
+        );
+      const insertProgress = this.#connection.sqlite.prepare(
+        `INSERT INTO unit_progress
+         (id, session_id, unit_id, unit_type, status, progress_json, started_at,
+          completed_at, skipped_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, '{}', NULL, NULL, NULL, ?)`,
+      );
+      for (const unit of day.units) {
+        insertProgress.run(
+          this.#id(),
+          sessionId,
+          unit.id,
+          unit.type,
+          unit.id === firstRequired.id ? "ready" : "locked",
+          capturedAt,
+        );
+      }
+      this.#connection.sqlite
+        .prepare(
+          `INSERT INTO learner_state (id, current_learning_session_id, updated_at)
+           VALUES ('default', ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             current_learning_session_id = excluded.current_learning_session_id,
+             updated_at = excluded.updated_at`,
+        )
+        .run(sessionId, capturedAt);
+    });
+    return this.getVersionedSession(sessionId);
+  }
+
+  async getCurrentVersionedSession(): Promise<VersionedSessionDetail | null> {
+    const current = this.#connection.sqlite
+      .prepare(
+        `SELECT s.id FROM learner_state l
+         JOIN learning_sessions s ON s.id = l.current_learning_session_id
+         WHERE l.id = 'default' AND s.status = 'active'`,
+      )
+      .get() as { id: string } | undefined;
+    return current ? this.getVersionedSession(current.id) : null;
+  }
+
+  async getVersionedSession(
+    sessionId: string,
+  ): Promise<VersionedSessionDetail> {
+    const sessionRow = this.#connection.sqlite
+      .prepare("SELECT * FROM learning_sessions WHERE id = ?")
+      .get(sessionId) as
+      | {
+          id: string;
+          day_id: string;
+          status: "active" | "completed" | "abandoned";
+          current_step: string;
+          idempotency_key: string | null;
+          started_at: number;
+          completed_at: number | null;
+          updated_at: number;
+          curriculum_day_v2_id: string | null;
+        }
+      | undefined;
+    const snapshotRow = this.#connection.sqlite
+      .prepare(
+        "SELECT snapshot_json FROM session_snapshots WHERE session_id = ?",
+      )
+      .get(sessionId) as { snapshot_json: string } | undefined;
+    if (!sessionRow || !snapshotRow) {
+      throw new Error(`Unknown versioned learning session: ${sessionId}`);
+    }
+    const parsed = JSON.parse(
+      snapshotRow.snapshot_json,
+    ) as VersionedSessionDetail["snapshot"];
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.units)) {
+      throw new Error("Invalid stored session snapshot");
+    }
+    const progressRows = this.#connection.sqlite
+      .prepare(
+        `SELECT p.* FROM unit_progress p
+         WHERE p.session_id = ?
+         ORDER BY CASE p.unit_id ${parsed.units
+           .map(
+             (unit, index) =>
+               `WHEN '${unit.id.replaceAll("'", "''")}' THEN ${index}`,
+           )
+           .join(" ")} ELSE 2147483647 END`,
+      )
+      .all(sessionId) as Array<{
+      id: string;
+      session_id: string;
+      unit_id: string;
+      unit_type: string;
+      status: UnitProgress["status"];
+      progress_json: string;
+      started_at: number | null;
+      completed_at: number | null;
+      skipped_at: number | null;
+      updated_at: number;
+    }>;
+    return {
+      session: {
+        id: sessionRow.id,
+        dayId: sessionRow.day_id,
+        status: sessionRow.status,
+        currentStep: sessionRow.current_step,
+        idempotencyKey: sessionRow.idempotency_key,
+        startedAt: sessionRow.started_at,
+        completedAt: sessionRow.completed_at,
+        updatedAt: sessionRow.updated_at,
+        curriculumDayV2Id: sessionRow.curriculum_day_v2_id,
+      },
+      snapshot: parsed,
+      unitProgress: progressRows.map((row) => {
+        const progress = parseJson(
+          row.progress_json,
+          "unit_progress.progress_json",
+          (value): value is Record<string, unknown> =>
+            !!value && typeof value === "object" && !Array.isArray(value),
+        );
+        return {
+          id: row.id,
+          sessionId: row.session_id,
+          unitId: row.unit_id,
+          unitType: row.unit_type,
+          status: row.status,
+          progressJson: row.progress_json,
+          startedAt: row.started_at,
+          completedAt: row.completed_at,
+          skippedAt: row.skipped_at,
+          updatedAt: row.updated_at,
+          progress,
+          payload: progress,
+        };
+      }),
+    };
+  }
+
+  async updateUnitProgress(input: {
+    sessionId: string;
+    unitId: string;
+    status: UnitProgress["status"];
+    progress?: Record<string, unknown>;
+  }): Promise<VersionedSessionDetail["unitProgress"][number]> {
+    const now = this.#now();
+    const result = this.#connection.sqlite
+      .prepare(
+        `UPDATE unit_progress
+         SET status = ?, progress_json = ?,
+             started_at = CASE WHEN ? = 'in_progress' THEN COALESCE(started_at, ?) ELSE started_at END,
+             completed_at = CASE WHEN ? = 'completed' THEN ? ELSE completed_at END,
+             skipped_at = CASE WHEN ? = 'skipped' THEN ? ELSE skipped_at END,
+             updated_at = ?
+         WHERE session_id = ? AND unit_id = ?
+           AND EXISTS (SELECT 1 FROM learning_sessions s
+                       WHERE s.id = unit_progress.session_id AND s.status = 'active')`,
+      )
+      .run(
+        input.status,
+        stringifyJson(input.progress ?? {}, "unit progress"),
+        input.status,
+        now,
+        input.status,
+        now,
+        input.status,
+        now,
+        now,
+        input.sessionId,
+        input.unitId,
+      );
+    if (result.changes !== 1)
+      throw new Error("Unknown active session unit progress");
+    const detail = await this.getVersionedSession(input.sessionId);
+    const progress = detail.unitProgress.find(
+      (item) => item.unitId === input.unitId,
+    );
+    if (!progress) throw new Error("Updated unit progress disappeared");
+    return progress;
   }
 
   async getReferenceAnswer(

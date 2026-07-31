@@ -118,6 +118,10 @@ export const learningSessions = sqliteTable(
     startedAt: integer("started_at").notNull(),
     completedAt: integer("completed_at"),
     updatedAt: integer("updated_at").notNull(),
+    curriculumDayV2Id: text("curriculum_day_v2_id").references(
+      () => curriculumDaysV2.id,
+      { onDelete: "restrict" },
+    ),
   },
   (table) => [
     index("learning_sessions_status_idx").on(table.status, table.updatedAt),
@@ -479,6 +483,231 @@ export const applicationSettings = sqliteTable("application_settings", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+export const curricula = sqliteTable("curricula", {
+  id: text("id").primaryKey(),
+  slug: text("slug").notNull().unique(),
+  title: text("title").notNull(),
+  description: text("description"),
+  activeVersionId: text("active_version_id"),
+  ...timestamps,
+});
+
+export const curriculumVersions = sqliteTable(
+  "curriculum_versions",
+  {
+    id: text("id").primaryKey(),
+    curriculumId: text("curriculum_id")
+      .notNull()
+      .references(() => curricula.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    parentVersionId: text("parent_version_id"),
+    status: text("status")
+      .$type<"draft" | "published" | "archived">()
+      .notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    contentHash: text("content_hash"),
+    createdAt: integer("created_at").notNull(),
+    publishedAt: integer("published_at"),
+    archivedAt: integer("archived_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("curriculum_versions_curriculum_revision_uq").on(
+      table.curriculumId,
+      table.revision,
+    ),
+    index("curriculum_versions_status_idx").on(
+      table.curriculumId,
+      table.status,
+      table.revision,
+    ),
+    check("curriculum_versions_revision_check", sql`${table.revision} > 0`),
+  ],
+);
+
+export const curriculumWeeks = sqliteTable(
+  "curriculum_weeks",
+  {
+    id: text("id").primaryKey(),
+    versionId: text("version_id")
+      .notNull()
+      .references(() => curriculumVersions.id, { onDelete: "cascade" }),
+    stableId: text("stable_id").notNull(),
+    orderIndex: integer("order_index").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("curriculum_weeks_version_stable_uq").on(
+      table.versionId,
+      table.stableId,
+    ),
+    uniqueIndex("curriculum_weeks_version_order_uq").on(
+      table.versionId,
+      table.orderIndex,
+    ),
+  ],
+);
+
+export const curriculumDaysV2 = sqliteTable(
+  "curriculum_days_v2",
+  {
+    id: text("id").primaryKey(),
+    versionId: text("version_id")
+      .notNull()
+      .references(() => curriculumVersions.id, { onDelete: "cascade" }),
+    weekId: text("week_id")
+      .notNull()
+      .references(() => curriculumWeeks.id, { onDelete: "cascade" }),
+    stableId: text("stable_id").notNull(),
+    orderIndex: integer("order_index").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    goal: text("goal").notNull(),
+    estimatedMinutes: integer("estimated_minutes").notNull(),
+    prerequisitesJson: text("prerequisites_json").notNull(),
+    expectedOutcomesJson: text("expected_outcomes_json").notNull(),
+    depthLevel: text("depth_level").notNull(),
+    outOfScopeJson: text("out_of_scope_json").notNull(),
+    topicsJson: text("topics_json").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("curriculum_days_v2_version_stable_uq").on(
+      table.versionId,
+      table.stableId,
+    ),
+    uniqueIndex("curriculum_days_v2_week_order_uq").on(
+      table.weekId,
+      table.orderIndex,
+    ),
+    index("curriculum_days_v2_version_idx").on(
+      table.versionId,
+      table.weekId,
+      table.orderIndex,
+    ),
+  ],
+);
+
+export const curriculumUnits = sqliteTable(
+  "curriculum_units",
+  {
+    id: text("id").primaryKey(),
+    versionId: text("version_id")
+      .notNull()
+      .references(() => curriculumVersions.id, { onDelete: "cascade" }),
+    dayId: text("day_id")
+      .notNull()
+      .references(() => curriculumDaysV2.id, { onDelete: "cascade" }),
+    stableId: text("stable_id").notNull(),
+    type: text("type").notNull(),
+    orderIndex: integer("order_index").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    estimatedMinutes: integer("estimated_minutes"),
+    objectivesJson: text("objectives_json").notNull(),
+    checklistJson: text("checklist_json").notNull(),
+    sourcesJson: text("sources_json").notNull(),
+    questionsJson: text("questions_json").notNull(),
+    misconceptionsJson: text("misconceptions_json").notNull(),
+    referenceAnswerJson: text("reference_answer_json"),
+    completionCriteriaJson: text("completion_criteria_json").notNull(),
+    unlockRulesJson: text("unlock_rules_json").notNull(),
+    optional: integer("optional", { mode: "boolean" }).notNull(),
+    depthLevel: text("depth_level"),
+    payloadJson: text("payload_json").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("curriculum_units_version_stable_uq").on(
+      table.versionId,
+      table.stableId,
+    ),
+    uniqueIndex("curriculum_units_day_order_uq").on(
+      table.dayId,
+      table.orderIndex,
+    ),
+    index("curriculum_units_version_day_idx").on(
+      table.versionId,
+      table.dayId,
+      table.orderIndex,
+    ),
+  ],
+);
+
+export const sessionSnapshots = sqliteTable(
+  "session_snapshots",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .unique()
+      .references(() => learningSessions.id, { onDelete: "cascade" }),
+    schemaVersion: integer("schema_version").notNull(),
+    curriculumId: text("curriculum_id").references(() => curricula.id, {
+      onDelete: "restrict",
+    }),
+    curriculumVersionId: text("curriculum_version_id").references(
+      () => curriculumVersions.id,
+      { onDelete: "restrict" },
+    ),
+    curriculumDayId: text("curriculum_day_id").references(
+      () => curriculumDaysV2.id,
+      { onDelete: "restrict" },
+    ),
+    contentHash: text("content_hash").notNull(),
+    snapshotJson: text("snapshot_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("session_snapshots_version_idx").on(
+      table.curriculumVersionId,
+      table.curriculumDayId,
+    ),
+  ],
+);
+
+export const unitProgress = sqliteTable(
+  "unit_progress",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => learningSessions.id, { onDelete: "cascade" }),
+    unitId: text("unit_id").notNull(),
+    unitType: text("unit_type").notNull(),
+    status: text("status")
+      .$type<"locked" | "ready" | "in_progress" | "completed" | "skipped">()
+      .notNull(),
+    progressJson: text("progress_json").notNull(),
+    startedAt: integer("started_at"),
+    completedAt: integer("completed_at"),
+    skippedAt: integer("skipped_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("unit_progress_session_unit_uq").on(
+      table.sessionId,
+      table.unitId,
+    ),
+    index("unit_progress_session_order_idx").on(
+      table.sessionId,
+      table.updatedAt,
+    ),
+  ],
+);
+
+export const learnerState = sqliteTable("learner_state", {
+  id: text("id").primaryKey(),
+  currentLearningSessionId: text("current_learning_session_id").references(
+    () => learningSessions.id,
+    { onDelete: "set null" },
+  ),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 // Short aliases keep repository call sites readable while preserving the explicit SQL table names.
 export const mastery = masteryScores;
 export const conversations = agentConversations;
@@ -507,6 +736,14 @@ export const schema = {
   agentMessages,
   providerConfigurations,
   applicationSettings,
+  curricula,
+  curriculumVersions,
+  curriculumWeeks,
+  curriculumDaysV2,
+  curriculumUnits,
+  sessionSnapshots,
+  unitProgress,
+  learnerState,
 };
 
 export type Topic = typeof topics.$inferSelect;
@@ -517,3 +754,11 @@ export type LearningSession = typeof learningSessions.$inferSelect;
 export type AnswerAttempt = typeof answerAttempts.$inferSelect;
 export type Flashcard = typeof flashcards.$inferSelect;
 export type MasteryScore = typeof masteryScores.$inferSelect;
+export type Curriculum = typeof curricula.$inferSelect;
+export type CurriculumVersion = typeof curriculumVersions.$inferSelect;
+export type CurriculumWeek = typeof curriculumWeeks.$inferSelect;
+export type CurriculumDayV2 = typeof curriculumDaysV2.$inferSelect;
+export type CurriculumUnit = typeof curriculumUnits.$inferSelect;
+export type SessionSnapshot = typeof sessionSnapshots.$inferSelect;
+export type UnitProgress = typeof unitProgress.$inferSelect;
+export type LearnerState = typeof learnerState.$inferSelect;

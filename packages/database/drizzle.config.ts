@@ -7,6 +7,6 @@ export default defineConfig({
   // so drizzle-kit can never create a second initial migration that the runner applies.
   out: "./drizzle-generated",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "./data/dev-learning-harness.sqlite",
+    url: process.env.DATABASE_URL ?? "./.data/dev-learning-harness.sqlite",
   },
 });

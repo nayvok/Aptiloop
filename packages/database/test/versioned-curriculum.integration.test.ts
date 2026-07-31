@@ -1,0 +1,301 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  createCurriculumAuthoringRepository,
+  createDatabaseBackup,
+  createLearningRepository,
+  migrateDatabase,
+  openDatabase,
+  type DatabaseConnection,
+} from "../src/index.js";
+
+const cleanup: Array<() => void> = [];
+const migrationsDirectory = fileURLToPath(
+  new URL("../migrations", import.meta.url),
+);
+
+function tempConnection(): { connection: DatabaseConnection; path: string } {
+  const directory = mkdtempSync(join(tmpdir(), "dlh-database-v2-"));
+  const path = join(directory, "test.sqlite");
+  const connection = openDatabase(path);
+  cleanup.push(() => {
+    connection.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  return { connection, path };
+}
+
+afterEach(() => {
+  while (cleanup.length) cleanup.pop()?.();
+});
+
+describe("versioned curriculum migration", () => {
+  it("preserves legacy rows and snapshots an existing active session", () => {
+    const { connection } = tempConnection();
+    connection.sqlite.exec(
+      readFileSync(join(migrationsDirectory, "0000_initial.sql"), "utf8"),
+    );
+    connection.sqlite.exec(`
+      INSERT INTO curriculum_days
+        (id, slug, week_number, day_number, title, summary, estimated_minutes,
+         goals_json, sources_json, created_at, updated_at)
+      VALUES ('legacy-day', 'legacy-day', 1, 1, 'Legacy day', 'History', 60,
+              '["goal"]', '[]', 10, 10);
+      INSERT INTO questions
+        (id, day_id, kind, prompt, order_index, reference_answer, key_points_json,
+         reveal_after_attempts, active, created_at, updated_at)
+      VALUES ('legacy-question', 'legacy-day', 'explain', 'Explain', 0, 'Protected',
+              '["point"]', 2, 1, 10, 10);
+      INSERT INTO learning_sessions
+        (id, day_id, status, current_step, started_at, updated_at)
+      VALUES ('legacy-session', 'legacy-day', 'active', 'questions', 20, 20);
+      INSERT INTO answer_attempts
+        (id, session_id, question_id, attempt_number, answer, submitted_at)
+      VALUES ('legacy-answer', 'legacy-session', 'legacy-question', 1, 'mine', 30);
+    `);
+
+    migrateDatabase(connection);
+
+    expect(count(connection, "curriculum_days")).toBe(1);
+    expect(count(connection, "answer_attempts")).toBe(1);
+    expect(count(connection, "curriculum_days_v2")).toBe(1);
+    expect(count(connection, "curriculum_units")).toBe(1);
+    const snapshot = connection.sqlite
+      .prepare(
+        "SELECT snapshot_json, content_hash FROM session_snapshots WHERE session_id = 'legacy-session'",
+      )
+      .get() as { snapshot_json: string; content_hash: string } | undefined;
+    expect(snapshot).toBeDefined();
+    expect(JSON.parse(snapshot?.snapshot_json ?? "null")).toMatchObject({
+      schemaVersion: 1,
+      day: { stableId: "legacy-day" },
+    });
+    expect(snapshot?.content_hash).toBeTruthy();
+    expect(
+      connection.sqlite
+        .prepare("SELECT current_learning_session_id FROM learner_state")
+        .get(),
+    ).toEqual({ current_learning_session_id: "legacy-session" });
+  });
+});
+
+describe("curriculum authoring", () => {
+  it("publishes an ordered immutable graph and clones a draft revision", async () => {
+    const { connection } = tempConnection();
+    migrateDatabase(connection);
+    let id = 0;
+    const repository = createCurriculumAuthoringRepository(connection, {
+      id: () => `id-${++id}`,
+      now: () => 100,
+    });
+    const draft = await repository.createDraft({
+      curriculum: {
+        id: "curriculum-js",
+        slug: "javascript",
+        title: "JavaScript",
+        description: "Foundation",
+      },
+      title: "First revision",
+    });
+    const week = await repository.addWeek({
+      versionId: draft.id,
+      stableId: "week-1",
+      title: "Week one",
+    });
+    const day = await repository.addDay({
+      versionId: draft.id,
+      weekId: week.id,
+      stableId: "day-1",
+      title: "Values",
+      description: "Values and bindings",
+      goal: "Explain values",
+      estimatedMinutes: 60,
+      depthLevel: "interview-ready",
+    });
+    const first = await repository.addUnit({
+      versionId: draft.id,
+      dayId: day.id,
+      stableId: "summary",
+      type: "summary",
+      title: "Summary",
+      completionCriteria: [{ kind: "acknowledged" }],
+    });
+    const second = await repository.addUnit({
+      versionId: draft.id,
+      dayId: day.id,
+      stableId: "briefing",
+      type: "briefing",
+      title: "Briefing",
+      completionCriteria: [{ kind: "acknowledged" }],
+    });
+    await repository.reorderUnits({
+      versionId: draft.id,
+      dayId: day.id,
+      orderedUnitIds: [second.id, first.id],
+    });
+
+    const published = await repository.publishVersion(draft.id);
+    expect(published.status).toBe("published");
+    expect(published.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    const path = await repository.getActivePath("curriculum-js");
+    expect(path?.weeks[0]?.days[0]?.units.map((unit) => unit.stableId)).toEqual(
+      ["briefing", "summary"],
+    );
+    await expect(
+      repository.addUnit({
+        versionId: draft.id,
+        dayId: day.id,
+        stableId: "late",
+        type: "study",
+        title: "Late mutation",
+        completionCriteria: [{ kind: "acknowledged" }],
+      }),
+    ).rejects.toThrow(/immutable/i);
+
+    const clone = await repository.cloneRevision(published.id, {
+      title: "Second revision",
+    });
+    expect(clone).toMatchObject({
+      curriculumId: "curriculum-js",
+      parentVersionId: published.id,
+      revision: 2,
+      status: "draft",
+    });
+    const clonePath = await repository.getVersionGraph(clone.id);
+    expect(
+      clonePath.weeks[0]?.days[0]?.units.map((unit) => unit.stableId),
+    ).toEqual(["briefing", "summary"]);
+  });
+});
+
+describe("snapshot sessions", () => {
+  it("resumes the global current session and keeps its authored snapshot", async () => {
+    const { connection } = tempConnection();
+    migrateDatabase(connection);
+    let id = 0;
+    const authoring = createCurriculumAuthoringRepository(connection, {
+      id: () => `author-${++id}`,
+      now: () => 100,
+    });
+    const draft = await authoring.createDraft({
+      curriculum: { id: "c", slug: "c", title: "Course" },
+      title: "v1",
+    });
+    const week = await authoring.addWeek({
+      versionId: draft.id,
+      stableId: "w1",
+      title: "Week",
+    });
+    const day = await authoring.addDay({
+      versionId: draft.id,
+      weekId: week.id,
+      stableId: "d1",
+      title: "Day before publish",
+      goal: "Learn",
+      estimatedMinutes: 30,
+      depthLevel: "foundation",
+    });
+    const unit = await authoring.addUnit({
+      versionId: draft.id,
+      dayId: day.id,
+      stableId: "u1",
+      type: "briefing",
+      title: "Start",
+      completionCriteria: [{ kind: "acknowledged" }],
+    });
+    const published = await authoring.publishVersion(draft.id);
+
+    const learning = createLearningRepository(connection, {
+      id: () => `session-${++id}`,
+      now: () => 200,
+    });
+    const started = await learning.startOrResumeVersionedSession({
+      dayId: day.id,
+      idempotencyKey: "start-d1",
+    });
+    expect(started.unitProgress).toEqual([
+      expect.objectContaining({ unitId: unit.id, status: "ready" }),
+    ]);
+    const resumed = await learning.getCurrentVersionedSession();
+    expect(resumed?.session.id).toBe(started.session.id);
+
+    const revision = await authoring.cloneRevision(published.id, {
+      title: "v2",
+    });
+    const revisionGraph = await authoring.getVersionGraph(revision.id);
+    const revisionDay = revisionGraph.weeks[0]?.days[0];
+    if (!revisionDay) throw new Error("Cloned graph is incomplete");
+    connection.sqlite
+      .prepare(
+        "UPDATE curriculum_days_v2 SET title = 'Changed later' WHERE id = ?",
+      )
+      .run(revisionDay.id);
+    await authoring.publishVersion(revision.id);
+    const restored = await learning.getVersionedSession(started.session.id);
+    expect(restored.snapshot.day.title).toBe("Day before publish");
+    await learning.updateUnitProgress({
+      sessionId: started.session.id,
+      unitId: unit.id,
+      status: "in_progress",
+      progress: { draft: "saved" },
+    });
+    expect(
+      (await learning.getVersionedSession(started.session.id)).unitProgress[0],
+    ).toMatchObject({ status: "in_progress", progress: { draft: "saved" } });
+  });
+});
+
+describe("database backup", () => {
+  it("uses a consistent SQLite backup and verifies both copies", () => {
+    const { connection, path } = tempConnection();
+    migrateDatabase(connection);
+    connection.sqlite
+      .prepare(
+        "INSERT INTO application_settings (key, value_json, updated_at) VALUES ('test', '{}', 1)",
+      )
+      .run();
+    const destination = join(join(path, ".."), "backup.sqlite");
+
+    const result = createDatabaseBackup(path, destination);
+
+    expect(result.source.integrity).toEqual(["ok"]);
+    expect(result.source.foreignKeyViolations).toEqual([]);
+    expect(result.backup.integrity).toEqual(["ok"]);
+    const backup = openDatabase(destination, {
+      readonly: true,
+      fileMustExist: true,
+    });
+    try {
+      expect(
+        backup.sqlite
+          .prepare(
+            "SELECT value_json FROM application_settings WHERE key = 'test'",
+          )
+          .get(),
+      ).toEqual({ value_json: "{}" });
+    } finally {
+      backup.close();
+    }
+  });
+});
+
+function count(connection: DatabaseConnection, table: string): number {
+  const allowed = new Set([
+    "curriculum_days",
+    "answer_attempts",
+    "curriculum_days_v2",
+    "curriculum_units",
+  ]);
+  if (!allowed.has(table)) throw new Error(`Unsafe table in test: ${table}`);
+  return (
+    connection.sqlite
+      .prepare(`SELECT count(*) AS count FROM ${table}`)
+      .get() as {
+      count: number;
+    }
+  ).count;
+}
