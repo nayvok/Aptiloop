@@ -367,6 +367,33 @@ export const CurriculumSchema = z.object({
 });
 export type Curriculum = z.infer<typeof CurriculumSchema>;
 
+export const CurriculumSnapshotWeekSchema = z.object({
+  id: IdSchema,
+  stableId: IdSchema,
+  order: z.number().int().positive(),
+  title: ShortTextSchema,
+  description: TextSchema.nullable(),
+});
+export type CurriculumSnapshotWeek = z.infer<
+  typeof CurriculumSnapshotWeekSchema
+>;
+
+export const CurriculumSnapshotDaySchema = z.object({
+  id: IdSchema,
+  stableId: IdSchema,
+  order: z.number().int().positive(),
+  title: ShortTextSchema,
+  description: TextSchema,
+  goal: TextSchema,
+  estimatedMinutes: z.number().int().positive(),
+  prerequisites: z.array(IdSchema),
+  expectedOutcomes: StringListSchema,
+  depthLevel: DepthLevelSchema,
+  outOfScope: StringListSchema,
+  topics: StringListSchema,
+});
+export type CurriculumSnapshotDay = z.infer<typeof CurriculumSnapshotDaySchema>;
+
 export const SessionSnapshotSchema = z.object({
   schemaVersion: z.number().int().positive(),
   contentHash: ShortTextSchema,
@@ -374,8 +401,9 @@ export const SessionSnapshotSchema = z.object({
   curriculumVersionId: IdSchema,
   curriculumRevision: z.number().int().positive(),
   curriculumTitle: ShortTextSchema,
-  week: CurriculumWeekBaseSchema,
-  day: CurriculumDaySchema,
+  week: CurriculumSnapshotWeekSchema,
+  day: CurriculumSnapshotDaySchema,
+  units: z.array(CurriculumUnitSchema).min(1),
   capturedAt: IsoDateTimeSchema,
 });
 export type SessionSnapshot = z.infer<typeof SessionSnapshotSchema>;
