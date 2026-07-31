@@ -1,0 +1,28 @@
+{
+  "name": "@dlh/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts",
+    "./seed": "./src/seed.ts"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --sourcemap --dts --out-dir dist",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/cli/migrate.ts",
+    "db:seed": "tsx src/cli/seed.ts",
+    "lint": "eslint src test --max-warnings=0",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dlh/curriculum": "0.1.0",
+    "drizzle-orm": "1.0.0-rc.4"
+  },
+  "devDependencies": {
+    "drizzle-kit": "1.0.0-rc.4",
+    "tsup": "8.5.0"
+  }
+}
