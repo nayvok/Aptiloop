@@ -46,6 +46,8 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 
 import { registerVersionedLearningRoutes } from "./learning-v2.js";
+import { registerCurriculumEditorRoutes } from "./curriculum-editor.js";
+import { registerInterviewV2Routes } from "./interview-v2.js";
 
 const sourceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const defaultOpenCodeEndpoint = "http://127.0.0.1:4096";
@@ -360,6 +362,8 @@ export function createApp(options: AppOptions = {}) {
   });
 
   registerVersionedLearningRoutes(app, state);
+  registerCurriculumEditorRoutes(app, state);
+  registerInterviewV2Routes(app, state);
 
   app.post("/api/learning/sessions", async (context) => {
     const input = z
