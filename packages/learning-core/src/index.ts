@@ -1,4 +1,5 @@
 export * from "./daily-steps.js";
+export * from "./day-summary.js";
 export * from "./flashcard-export.js";
 export * from "./hints.js";
 export * from "./mastery.js";
