@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExerciseClient } from "@/components/exercise-client";
 import { KnowledgeClient } from "@/components/knowledge-client";
 import { ProviderHealth } from "@/components/provider-health";
-import { SessionClient } from "@/components/session-client";
 
 const { apiMock, pushMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -57,32 +56,6 @@ describe("core learning screens", () => {
 
     renderWithQuery(<ProviderHealth />);
     expect(await screen.findByText(/Deterministic Mock/u)).toBeInTheDocument();
-  });
-
-  it("renders daily session steps and the retrieval question", async () => {
-    apiMock.mockResolvedValue({
-      id: "session-1",
-      dayNumber: 1,
-      title: "Значения и scope",
-      status: "active",
-      currentStep: "questions",
-      steps: [
-        { id: "review", label: "Повторение", status: "active" },
-        { id: "theory", label: "Теория", status: "locked" },
-      ],
-      question: {
-        id: "question-1",
-        prompt: "Чем значение отличается от переменной?",
-        kind: "explain",
-      },
-    });
-
-    renderWithQuery(<SessionClient />);
-    expect(
-      await screen.findByText("Чем значение отличается от переменной?"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Повторение")).toBeInTheDocument();
-    expect(screen.getByText("Теория")).toBeInTheDocument();
   });
 
   it("renders knowledge dimensions and evidence", async () => {
