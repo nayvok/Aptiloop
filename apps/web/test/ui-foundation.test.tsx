@@ -14,6 +14,7 @@ import { AppShell } from "@/components/app-shell";
 import { KnowledgeClient } from "@/components/knowledge-client";
 import { ProviderHealth } from "@/components/provider-health";
 import { SettingsForm } from "@/components/settings-form";
+import { Textarea } from "@/components/ui/textarea";
 
 const { apiMock, pathnameState, setThemeMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -83,6 +84,19 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("UI foundation", () => {
+  it("renders the Textarea primitive with its slot and disabled state", () => {
+    render(
+      <label>
+        Сообщение
+        <Textarea disabled />
+      </label>,
+    );
+
+    const textarea = screen.getByLabelText("Сообщение");
+    expect(textarea).toHaveAttribute("data-slot", "textarea");
+    expect(textarea).toBeDisabled();
+  });
+
   it("exposes a skip target and the product IA without Agents in primary navigation", async () => {
     apiMock.mockResolvedValue({ providers: [] });
 
