@@ -1598,7 +1598,20 @@ async function assertCompletionCriteria(
                 payload,
                 criterion.minimum,
               ))
-            : evidenceAttemptCount(unit, payload) < criterion.minimum;
+            : unit.type === "interview"
+              ? !(
+                  "interviewSessionId" in payload &&
+                  typeof payload.interviewSessionId === "string" &&
+                  payload.interviewSessionId !== "" &&
+                  "reportId" in payload &&
+                  typeof payload.reportId === "string" &&
+                  payload.reportId !== "" &&
+                  countCompletedInterviewAnswers(
+                    connection,
+                    payload.interviewSessionId,
+                  ) >= (criterion.minimum ?? 1)
+                )
+              : evidenceAttemptCount(unit, payload) < criterion.minimum;
         break;
       case "dialogue":
         failed = !hasPersistedTeacherDialogue(
@@ -1654,6 +1667,34 @@ async function assertCompletionCriteria(
   if (failures.length) {
     throw new Error("Unit completion criteria are not satisfied");
   }
+}
+
+const interviewStoredSetupSchema = z.object({
+  schemaVersion: z.literal(1),
+  setup: z.object({ conversationId: z.string().trim().min(1) }).passthrough(),
+});
+
+function countCompletedInterviewAnswers(
+  connection: DatabaseConnection,
+  interviewSessionId: string,
+): number {
+  const row = connection.sqlite
+    .prepare(
+      "SELECT result_json AS resultJson FROM interview_sessions WHERE id = ?",
+    )
+    .get(interviewSessionId) as { resultJson: string | null } | undefined;
+  if (!row?.resultJson) return 0;
+  const parsed = interviewStoredSetupSchema.safeParse(
+    JSON.parse(row.resultJson),
+  );
+  if (!parsed.success) return 0;
+  const count = connection.sqlite
+    .prepare(
+      `SELECT COUNT(*) AS count FROM agent_messages
+       WHERE conversation_id = ? AND role = 'user' AND status = 'completed'`,
+    )
+    .get(parsed.data.setup.conversationId) as { count: number };
+  return count.count;
 }
 
 function evidenceAttemptCount(

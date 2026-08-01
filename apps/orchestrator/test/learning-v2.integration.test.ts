@@ -179,7 +179,455 @@ function completionPayload(unit: LearnerUnit): Record<string, unknown> {
   }
 }
 
+function completePrecedingDaysForDaySeven(
+  state: ReturnType<typeof createApp>["state"],
+  dayIds: readonly string[],
+) {
+  const legacyDay = state.connection.sqlite
+    .prepare("SELECT id FROM curriculum_days ORDER BY id LIMIT 1")
+    .get() as { id: string };
+  const now = Date.now();
+  const insert = state.connection.sqlite.prepare(
+    `INSERT INTO learning_sessions
+     (id, day_id, status, current_step, idempotency_key, started_at,
+      completed_at, updated_at, curriculum_day_v2_id)
+     VALUES (?, ?, 'completed', 'complete', ?, ?, ?, ?, ?)`,
+  );
+  for (const [index, dayId] of dayIds.entries()) {
+    insert.run(
+      `day-seven-prerequisite-${index + 1}`,
+      legacyDay.id,
+      `day-seven-prerequisite-operation-${index + 1}`,
+      now,
+      now,
+      now,
+      dayId,
+    );
+  }
+}
+
+function insertCompletedInterviewEvidence(
+  state: ReturnType<typeof createApp>["state"],
+  sessionId: string,
+  interviewId: string,
+  answerCount: number,
+) {
+  const conversationId = `${interviewId}-conversation`;
+  state.connection.sqlite
+    .prepare(
+      `INSERT INTO interview_sessions
+       (id, learning_session_id, status, result_json, started_at, completed_at)
+       VALUES (?, ?, 'completed', ?, 1000, 2000)`,
+    )
+    .run(
+      interviewId,
+      sessionId,
+      JSON.stringify({
+        schemaVersion: 1,
+        setup: {
+          conversationId,
+          topics: [],
+          difficulty: "interview-ready",
+          questionCount: 3,
+          operationId: `${interviewId}-operation`,
+        },
+        report: { status: "completed" },
+      }),
+    );
+  state.connection.sqlite
+    .prepare(
+      `INSERT INTO agent_conversations
+       (id, learning_session_id, role, provider_id, model_id,
+        provider_session_id, status, created_at, updated_at)
+       VALUES (?, ?, 'interviewer', 'mock', 'mock-deterministic', NULL,
+               'completed', 1000, 1000)`,
+    )
+    .run(conversationId, sessionId);
+  const insertMessage = state.connection.sqlite.prepare(
+    `INSERT INTO agent_messages
+     (id, conversation_id, role, content, tool_events_json, raw_event_json,
+      status, sequence, idempotency_key, created_at)
+     VALUES (?, ?, 'user', ?, '[]', NULL, 'completed', ?, NULL, ?)`,
+  );
+  for (let index = 1; index <= answerCount; index += 1) {
+    insertMessage.run(
+      `${interviewId}-answer-${index}`,
+      conversationId,
+      `Ответ ${index}`,
+      index,
+      1000 + index,
+    );
+  }
+}
+
+async function startDaySevenAtInterview(
+  runtime: ReturnType<typeof createRuntime>,
+) {
+  const session = await startDaySeven(runtime);
+  const interviewUnit = session.snapshot.units.find(
+    (unit) => unit.type === "interview",
+  );
+  if (!interviewUnit) throw new Error("Day 7 interview unit is missing");
+  runtime.state.connection.sqlite
+    .prepare(
+      `UPDATE unit_progress
+       SET status = 'completed', completed_at = ?, updated_at = ?
+       WHERE session_id = ? AND unit_id != ?`,
+    )
+    .run(Date.now(), Date.now(), session.id, interviewUnit.id);
+  runtime.state.connection.sqlite
+    .prepare(
+      `UPDATE unit_progress
+       SET status = 'in_progress', started_at = ?, updated_at = ?
+       WHERE session_id = ? AND unit_id = ?`,
+    )
+    .run(Date.now(), Date.now(), session.id, interviewUnit.id);
+  return { session, interviewUnit };
+}
+
+async function startDaySeven(runtime: ReturnType<typeof createRuntime>) {
+  const path = (await (
+    await request(runtime.app, "/api/learning/path")
+  ).json()) as {
+    curriculum: {
+      weeks: Array<{ days: Array<{ id: string; stableId: string }> }>;
+    };
+  };
+  const days = path.curriculum.weeks[0]!.days;
+  const daySeven = days.find(
+    (day) => day.stableId === "w1d7-integration-checkpoint",
+  );
+  if (!daySeven) throw new Error("Day 7 fixture is missing");
+  completePrecedingDaysForDaySeven(
+    runtime.state,
+    days.filter((day) => day.id !== daySeven.id).map((day) => day.id),
+  );
+  const started = await request(runtime.app, "/api/learning/sessions/v2", {
+    method: "POST",
+    body: JSON.stringify({
+      dayId: daySeven.id,
+      operationId: "day7-interview-test",
+    }),
+  });
+  expect(started.status).toBe(201);
+  return ((await started.json()) as { session: LearnerSession }).session;
+}
+
 describe("versioned learning API", () => {
+  it("completes the interview unit only with three persisted answers and a report", async () => {
+    const runtime = createRuntime();
+    const { session, interviewUnit } = await startDaySevenAtInterview(runtime);
+    const endpoint = `/api/learning/sessions/v2/${session.id}/units/${interviewUnit.id}`;
+
+    const forged = await request(runtime.app, endpoint, {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: "completed",
+        payload: {
+          type: "interview",
+          interviewSessionId: "fake",
+          reportId: "fake",
+        },
+      }),
+    });
+    expect(forged.status).toBe(400);
+
+    insertCompletedInterviewEvidence(
+      runtime.state,
+      session.id,
+      "day7-real-interview",
+      3,
+    );
+    const complete = await request(runtime.app, endpoint, {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: "completed",
+        payload: {
+          type: "interview",
+          interviewSessionId: "day7-real-interview",
+          reportId: "day7-real-interview",
+        },
+      }),
+    });
+    expect(complete.status).toBe(200);
+  });
+
+  it("rejects interview completion with fewer than three answers or no report", async () => {
+    const runtime = createRuntime();
+    const { session, interviewUnit } = await startDaySevenAtInterview(runtime);
+    const endpoint = `/api/learning/sessions/v2/${session.id}/units/${interviewUnit.id}`;
+    insertCompletedInterviewEvidence(
+      runtime.state,
+      session.id,
+      "day7-incomplete-interview",
+      2,
+    );
+
+    const incomplete = await request(runtime.app, endpoint, {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: "completed",
+        payload: {
+          type: "interview",
+          interviewSessionId: "day7-incomplete-interview",
+          reportId: "day7-incomplete-interview",
+        },
+      }),
+    });
+    expect(incomplete.status).toBe(400);
+
+    insertCompletedInterviewEvidence(
+      runtime.state,
+      session.id,
+      "day7-no-report-interview",
+      3,
+    );
+    const missingReport = await request(runtime.app, endpoint, {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: "completed",
+        payload: {
+          type: "interview",
+          interviewSessionId: "day7-no-report-interview",
+          reportId: "",
+        },
+      }),
+    });
+    expect(missingReport.status).toBe(400);
+  });
+
+  it("completes the full day 7 from briefing through interview to summary", async () => {
+    const runtime = createRuntime();
+    let session = await startDaySeven(runtime);
+    let exerciseAttemptId: string | null = null;
+
+    for (const unit of session.snapshot.units) {
+      const endpoint = `/api/learning/sessions/v2/${session.id}/units/${unit.id}`;
+      const started = await request(runtime.app, endpoint, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "in_progress" }),
+      });
+      expect(started.status, `start ${unit.stableId}`).toBe(200);
+
+      let payload = completionPayload(unit);
+      if (unit.type === "recall") {
+        for (const [index, question] of unit.questions.entries()) {
+          const response = await request(
+            runtime.app,
+            `${endpoint}/recall-attempts`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                operationId: `day7-recall-attempt-${index + 1}`,
+                questionId: question.id,
+                answer: `Самостоятельный ответ ${index + 1}`,
+              }),
+            },
+          );
+          expect(response.status).toBe(201);
+          session = ((await response.json()) as { session: LearnerSession })
+            .session;
+        }
+        payload = unitProgressPayload(session, unit.id);
+      }
+
+      if (unit.type === "teacher-dialogue") {
+        const conversationId = "day7-teacher-conversation";
+        runtime.state.connection.sqlite
+          .prepare(
+            `INSERT INTO agent_conversations
+             (id, learning_session_id, role, provider_id, model_id,
+              provider_session_id, status, created_at, updated_at)
+             VALUES (?, ?, 'teacher', 'mock', 'mock-deterministic', NULL,
+                     'completed', 1000, 1000)`,
+          )
+          .run(conversationId, session.id);
+        const insert = runtime.state.connection.sqlite.prepare(
+          `INSERT INTO agent_messages
+           (id, conversation_id, role, content, tool_events_json, raw_event_json,
+            status, sequence, idempotency_key, created_at)
+           VALUES (?, ?, ?, ?, '[]', NULL, 'completed', ?, NULL, ?)`,
+        );
+        insert.run(
+          "day7-teacher-user-1",
+          conversationId,
+          "user",
+          "Первый ответ",
+          1,
+          1001,
+        );
+        insert.run(
+          "day7-teacher-assistant-1",
+          conversationId,
+          "assistant",
+          "Уточните",
+          2,
+          1002,
+        );
+        insert.run(
+          "day7-teacher-user-2",
+          conversationId,
+          "user",
+          "Уточнённый ответ",
+          3,
+          1003,
+        );
+        insert.run(
+          "day7-teacher-assistant-2",
+          conversationId,
+          "assistant",
+          "Достаточно",
+          4,
+          1004,
+        );
+        payload = {
+          type: "teacher-dialogue",
+          conversationId,
+          turnCount: 2,
+          revisionAttemptIds: ["day7-teacher-user-1", "day7-teacher-user-2"],
+        };
+      }
+
+      if (unit.type === "quiz") {
+        const privateUnit = privateSnapshot(
+          runtime.state.connection,
+          session.id,
+        ).units.find((candidate) => candidate.id === unit.id)!;
+        const response = await request(
+          runtime.app,
+          `${endpoint}/quiz-attempts`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              operationId: "day7-quiz-attempt",
+              answers: privateUnit.questions.map((question) => ({
+                questionId: question.id,
+                selectedOptionId: question.correctOptionIds[0],
+              })),
+            }),
+          },
+        );
+        expect(response.status).toBe(201);
+        session = ((await response.json()) as { session: LearnerSession })
+          .session;
+        payload = unitProgressPayload(session, unit.id);
+      }
+
+      if (unit.type === "code-reading") {
+        const response = await request(
+          runtime.app,
+          `${endpoint}/code-reading-attempts`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              operationId: "day7-code-reading-attempt",
+              prediction: "Предсказание до запуска",
+              explanation: "Объяснение механизма",
+              verbalFix: "Исправление сформулировано",
+            }),
+          },
+        );
+        expect(response.status).toBe(201);
+        session = ((await response.json()) as { session: LearnerSession })
+          .session;
+        payload = unitProgressPayload(session, unit.id);
+      }
+
+      if (unit.type === "exercise") {
+        const exercise = runtime.state.connection.sqlite
+          .prepare("SELECT id FROM exercises ORDER BY id LIMIT 1")
+          .get() as { id: string };
+        exerciseAttemptId = "day7-exercise-attempt";
+        const now = Date.now();
+        runtime.state.connection.sqlite
+          .prepare(
+            `INSERT INTO exercise_attempts
+           (id, session_id, exercise_id, status, workspace_path, baseline_path,
+            baseline_hash, started_at, completed_at, updated_at)
+           VALUES (?, ?, ?, 'active', 'test-workspace', 'test-baseline',
+                   'baseline-hash', ?, NULL, ?)`,
+          )
+          .run(exerciseAttemptId, session.id, exercise.id, now, now);
+        runtime.state.connection.sqlite
+          .prepare(
+            `INSERT INTO test_runs
+           (id, exercise_attempt_id, operation_id, status, exit_code, stdout,
+            stderr, duration_ms, started_at, completed_at)
+           VALUES ('day7-test-run', ?, 'day7-test-operation', 'passed', 0,
+                   '', '', 1, ?, ?)`,
+          )
+          .run(exerciseAttemptId, now, now);
+        payload = {
+          type: "exercise",
+          attemptId: exerciseAttemptId,
+          latestTestRunId: "day7-test-run",
+          latestReviewId: null,
+        };
+      }
+
+      if (unit.type === "review") {
+        if (!exerciseAttemptId) throw new Error("Exercise evidence is missing");
+        const now = Date.now();
+        runtime.state.connection.sqlite
+          .prepare(
+            `INSERT INTO reviews
+           (id, session_id, exercise_attempt_id, provider_id, model_id, status,
+            result_json, raw_response, created_at, completed_at)
+           VALUES ('day7-review', ?, ?, 'mock', 'mock-reviewer', 'passed',
+                   '{"status":"passed","findings":[]}', NULL, ?, ?)`,
+          )
+          .run(session.id, exerciseAttemptId, now, now);
+        payload = {
+          type: "review",
+          reviewId: "day7-review",
+          reviewStatus: "accepted",
+          reviewedDiffHash: "sha256-day7-review-diff",
+        };
+      }
+
+      if (unit.type === "interview") {
+        insertCompletedInterviewEvidence(
+          runtime.state,
+          session.id,
+          "day7-full-interview",
+          3,
+        );
+        payload = {
+          type: "interview",
+          interviewSessionId: "day7-full-interview",
+          reportId: "day7-full-interview",
+        };
+      }
+
+      if (unit.type === "summary") {
+        const response = await request(runtime.app, `${endpoint}/summary`, {
+          method: "POST",
+          body: JSON.stringify({ operationId: "day7-summary" }),
+        });
+        expect(response.status).toBe(201);
+        session = ((await response.json()) as { session: LearnerSession })
+          .session;
+        payload = unitProgressPayload(session, unit.id);
+      }
+
+      const complete = await request(runtime.app, endpoint, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "completed", payload }),
+      });
+      expect(complete.status, `complete ${unit.stableId}`).toBe(200);
+      session = ((await complete.json()) as { session: LearnerSession })
+        .session;
+    }
+
+    expect(session.status).toBe("completed");
+    expect(session.currentStep).toBe("complete");
+    const current = await request(
+      runtime.app,
+      "/api/learning/sessions/current",
+    );
+    expect(await current.json()).toEqual({ session: null });
+  });
+
   it("returns a learner-safe path and no current session initially", async () => {
     const { app } = createRuntime();
     const pathResponse = await request(app, "/api/learning/path");
