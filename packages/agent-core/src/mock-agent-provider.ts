@@ -44,8 +44,32 @@ const MOCK_REVIEW: ReviewResult = {
   ],
 };
 
+const MOCK_PASSED_REVIEW: ReviewResult = {
+  status: "passed",
+  summary:
+    "The correction cycle is complete and the tested learner change now meets the exercise contract.",
+  findings: [],
+  strengths: [
+    "The learner reran the allowlisted tests after the correction.",
+    "The implementation keeps the input immutable and covers the requested edge case.",
+  ],
+  suggestedMasteryChanges: [
+    {
+      topicId: "javascript-arrays",
+      dimension: "debugging",
+      delta: 0.25,
+      reason: "A persisted correction cycle ended with a fresh passing test.",
+      evidence:
+        "The second read-only review follows a new successful test run.",
+    },
+  ],
+};
+
 const responseFor = (role: AgentRole, message: string): string => {
-  if (role === "reviewer") return JSON.stringify(MOCK_REVIEW);
+  if (role === "reviewer") {
+    const hasPriorReview = /"priorReviewCount"\s*:\s*[1-9]\d*/u.test(message);
+    return JSON.stringify(hasPriorReview ? MOCK_PASSED_REVIEW : MOCK_REVIEW);
+  }
   if (role === "interviewer")
     return "In 60 seconds, explain how the JavaScript event loop orders microtasks and macrotasks.";
   if (role === "teacher")

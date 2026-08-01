@@ -1560,6 +1560,13 @@ async function requestExerciseReview(
       constraints: input.constraints,
     },
     evidence: {
+      priorReviewCount: (
+        state.connection.sqlite
+          .prepare(
+            "SELECT count(*) AS count FROM reviews WHERE exercise_attempt_id = ?",
+          )
+          .get(input.attempt.id) as { count: number }
+      ).count,
       gitDiff: input.diff,
       diffTruncated: input.diffTruncated,
       latestTestRun: {

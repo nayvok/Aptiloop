@@ -349,12 +349,56 @@ describe("practice execution and reviewer boundaries", () => {
     expect(ReviewResultSchema.parse(JSON.parse(persisted.resultJson))).toEqual(
       result,
     );
+    const afterFirstReview = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/diff`,
+    );
+    expect((await afterFirstReview.json()) as { diff: string }).toEqual(
+      beforeDiff,
+    );
+
+    writeFileSync(
+      learnerFile,
+      `${passingImplementation}\n// learner correction after read-only review\n`,
+      "utf8",
+    );
+    const correctedTest = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/commands`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          operationId: "corrected-test-operation",
+          commandId: "test",
+        }),
+      },
+    );
+    expect(await correctedTest.json()).toMatchObject({ status: "passed" });
+    const correctedBeforeReview = (await (
+      await request(current.app, `/api/exercise-attempts/${attemptId}/diff`)
+    ).json()) as { diff: string };
+    const correctedReview = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      { method: "POST", body: "{}" },
+    );
+    expect(correctedReview.status).toBe(200);
+    expect(await correctedReview.json()).toMatchObject({ status: "passed" });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          "SELECT count(*) AS count FROM reviews WHERE exercise_attempt_id = ?",
+        )
+        .get(attemptId),
+    ).toEqual({ count: 2 });
 
     const after = await request(
       current.app,
       `/api/exercise-attempts/${attemptId}/diff`,
     );
-    expect((await after.json()) as { diff: string }).toEqual(beforeDiff);
+    expect((await after.json()) as { diff: string }).toEqual(
+      correctedBeforeReview,
+    );
   }, 30_000);
 });
 

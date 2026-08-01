@@ -38,6 +38,31 @@ describe("MockAgentProvider", () => {
       ).toMatchObject({ status: "changes_requested" });
   });
 
+  it("accepts a correction when server context records a prior review", async () => {
+    const provider = new MockAgentProvider({ chunkSize: 1000 });
+    const session = await provider.createSession({
+      role: "reviewer",
+      modelId: "mock-deterministic",
+      systemPrompt: "Review only",
+    });
+    const events = await collect(
+      provider.streamMessage({
+        sessionId: session.id,
+        message: JSON.stringify({ evidence: { priorReviewCount: 1 } }),
+        responseFormat: "json",
+      }),
+    );
+    const completed = events.find(
+      (event) => event.type === "message.completed",
+    );
+    if (completed?.type !== "message.completed") {
+      throw new Error("Mock review did not complete");
+    }
+    expect(
+      ReviewResultSchema.parse(JSON.parse(completed.content)),
+    ).toMatchObject({ status: "passed", findings: [] });
+  });
+
   it("exposes deterministic error events", async () => {
     const provider = new MockAgentProvider();
     const session = await provider.createSession({
