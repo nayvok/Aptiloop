@@ -283,7 +283,7 @@ export function registerVersionedLearningRoutes(
               stableId: day.stableId,
               order: day.orderIndex + 1,
               title: day.title,
-              description: day.description,
+              description: day.description ?? day.title,
               goal: day.goal,
               estimatedMinutes: day.estimatedMinutes,
               prerequisites: day.prerequisites,

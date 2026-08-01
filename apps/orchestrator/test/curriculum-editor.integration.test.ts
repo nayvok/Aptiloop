@@ -163,7 +163,20 @@ describe("curriculum editor routes", () => {
       },
     );
     expect(dayResponse.status).toBe(201);
-    const day = await body<{ day: { id: string } }>(dayResponse);
+    const day = await body<{
+      day: {
+        id: string;
+        prerequisites: unknown[];
+        expectedOutcomes: unknown[];
+        topics: unknown[];
+      };
+    }>(dayResponse);
+    expect(day.day).toMatchObject({
+      prerequisites: [],
+      expectedOutcomes: ["Explain binding semantics"],
+      topics: ["Values"],
+    });
+    expect(day.day).not.toHaveProperty("prerequisitesJson");
     const disposableDayResponse = await request(
       app,
       `/api/curriculum-editor/versions/${draft.version.id}/weeks/${week.week.id}/days`,
@@ -248,7 +261,20 @@ describe("curriculum editor routes", () => {
         },
       );
       expect(response.status).toBe(201);
-      return body<{ unit: { id: string; stableId: string } }>(response);
+      const created = await body<{
+        unit: {
+          id: string;
+          stableId: string;
+          completionCriteria: unknown[];
+          payload: Record<string, unknown>;
+        };
+      }>(response);
+      expect(created.unit.completionCriteria).toEqual([
+        { type: "acknowledgement" },
+      ]);
+      expect(created.unit.payload).toMatchObject({ type });
+      expect(created.unit).not.toHaveProperty("completionCriteriaJson");
+      return created;
     };
 
     const briefing = await makeUnit(

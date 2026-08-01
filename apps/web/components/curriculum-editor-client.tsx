@@ -9,6 +9,12 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
+import { z } from "zod";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { EmptyState, QueryError } from "@/components/query-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   CurriculumSourceSchema,
   DepthLevelSchema,
@@ -18,13 +24,7 @@ import {
   UnitQuestionSchema,
   UnitTypeSchema,
   UnitUnlockRuleSchema,
-} from "@dlh/shared";
-import { z } from "zod";
-
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { EmptyState, QueryError } from "@/components/query-state";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@/lib/curriculum-authoring-schemas";
 
 const idSchema = z.string().trim().min(1).max(200);
 const nullableTextSchema = z.string().nullable();

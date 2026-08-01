@@ -371,7 +371,7 @@ async function updateUnitAndValidate(
     const graph = await editorRepository(state).getVersionGraph(versionId);
     assertGraphContracts(graph);
     state.connection.sqlite.exec("COMMIT");
-    return graph;
+    return toEditorDto(graph);
   } catch (error) {
     state.connection.sqlite.exec("ROLLBACK");
     throw error;
@@ -380,6 +380,18 @@ async function updateUnitAndValidate(
 
 function json(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function toEditorDto<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => toEditorDto(item)) as T;
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !key.endsWith("Json"))
+      .map(([key, nested]) => [key, toEditorDto(nested)]),
+  ) as T;
 }
 
 function valuesFrom<T extends object>(
@@ -411,7 +423,7 @@ async function graphOrNotFound(
   versionId: string,
 ): Promise<CurriculumVersionGraph> {
   try {
-    return await repository.getVersionGraph(versionId);
+    return toEditorDto(await repository.getVersionGraph(versionId));
   } catch {
     throw new EditorError(404, "not_found", "Curriculum version was not found");
   }
@@ -596,7 +608,7 @@ export function registerCurriculumEditorRoutes(
         )
         .get(id, versionId);
       if (existing) {
-        const graph = await repository.getVersionGraph(versionId);
+        const graph = toEditorDto(await repository.getVersionGraph(versionId));
         return context.json({
           week: graph.weeks.find((week) => week.id === id),
         });
@@ -634,7 +646,9 @@ export function registerCurriculumEditorRoutes(
             ["description", "description"],
           ]),
         );
-        const graph = await editorRepository(state).getVersionGraph(versionId);
+        const graph = toEditorDto(
+          await editorRepository(state).getVersionGraph(versionId),
+        );
         return context.json({
           week: graph.weeks.find((week) => week.id === weekId),
         });
@@ -667,7 +681,9 @@ export function registerCurriculumEditorRoutes(
           orderedWeekIds: input.orderedIds,
         });
         return context.json({
-          curriculum: await editorRepository(state).getVersionGraph(versionId),
+          curriculum: toEditorDto(
+            await editorRepository(state).getVersionGraph(versionId),
+          ),
         });
       }),
   );
@@ -688,14 +704,14 @@ export function registerCurriculumEditorRoutes(
           )
           .get(id, versionId);
         if (existing) {
-          const graph = await repository.getVersionGraph(versionId);
+          const graph = toEditorDto(await repository.getVersionGraph(versionId));
           return context.json({
             day: graph.weeks
               .flatMap((week) => week.days)
               .find((day) => day.id === id),
           });
         }
-        const day = await repository.addDay({
+        await repository.addDay({
           versionId,
           weekId,
           stableId: input.stableId,
@@ -720,6 +736,11 @@ export function registerCurriculumEditorRoutes(
             ? { orderIndex: input.orderIndex }
             : {}),
         });
+        const graph = toEditorDto(await repository.getVersionGraph(versionId));
+        const day = graph.weeks
+          .flatMap((week) => week.days)
+          .find((item) => item.id === id);
+        if (!day) throw new Error("Created curriculum day was not found");
         return context.json({ day }, 201);
       }),
   );
@@ -749,7 +770,9 @@ export function registerCurriculumEditorRoutes(
             ["topics", "topics_json", json],
           ]),
         );
-        const graph = await editorRepository(state).getVersionGraph(versionId);
+        const graph = toEditorDto(
+          await editorRepository(state).getVersionGraph(versionId),
+        );
         return context.json({
           day: graph.weeks
             .flatMap((week) => week.days)
@@ -786,7 +809,9 @@ export function registerCurriculumEditorRoutes(
           orderedDayIds: input.orderedIds,
         });
         return context.json({
-          curriculum: await editorRepository(state).getVersionGraph(versionId),
+          curriculum: toEditorDto(
+            await editorRepository(state).getVersionGraph(versionId),
+          ),
         });
       }),
   );
@@ -807,7 +832,7 @@ export function registerCurriculumEditorRoutes(
           )
           .get(id, versionId);
         if (existing) {
-          const graph = await repository.getVersionGraph(versionId);
+          const graph = toEditorDto(await repository.getVersionGraph(versionId));
           return context.json({
             unit: graph.weeks
               .flatMap((week) => week.days)
@@ -815,7 +840,7 @@ export function registerCurriculumEditorRoutes(
               .find((unit) => unit.id === id),
           });
         }
-        const unit = await repository.addUnit({
+        await repository.addUnit({
           versionId,
           dayId,
           stableId: input.stableId,
@@ -858,6 +883,12 @@ export function registerCurriculumEditorRoutes(
             ? { orderIndex: input.orderIndex }
             : {}),
         });
+        const graph = toEditorDto(await repository.getVersionGraph(versionId));
+        const unit = graph.weeks
+          .flatMap((week) => week.days)
+          .flatMap((item) => item.units)
+          .find((item) => item.id === id);
+        if (!unit) throw new Error("Created curriculum unit was not found");
         return context.json({ unit }, 201);
       }),
   );
@@ -936,7 +967,9 @@ export function registerCurriculumEditorRoutes(
           orderedUnitIds: input.orderedIds,
         });
         return context.json({
-          curriculum: await editorRepository(state).getVersionGraph(versionId),
+          curriculum: toEditorDto(
+            await editorRepository(state).getVersionGraph(versionId),
+          ),
         });
       }),
   );
