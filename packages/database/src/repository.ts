@@ -705,7 +705,9 @@ export class LearningRepository {
         referenceAnswer: null,
         questions: unit.questions.map((question) => ({
           ...question,
+          correctOptionIds: [],
           referenceAnswer: null,
+          evaluationPoints: [],
         })),
       })),
     });

@@ -2068,7 +2068,7 @@ export const foundationWeekV2 = {
   days: [day1, day2, day3, day4, day5, day6, day7],
 } as const;
 
-export const activeCurriculumVersion = {
+export const publishedCurriculumV2 = {
   id: "curriculum-foundation-v2-r1",
   curriculumId: "curriculum-foundation",
   revision: 1,
@@ -2086,12 +2086,10 @@ export const activeCurriculumVersion = {
   draftRoadmap: draftRoadmapWeeks,
 } as const satisfies VersionedCurriculumVersion;
 
-export const publishedCurriculumV2 = activeCurriculumVersion;
-
-export function getVersionedCurriculumDay(
+export function getPublishedCurriculumV2Day(
   stableId: string,
 ): VersionedCurriculumDay | undefined {
-  return activeCurriculumVersion.weeks
+  return publishedCurriculumV2.weeks
     .flatMap((week) => week.days)
     .find((day) => day.stableId === stableId);
 }

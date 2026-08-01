@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionSnapshotSchema, UnitProgressSchema } from "@dlh/shared";
+import { publishedCurriculumV2 } from "@dlh/curriculum";
 
 import {
   createCurriculumAuthoringRepository,
@@ -14,6 +15,7 @@ import {
   discoverDatabaseCandidates,
   resolveDatabaseProjectRoot,
   seedDatabase,
+  seedVersionedCurriculum,
   type DatabaseConnection,
 } from "../src/index.js";
 
@@ -287,27 +289,57 @@ describe("versioned curriculum seed", () => {
     const { connection } = tempConnection();
     migrateDatabase(connection);
 
-    const first = seedDatabase(connection, undefined, 1_000);
-    const versionBefore = connection.sqlite
+    seedVersionedCurriculum(connection, publishedCurriculumV2);
+    const immutableParentBefore = connection.sqlite
       .prepare(
-        "SELECT status, content_hash, updated_at FROM curriculum_versions WHERE id = 'curriculum-foundation-v2-r1'",
-      )
-      .get();
-    const second = seedDatabase(connection, undefined, 2_000);
-    const versionAfter = connection.sqlite
-      .prepare(
-        "SELECT status, content_hash, updated_at FROM curriculum_versions WHERE id = 'curriculum-foundation-v2-r1'",
+        `SELECT id, curriculum_id, revision, parent_version_id, status,
+                content_hash, created_at, published_at, updated_at
+         FROM curriculum_versions WHERE id = 'curriculum-foundation-v2-r1'`,
       )
       .get();
 
+    const first = seedDatabase(connection, undefined, 1_000);
+    const versionsBefore = connection.sqlite
+      .prepare(
+        `SELECT id, curriculum_id, revision, parent_version_id, status,
+                content_hash, created_at, published_at, updated_at
+         FROM curriculum_versions
+         WHERE id IN ('curriculum-foundation-v2-r1', 'curriculum-foundation-v2-r2')
+         ORDER BY revision`,
+      )
+      .all();
+    const second = seedDatabase(connection, undefined, 2_000);
+    const versionsAfter = connection.sqlite
+      .prepare(
+        `SELECT id, curriculum_id, revision, parent_version_id, status,
+                content_hash, created_at, published_at, updated_at
+         FROM curriculum_versions
+         WHERE id IN ('curriculum-foundation-v2-r1', 'curriculum-foundation-v2-r2')
+         ORDER BY revision`,
+      )
+      .all();
+
     expect(second).toEqual(first);
-    expect(versionAfter).toEqual(versionBefore);
+    expect(versionsAfter).toEqual(versionsBefore);
+    expect(versionsBefore).toHaveLength(2);
+    expect(versionsBefore[0]).toMatchObject({
+      id: "curriculum-foundation-v2-r1",
+      curriculum_id: "curriculum-foundation",
+      revision: 1,
+    });
+    expect(versionsBefore[0]).toEqual(immutableParentBefore);
+    expect(versionsBefore[1]).toMatchObject({
+      id: "curriculum-foundation-v2-r2",
+      curriculum_id: "curriculum-foundation",
+      revision: 2,
+      parent_version_id: "curriculum-foundation-v2-r1",
+    });
     const authoring = createCurriculumAuthoringRepository(connection);
     const path = await authoring.getActivePath("curriculum-foundation");
     const dayOne = path?.weeks[0]?.days.find(
       (day) => day.stableId === "w1d1-values-types-objects",
     );
-    expect(path?.version.id).toBe("curriculum-foundation-v2-r1");
+    expect(path?.version.id).toBe("curriculum-foundation-v2-r2");
     expect(dayOne?.units).toHaveLength(12);
     expect(dayOne?.units[0]).toMatchObject({
       stableId: "w1d1-u01-briefing",
@@ -351,6 +383,38 @@ describe("versioned curriculum seed", () => {
       .find((question) => question.id === storedProtectedQuestion?.id);
     expect(storedProtectedQuestion?.referenceAnswer).toBeTruthy();
     expect(exposedQuestion?.referenceAnswer).toBeNull();
+    expect(exposedQuestion?.evaluationPoints).toEqual([]);
+
+    const storedQuiz = storedSnapshot.units.find(
+      (candidate) => candidate.type === "quiz",
+    );
+    const exposedQuiz = session.snapshot.units.find(
+      (candidate) => candidate.id === storedQuiz?.id,
+    );
+    expect(storedQuiz?.questions).toHaveLength(4);
+    expect(storedQuiz?.questions[0]).toMatchObject({
+      kind: "multiple-choice",
+      options: [
+        { id: "q1-a", label: "null" },
+        { id: "q1-b", label: "object" },
+        { id: "q1-c", label: "undefined" },
+      ],
+      correctOptionIds: ["q1-b"],
+    });
+    expect(exposedQuiz?.questions[0]).toMatchObject({
+      kind: "multiple-choice",
+      correctOptionIds: [],
+      referenceAnswer: null,
+      evaluationPoints: [],
+    });
+    expect(exposedQuiz?.questions[0]?.options).toEqual(
+      storedQuiz?.questions[0]?.options,
+    );
+    expect(
+      exposedQuiz?.questions[0]?.options.every(
+        (option) => Object.keys(option).sort().join(",") === "id,label",
+      ),
+    ).toBe(true);
 
     await learning.recordHintUsage({
       sessionId: session.session.id,

@@ -92,13 +92,56 @@ export const UnitChecklistItemSchema = z.object({
 });
 export type UnitChecklistItem = z.infer<typeof UnitChecklistItemSchema>;
 
-export const UnitQuestionSchema = z.object({
+export const QuestionKindSchema = z.enum([
+  "explain",
+  "compare",
+  "predict-output",
+  "find-bug",
+  "multiple-choice",
+  "design-choice",
+]);
+export type QuestionKind = z.infer<typeof QuestionKindSchema>;
+
+export const UnitQuestionOptionSchema = z.object({
   id: IdSchema,
-  prompt: TextSchema,
-  referenceAnswer: TextSchema.nullable().default(null),
-  evaluationPoints: StringListSchema.default([]),
-  commonMistakes: StringListSchema.default([]),
+  label: ShortTextSchema,
 });
+export type UnitQuestionOption = z.infer<typeof UnitQuestionOptionSchema>;
+
+export const UnitQuestionSchema = z
+  .object({
+    id: IdSchema,
+    kind: QuestionKindSchema.default("explain"),
+    prompt: TextSchema,
+    options: z.array(UnitQuestionOptionSchema).default([]),
+    /** Server-side answer key. Learner-facing repositories must redact it. */
+    correctOptionIds: z.array(IdSchema).default([]),
+    referenceAnswer: TextSchema.nullable().default(null),
+    evaluationPoints: StringListSchema.default([]),
+    commonMistakes: StringListSchema.default([]),
+  })
+  .superRefine((question, context) => {
+    const optionIds = new Set<string>();
+    question.options.forEach((option, index) => {
+      if (optionIds.has(option.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["options", index, "id"],
+          message: `Duplicate question option ID: ${option.id}`,
+        });
+      }
+      optionIds.add(option.id);
+    });
+    question.correctOptionIds.forEach((optionId, index) => {
+      if (!optionIds.has(optionId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["correctOptionIds", index],
+          message: `Correct option ID is not a public option: ${optionId}`,
+        });
+      }
+    });
+  });
 export type UnitQuestion = z.infer<typeof UnitQuestionSchema>;
 
 export const UnitCompletionCriterionSchema = z.discriminatedUnion("type", [

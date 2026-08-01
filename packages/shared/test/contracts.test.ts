@@ -8,6 +8,7 @@ import {
   CurriculumVersionSchema,
   DepthLevelSchema,
   SessionSnapshotSchema,
+  UnitQuestionSchema,
   UnitProgressSchema,
   ReviewResultSchema,
 } from "../src/index.js";
@@ -31,6 +32,44 @@ describe("shared contracts", () => {
 
   it("exposes all supported agent roles", () => {
     expect(AgentRoleSchema.options).toHaveLength(8);
+  });
+
+  it("keeps quiz options public and validates the protected answer key", () => {
+    expect(
+      UnitQuestionSchema.parse({
+        id: "quiz-q1",
+        kind: "multiple-choice",
+        prompt: "What is typeof null?",
+        options: [
+          { id: "q1-a", label: "null" },
+          { id: "q1-b", label: "object" },
+        ],
+        correctOptionIds: ["q1-b"],
+      }),
+    ).toMatchObject({
+      kind: "multiple-choice",
+      options: [
+        { id: "q1-a", label: "null" },
+        { id: "q1-b", label: "object" },
+      ],
+      correctOptionIds: ["q1-b"],
+    });
+    expect(
+      UnitQuestionSchema.parse({ id: "legacy-q", prompt: "Explain" }),
+    ).toMatchObject({
+      kind: "explain",
+      options: [],
+      correctOptionIds: [],
+    });
+    expect(
+      UnitQuestionSchema.safeParse({
+        id: "quiz-q2",
+        kind: "multiple-choice",
+        prompt: "Choose",
+        options: [{ id: "q2-a", label: "A" }],
+        correctOptionIds: ["q2-missing"],
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects a passed review with an error finding", () => {

@@ -997,3 +997,4 @@ export default curriculum;
 // existing seed/orchestrator consumers until they migrate to the v2 graph.
 export * from "./versioned-types.js";
 export * from "./version-2.js";
+export * from "./version-3.js";

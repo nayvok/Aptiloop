@@ -42,6 +42,7 @@ export interface ProtectedQuestionEvaluation {
   /** Server-side evaluation material. Never include this object in learner/Teacher prompts before an attempt. */
   readonly referenceAnswer: string;
   readonly evaluationPoints: readonly string[];
+  readonly correctOptionStableIds?: readonly string[];
 }
 
 export interface VersionedCurriculumQuestion {

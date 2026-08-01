@@ -6,6 +6,7 @@ import {
   curriculum,
   draftRoadmapWeeks,
   foundationWeekV2,
+  publishedCurriculumV2,
   toLearnerUnit,
   weekOneCurriculum,
 } from "../src/index.js";
@@ -21,12 +22,28 @@ describe("published curriculum v2", () => {
       "JavaScript, TypeScript и React: восстановление фундамента",
     );
     expect(activeCurriculumVersion.parentVersionId).toBe(
+      publishedCurriculumV2.id,
+    );
+    expect(publishedCurriculumV2.parentVersionId).toBe(
       archivedLegacyCurriculumVersion.id,
     );
     expect(archivedLegacyCurriculumVersion.preservedExport).toBe(
       "weekOneCurriculum",
     );
     expect(activeCurriculumVersion.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(activeCurriculumVersion).toMatchObject({
+      id: "curriculum-foundation-v2-r2",
+      revision: 2,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      publishedAt: "2026-08-01T00:00:00.000Z",
+    });
+    expect(publishedCurriculumV2).toMatchObject({
+      id: "curriculum-foundation-v2-r1",
+      revision: 1,
+    });
+    expect(activeCurriculumVersion.contentHash).not.toBe(
+      publishedCurriculumV2.contentHash,
+    );
   });
 
   it("uses stable unique IDs and consecutive authored order", () => {
@@ -164,9 +181,42 @@ describe("published curriculum v2", () => {
 
       expect(learnerJson).not.toContain("protectedEvaluation");
       expect(learnerJson).not.toContain("referenceAnswer");
+      expect(learnerJson).not.toContain("correctOptionStableIds");
       authoredReferences.forEach((reference) =>
         expect(learnerJson).not.toContain(reference),
       );
+    }
+  });
+
+  it("publishes Day 1 quiz choices without embedding correctness in options", () => {
+    const quiz = activeCurriculumVersion.weeks[0]?.days[0]?.units.find(
+      (unit) => unit.type === "quiz",
+    );
+    const publishedV2Quiz = publishedCurriculumV2.weeks[0]?.days[0]?.units.find(
+      (unit) => unit.type === "quiz",
+    );
+    expect(
+      publishedV2Quiz?.questions.every(
+        (item) => item.protectedEvaluation.correctOptionStableIds === undefined,
+      ),
+    ).toBe(true);
+    expect(quiz?.questions).toHaveLength(4);
+    for (const item of quiz?.questions ?? []) {
+      expect(item.kind).toBe("multiple-choice");
+      expect(item.options).toHaveLength(3);
+      const correctOptionStableIds =
+        item.protectedEvaluation.correctOptionStableIds ?? [];
+      expect(correctOptionStableIds).toHaveLength(1);
+      expect(
+        item.options?.every(
+          (option) => Object.keys(option).sort().join(",") === "label,stableId",
+        ),
+      ).toBe(true);
+      expect(
+        item.options?.some((option) =>
+          correctOptionStableIds.includes(option.stableId),
+        ),
+      ).toBe(true);
     }
   });
 

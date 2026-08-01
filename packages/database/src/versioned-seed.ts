@@ -1,5 +1,7 @@
 import {
   activeCurriculumVersion,
+  archivedLegacyCurriculumVersion,
+  publishedCurriculumV2,
   type UnitCompletionCriterion as AuthoredCriterion,
   type VersionedCurriculumDay as AuthoredDay,
   type VersionedCurriculumQuestion as AuthoredQuestion,
@@ -45,7 +47,15 @@ function mapSource(source: AuthoredSource): CurriculumSource {
 function mapQuestion(question: AuthoredQuestion) {
   return {
     id: question.stableId,
+    kind: question.kind,
     prompt: question.prompt,
+    options: (question.options ?? []).map((option) => ({
+      id: option.stableId,
+      label: option.label,
+    })),
+    correctOptionIds: [
+      ...(question.protectedEvaluation.correctOptionStableIds ?? []),
+    ],
     referenceAnswer: question.protectedEvaluation.referenceAnswer,
     evaluationPoints: [...question.protectedEvaluation.evaluationPoints],
     commonMistakes: [...question.misconceptions],
@@ -244,9 +254,9 @@ export function mapActiveCurriculumVersion(
   return CurriculumVersionSchema.parse(mapped);
 }
 
-export function seedVersionedCurriculum(
+function seedSingleVersion(
   connection: DatabaseConnection,
-  source: AuthoredVersion = activeCurriculumVersion,
+  source: AuthoredVersion,
 ): VersionedSeedResult {
   const version = mapActiveCurriculumVersion(source);
   const result = {
@@ -304,37 +314,55 @@ export function seedVersionedCurriculum(
 
     const createdAt = Date.parse(version.createdAt);
     const publishedAt = Date.parse(version.publishedAt ?? version.createdAt);
-    if (version.parentVersionId) {
+    const parentExists = version.parentVersionId
+      ? connection.sqlite
+          .prepare("SELECT id FROM curriculum_versions WHERE id = ?")
+          .get(version.parentVersionId)
+      : undefined;
+    if (
+      version.parentVersionId === archivedLegacyCurriculumVersion.id &&
+      !parentExists
+    ) {
       connection.sqlite
         .prepare(
           `INSERT OR IGNORE INTO curricula
            (id, slug, title, description, active_version_id, created_at, updated_at)
            VALUES ('curriculum-legacy-bridge', 'curriculum-legacy-bridge',
-                   'Legacy curriculum bridge', 'Immutable parent reference for v2',
+                   ?, 'Immutable metadata for the preserved legacy curriculum export',
                    NULL, ?, ?)`,
         )
-        .run(createdAt, createdAt);
+        .run(archivedLegacyCurriculumVersion.title, createdAt, createdAt);
       connection.sqlite
         .prepare(
           `INSERT OR IGNORE INTO curriculum_versions
            (id, curriculum_id, revision, parent_version_id, status, title, description,
             content_hash, created_at, published_at, archived_at, updated_at)
            VALUES (?, 'curriculum-legacy-bridge', 1, NULL, 'archived',
-                   'Legacy curriculum revision', 'Preserved legacy parent reference',
-                   ?, ?, ?, ?, ?)`,
+                   ?, 'Preserved legacy weekOneCurriculum export', ?, ?, ?, ?, ?)`,
         )
         .run(
           version.parentVersionId,
-          version.contentHash,
-          createdAt,
-          publishedAt,
-          publishedAt,
-          publishedAt,
+          archivedLegacyCurriculumVersion.title,
+          "20b3e27c49fa179fd04ec1435649fb776ae02c6eccbdf2ec6bc17d4b61fae5c3",
+          Date.parse(archivedLegacyCurriculumVersion.publishedAt),
+          Date.parse(archivedLegacyCurriculumVersion.publishedAt),
+          Date.parse(archivedLegacyCurriculumVersion.archivedAt),
+          Date.parse(archivedLegacyCurriculumVersion.archivedAt),
         );
+    }
+    if (
+      version.parentVersionId &&
+      !connection.sqlite
+        .prepare("SELECT id FROM curriculum_versions WHERE id = ?")
+        .get(version.parentVersionId)
+    ) {
+      throw new Error(
+        `Missing immutable parent curriculum version: ${version.parentVersionId}`,
+      );
     }
     connection.sqlite
       .prepare(
-        `INSERT INTO curricula
+        `INSERT OR IGNORE INTO curricula
          (id, slug, title, description, active_version_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, NULL, ?, ?)`,
       )
@@ -458,4 +486,32 @@ export function seedVersionedCurriculum(
       .run(version.id, publishedAt, version.curriculumId);
   });
   return result;
+}
+
+export function seedVersionedCurriculum(
+  connection: DatabaseConnection,
+  source?: AuthoredVersion,
+): VersionedSeedResult {
+  const sources =
+    source === undefined
+      ? [publishedCurriculumV2, activeCurriculumVersion]
+      : [source];
+  return sources.reduce<VersionedSeedResult>(
+    (total, candidate) => {
+      const seeded = seedSingleVersion(connection, candidate);
+      return {
+        curriculumVersions:
+          total.curriculumVersions + seeded.curriculumVersions,
+        versionedWeeks: total.versionedWeeks + seeded.versionedWeeks,
+        versionedDays: total.versionedDays + seeded.versionedDays,
+        versionedUnits: total.versionedUnits + seeded.versionedUnits,
+      };
+    },
+    {
+      curriculumVersions: 0,
+      versionedWeeks: 0,
+      versionedDays: 0,
+      versionedUnits: 0,
+    },
+  );
 }

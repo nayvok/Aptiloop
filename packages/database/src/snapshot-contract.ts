@@ -155,7 +155,10 @@ export function normalizeSessionSnapshotV2(raw: unknown): SessionSnapshot {
       questions = [
         {
           id: `${stableId}-legacy-question`,
+          kind: "explain",
           prompt: description,
+          options: [],
+          correctOptionIds: [],
           referenceAnswer: null,
           evaluationPoints: [],
           commonMistakes: [],
