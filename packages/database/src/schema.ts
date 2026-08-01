@@ -4,6 +4,7 @@ import {
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -743,6 +744,62 @@ export const hintUsagesV2 = sqliteTable(
   ],
 );
 
+export const versionedUnitEvidence = sqliteTable(
+  "versioned_unit_evidence",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => learningSessions.id, { onDelete: "cascade" }),
+    unitId: text("unit_id").notNull(),
+    evidenceType: text("evidence_type")
+      .$type<
+        "recall-attempt" | "quiz-answer" | "code-reading-attempt" | "summary"
+      >()
+      .notNull(),
+    operationId: text("operation_id").notNull().unique(),
+    questionId: text("question_id"),
+    payloadJson: text("payload_json").notNull(),
+    correctness: real("correctness"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("versioned_unit_evidence_session_idx").on(
+      table.sessionId,
+      table.createdAt,
+      table.id,
+    ),
+    index("versioned_unit_evidence_session_unit_idx").on(
+      table.sessionId,
+      table.unitId,
+      table.createdAt,
+      table.id,
+    ),
+    index("versioned_unit_evidence_session_type_idx").on(
+      table.sessionId,
+      table.evidenceType,
+      table.createdAt,
+      table.id,
+    ),
+    check(
+      "versioned_unit_evidence_type_check",
+      sql`${table.evidenceType} in ('recall-attempt', 'quiz-answer', 'code-reading-attempt', 'summary')`,
+    ),
+    check(
+      "versioned_unit_evidence_operation_id_check",
+      sql`length(trim(${table.operationId})) between 1 and 200`,
+    ),
+    check(
+      "versioned_unit_evidence_question_id_check",
+      sql`${table.questionId} is null or length(trim(${table.questionId})) between 1 and 200`,
+    ),
+    check(
+      "versioned_unit_evidence_correctness_check",
+      sql`${table.correctness} is null or ${table.correctness} between 0.0 and 1.0`,
+    ),
+  ],
+);
+
 // Short aliases keep repository call sites readable while preserving the explicit SQL table names.
 export const mastery = masteryScores;
 export const conversations = agentConversations;
@@ -780,6 +837,7 @@ export const schema = {
   unitProgress,
   learnerState,
   hintUsagesV2,
+  versionedUnitEvidence,
 };
 
 export type Topic = typeof topics.$inferSelect;
@@ -799,3 +857,4 @@ export type SessionSnapshot = typeof sessionSnapshots.$inferSelect;
 export type UnitProgress = typeof unitProgress.$inferSelect;
 export type LearnerState = typeof learnerState.$inferSelect;
 export type HintUsageV2 = typeof hintUsagesV2.$inferSelect;
+export type VersionedUnitEvidence = typeof versionedUnitEvidence.$inferSelect;

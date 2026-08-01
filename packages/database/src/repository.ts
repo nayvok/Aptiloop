@@ -53,6 +53,18 @@ import {
   createInitialProgressPayload,
   toIsoDateTime,
 } from "./snapshot-contract.js";
+import {
+  expectedUnitTypeForEvidence,
+  parseEvidencePayload,
+  serializeEvidencePayload,
+  validateEvidenceCorrectness,
+  validateEvidenceIdentifier,
+  VERSIONED_EVIDENCE_TYPES,
+  type ListVersionedUnitEvidenceFilter,
+  type RecordVersionedUnitEvidenceInput,
+  type VersionedEvidenceType,
+  type VersionedUnitEvidenceRecord,
+} from "./unit-evidence.js";
 
 export type IdFactory = () => string;
 export type Clock = () => number;
@@ -190,6 +202,37 @@ const isStringArray = (input: unknown): input is string[] =>
   Array.isArray(input) && input.every((item) => typeof item === "string");
 const isUnknownArray = (input: unknown): input is unknown[] =>
   Array.isArray(input);
+
+interface VersionedUnitEvidenceRow {
+  id: string;
+  session_id: string;
+  unit_id: string;
+  evidence_type: VersionedEvidenceType;
+  operation_id: string;
+  question_id: string | null;
+  payload_json: string;
+  correctness: number | null;
+  created_at: number;
+}
+
+function toVersionedUnitEvidenceRecord(
+  row: VersionedUnitEvidenceRow,
+): VersionedUnitEvidenceRecord {
+  if (!VERSIONED_EVIDENCE_TYPES.includes(row.evidence_type)) {
+    throw new Error("Invalid evidence type stored in versioned unit evidence");
+  }
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    unitId: row.unit_id,
+    evidenceType: row.evidence_type,
+    operationId: row.operation_id,
+    questionId: row.question_id,
+    payload: parseEvidencePayload(row.payload_json),
+    correctness: validateEvidenceCorrectness(row.correctness),
+    createdAt: row.created_at,
+  };
+}
 
 export class LearningRepository {
   readonly #connection: DatabaseConnection;
@@ -819,6 +862,171 @@ export class LearningRepository {
     );
     if (!progress) throw new Error("Updated unit progress disappeared");
     return progress;
+  }
+
+  async recordVersionedUnitEvidence(
+    input: RecordVersionedUnitEvidenceInput,
+  ): Promise<VersionedUnitEvidenceRecord> {
+    const sessionId = validateEvidenceIdentifier(input.sessionId, "Session ID");
+    const unitId = validateEvidenceIdentifier(input.unitId, "Unit ID");
+    const operationId = validateEvidenceIdentifier(
+      input.operationId,
+      "Operation ID",
+    );
+    const questionId =
+      input.questionId === undefined || input.questionId === null
+        ? null
+        : validateEvidenceIdentifier(input.questionId, "Question ID");
+    const expectedUnitType = expectedUnitTypeForEvidence(input.evidenceType);
+    const correctness = validateEvidenceCorrectness(input.correctness);
+    const serializedPayload = serializeEvidencePayload(input.payload);
+
+    return withTransaction(this.#connection, () => {
+      const existing = this.#connection.sqlite
+        .prepare(
+          `SELECT id, session_id, unit_id, evidence_type, operation_id,
+                  question_id, payload_json, correctness, created_at
+           FROM versioned_unit_evidence WHERE operation_id = ?`,
+        )
+        .get(operationId) as VersionedUnitEvidenceRow | undefined;
+      if (existing) {
+        if (
+          existing.session_id !== sessionId ||
+          existing.unit_id !== unitId ||
+          existing.evidence_type !== input.evidenceType ||
+          existing.question_id !== questionId ||
+          existing.payload_json !== serializedPayload.json ||
+          existing.correctness !== correctness
+        ) {
+          throw new Error(
+            "Operation ID is already associated with different unit evidence",
+          );
+        }
+        return toVersionedUnitEvidenceRecord(existing);
+      }
+
+      const target = this.#connection.sqlite
+        .prepare(
+          `SELECT p.unit_type, p.status AS unit_status, s.status
+           FROM unit_progress p
+           JOIN learning_sessions s ON s.id = p.session_id
+           WHERE p.session_id = ? AND p.unit_id = ?
+             AND s.curriculum_day_v2_id IS NOT NULL`,
+        )
+        .get(sessionId, unitId) as
+        { unit_type: string; unit_status: string; status: string } | undefined;
+      if (!target) {
+        throw new Error(
+          "Evidence target is not a unit in the versioned session",
+        );
+      }
+      if (target.status !== "active") {
+        throw new Error("New unit evidence requires an active session");
+      }
+      if (target.unit_type !== expectedUnitType) {
+        throw new Error(
+          `Evidence type ${input.evidenceType} requires a ${expectedUnitType} unit`,
+        );
+      }
+      if (target.unit_status !== "in_progress") {
+        throw new Error("New unit evidence requires an in-progress unit");
+      }
+
+      const row: VersionedUnitEvidenceRow = {
+        id: this.#id(),
+        session_id: sessionId,
+        unit_id: unitId,
+        evidence_type: input.evidenceType,
+        operation_id: operationId,
+        question_id: questionId,
+        payload_json: serializedPayload.json,
+        correctness,
+        created_at: this.#now(),
+      };
+      this.#connection.sqlite
+        .prepare(
+          `INSERT INTO versioned_unit_evidence
+           (id, session_id, unit_id, evidence_type, operation_id, question_id,
+            payload_json, correctness, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          row.id,
+          row.session_id,
+          row.unit_id,
+          row.evidence_type,
+          row.operation_id,
+          row.question_id,
+          row.payload_json,
+          row.correctness,
+          row.created_at,
+        );
+      return toVersionedUnitEvidenceRecord(row);
+    });
+  }
+
+  async listVersionedUnitEvidence(
+    sessionIdInput: string,
+    filter: ListVersionedUnitEvidenceFilter = {},
+  ): Promise<VersionedUnitEvidenceRecord[]> {
+    const sessionId = validateEvidenceIdentifier(sessionIdInput, "Session ID");
+    const unitId =
+      filter.unitId === undefined
+        ? undefined
+        : validateEvidenceIdentifier(filter.unitId, "Unit ID");
+    if (
+      filter.evidenceType !== undefined &&
+      !VERSIONED_EVIDENCE_TYPES.includes(filter.evidenceType)
+    ) {
+      throw new Error("Unsupported versioned evidence type");
+    }
+    const session = this.#connection.sqlite
+      .prepare(
+        `SELECT s.status
+         FROM learning_sessions s
+         WHERE s.id = ? AND s.status IN ('active', 'completed')
+           AND s.curriculum_day_v2_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM unit_progress p WHERE p.session_id = s.id
+           )`,
+      )
+      .get(sessionId);
+    if (!session) {
+      throw new Error("Unknown active or completed versioned session");
+    }
+
+    const select = `SELECT id, session_id, unit_id, evidence_type, operation_id,
+                           question_id, payload_json, correctness, created_at
+                    FROM versioned_unit_evidence`;
+    const order = " ORDER BY created_at ASC, id ASC";
+    let rows: VersionedUnitEvidenceRow[];
+    if (unitId !== undefined && filter.evidenceType !== undefined) {
+      rows = this.#connection.sqlite
+        .prepare(
+          `${select} WHERE session_id = ? AND unit_id = ? AND evidence_type = ?${order}`,
+        )
+        .all(
+          sessionId,
+          unitId,
+          filter.evidenceType,
+        ) as unknown as VersionedUnitEvidenceRow[];
+    } else if (unitId !== undefined) {
+      rows = this.#connection.sqlite
+        .prepare(`${select} WHERE session_id = ? AND unit_id = ?${order}`)
+        .all(sessionId, unitId) as unknown as VersionedUnitEvidenceRow[];
+    } else if (filter.evidenceType !== undefined) {
+      rows = this.#connection.sqlite
+        .prepare(`${select} WHERE session_id = ? AND evidence_type = ?${order}`)
+        .all(
+          sessionId,
+          filter.evidenceType,
+        ) as unknown as VersionedUnitEvidenceRow[];
+    } else {
+      rows = this.#connection.sqlite
+        .prepare(`${select} WHERE session_id = ?${order}`)
+        .all(sessionId) as unknown as VersionedUnitEvidenceRow[];
+    }
+    return rows.map(toVersionedUnitEvidenceRecord);
   }
 
   async recordHintUsage(input: {

@@ -46,7 +46,7 @@ describe("SQLite database", () => {
       .get() as { count: number };
     expect(foreignKeys.foreign_keys).toBe(1);
     expect(journal.journal_mode).toBe("wal");
-    expect(migrations.count).toBe(3);
+    expect(migrations.count).toBe(4);
     expect(() =>
       connection.sqlite
         .prepare(
