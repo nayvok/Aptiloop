@@ -637,6 +637,39 @@ describe("versioned learning API", () => {
         };
       }
 
+      if (unit.type === "summary") {
+        const fakeSummary = await request(
+          restartedRuntime.app,
+          `/api/learning/sessions/v2/${session.id}/units/${unit.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              status: "completed",
+              payload: { type: "summary", summaryId: "fake-summary-id" },
+            }),
+          },
+        );
+        expect(fakeSummary.status).toBe(400);
+        const summaryResponse = await request(
+          restartedRuntime.app,
+          `/api/learning/sessions/v2/${session.id}/units/${unit.id}/summary`,
+          {
+            method: "POST",
+            body: JSON.stringify({ operationId: "day1-summary" }),
+          },
+        );
+        expect(summaryResponse.status).toBe(201);
+        const summaryBody = (await summaryResponse.json()) as {
+          evidence: { id: string };
+          session: LearnerSession;
+        };
+        session = summaryBody.session;
+        payload = {
+          type: "summary",
+          summaryId: summaryBody.evidence.id,
+        };
+      }
+
       const complete = await request(
         restartedRuntime.app,
         `/api/learning/sessions/v2/${session.id}/units/${unit.id}`,

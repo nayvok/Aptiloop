@@ -372,6 +372,52 @@ function replaceProgress(
   };
 }
 
+function makeSummaryResponse(
+  session: SessionFixture,
+  evidenceId = "summary-1",
+) {
+  return {
+    summary: {
+      sessionId: session.id,
+      occurredAt: now,
+      masteryEvidence: [],
+      strengths: ["Тесты и read-only review пройдены"],
+      gaps: ["Точнее объяснять shallow copy"],
+      mistakeCandidates: [
+        {
+          fingerprint: "mistake-shallow-copy",
+          summary: "Смешаны shallow и deep copy",
+          correction: "Spread копирует только верхний уровень",
+          sourceId: "quiz-q2",
+        },
+      ],
+      flashcardCandidates: [
+        {
+          front: "Что копирует object spread?",
+          back: "Только верхний уровень объекта.",
+          sourceFingerprint: "mistake-shallow-copy",
+        },
+      ],
+      narrative: "День завершён на основе сохранённого evidence.",
+      metrics: {
+        topicCount: 1,
+        evidenceCount: 6,
+        correctEvidenceCount: 3,
+        partialEvidenceCount: 2,
+        incorrectEvidenceCount: 1,
+        attemptedActivityCount: 5,
+        quizScore: 0.5,
+        maxHintLevel: 2,
+        exerciseTestsPassed: true,
+        reviewStatus: "passed",
+        correctionCycleCount: 1,
+      },
+    },
+    evidence: { id: evidenceId },
+    session,
+  };
+}
+
 function renderWithQuery(children: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -735,6 +781,88 @@ describe("guided versioned session", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Открыть практику" }));
     expect(pushMock).toHaveBeenCalledWith("/exercise?sessionId=session-v2");
+  });
+
+  it("creates the server-derived summary and completes the day with its persisted evidence id", async () => {
+    const initial = makeSession("summary");
+    const summarized = replaceProgress(initial, "in_progress", {
+      type: "summary",
+      summaryId: "summary-1",
+    });
+    const completed = replaceProgress(summarized, "completed", {
+      type: "summary",
+      summaryId: "summary-1",
+    });
+    apiMock
+      .mockResolvedValueOnce({ session: initial })
+      .mockResolvedValueOnce(makeSummaryResponse(summarized))
+      .mockResolvedValueOnce({ session: completed });
+    renderWithQuery(<SessionClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Сформировать итог" }),
+    );
+    expect(
+      await screen.findByText("День завершён на основе сохранённого evidence."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    expect(
+      screen.getByText(/В журнал добавлено ошибок: 1/u),
+    ).toBeInTheDocument();
+    expect(apiMock).toHaveBeenNthCalledWith(
+      2,
+      "/learning/sessions/v2/session-v2/units/unit-summary/summary",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ operationId: "operation-1" }),
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Завершить день" }));
+    await vi.waitFor(() => {
+      expect(apiMock).toHaveBeenLastCalledWith(
+        "/learning/sessions/v2/session-v2/units/unit-summary",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "completed",
+            payload: { type: "summary", summaryId: "summary-1" },
+            operationId: "operation-2",
+          }),
+        }),
+      );
+    });
+  });
+
+  it("restores a persisted summary after restart without generating it again", async () => {
+    const summarized = makeSession("summary", "in_progress", {
+      type: "summary",
+      summaryId: "summary-restored",
+    });
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/learning/sessions/v2/session-v2") {
+        return Promise.resolve({ session: summarized });
+      }
+      if (
+        path === "/learning/sessions/v2/session-v2/units/unit-summary/summary"
+      ) {
+        return Promise.resolve(
+          makeSummaryResponse(summarized, "summary-restored"),
+        );
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+    const { container } = renderWithQuery(<SessionClient />);
+
+    expect(
+      await screen.findByText("День завершён на основе сохранённого evidence."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Сформировать итог" }),
+    ).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(
+      /correctOptionIds|referenceAnswer/u,
+    );
   });
 
   it("announces loading and renders a retryable contract or network error", async () => {

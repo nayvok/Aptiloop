@@ -387,6 +387,56 @@ const quizResponseSchema = z
 const codeReadingResponseSchema = z
   .object({ evidence: evidenceBaseSchema, session: learnerSessionSchema })
   .passthrough();
+const daySummarySchema = z
+  .object({
+    sessionId: idSchema,
+    occurredAt: z.string().datetime(),
+    strengths: z.array(z.string()),
+    gaps: z.array(z.string()),
+    mistakeCandidates: z.array(
+      z
+        .object({
+          fingerprint: idSchema,
+          summary: z.string().min(1),
+          correction: z.string().min(1),
+          sourceId: idSchema,
+        })
+        .passthrough(),
+    ),
+    flashcardCandidates: z.array(
+      z
+        .object({
+          front: z.string().min(1),
+          back: z.string().min(1),
+          sourceFingerprint: idSchema.optional(),
+        })
+        .passthrough(),
+    ),
+    narrative: z.string(),
+    metrics: z
+      .object({
+        topicCount: z.number().int().nonnegative(),
+        evidenceCount: z.number().int().nonnegative(),
+        correctEvidenceCount: z.number().int().nonnegative(),
+        partialEvidenceCount: z.number().int().nonnegative(),
+        incorrectEvidenceCount: z.number().int().nonnegative(),
+        attemptedActivityCount: z.number().int().nonnegative(),
+        quizScore: z.number().min(0).max(1),
+        maxHintLevel: z.number().int().min(0).max(5),
+        exerciseTestsPassed: z.boolean(),
+        reviewStatus: z.enum(["passed", "changes_requested"]).nullable(),
+        correctionCycleCount: z.number().int().nonnegative(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+const summaryResponseSchema = z
+  .object({
+    summary: daySummarySchema,
+    evidence: z.object({ id: idSchema }).passthrough(),
+    session: learnerSessionSchema,
+  })
+  .passthrough();
 
 type LearnerSession = z.infer<typeof learnerSessionSchema>;
 type LearnerUnit = z.infer<typeof learnerUnitSchema>;
@@ -1650,23 +1700,153 @@ function InterviewUnit({ unit, progress, onInterview }: UnitBodyProps) {
   );
 }
 
-function SummaryUnit({ unit, progress }: UnitBodyProps) {
+function SummaryUnit({
+  session,
+  unit,
+  progress,
+  pending,
+  patchUnit,
+  runAction,
+}: UnitBodyProps) {
+  const summaryId =
+    progress.payload.type === "summary" ? progress.payload.summaryId : null;
+  const [created, setCreated] = useState<z.infer<
+    typeof summaryResponseSchema
+  > | null>(null);
+  const persisted = useQuery({
+    queryKey: ["learning-summary-v2", session.id, unit.id, summaryId],
+    enabled: Boolean(summaryId) && created === null,
+    queryFn: async () => {
+      const raw = await api<unknown>(
+        `/learning/sessions/v2/${encodeURIComponent(session.id)}/units/${encodeURIComponent(unit.id)}/summary`,
+      );
+      rejectProtectedFields(raw);
+      return summaryResponseSchema.parse(raw);
+    },
+  });
+  const result = created ?? persisted.data ?? null;
+
+  async function createSummary() {
+    const response = await runAction(
+      `summary:${unit.id}`,
+      async () => {
+        const raw = await api<unknown>(
+          `/learning/sessions/v2/${encodeURIComponent(session.id)}/units/${encodeURIComponent(unit.id)}/summary`,
+          {
+            method: "POST",
+            body: JSON.stringify({ operationId: operationId() }),
+          },
+        );
+        rejectProtectedFields(raw);
+        return summaryResponseSchema.parse(raw);
+      },
+      (value) => value.session,
+    );
+    if (response) setCreated(response);
+  }
+
+  async function completeSummary() {
+    if (!result) return;
+    await patchUnit(unit, progress, "completed", {
+      type: "summary",
+      summaryId: result.evidence.id,
+    });
+  }
+
   return (
     <div className="flex flex-col gap-6">
       {unit.payload.type === "summary" && unit.payload.prompts.length ? (
         <InfoList title="Итоговые вопросы" items={unit.payload.prompts} />
       ) : null}
-      {progress.status === "completed" ? (
-        <CompletedNote />
+      {result ? (
+        <div data-slot="day-summary" className="flex flex-col gap-5">
+          <div className="rounded-md border border-border bg-muted p-4">
+            <p className="text-sm leading-6">{result.summary.narrative}</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <SummaryMetric
+              label="Квиз"
+              value={`${Math.round(result.summary.metrics.quizScore * 100)}%`}
+            />
+            <SummaryMetric
+              label="Evidence"
+              value={String(result.summary.metrics.evidenceCount)}
+            />
+            <SummaryMetric
+              label="Подсказки"
+              value={`${result.summary.metrics.maxHintLevel} / 5`}
+            />
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <InfoList
+              title="Что уже получается"
+              items={
+                result.summary.strengths.length
+                  ? result.summary.strengths
+                  : ["Пока недостаточно подтверждённого evidence"]
+              }
+            />
+            <InfoList
+              title="Что закрепить"
+              items={
+                result.summary.gaps.length
+                  ? result.summary.gaps
+                  : ["Новых пробелов не зафиксировано"]
+              }
+            />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            В журнал добавлено ошибок: {result.summary.mistakeCandidates.length}
+            . Кандидатов в карточки: {result.summary.flashcardCandidates.length}
+            .
+          </p>
+          {progress.status === "completed" ? (
+            <CompletedNote />
+          ) : (
+            <div className="flex justify-end">
+              <Button disabled={pending} onClick={() => void completeSummary()}>
+                {pending ? "Завершаю…" : "Завершить день"}
+                <CheckIcon aria-hidden />
+              </Button>
+            </div>
+          )}
+        </div>
+      ) : persisted.isError ? (
+        <div className="flex flex-col items-start gap-3" role="alert">
+          <p className="text-sm text-destructive">
+            Не удалось восстановить сохранённый итог:{" "}
+            {errorMessage(persisted.error)}
+          </p>
+          <Button variant="outline" onClick={() => void persisted.refetch()}>
+            Повторить загрузку
+          </Button>
+        </div>
+      ) : persisted.isPending && summaryId ? (
+        <div className="flex flex-col gap-3" role="status">
+          <span className="sr-only">Загружаю итог…</span>
+          <Skeleton className="h-20" />
+          <Skeleton className="h-16" />
+        </div>
       ) : (
         <div className="flex flex-col items-start gap-2">
-          <Button disabled>Сформировать итог на сервере</Button>
+          <Button disabled={pending} onClick={() => void createSummary()}>
+            {pending ? "Формирую итог…" : "Сформировать итог"}
+          </Button>
           <p className="text-xs text-muted-foreground">
-            Серверная генерация Summary ещё не подключена. summaryId не будет
-            подменён фиктивным значением.
+            Итог строится только из сохранённых ответов, тестов и read-only
+            review. Браузер не выставляет mastery и не придумывает evidence.
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+function SummaryMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
     </div>
   );
 }
