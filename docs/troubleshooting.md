@@ -105,6 +105,15 @@ Invoke-WebRequest http://127.0.0.1:4096/global/health
 
 Проверьте `OPENCODE_ENDPOINT`, username/password и совместимость CLI/SDK. Endpoint должен быть HTTP loopback без path/credentials/query. `npm start` пытается поднять sidecar и продолжает с Mock/Codex при failure. В Compose `host.docker.internal` не принимается как loopback.
 
+## Запуск OpenCode sidecar
+
+```text
+Запуск OpenCode sidecar для локального провайдера:
+OPENCODE_SERVER_PASSWORD=<пароль> opencode serve --hostname 127.0.0.1 --port 4096
+Проверка: GET http://127.0.0.1:4096/health → 200.
+Пароль передаётся только через environment и не логируется.
+```
+
 ## Interview report не оценивает correctness
 
 Это ожидаемое ограничение MVP: отчёт хранит completion/length/structure evidence. Он не сравнивает ответы с rubric/reference и не меняет mastery. Для технической оценки используйте Teacher/Reviewer или ручную проверку; не интерпретируйте completion rate как correctness score.

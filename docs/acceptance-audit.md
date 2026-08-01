@@ -1,6 +1,6 @@
 # Acceptance-аудит versioned MVP
 
-Дата среза: 2026-08-01. Этот документ отделяет реализованное поведение от обязательной финальной проверки окружения. Наличие UI или unit test не считается доказательством external provider smoke.
+Дата среза: 2026-08-02. Этот документ отделяет реализованное поведение от обязательной финальной проверки окружения. Наличие UI или unit test не считается доказательством external provider smoke.
 
 ## Вертикальный срез Дня 1
 
@@ -36,7 +36,7 @@ Playwright покрывает продуктовый путь с Mock и реа�
 
 ## Interview
 
-Реализованы setup (topics/difficulty/1–12), server-selected provider/model, один вопрос за раз, transcript/current-session resume, terminal finish и persisted report.
+Реализованы setup (topics/difficulty/1–12), чат-UI без стриминга, server-selected provider/model, один вопрос за раз, transcript/current-session resume, terminal finish и persisted report. Интервью связано с юнитом дня: finish сохраняет progress юнита, завершение требует `reportId` и минимум 3 ответа, поэтому день 7 проходим.
 
 Ограничение: report оценивает completion, длину и форму ответа. Он не доказывает technical correctness, не использует полноценную expert rubric/reference evaluation и не обновляет mastery. Поэтому acceptance по «отдельному workflow» выполнен, а «экспертная техническая оценка интервью» — вне текущего среза.
 
@@ -89,7 +89,7 @@ npm run build
 
 Browser acceptance проверяет light/dark hydration, path, start/resume, practice, correction, summary, Day 2 unlock, Editor draft/publish/clone guard и Interview reload/report. Component tests покрывают основные loading/empty/error/protected-data states. Dashboard, session и locked Practice дополнительно проверены вручную при 390×844 и 1280×800; автоматический contrast audit в текущий gate не входит.
 
-## Фактический результат 2026-08-01
+## Фактический результат 2026-08-02
 
 | Gate                  | Результат                                                                                 |
 | --------------------- | ----------------------------------------------------------------------------------------- |
@@ -103,29 +103,29 @@ Browser acceptance проверяет light/dark hydration, path, start/resume, 
 | production build      | 12/12 workspace builds, 13 Next routes prerendered                                        |
 | runtime               | web/orchestrator отвечают; desktop/mobile browser smoke и readiness `database=connected`  |
 | Docker                | image собран; non-root user пишет в attempt-root и резолвит Vitest из `/app/node_modules` |
-| Codex                 | health/model discovery работает; authenticated model turn в этом аудите не выполнялся     |
-| OpenCode              | честно `unavailable`: локальный `opencode serve` недоступен; model turn не выполнен       |
-| Zed                   | фактическое открытие GUI в этом аудите не выполнялось                                     |
+| Codex                 | проверка выполняется в финальном блоке                                                    |
+| OpenCode              | проверка выполняется в финальном блоке                                                    |
+| Zed                   | проверка выполняется в финальном блоке                                                    |
 
-`npm audit` после обновления `@hono/node-server` 1.x → 2.0.12 больше не содержит Hono advisory. Остаются 3 high production advisories в latest `next@16.2.12` через его pinned `postcss@8.4.31` и optional `sharp@0.34.5`, а также 1 low dev-only advisory в `esbuild` через `tsup`. На дату среза registry не предлагает совместимый Next update: автоматический fix ошибочно предлагает downgrade до Next 9.3.3, поэтому `--force` и несовместимые transitive overrides не применялись.
+`npm audit` (без изменений зависимостей) показал 3 high production advisories в latest `next@16.2.12` через его pinned `postcss@8.4.31` и optional `sharp@0.34.5`, а также 1 low dev-only advisory в `esbuild` через `tsup`. `npm audit fix` без `--force` не нашёл безопасного обновления; esbuild 0.27.7 под tsup остаётся; `--force`/overrides не применялись (ошибочный downgrade next до 9.3.3).
 
 ## Итог по acceptance criteria
 
-| Группа                                                          | Статус                    | Комментарий                                                   |
-| --------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------- |
-| Запуск, migrations, seed, persistence, restart                  | Выполнено                 | canonical DB сохранена и повторно проверена                   |
-| Light/dark/system, path, units, active session                  | Выполнено                 | component + E2E + ручные desktop screenshots                  |
-| Day 1: briefing → summary → Day 2                               | Выполнено                 | полный Playwright vertical slice                              |
-| Практика, Zed path, Git diff, tests, read-only correction cycle | Выполнено                 | реальный isolated attempt; Zed CLI проверен без запуска GUI   |
-| Mastery, mistake journal, flashcard candidates/export           | Выполнено                 | summary E2E и deterministic export unit tests                 |
-| Curriculum Editor/versioning/history                            | Выполнено                 | draft/CRUD/reorder/publish/clone + snapshot E2E               |
-| Interview как отдельный workflow                                | Выполнено                 | setup/questions/report/reload E2E                             |
-| Interview technical mastery evaluation                          | Частично                  | report честно оценивает полноту/форму, не correctness/mastery |
-| Mock provider                                                   | Выполнено                 | offline fast/E2E provider                                     |
-| Codex provider                                                  | Turn не перепроверен      | health/model discovery работают; unit tests не заменяют turn  |
-| OpenCode provider                                               | Невозможно проверить turn | sidecar unavailable; диагностика и fallback работают          |
-| Security boundaries и запрещённые расширения                    | Выполнено                 | tests + финальный grep; Pi/IDE/AnkiConnect отсутствуют        |
-| Dependency audit                                                | Частично                  | Hono исправлен; 3 upstream Next high + 1 dev low остаются     |
+| Группа                                                          | Статус                                 | Комментарий                                                   |
+| --------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------- |
+| Запуск, migrations, seed, persistence, restart                  | Выполнено                              | canonical DB сохранена и повторно проверена                   |
+| Light/dark/system, path, units, active session                  | Выполнено                              | component + E2E + ручные desktop screenshots                  |
+| Day 1: briefing → summary → Day 2                               | Выполнено                              | полный Playwright vertical slice                              |
+| Практика, Zed path, Git diff, tests, read-only correction cycle | Проверка выполняется в финальном блоке | Zed GUI и внешний smoke доберут отдельным блоком              |
+| Mastery, mistake journal, flashcard candidates/export           | Выполнено                              | summary E2E и deterministic export unit tests                 |
+| Curriculum Editor/versioning/history                            | Выполнено                              | draft/CRUD/reorder/publish/clone + snapshot E2E               |
+| Interview как отдельный workflow                                | Выполнено                              | чат-UI, setup/questions/report/reload E2E и связка с day unit |
+| Interview technical mastery evaluation                          | Частично                               | report честно оценивает полноту/форму, не correctness/mastery |
+| Mock provider                                                   | Выполнено                              | offline fast/E2E provider                                     |
+| Codex provider                                                  | Проверка выполняется в финальном блоке | финальный block заполнит реальный turn                        |
+| OpenCode provider                                               | Проверка выполняется в финальном блоке | финальный block заполнит реальный turn                        |
+| Security boundaries и запрещённые расширения                    | Выполнено                              | tests + финальный grep; Pi/IDE/AnkiConnect отсутствуют        |
+| Dependency audit                                                | Частично                               | Hono исправлен; 3 upstream Next high + 1 dev low остаются     |
 
 ## External provider matrix
 

@@ -29,6 +29,30 @@ ThemeProvider хранит `system|light|dark` под key `theme`, включа�
 
 Guided path использует statuses `completed`, `in_progress`, `available`, `locked` и отдельный список units. Cards применяются для самостоятельных смысловых блоков, а не как обёртка каждого текста.
 
+## Каталог компонентов
+
+### Textarea
+
+`apps/web/components/ui/textarea.tsx` — ui-примитив для многострочного ввода.
+Использует `data-slot="textarea"`, сохраняет стандартные focus/disabled states
+и применяется в интервью-композитах как доступный composer с label.
+
+### InterviewChatView
+
+`apps/web/components/interview-chat-view.tsx` — составной чат-компонент
+интервью. Сообщения рендерятся через `MessageScroller`/`Bubble`/`Message`, а
+pending-вопрос и typing-indicator используют `role="status"` и `aria-live`
+только для одного элемента за раз. Composer опирается на `Textarea`,
+поддерживает Enter/Shift+Enter и не ломает существующие loading/error states.
+
+### DayPlan
+
+`apps/web/components/day-plan.tsx` — составной блок плана дня под шапкой
+сессии. Использует `data-slot` для внутренних секций и уникальные лейблы
+«План дня», «Темы», «Ожидаемые результаты», «Вне дня», «Юниты», чтобы тесты и
+screen reader не путали соседние блоки. Содержимое остаётся семантическим,
+сверху вниз читается как summary → outcomes → topics → units.
+
 ## Компонентные правила
 
 - Минимальная высота интерактивной цели — 44 px (`min-h-11`).

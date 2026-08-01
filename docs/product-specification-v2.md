@@ -39,11 +39,13 @@ workspace. Любой шаг, влияющий на прогресс, подтв
 
 1. `/` - Путь, основная страница.
 2. `/session` и `/sessions/:id` - Текущее занятие; route без ID разрешает
-   `currentLearningSessionId`.
+   `currentLearningSessionId`, а `?id=` задаёт явную сессию и показывает план
+   дня внутри страницы.
 3. `/exercise` - Практика текущей сессии.
 4. `/knowledge` - Карта знаний.
 5. `/mistakes` - Ошибки.
-6. `/interview` - отдельный interview workflow.
+6. `/interview` - отдельный interview workflow; поддерживает `?sessionId=` и
+   `?id=`.
 7. `/flashcards` - кандидаты и export.
 8. `/settings` - providers, theme, paths.
 9. `/settings/curriculum` - curriculum editor.
@@ -191,8 +193,23 @@ time. Уровень 5 доступен только после completion/expli
 
 InterviewSession сохраняет setup (topics, depth, duration, count, format,
 provider/model), transcript, current question и report. Во время интервью роль
-нельзя переключить, reference скрыт, вопросы идут по одному. Завершение создаёт
-детерминированные mastery/mistake/card evidence на основе validated report.
+нельзя переключить, reference скрыт, вопросы идут по одному, а UI работает как
+чат без стриминга: новый вопрос появляется после сохранённого ответа, а typing
+state показывается локально.
+
+Интервью поддерживает два режима открытия:
+
+- `?sessionId=<learningSessionId>` — вход из юнита дня, с кнопкой
+  «Вернуться к занятию» и возвратом на `/session?id=<learningSessionId>`.
+- `?id=<interviewId>` — прямое открытие сохранённого интервью/отчёта без
+  localStorage, с чтением по `/api/interviews/v2/:id`.
+
+Завершение создаёт детерминированные mastery/mistake/card evidence на основе
+validated report. Когда интервью связано с unit дня, finish также сохраняет
+progress юнита интервью: до завершения юнит показывает «Открыть интервью» или
+«Открыть отчёт» + «Завершить юнит», а после успешного сохранения — «Юнит
+завершён и сохранён». Для завершения юнита требуется reportId и минимум три
+сохранённых ответа, поэтому день 7 проходит насквозь.
 
 ## 11. Curriculum editor MVP
 
