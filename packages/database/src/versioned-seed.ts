@@ -317,11 +317,23 @@ function seedSingleVersion(
       ) {
         throw new Error(`Seeded curriculum graph is incomplete: ${version.id}`);
       }
+      // Authored curriculum timestamps may legitimately lie in the future
+      // (release notes are dated ahead of the local clock). The path picks the
+      // active curriculum by `curricula.updated_at DESC`, so such a row must
+      // never outrank a real, later publish. Clamp the wall-clock marker to
+      // the seed moment when the authored value is in the future.
+      connection.sqlite
+        .prepare(
+          `UPDATE curricula SET updated_at = ? WHERE id = ? AND updated_at > ?`,
+        )
+        .run(Date.now(), version.curriculumId, Date.now());
       return;
     }
 
     const createdAt = Date.parse(version.createdAt);
     const publishedAt = Date.parse(version.publishedAt ?? version.createdAt);
+    const wallClockNow = Date.now();
+    const curriculumUpdatedAt = Math.min(publishedAt, wallClockNow);
     const parentExists = version.parentVersionId
       ? connection.sqlite
           .prepare("SELECT id FROM curriculum_versions WHERE id = ?")
@@ -491,7 +503,7 @@ function seedSingleVersion(
       .prepare(
         "UPDATE curricula SET active_version_id = ?, updated_at = ? WHERE id = ?",
       )
-      .run(version.id, publishedAt, version.curriculumId);
+      .run(version.id, curriculumUpdatedAt, version.curriculumId);
   });
   return result;
 }

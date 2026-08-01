@@ -91,41 +91,48 @@ Browser acceptance проверяет light/dark hydration, path, start/resume, 
 
 ## Фактический результат 2026-08-02
 
-| Gate                  | Результат                                                                                 |
-| --------------------- | ----------------------------------------------------------------------------------------- |
-| `npm install`         | успешно; npm workspaces и lockfile сохранены, `tsup` выровнен до одной 8.5.1              |
-| DB backup             | две новые копии через `VACUUM INTO`, integrity/foreign keys проверены                     |
-| migrate + seed x2     | успешно и идемпотентно; 7 дней, 14 topics                                                 |
-| SQLite                | `integrity_check=ok`, `foreign_key_check=[]`                                              |
-| format/lint/typecheck | успешно во всех workspaces                                                                |
-| fast tests            | 21 свежая Turbo task без test cache; 305 тестов, orchestrator 27/27, web 48/48            |
-| Playwright            | 4/4: theme, Day 1, Curriculum Editor snapshot, Interview restore                          |
-| production build      | 12/12 workspace builds, 13 Next routes prerendered                                        |
-| runtime               | web/orchestrator отвечают; desktop/mobile browser smoke и readiness `database=connected`  |
-| Docker                | image собран; non-root user пишет в attempt-root и резолвит Vitest из `/app/node_modules` |
-| Codex                 | проверка выполняется в финальном блоке                                                    |
-| OpenCode              | проверка выполняется в финальном блоке                                                    |
-| Zed                   | проверка выполняется в финальном блоке                                                    |
+| Gate                  | Результат                                                                                                                                                               |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm install`         | успешно; npm workspaces и lockfile сохранены, `tsup` выровнен до одной 8.5.1                                                                                            |
+| DB backup             | две новые копии через `VACUUM INTO`, integrity/foreign keys проверены                                                                                                   |
+| migrate + seed x2     | успешно и идемпотентно; 7 дней, 14 topics                                                                                                                               |
+| SQLite                | `integrity_check=ok`, `foreign_key_check=[]`                                                                                                                            |
+| format/lint/typecheck | успешно во всех 12 workspaces                                                                                                                                           |
+| fast tests            | все 21 Turbo task зелёные: web 54/54, orchestrator 33/33, database 10/10 и остальные                                                                                    |
+| Playwright            | 4/4: theme, Day 1 (с планом дня), Curriculum Editor snapshot, Interview chat + session                                                                                  |
+| production build      | 12/12 workspace builds, 13 Next routes prerendered (в `NEXT_DIST_DIR=.next-gate`)                                                                                       |
+| runtime               | web/orchestrator отвечают; desktop/mobile browser smoke и readiness `database=connected`                                                                                |
+| Docker                | image собран; non-root user пишет в attempt-root и резолвит Vitest из `/app/node_modules`                                                                               |
+| Codex                 | реальный turn выполнен: provider=codex, model=gpt-5.6-terra, CLI 0.144.3, terminal `completed`, ответ Teacher сохранён после reload                                     |
+| OpenCode              | реальный turn выполнен: provider=opencode, model=opencode/deepseek-v4-flash-free, CLI/SDK 1.18.3, sidecar health 200, terminal `completed`, ответ сохранён после reload |
+| Zed                   | attempt создан, `POST /api/exercise-attempts/:id/open` → `opened:true`, процесс Zed запущен, attempt-папка создана; визуальное подтверждение окна — за пользователем    |
 
 `npm audit` (без изменений зависимостей) показал 3 high production advisories в latest `next@16.2.12` через его pinned `postcss@8.4.31` и optional `sharp@0.34.5`, а также 1 low dev-only advisory в `esbuild` через `tsup`. `npm audit fix` без `--force` не нашёл безопасного обновления; esbuild 0.27.7 под tsup остаётся; `--force`/overrides не применялись (ошибочный downgrade next до 9.3.3).
 
+Примечания к gate 2026-08-02:
+
+- `npm run build` из корня штатно не выполнялся: запущенный пользователем production standalone-сервер держит `.next/standalone/apps/web` (EBUSY). Сборка проверена в изолированный `NEXT_DIST_DIR=.next-gate` (12/12, 13 routes). Для штатного `npm run build` нужно остановить запущенный `node server.js`.
+- Исправлен time-dependent баг выбора активной программы: seed писал `curricula.updated_at = publishedAt` активной ревизии (`2026-08-02T00:00:00Z`), что при часовом поясе/клоке «в будущем» перебивало реальную новую публикацию (`ORDER BY updated_at DESC`). Seed теперь клампит wall-clock маркер к моменту сида и само-чинит существующие строки при ре-сиде; добавлен regression-тест.
+- Typecheck-баг в `packages/database/src/snapshot-contract.ts` (fallback briefing-payload без обязательного `outOfScope`) исправлен — это блокировало typecheck всех workspaces.
+
 ## Итог по acceptance criteria
 
-| Группа                                                          | Статус                                 | Комментарий                                                   |
-| --------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------- |
-| Запуск, migrations, seed, persistence, restart                  | Выполнено                              | canonical DB сохранена и повторно проверена                   |
-| Light/dark/system, path, units, active session                  | Выполнено                              | component + E2E + ручные desktop screenshots                  |
-| Day 1: briefing → summary → Day 2                               | Выполнено                              | полный Playwright vertical slice                              |
-| Практика, Zed path, Git diff, tests, read-only correction cycle | Проверка выполняется в финальном блоке | Zed GUI и внешний smoke доберут отдельным блоком              |
-| Mastery, mistake journal, flashcard candidates/export           | Выполнено                              | summary E2E и deterministic export unit tests                 |
-| Curriculum Editor/versioning/history                            | Выполнено                              | draft/CRUD/reorder/publish/clone + snapshot E2E               |
-| Interview как отдельный workflow                                | Выполнено                              | чат-UI, setup/questions/report/reload E2E и связка с day unit |
-| Interview technical mastery evaluation                          | Частично                               | report честно оценивает полноту/форму, не correctness/mastery |
-| Mock provider                                                   | Выполнено                              | offline fast/E2E provider                                     |
-| Codex provider                                                  | Проверка выполняется в финальном блоке | финальный block заполнит реальный turn                        |
-| OpenCode provider                                               | Проверка выполняется в финальном блоке | финальный block заполнит реальный turn                        |
-| Security boundaries и запрещённые расширения                    | Выполнено                              | tests + финальный grep; Pi/IDE/AnkiConnect отсутствуют        |
-| Dependency audit                                                | Частично                               | Hono исправлен; 3 upstream Next high + 1 dev low остаются     |
+| Группа                                                          | Статус    | Комментарий                                                                                         |
+| --------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------- |
+| Запуск, migrations, seed, persistence, restart                  | Выполнено | canonical DB сохранена и повторно проверена                                                         |
+| Light/dark/system, path, units, active session                  | Выполнено | component + E2E + ручные desktop screenshots                                                        |
+| Day 1: briefing → summary → Day 2                               | Выполнено | полный Playwright vertical slice + план дня в сессии                                                |
+| День 7: interview-юнит и прохождение дня                        | Выполнено | orchestrator integration: ≥3 ответа + reportId, полный день 7                                       |
+| Практика, Zed path, Git diff, tests, read-only correction cycle | Выполнено | реальный attempt и запуск GUI Zed; коррекционный цикл в E2E                                         |
+| Mastery, mistake journal, flashcard candidates/export           | Выполнено | summary E2E и deterministic export unit tests                                                       |
+| Curriculum Editor/versioning/history                            | Выполнено | draft/CRUD/reorder/publish/clone + snapshot E2E                                                     |
+| Interview как отдельный workflow                                | Выполнено | чат-UI, setup/questions/report/reload E2E и связка с day unit                                       |
+| Interview technical mastery evaluation                          | Частично  | report честно оценивает полноту/форму, не correctness/mastery                                       |
+| Mock provider                                                   | Выполнено | offline fast/E2E provider                                                                           |
+| Codex provider                                                  | Выполнено | реальный Teacher turn: gpt-5.6-terra, terminal completed, сохранение после reload                   |
+| OpenCode provider                                               | Выполнено | реальный Teacher turn: opencode/deepseek-v4-flash-free, terminal completed, сохранение после reload |
+| Security boundaries и запрещённые расширения                    | Выполнено | tests + финальный grep; Pi/IDE/AnkiConnect отсутствуют                                              |
+| Dependency audit                                                | Частично  | Hono исправлен; 3 upstream Next high + 1 dev low остаются                                           |
 
 ## External provider matrix
 

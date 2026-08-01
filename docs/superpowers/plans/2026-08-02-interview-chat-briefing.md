@@ -68,6 +68,7 @@
 ### Task 1: Общий модуль лейблов юнитов
 
 **Files:**
+
 - Create: `apps/web/lib/unit-labels.ts`
 - Modify: `apps/web/components/dashboard-client.tsx` (удалить локальные `unitTypeLabels`/`unitStatusLabels`, импортировать из lib)
 - Test: существующие `apps/web/test/path-v2.test.tsx` (регрессия)
@@ -76,12 +77,21 @@
 
 ```ts
 export type UnitType =
-  | "briefing" | "study" | "recall" | "teacher-dialogue" | "quiz"
-  | "code-reading" | "exercise" | "review" | "interview" | "summary"
-  | "checkpoint" | "spaced-review";
+  | "briefing"
+  | "study"
+  | "recall"
+  | "teacher-dialogue"
+  | "quiz"
+  | "code-reading"
+  | "exercise"
+  | "review"
+  | "interview"
+  | "summary"
+  | "checkpoint"
+  | "spaced-review";
 
 export type UnitStatus =
-  | "locked" | "ready" | "in_progress" | "completed" | "skipped";
+  "locked" | "ready" | "in_progress" | "completed" | "skipped";
 
 export const unitTypeLabels: Record<UnitType, string> = {
   briefing: "Брифинг",
@@ -122,6 +132,7 @@ npm run test --workspace=@dlh/web -- path-v2.test.tsx
 ### Task 2: UI-компонент Textarea
 
 **Files:**
+
 - Create: `apps/web/components/ui/textarea.tsx`
 - Test: покрытие через `apps/web/test/ui-foundation.test.tsx` (добавить кейс) и компонентные тесты чата (Task 3)
 
@@ -157,6 +168,7 @@ export { Textarea };
 ### Task 3: InterviewChatView и интеграция в InterviewClient
 
 **Files:**
+
 - Create: `apps/web/components/interview-chat-view.tsx`
 - Modify: `apps/web/components/interview-client.tsx` (экспортировать тип `Interview`, заменить секцию «Transcript/Ответ/Все вопросы отвечены» на `InterviewChatView`)
 - Modify: `apps/web/test/interview-v2.test.tsx` (лейбл «Текст ответа» → «Сообщение», новые кейсы чата)
@@ -186,10 +198,10 @@ it("renders chat bubbles, typing state and a single live pending question", asyn
     target: { value: "Lexical scope определяется местом объявления функции." },
   });
   fireEvent.click(screen.getByRole("button", { name: "Отправить ответ" }));
+  expect(await screen.findByText("Интервьюер печатает…")).toBeInTheDocument();
   expect(
-    await screen.findByText("Интервьюер печатает…"),
+    await screen.findByText(/Как TypeScript narrowing/u),
   ).toBeInTheDocument();
-  expect(await screen.findByText(/Как TypeScript narrowing/u)).toBeInTheDocument();
   expect(screen.queryByText("Интервьюер печатает…")).not.toBeInTheDocument();
   expect(screen.getAllByRole("status")).toHaveLength(1);
   expect(screen.getByRole("status")).toHaveTextContent(
@@ -355,14 +367,10 @@ export function InterviewChatView({
           <div className="flex flex-col gap-3">
             <p className="text-sm leading-6 text-muted-foreground">
               Сервер сформирует честный отчёт по сохранённому transcript.
-              Техническая корректность без review не будет считаться
-              доказанной.
+              Техническая корректность без review не будет считаться доказанной.
             </p>
             <div className="flex justify-end">
-              <Button
-                onClick={onFinish}
-                disabled={action !== null}
-              >
+              <Button onClick={onFinish} disabled={action !== null}>
                 {action === "finish" ? (
                   <>
                     <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -425,6 +433,7 @@ export function InterviewChatView({
 ```
 
 Примечания:
+
 - `MessageScroller`/`Message`/`Bubble` импортируются из существующих ui-модулей (в `message-scroller.tsx` переэкспортируются примитивы, `message.tsx` — `Message*`, `bubble.tsx` — `Bubble*`; в `agent-chat.tsx` единый импорт уже работает).
 - «Отправить ответ» и «Повторить запрос» — `aria-label` на кнопке; видимый текст внутри кнопки не обязателен, но для e2e-якоря «Отправить ответ» тесты используют `getByRole("button", { name: "Отправить ответ" })`, который матчит aria-label.
 
@@ -459,8 +468,8 @@ return (
 );
 ```
 
-  - `submitAnswer` менять не нужно (логика operationId/localStorage/ошибки сохраняется). `setActionError` для recoverable-кейса остаётся «… Ответ сохранён в форме — можно повторить запрос.».
-  - Удалить неиспользуемые импорты (`Progress`, `Skeleton` оставить для loading).
+- `submitAnswer` менять не нужно (логика operationId/localStorage/ошибки сохраняется). `setActionError` для recoverable-кейса остаётся «… Ответ сохранён в форме — можно повторить запрос.».
+- Удалить неиспользуемые импорты (`Progress`, `Skeleton` оставить для loading).
 
 - [ ] **Step 5: Обновить e2e-селекторы интервью** (см. Task 8, но лейбл поменять уже здесь): в `apps/web/e2e/daily-flow.spec.ts` `getByLabel("Текст ответа")` → `getByLabel("Сообщение")`; `getByRole("button", { name: "Отправить ответ" })` остаётся.
 - [ ] **Step 6: Прогнать** `npm run test --workspace=@dlh/web -- interview-v2.test.tsx` и `npm run typecheck --workspace=@dlh/web` — зелёные.
@@ -469,6 +478,7 @@ return (
 ### Task 4: План дня и обогащённый рейл юнитов
 
 **Files:**
+
 - Create: `apps/web/components/day-plan.tsx`
 - Modify: `apps/web/components/session-client.tsx` (DayPlan под шапкой; `UnitStepList` с типом/минутами/статусом; экспортировать тип `LearnerSession`)
 - Modify: `apps/web/test/session-v2.test.tsx` (новые кейсы)
@@ -511,10 +521,7 @@ import { useState } from "react";
 import { CaretDownIcon } from "@phosphor-icons/react";
 
 import { Badge } from "@/components/ui/badge";
-import {
-  unitStatusLabels,
-  unitTypeLabels,
-} from "@/lib/unit-labels";
+import { unitStatusLabels, unitTypeLabels } from "@/lib/unit-labels";
 import type { LearnerSession } from "@/components/session-client";
 
 export function DayPlan({ session }: { session: LearnerSession }) {
@@ -557,7 +564,10 @@ export function DayPlan({ session }: { session: LearnerSession }) {
             <ul className="mt-2 flex flex-col gap-1.5 text-sm text-muted-foreground">
               {day.expectedOutcomes.map((outcome) => (
                 <li key={outcome} className="flex gap-2">
-                  <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-primary" />
+                  <span
+                    aria-hidden
+                    className="mt-2 size-1.5 shrink-0 rounded-full bg-primary"
+                  />
                   {outcome}
                 </li>
               ))}
@@ -568,7 +578,10 @@ export function DayPlan({ session }: { session: LearnerSession }) {
             <ul className="mt-2 flex flex-col gap-1.5 text-sm text-muted-foreground">
               {day.outOfScope.map((item) => (
                 <li key={item} className="flex gap-2">
-                  <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
+                  <span
+                    aria-hidden
+                    className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
+                  />
                   {item}
                 </li>
               ))}
@@ -620,8 +633,8 @@ export function DayPlan({ session }: { session: LearnerSession }) {
 </span>
 ```
 
-  - Импортировать `unitTypeLabels`, `unitStatusLabels` из `@/lib/unit-labels`; локальный `statusLabels` в `session-client.tsx` заменить на `unitStatusLabels` (он используется в трёх местах: шапка details, `UnitShell`, рейл). `unitTypeLabels` используется в шапке `UnitShell` вместо `<Badge variant="outline">{unit.type}</Badge>` (лейбл «Интервью» вместо «interview»).
-  - Убедиться, что `data-slot="unit-step"`, `aria-current`, отсутствие кликабельности сохраняются.
+- Импортировать `unitTypeLabels`, `unitStatusLabels` из `@/lib/unit-labels`; локальный `statusLabels` в `session-client.tsx` заменить на `unitStatusLabels` (он используется в трёх местах: шапка details, `UnitShell`, рейл). `unitTypeLabels` используется в шапке `UnitShell` вместо `<Badge variant="outline">{unit.type}</Badge>` (лейбл «Интервью» вместо «interview»).
+- Убедиться, что `data-slot="unit-step"`, `aria-current`, отсутствие кликабельности сохраняются.
 
 - [ ] **Step 5: Прогнать** `npm run test --workspace=@dlh/web -- session-v2.test.tsx path-v2.test.tsx core-screens.test.tsx` и typecheck — зелёные.
 - [ ] **Step 6: Commit** `git add apps/web/components/day-plan.tsx apps/web/components/session-client.tsx apps/web/test/session-v2.test.tsx && git commit -m "feat(web): show day plan in session and enrich unit rail"`
@@ -629,6 +642,7 @@ export function DayPlan({ session }: { session: LearnerSession }) {
 ### Task 5: Сервер — upsert прогресса интервью при finish
 
 **Files:**
+
 - Modify: `apps/orchestrator/src/interview-v2.ts`
 - Modify: `apps/orchestrator/test/interview-v2.integration.test.ts`
 
@@ -665,8 +679,8 @@ it("finishes standalone interviews without a learning session", async () => {
 upsertInterviewUnitProgress(state, learningSessionId, interviewId);
 ```
 
-  - `learningSessionId` — из `interview.learningSessionId` (уже есть в `InterviewRow`).
-  - Новая функция:
+- `learningSessionId` — из `interview.learningSessionId` (уже есть в `InterviewRow`).
+- Новая функция:
 
 ```ts
 function upsertInterviewUnitProgress(
@@ -713,6 +727,7 @@ function upsertInterviewUnitProgress(
 ### Task 6: Сервер — критерий интервью по ответам из БД + день 7
 
 **Files:**
+
 - Modify: `apps/orchestrator/src/learning-v2.ts`
 - Modify: `apps/orchestrator/test/learning-v2.integration.test.ts`
 
@@ -832,14 +847,12 @@ case "attempts":
   break;
 ```
 
-  - Добавить схему и хелпер (рядом с `evidenceAttemptCount`):
+- Добавить схему и хелпер (рядом с `evidenceAttemptCount`):
 
 ```ts
 const interviewStoredSetupSchema = z.object({
   schemaVersion: z.literal(1),
-  setup: z
-    .object({ conversationId: z.string().trim().min(1) })
-    .passthrough(),
+  setup: z.object({ conversationId: z.string().trim().min(1) }).passthrough(),
 });
 
 function countCompletedInterviewAnswers(
@@ -866,7 +879,7 @@ function countCompletedInterviewAnswers(
 }
 ```
 
-  - Проверить, что `z` уже импортирован в `learning-v2.ts` (да, используется для схем запросов).
+- Проверить, что `z` уже импортирован в `learning-v2.ts` (да, используется для схем запросов).
 
 - [ ] **Step 4: Прогнать** `npm run test --workspace=@dlh/orchestrator -- learning-v2.integration.test.ts interview-v2.integration.test.ts` и typecheck — зелёные. Проверить, что существующий full-day-1 тест не сломан (интервью в нём нет).
 - [ ] **Step 5: Commit** `git add apps/orchestrator/src/learning-v2.ts apps/orchestrator/test/learning-v2.integration.test.ts && git commit -m "fix(orchestrator): complete interview units from persisted answers and report"`
@@ -874,6 +887,7 @@ function countCompletedInterviewAnswers(
 ### Task 7: Клиент — состояния интервью-юнита и параметры страницы интервью
 
 **Files:**
+
 - Modify: `apps/web/components/session-client.tsx` (`InterviewUnit`, `onInterview` push)
 - Modify: `apps/web/components/interview-client.tsx` (`?sessionId=`, `?id=`)
 - Modify: `apps/web/test/session-v2.test.tsx`, `apps/web/test/interview-v2.test.tsx`
@@ -899,7 +913,7 @@ onInterview={() => {
 }}
 ```
 
-  - `InterviewUnit` (заменить функцию целиком):
+- `InterviewUnit` (заменить функцию целиком):
 
 ```tsx
 function InterviewUnit({
@@ -965,20 +979,24 @@ function InterviewUnit({
   - В рендер добавить кнопку «Вернуться к занятию» (рендерится при `sessionId` во всех ветках: setup, opening-retry, session, report):
 
 ```tsx
-{sessionId ? (
-  <Button
-    variant="outline"
-    className="self-start"
-    onClick={() => router.push(`/session?id=${encodeURIComponent(sessionId)}`)}
-  >
-    <ArrowLeftIcon aria-hidden className="size-4" />
-    Вернуться к занятию
-  </Button>
-) : null}
+{
+  sessionId ? (
+    <Button
+      variant="outline"
+      className="self-start"
+      onClick={() =>
+        router.push(`/session?id=${encodeURIComponent(sessionId)}`)
+      }
+    >
+      <ArrowLeftIcon aria-hidden className="size-4" />
+      Вернуться к занятию
+    </Button>
+  ) : null;
+}
 ```
 
-  - `ArrowLeftIcon` импортировать из `@phosphor-icons/react`.
-  - Проверить, что `startNewInterview` при `?id=` не роняет кэш: при `?id=` queryKey другой, `setQueryData` в `startInterview`/`submitAnswer`/`finishInterview` обновляет `["interview-v2-current"]` — в `?id=`-режиме обновлять и `["interview-v2", id]` (после мутаций `queryClient.setQueryData(queryKey, next)` вместо жёсткого ключа; в существующих местах заменить `["interview-v2-current"]` на `queryKey`).
+- `ArrowLeftIcon` импортировать из `@phosphor-icons/react`.
+- Проверить, что `startNewInterview` при `?id=` не роняет кэш: при `?id=` queryKey другой, `setQueryData` в `startInterview`/`submitAnswer`/`finishInterview` обновляет `["interview-v2-current"]` — в `?id=`-режиме обновлять и `["interview-v2", id]` (после мутаций `queryClient.setQueryData(queryKey, next)` вместо жёсткого ключа; в существующих местах заменить `["interview-v2-current"]` на `queryKey`).
 
 - [ ] **Step 5: Прогнать** `npm run test --workspace=@dlh/web -- session-v2.test.tsx interview-v2.test.tsx` и typecheck — зелёные.
 - [ ] **Step 6: Commit** `git add apps/web/components/session-client.tsx apps/web/components/interview-client.tsx apps/web/test/session-v2.test.tsx apps/web/test/interview-v2.test.tsx && git commit -m "feat(web): link interview unit states and session returns"`
@@ -986,6 +1004,7 @@ function InterviewUnit({
 ### Task 8: E2E — обновлённые селекторы, план дня, завершение интервью-юнита
 
 **Files:**
+
 - Modify: `apps/web/e2e/daily-flow.spec.ts`
 
 - [ ] **Step 1: Обновить тест «runs and restores the dedicated interview workflow»:**
@@ -999,12 +1018,14 @@ function InterviewUnit({
 npm run test:e2e --workspace=@dlh/web -- --grep "interview"
 ```
 
-  Ожидается: зелёный. Полный e2e-прогон — в финальном gate.
+Ожидается: зелёный. Полный e2e-прогон — в финальном gate.
+
 - [ ] **Step 4: Commit** `git add apps/web/e2e/daily-flow.spec.ts && git commit -m "test(e2e): cover chat interview, day plan and session return"`
 
 ### Task 9: Аудит зависимостей и документация
 
 **Files:**
+
 - Modify: `package-lock.json` (только если `npm audit fix` безопасно обновит esbuild/tsup)
 - Modify: `docs/acceptance-audit.md`, `docs/troubleshooting.md`, `docs/product-specification-v2.md`, `docs/design-system.md`
 
@@ -1027,6 +1048,7 @@ OPENCODE_SERVER_PASSWORD=<пароль> opencode serve --hostname 127.0.0.1 --po
 ### Task 10: Реальные проверки провайдеров и Zed (финальный блок, требует окружения)
 
 **Files:**
+
 - Modify: `docs/acceptance-audit.md` (фактические результаты)
 
 Проверки выполняются субагентом аудита в конце, с запущенным приложением:

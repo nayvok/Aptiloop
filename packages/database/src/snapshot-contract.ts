@@ -49,7 +49,7 @@ function fallbackUnitPayload(input: {
 }): UnitPayload {
   switch (input.type) {
     case "briefing":
-      return { type: "briefing", scope: [] };
+      return { type: "briefing", scope: [], outOfScope: [] };
     case "study":
       return { type: "study", body: input.description };
     case "recall":

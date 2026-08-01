@@ -1,4 +1,6 @@
 .next
+.next-*
+.superpowers
 coverage
 dist
 node_modules

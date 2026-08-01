@@ -353,7 +353,7 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
   await page.getByRole("button", { name: "Начать интервью" }).click();
 
   await expect(
-    page.locator('li[role="status"][aria-live="polite"]'),
+    page.locator('[role="status"][aria-live="polite"]'),
   ).toBeVisible();
   await page
     .getByLabel("Сообщение")

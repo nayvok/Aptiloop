@@ -383,6 +383,14 @@ describe("versioned curriculum seed", () => {
       .get();
 
     const first = seedDatabase(connection, undefined, 1_000);
+    const seededCurriculum = connection.sqlite
+      .prepare(
+        "SELECT updated_at FROM curricula WHERE id = 'curriculum-foundation'",
+      )
+      .get() as { updated_at: number };
+    // Authored release timestamps may lie in the future; the wall-clock marker
+    // used by the path's "most recently activated" selection must not.
+    expect(seededCurriculum.updated_at).toBeLessThanOrEqual(Date.now());
     const versionsBefore = connection.sqlite
       .prepare(
         `SELECT id, curriculum_id, revision, parent_version_id, status,
