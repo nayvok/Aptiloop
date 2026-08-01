@@ -2,14 +2,16 @@ import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 const root = path.resolve(import.meta.dirname, "../..");
+const webOrigin = "http://127.0.0.1:3100";
+const orchestratorOrigin = "http://127.0.0.1:8887";
 
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
-  retries: process.env.CI ? 2 : 0,
+  retries: 0,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: webOrigin,
     trace: "retain-on-failure",
   },
   projects: [
@@ -22,23 +24,32 @@ export default defineConfig({
     {
       command: "npm run dev --workspace=@dlh/orchestrator",
       cwd: root,
-      url: "http://127.0.0.1:8787/health/ready",
-      reuseExistingServer: !process.env.CI,
+      url: `${orchestratorOrigin}/health/ready`,
+      reuseExistingServer: false,
       env: {
         ...process.env,
         DATABASE_URL: ":memory:",
+        EXERCISE_ATTEMPTS_ROOT: path.join(
+          root,
+          ".data",
+          "e2e-exercise-attempts",
+        ),
         NODE_ENV: "test",
+        PORT: "8887",
+        WEB_ORIGIN: webOrigin,
       },
       timeout: 120_000,
     },
     {
       command: "npm run dev --workspace=@dlh/web",
       cwd: root,
-      url: "http://127.0.0.1:3000",
-      reuseExistingServer: !process.env.CI,
+      url: webOrigin,
+      reuseExistingServer: false,
       env: {
         ...process.env,
-        ORCHESTRATOR_URL: "http://127.0.0.1:8787",
+        NEXT_DIST_DIR: ".next-e2e",
+        ORCHESTRATOR_URL: orchestratorOrigin,
+        PORT: "3100",
       },
       timeout: 120_000,
     },

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
+import { useEffect, useState } from "react";
 import {
   ArticleIcon,
   BrainIcon,
@@ -53,9 +54,15 @@ const settingsNav = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
+  const [themeMounted, setThemeMounted] = useState(false);
   const title = titles[pathname] ?? "Dev Learning Harness";
+  const visibleTheme = themeMounted ? theme : "system";
   const nextTheme =
-    theme === "system" ? "light" : theme === "light" ? "dark" : "system";
+    visibleTheme === "system"
+      ? "light"
+      : visibleTheme === "light"
+        ? "dark"
+        : "system";
   const mobileSettings =
     pathname === "/settings/developer-tools"
       ? {
@@ -64,6 +71,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           icon: GearSixIcon,
         }
       : { href: "/settings", label: "Настройки", icon: GearSixIcon };
+
+  useEffect(() => {
+    setThemeMounted(true);
+  }, []);
 
   return (
     <div
@@ -157,7 +168,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <ProviderHealth />
             <Button
               aria-label="Переключить тему"
-              title={`Тема: ${theme === "dark" ? "тёмная" : theme === "light" ? "светлая" : "системная"}`}
+              title={`Тема: ${visibleTheme === "dark" ? "тёмная" : visibleTheme === "light" ? "светлая" : "системная"}`}
               variant="ghost"
               size="icon"
               onClick={() => setTheme(nextTheme)}
