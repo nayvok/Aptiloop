@@ -66,6 +66,17 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   const sessionId = new URL(page.url()).searchParams.get("id");
   if (!sessionId) throw new Error("Session ID is missing from the guided flow");
 
+  await expect(page.getByText("План дня", { exact: true })).toBeVisible();
+  await expect(page.getByText("Темы", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Ожидаемые результаты", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Вне дня", { exact: true })).toBeVisible();
+  await expect(page.getByText("Юниты", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Брифинг · 6 мин", { exact: true }),
+  ).toBeVisible();
+
   await startUnit(page);
   await checkChecklist(page, 3);
   await page.getByLabel("Подтверждаю: цели и границы дня понятны").check();
@@ -365,6 +376,10 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
   await page.reload();
   await expect(page.getByText("Отчёт по интервью")).toBeVisible();
   await expect(page.getByText("100%")).toBeVisible();
+
+  await page.goto("/interview?sessionId=demo-session");
+  await page.getByRole("button", { name: "Вернуться к занятию" }).click();
+  await expect(page).toHaveURL(/\/session\?id=demo-session/u);
 });
 
 async function startUnit(page: Page): Promise<void> {

@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowLeftIcon,
   ArrowClockwiseIcon,
   CheckCircleIcon,
   ChatCircleDotsIcon,
 } from "@phosphor-icons/react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
 
 import { api, ApiError } from "@/lib/api";
@@ -198,10 +200,25 @@ const fieldClassName =
   "min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
 
 export function InterviewClient() {
+  const params = useSearchParams();
+  const router = useRouter();
   const queryClient = useQueryClient();
+  const requestedInterviewId = params.get("id")?.trim() || null;
+  const sessionId = params.get("sessionId")?.trim() || null;
+  const queryKey = requestedInterviewId
+    ? ["interview-v2", requestedInterviewId]
+    : ["interview-v2-current"];
   const interviewQuery = useQuery({
-    queryKey: ["interview-v2-current"],
-    queryFn: readCurrentInterview,
+    queryKey,
+    queryFn: async () =>
+      requestedInterviewId
+        ? parsePayload(
+            interviewSchema,
+            await api<unknown>(
+              `/interviews/v2/${encodeURIComponent(requestedInterviewId)}`,
+            ),
+          )
+        : readCurrentInterview(),
     retry: false,
   });
   const [topicsInput, setTopicsInput] = useState("JavaScript, TypeScript");
@@ -271,7 +288,7 @@ export function InterviewClient() {
       );
       writeStorage(latestInterviewKey, next.id);
       if (next.status !== "setup") removeStorage(startDraftKey);
-      queryClient.setQueryData(["interview-v2-current"], next);
+      queryClient.setQueryData(queryKey, next);
     } catch (error) {
       setActionError(
         error instanceof Error ? error.message : "Не удалось начать интервью.",
@@ -312,7 +329,7 @@ export function InterviewClient() {
       );
       removeStorage(pendingAnswerKey);
       setAnswer("");
-      queryClient.setQueryData(["interview-v2-current"], next);
+      queryClient.setQueryData(queryKey, next);
     } catch (error) {
       setActionError(
         error instanceof Error
@@ -340,7 +357,7 @@ export function InterviewClient() {
         ),
       );
       writeStorage(latestInterviewKey, response.interview.id);
-      queryClient.setQueryData(["interview-v2-current"], response.interview);
+      queryClient.setQueryData(queryKey, response.interview);
     } catch (error) {
       setActionError(
         error instanceof Error
@@ -358,8 +375,21 @@ export function InterviewClient() {
     removeStorage(pendingAnswerKey);
     setAnswer("");
     setActionError(null);
-    queryClient.setQueryData(["interview-v2-current"], null);
+    queryClient.setQueryData(queryKey, null);
   }
+
+  const returnToSession = sessionId ? (
+    <Button
+      variant="outline"
+      className="self-start"
+      onClick={() =>
+        router.push(`/session?id=${encodeURIComponent(sessionId)}`)
+      }
+    >
+      <ArrowLeftIcon aria-hidden className="size-4" />
+      Вернуться к занятию
+    </Button>
+  ) : null;
 
   if (interviewQuery.isLoading) {
     return (
@@ -391,6 +421,7 @@ export function InterviewClient() {
   if (!interview) {
     return (
       <div data-slot="interview-setup" className="flex flex-col gap-6">
+        {returnToSession}
         <PageHeader
           title="Техническое интервью"
           description="Настрой темы и формат. Интервьюер задаёт по одному вопросу; отчёт фиксирует evidence, но не выдумывает техническую оценку."
@@ -484,7 +515,11 @@ export function InterviewClient() {
 
   if (interview.status === "completed" && interview.report) {
     return (
-      <InterviewReportView interview={interview} onNew={startNewInterview} />
+      <InterviewReportView
+        interview={interview}
+        onNew={startNewInterview}
+        returnToSession={returnToSession}
+      />
     );
   }
 
@@ -492,6 +527,7 @@ export function InterviewClient() {
     const draft = readStorage(startDraftKey, startDraftSchema);
     return (
       <div data-slot="interview-opening-retry" className="flex flex-col gap-6">
+        {returnToSession}
         <PageHeader
           title="Техническое интервью"
           description="Настройка сохранена, но первый вопрос ещё не получен."
@@ -532,6 +568,7 @@ export function InterviewClient() {
 
   return (
     <div data-slot="interview-session" className="flex flex-col gap-6">
+      {returnToSession}
       <PageHeader
         title="Техническое интервью"
         description="Отвечай на текущий вопрос. Transcript и прогресс сохраняются сервером после каждого шага."
@@ -559,15 +596,18 @@ export function InterviewClient() {
 function InterviewReportView({
   interview,
   onNew,
+  returnToSession,
 }: {
   interview: Interview;
   onNew(): void;
+  returnToSession?: ReactNode;
 }) {
   const report = interview.report;
   if (!report) return null;
   const completionPercent = Math.round(report.metrics.completionRate * 100);
   return (
     <div data-slot="interview-report" className="flex flex-col gap-6">
+      {returnToSession}
       <PageHeader
         title="Отчёт по интервью"
         description={report.summary}

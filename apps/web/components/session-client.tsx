@@ -755,7 +755,22 @@ export function SessionClient() {
                   `/exercise?sessionId=${encodeURIComponent(session.id)}`,
                 )
               }
-              onInterview={() => router.push("/interview")}
+              onInterview={() => {
+                const payload = focusedProgress.payload;
+                const interviewId =
+                  payload.type === "interview"
+                    ? payload.interviewSessionId
+                    : null;
+                if (interviewId) {
+                  router.push(
+                    `/interview?id=${encodeURIComponent(interviewId)}`,
+                  );
+                } else {
+                  router.push(
+                    `/interview?sessionId=${encodeURIComponent(session.id)}`,
+                  );
+                }
+              }}
             />
           )}
         </UnitShell>
@@ -1852,7 +1867,16 @@ function ExerciseHandoffUnit({ unit, progress, onExercise }: UnitBodyProps) {
   );
 }
 
-function InterviewUnit({ unit, progress, onInterview }: UnitBodyProps) {
+function InterviewUnit({
+  unit,
+  progress,
+  pending,
+  patchUnit,
+  onInterview,
+}: UnitBodyProps) {
+  const payload =
+    progress.payload.type === "interview" ? progress.payload : null;
+  const hasReport = Boolean(payload?.reportId);
   return (
     <div className="flex flex-col gap-6">
       {unit.payload.type === "interview" ? (
@@ -1860,6 +1884,31 @@ function InterviewUnit({ unit, progress, onInterview }: UnitBodyProps) {
       ) : null}
       {progress.status === "completed" ? (
         <CompletedNote />
+      ) : hasReport ? (
+        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="max-w-[60ch] text-sm leading-6 text-muted-foreground">
+            Отчёт по интервью сохранён. Открой его, затем заверши юнит.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={onInterview}>
+              Открыть отчёт
+              <ArrowRightIcon aria-hidden />
+            </Button>
+            <Button
+              disabled={pending}
+              onClick={() =>
+                void patchUnit(unit, progress, "completed", {
+                  type: "interview",
+                  interviewSessionId: payload?.interviewSessionId ?? null,
+                  reportId: payload?.reportId ?? null,
+                })
+              }
+            >
+              Завершить юнит
+              <CheckIcon aria-hidden />
+            </Button>
+          </div>
+        </div>
       ) : (
         <div className="flex justify-end">
           <Button onClick={onInterview}>

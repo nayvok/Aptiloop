@@ -493,6 +493,54 @@ describe("guided versioned session", () => {
     expect(steps[0]).toHaveTextContent("Доступно");
   });
 
+  it("opens a new interview from its unit with a return session id", async () => {
+    apiMock.mockResolvedValue({ session: makeSession("interview") });
+    renderWithQuery(<SessionClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Открыть интервью" }),
+    );
+
+    expect(pushMock).toHaveBeenCalledWith("/interview?sessionId=session-v2");
+  });
+
+  it("opens a saved interview report and completes its unit", async () => {
+    const reportProgress = {
+      type: "interview" as const,
+      interviewSessionId: "interview-1",
+      reportId: "report-1",
+    };
+    const active = makeSession("interview", "in_progress", reportProgress);
+    const completed = replaceProgress(active, "completed", reportProgress);
+    apiMock
+      .mockResolvedValueOnce({ session: active })
+      .mockResolvedValueOnce({ session: completed });
+    renderWithQuery(<SessionClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Открыть отчёт" }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/interview?id=interview-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Завершить юнит" }));
+    await vi.waitFor(() => {
+      expect(apiMock).toHaveBeenLastCalledWith(
+        "/learning/sessions/v2/session-v2/units/unit-interview",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "completed",
+            payload: reportProgress,
+            operationId: "operation-1",
+          }),
+        }),
+      );
+    });
+    expect(
+      await screen.findByText("Юнит завершён и сохранён"),
+    ).toBeInTheDocument();
+  });
+
   it("resolves the current session when the URL has no id and shows Path when it is null", async () => {
     searchState.value = "";
     apiMock.mockResolvedValue({ session: null });

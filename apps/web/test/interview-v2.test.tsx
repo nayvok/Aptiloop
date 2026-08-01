@@ -5,9 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InterviewClient } from "@/components/interview-client";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
+const { apiMock, pushMock, searchState } = vi.hoisted(() => ({
+  apiMock: vi.fn(),
+  pushMock: vi.fn(),
+  searchState: { value: "" },
+}));
 
 vi.mock("@/lib/api", () => ({ api: apiMock }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: pushMock }),
+  useSearchParams: () => new URLSearchParams(searchState.value),
+}));
 
 const now = "2026-08-01T00:00:00.000Z";
 
@@ -144,6 +153,8 @@ function renderWithQuery(children: ReactNode) {
 
 beforeEach(() => {
   apiMock.mockReset();
+  pushMock.mockReset();
+  searchState.value = "";
   window.localStorage.clear();
   let id = 0;
   Object.defineProperty(globalThis, "crypto", {
@@ -410,5 +421,61 @@ describe("versioned interview workflow", () => {
     expect(
       await screen.findByRole("button", { name: "Повторить запрос" }),
     ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["setup", { interview: null }],
+    [
+      "opening retry",
+      { interview: interviewFixture({ status: "setup", transcript: [] }) },
+    ],
+    ["session", { interview: interviewFixture() }],
+    [
+      "report",
+      {
+        interview: interviewFixture({
+          status: "completed",
+          transcript: transcriptComplete(),
+          report: reportFixture(),
+        }),
+      },
+    ],
+  ])("returns to the learning session from %s", async (_state, response) => {
+    searchState.value = "sessionId=session-1";
+    apiMock.mockResolvedValueOnce(response);
+    renderWithQuery(<InterviewClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Вернуться к занятию" }),
+    );
+
+    expect(pushMock).toHaveBeenCalledWith("/session?id=session-1");
+  });
+
+  it("loads a requested saved interview and renders its report", async () => {
+    searchState.value = "id=interview-9";
+    apiMock.mockResolvedValueOnce(
+      interviewFixture({
+        status: "completed",
+        transcript: transcriptComplete(),
+        report: { ...reportFixture(), interviewId: "interview-9" },
+      }),
+    );
+    renderWithQuery(<InterviewClient />);
+
+    expect(await screen.findByText("Отчёт по интервью")).toBeInTheDocument();
+    expect(apiMock).toHaveBeenCalledWith("/interviews/v2/interview-9");
+  });
+
+  it("shows a retryable error for an invalid requested interview id", async () => {
+    searchState.value = "id=missing-interview";
+    apiMock.mockRejectedValue(new Error("Interview not found"));
+    renderWithQuery(<InterviewClient />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Interview not found",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+    await vi.waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
   });
 });
