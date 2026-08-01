@@ -14,6 +14,8 @@ import {
 import { z } from "zod";
 
 import { api, streamAgent } from "@/lib/api";
+import { unitStatusLabels, unitTypeLabels } from "@/lib/unit-labels";
+import { DayPlan } from "@/components/day-plan";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
@@ -452,18 +454,10 @@ const summaryResponseSchema = z
   })
   .passthrough();
 
-type LearnerSession = z.infer<typeof learnerSessionSchema>;
+export type LearnerSession = z.infer<typeof learnerSessionSchema>;
 type LearnerUnit = z.infer<typeof learnerUnitSchema>;
 type UnitProgress = z.infer<typeof unitProgressSchema>;
 type ProgressPayload = z.infer<typeof progressPayloadSchema>;
-
-const statusLabels: Record<z.infer<typeof unitStatusSchema>, string> = {
-  locked: "Заблокировано",
-  ready: "Доступно",
-  in_progress: "Сейчас",
-  completed: "Готово",
-  skipped: "Пропущено",
-};
 
 function rejectProtectedFields(value: unknown, path = "response"): void {
   if (Array.isArray(value)) {
@@ -676,6 +670,8 @@ export function SessionClient() {
         }
       />
 
+      <DayPlan session={session} />
+
       {mutationError ? (
         <div
           role="alert"
@@ -709,7 +705,7 @@ export function SessionClient() {
                 </span>
               </span>
               <Badge variant="secondary">
-                {statusLabels[focusedProgress.status]}
+                {unitStatusLabels[focusedProgress.status]}
               </Badge>
             </summary>
             <div className="hidden max-h-72 overflow-y-auto border-t border-border p-2 group-open:block md:block md:max-h-none md:overflow-visible md:border-0 md:p-0">
@@ -803,7 +799,8 @@ function UnitStepList({
             <span className="flex min-w-0 flex-col gap-1">
               <span className="block font-medium leading-5">{unit.title}</span>
               <span className="block text-xs text-muted-foreground">
-                {statusLabels[status]}
+                {unitTypeLabels[unit.type]} · {unit.estimatedMinutes} мин ·{" "}
+                {unitStatusLabels[status]}
               </span>
             </span>
           </li>
@@ -834,7 +831,7 @@ function UnitShell({
       >
         <div className="flex min-w-0 flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{unit.type}</Badge>
+            <Badge variant="outline">{unitTypeLabels[unit.type]}</Badge>
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <ClockIcon aria-hidden />
               {unit.estimatedMinutes} мин
@@ -850,7 +847,7 @@ function UnitShell({
         <Badge
           variant={progress.status === "completed" ? "success" : "secondary"}
         >
-          {statusLabels[progress.status]}
+          {unitStatusLabels[progress.status]}
         </Badge>
       </header>
       <div data-slot="unit-shell-content" className="p-4 md:p-6">

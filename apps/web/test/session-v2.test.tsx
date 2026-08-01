@@ -463,6 +463,36 @@ afterEach(() => {
 });
 
 describe("guided versioned session", () => {
+  it("shows the collapsible day plan with unique labels above the rail", async () => {
+    apiMock.mockResolvedValue({ session: makeSession("briefing") });
+    renderWithQuery(<SessionClient />);
+
+    expect(await screen.findByText("План дня")).toBeVisible();
+    const plan = document.querySelector('[data-slot="day-plan"]');
+    expect(plan).toHaveTextContent("Цель");
+    expect(plan).toHaveTextContent("Построить точную причинную модель");
+    expect(plan).toHaveTextContent("Темы");
+    expect(plan).toHaveTextContent("Ожидаемые результаты");
+    expect(plan).toHaveTextContent("Вне дня");
+    expect(plan).toHaveTextContent("Юниты");
+    expect(plan).toHaveTextContent("Брифинг · 10 мин");
+    expect(plan).not.toHaveTextContent("Что нужно сделать");
+    expect(plan).not.toHaveTextContent("Начать юнит");
+    expect(screen.getAllByText("Что нужно сделать")).toHaveLength(1);
+  });
+
+  it("enriches the unit rail with Russian type, minutes and status", async () => {
+    apiMock.mockResolvedValue({ session: makeSession("briefing", "ready") });
+    renderWithQuery(<SessionClient />);
+
+    await screen.findByText("План дня");
+    const steps = document.querySelectorAll('[data-slot="unit-step"]');
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toHaveTextContent("Брифинг");
+    expect(steps[0]).toHaveTextContent("10 мин");
+    expect(steps[0]).toHaveTextContent("Доступно");
+  });
+
   it("resolves the current session when the URL has no id and shows Path when it is null", async () => {
     searchState.value = "";
     apiMock.mockResolvedValue({ session: null });
