@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,13 +85,57 @@ describe("core learning screens", () => {
     expect(screen.getByText("3")).toBeInTheDocument();
   });
 
-  it("reveals a diff before allowing a structured review", async () => {
-    apiMock.mockImplementation((requestPath: string) => {
-      if (requestPath.includes("/diff")) {
-        return Promise.resolve({ diff: "+ learner change", changed: true });
-      }
-      if (requestPath.includes("/reviews")) {
-        return Promise.resolve({
+  it("restores persisted practice evidence after mounting", async () => {
+    apiMock.mockResolvedValue({
+      sessionId: "session-1",
+      exerciseUnitId: "unit-exercise",
+      reviewUnitId: "unit-review",
+      exerciseUnitProgress: {
+        status: "in_progress",
+        payload: {
+          type: "exercise",
+          attemptId: "attempt-1",
+          latestTestRunId: "test-1",
+          latestReviewId: null,
+        },
+      },
+      reviewUnitProgress: {
+        status: "locked",
+        payload: {
+          type: "review",
+          reviewId: null,
+          reviewStatus: null,
+          reviewedDiffHash: null,
+        },
+      },
+      id: "exercise-1",
+      title: "Normalize profile",
+      prompt: "Нормализуй unknown без any",
+      difficulty: "easy",
+      estimatedMinutes: 45,
+      criteria: ["Проверены поля"],
+      constraints: ["Без any"],
+      topics: ["unknown"],
+      workspacePath: "C:/attempts/attempt-1",
+      attempt: {
+        id: "attempt-1",
+        changed: true,
+        testsRun: true,
+        diff: {
+          patch: "+ learner change",
+          changed: true,
+          truncated: false,
+        },
+        latestTestRun: {
+          id: "test-1",
+          operationId: "test-operation-1",
+          status: "passed",
+          exitCode: 0,
+          output: "all tests passed",
+          workspaceCurrent: true,
+        },
+        latestReview: {
+          id: "review-1",
           status: "changes_requested",
           summary: "Проверь пустой массив",
           findings: [
@@ -103,30 +147,16 @@ describe("core learning screens", () => {
             },
           ],
           strengths: ["Чистая функция"],
-        });
-      }
-      return Promise.resolve({
-        id: "exercise-1",
-        title: "Normalize profile",
-        prompt: "Нормализуй unknown без any",
-        difficulty: "easy",
-        estimatedMinutes: 45,
-        criteria: ["Проверены поля"],
-        constraints: ["Без any"],
-        topics: ["unknown"],
-        workspacePath: "workspaces/exercises/week-01/day-01/normalize-profile",
-        attempt: { id: "attempt-1", changed: false, testsRun: false },
-      });
+        },
+      },
     });
 
     renderWithQuery(<ExerciseClient />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Показать Git diff" }),
-    );
     expect(await screen.findByText("+ learner change")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Запросить review" }));
+    expect(screen.getByText(/all tests passed/u)).toBeInTheDocument();
+    expect(screen.getByText("Проверь пустой массив")).toBeInTheDocument();
     expect(
-      await screen.findByText("Проверь пустой массив"),
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: "Запросить review" }),
+    ).toBeDisabled();
   });
 });

@@ -121,10 +121,10 @@ describe("practice execution and reviewer boundaries", () => {
     const exercise = (await exerciseResponse.json()) as Record<
       string,
       unknown
-    > & { id: string; criteria: string[]; workspacePath: string };
+    > & { id: string; criteria: string[]; workspacePath: string | null };
     expect(exercise).toMatchObject({
       id: "exercise-w1d1-normalize-profile-v2",
-      workspacePath: "workspaces/exercises/week-01/day-01/normalize-profile",
+      workspacePath: null,
     });
     expect(exercise.criteria.length).toBeGreaterThan(0);
     expect(exercise).not.toHaveProperty("referenceAnswer");

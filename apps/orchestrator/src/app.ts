@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { lstat, mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -112,6 +112,13 @@ interface TestRunRecord {
   durationMs: number | null;
   startedAt: number;
   completedAt: number | null;
+}
+
+interface ReviewRecord {
+  id: string;
+  status: string;
+  resultJson: string;
+  createdAt: number;
 }
 
 interface ProviderSessionRecord {
@@ -617,12 +624,21 @@ export function createApp(options: AppOptions = {}) {
     if (!sessionId) throw new Error("No active learning session");
     const resolved = await resolveExerciseContext(state, sessionId);
     const { exercise } = resolved;
+    const versioned = await readVersionedExerciseProgress(state, sessionId);
     const attempt = findAttemptByExercise(
       state.connection,
       resolved.sessionId,
       exercise.templateExerciseId,
     );
+    const attemptEvidence = attempt
+      ? await readAttemptEvidence(state.connection, attempt)
+      : null;
     return context.json({
+      sessionId: resolved.sessionId,
+      exerciseUnitId: versioned?.exerciseUnitId ?? null,
+      reviewUnitId: versioned?.reviewUnitId ?? null,
+      exerciseUnitProgress: versioned?.exerciseUnitProgress ?? null,
+      reviewUnitProgress: versioned?.reviewUnitProgress ?? null,
       id: exercise.id,
       title: exercise.title,
       prompt: exercise.prompt,
@@ -631,13 +647,24 @@ export function createApp(options: AppOptions = {}) {
       criteria: exercise.criteria,
       constraints: exercise.constraints,
       topics: exercise.topics,
-      workspacePath: exercise.workspacePath,
+      // A versioned session only reveals the server-created isolated attempt
+      // path. The trusted template path remains an implementation detail.
+      workspacePath: versioned
+        ? (attempt?.workspacePath ?? null)
+        : exercise.workspacePath,
       ...(attempt
         ? {
             attempt: {
               id: attempt.id,
-              changed: false,
-              testsRun: hasTestRun(state.connection, attempt.id),
+              changed: attemptEvidence?.diff.changed ?? false,
+              testsRun: Boolean(attemptEvidence?.latestTestRun),
+              diff: attemptEvidence?.diff ?? {
+                patch: "",
+                changed: false,
+                truncated: false,
+              },
+              latestTestRun: attemptEvidence?.latestTestRun ?? null,
+              latestReview: attemptEvidence?.latestReview ?? null,
             },
           }
         : {}),
@@ -821,9 +848,19 @@ export function createApp(options: AppOptions = {}) {
       );
     }
     const latestTest = findLatestTestRun(state.connection, attempt.id);
-    if (!latestTest || latestTest.status !== "passed") {
+    if (
+      !latestTest ||
+      latestTest.status !== "passed" ||
+      (await workspaceChangedAfter(
+        attempt.workspacePath,
+        latestTest.completedAt,
+      ))
+    ) {
       return context.json(
-        { error: "Review requires the latest test run to pass" },
+        {
+          error:
+            "Review requires a passing test run after the latest learner edit",
+        },
         409,
       );
     }
@@ -1166,15 +1203,148 @@ function requireAttempt(
   return attempt;
 }
 
-function hasTestRun(
+async function readVersionedExerciseProgress(
+  state: AppState,
+  sessionId: string,
+): Promise<{
+  exerciseUnitId: string;
+  reviewUnitId: string | null;
+  exerciseUnitProgress: {
+    status: string;
+    payload: unknown;
+  };
+  reviewUnitProgress: { status: string; payload: unknown } | null;
+} | null> {
+  const hasSnapshot = Boolean(
+    state.connection.sqlite
+      .prepare("SELECT 1 FROM session_snapshots WHERE session_id = ? LIMIT 1")
+      .get(sessionId),
+  );
+  if (!hasSnapshot) return null;
+
+  const detail = await state.repository.getVersionedSession(sessionId);
+  const exerciseUnit = detail.snapshot.units.find(
+    (unit) => unit.type === "exercise",
+  );
+  if (!exerciseUnit) return null;
+  const exerciseProgress = detail.unitProgress.find(
+    (progress) => progress.unitId === exerciseUnit.id,
+  );
+  if (!exerciseProgress) return null;
+  const reviewUnit = detail.snapshot.units.find(
+    (unit) =>
+      unit.payload.type === "review" &&
+      unit.payload.exerciseUnitId === exerciseUnit.stableId,
+  );
+  const reviewProgress = reviewUnit
+    ? detail.unitProgress.find((progress) => progress.unitId === reviewUnit.id)
+    : undefined;
+  return {
+    exerciseUnitId: exerciseUnit.id,
+    reviewUnitId: reviewUnit?.id ?? null,
+    exerciseUnitProgress: {
+      status: exerciseProgress.status,
+      payload: exerciseProgress.payload,
+    },
+    reviewUnitProgress: reviewProgress
+      ? { status: reviewProgress.status, payload: reviewProgress.payload }
+      : null,
+  };
+}
+
+async function readAttemptEvidence(
+  connection: DatabaseConnection,
+  attempt: AttemptRecord,
+) {
+  const currentDiff = await getExerciseDiff(attempt.workspacePath, {
+    expectedBaselineHash: attempt.baselineHash,
+  });
+  const latestTest = findLatestTestRun(connection, attempt.id);
+  const testFresh = latestTest
+    ? !(await workspaceChangedAfter(
+        attempt.workspacePath,
+        latestTest.completedAt,
+      ))
+    : false;
+  const latestReviewRecord = findLatestReview(connection, attempt.id);
+  const reviewIsCurrent = Boolean(
+    latestReviewRecord &&
+    latestTest &&
+    testFresh &&
+    latestReviewRecord.createdAt >= latestTest.startedAt,
+  );
+  let latestReview: {
+    id: string;
+    status: ReviewResult["status"];
+    summary: string;
+    findings: ReviewResult["findings"];
+    strengths: string[];
+  } | null = null;
+  if (latestReviewRecord && reviewIsCurrent) {
+    try {
+      const parsed = await parseReviewResult(latestReviewRecord.resultJson);
+      if (parsed.status === latestReviewRecord.status) {
+        latestReview = {
+          id: latestReviewRecord.id,
+          status: parsed.status,
+          summary: parsed.summary,
+          findings: parsed.findings,
+          strengths: parsed.strengths,
+        };
+      }
+    } catch {
+      // Older rows may predate the structured review contract. They remain in
+      // SQLite for audit, but are not exposed as trusted learner evidence.
+    }
+  }
+  return {
+    diff: {
+      patch: currentDiff.patch,
+      changed: currentDiff.hasChanges,
+      truncated: currentDiff.truncated,
+    },
+    latestTestRun: latestTest
+      ? { ...toTestRunResponse(latestTest), workspaceCurrent: testFresh }
+      : null,
+    latestReview,
+  };
+}
+
+function findLatestReview(
   connection: DatabaseConnection,
   attemptId: string,
-): boolean {
-  return Boolean(
-    connection.sqlite
-      .prepare("SELECT 1 FROM test_runs WHERE exercise_attempt_id = ? LIMIT 1")
-      .get(attemptId),
-  );
+): ReviewRecord | undefined {
+  return connection.sqlite
+    .prepare(
+      `SELECT id, status, result_json AS resultJson, created_at AS createdAt
+       FROM reviews WHERE exercise_attempt_id = ?
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(attemptId) as ReviewRecord | undefined;
+}
+
+async function workspaceChangedAfter(
+  workspacePath: string,
+  completedAt: number | null,
+): Promise<boolean> {
+  if (completedAt === null) return true;
+  return (await latestLearnerFileMtime(workspacePath)) > completedAt;
+}
+
+async function latestLearnerFileMtime(directory: string): Promise<number> {
+  let latest = 0;
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.name === ".git" || entry.name === "node_modules") continue;
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) {
+      latest = Math.max(latest, await latestLearnerFileMtime(entryPath));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    latest = Math.max(latest, (await lstat(entryPath)).mtimeMs);
+  }
+  return latest;
 }
 
 function findTestRunByOperation(
