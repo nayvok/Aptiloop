@@ -334,6 +334,11 @@ export function registerInterviewV2Routes(
            SET status = 'completed', updated_at = ? WHERE id = ?`,
         )
         .run(now, stored.setup.conversationId);
+      upsertInterviewUnitProgress(
+        state,
+        interview.learningSessionId,
+        interview.id,
+      );
       state.connection.sqlite.exec("COMMIT");
     } catch (error) {
       state.connection.sqlite.exec("ROLLBACK");
@@ -344,6 +349,43 @@ export function registerInterviewV2Routes(
       report,
     });
   });
+}
+
+function upsertInterviewUnitProgress(
+  state: InterviewV2State,
+  learningSessionId: string | null,
+  interviewId: string,
+): void {
+  if (!learningSessionId) return;
+  const unit = state.connection.sqlite
+    .prepare(
+      `SELECT unit_id AS unitId FROM unit_progress
+       WHERE session_id = ? AND unit_type = 'interview'
+       ORDER BY rowid ASC LIMIT 1`,
+    )
+    .get(learningSessionId) as { unitId: string } | undefined;
+  if (!unit) return;
+  state.connection.sqlite
+    .prepare(
+      `UPDATE unit_progress
+       SET progress_json = ?, updated_at = ?
+       WHERE session_id = ? AND unit_id = ?
+         AND EXISTS (
+           SELECT 1 FROM learning_sessions session
+           WHERE session.id = unit_progress.session_id
+             AND session.status = 'active'
+         )`,
+    )
+    .run(
+      JSON.stringify({
+        type: "interview",
+        interviewSessionId: interviewId,
+        reportId: interviewId,
+      }),
+      Date.now(),
+      learningSessionId,
+      unit.unitId,
+    );
 }
 
 async function ensureOpeningQuestion(

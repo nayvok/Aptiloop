@@ -144,6 +144,100 @@ class FailingInterviewer implements AgentProvider {
 }
 
 describe("restart-safe interview v2", () => {
+  it("writes interview unit progress into the linked learning session on finish", async () => {
+    const { state } = createState();
+    const app = createTestApp(state);
+    const now = Date.now();
+    state.connection.sqlite
+      .prepare(
+        `INSERT INTO curriculum_days
+         (id, slug, week_number, day_number, title, summary,
+          estimated_minutes, goals_json, sources_json, created_at, updated_at)
+         VALUES ('interview-test-day', 'interview-test-day', 1, 1, 'Test',
+                 'Test', 1, '[]', '[]', ?, ?)`,
+      )
+      .run(now, now);
+    state.connection.sqlite
+      .prepare(
+        `INSERT INTO learning_sessions
+         (id, day_id, status, current_step, idempotency_key, started_at,
+          completed_at, updated_at, curriculum_day_v2_id)
+         VALUES ('session-interview-1', 'interview-test-day', 'active',
+                 'unit-interview-1', 'session-interview-operation', ?, NULL,
+                 ?, NULL)`,
+      )
+      .run(now, now);
+    state.connection.sqlite
+      .prepare(
+        `INSERT INTO unit_progress
+         (id, session_id, unit_id, unit_type, status, progress_json,
+          started_at, completed_at, skipped_at, updated_at)
+         VALUES ('progress-interview-1', 'session-interview-1',
+                 'unit-interview-1', 'interview', 'in_progress',
+                 '{"type":"interview","interviewSessionId":null,"reportId":null}',
+                 ?, NULL, NULL, ?)`,
+      )
+      .run(now, now);
+
+    const started = await request(app, "/api/interviews/v2", {
+      operationId: "setup-linked",
+      topics: ["closures"],
+      difficulty: "interview-ready",
+      questionCount: 3,
+    });
+    expect(started.status).toBe(201);
+    const { id } = (await started.json()) as { id: string };
+    for (const [index, operationId] of [
+      "linked-answer-0001",
+      "linked-answer-0002",
+      "linked-answer-0003",
+    ].entries()) {
+      const answered = await request(app, `/api/interviews/v2/${id}/answers`, {
+        operationId,
+        answer: `Ответ ${index + 1} о замыканиях и лексическом окружении.`,
+      });
+      expect(answered.status).toBe(200);
+    }
+
+    const finished = await request(app, `/api/interviews/v2/${id}/finish`, {
+      operationId: "finish-linked",
+    });
+    expect(finished.status).toBe(200);
+    const progress = state.connection.sqlite
+      .prepare(
+        `SELECT status, progress_json AS progressJson FROM unit_progress
+         WHERE session_id = 'session-interview-1' AND unit_id = 'unit-interview-1'`,
+      )
+      .get() as { status: string; progressJson: string };
+    expect(progress.status).toBe("in_progress");
+    expect(JSON.parse(progress.progressJson)).toEqual({
+      type: "interview",
+      interviewSessionId: id,
+      reportId: id,
+    });
+  });
+
+  it("finishes standalone interviews without a learning session", async () => {
+    const { state } = createState();
+    const app = createTestApp(state);
+    const started = await request(app, "/api/interviews/v2", {
+      operationId: "setup-standalone",
+      topics: ["closures"],
+      difficulty: "foundation",
+      questionCount: 1,
+    });
+    const { id } = (await started.json()) as { id: string };
+    await request(app, `/api/interviews/v2/${id}/answers`, {
+      operationId: "answer-standalone",
+      answer: "Замыкание сохраняет лексическое окружение функции.",
+    });
+
+    const finished = await request(app, `/api/interviews/v2/${id}/finish`, {
+      operationId: "finish-standalone",
+    });
+    expect(finished.status).toBe(200);
+  });
+
   it("persists setup, one-at-a-time questions, answers, report and restart reads", async () => {
     const { state, root } = createState();
     const app = createTestApp(state);
