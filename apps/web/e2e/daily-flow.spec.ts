@@ -1,4 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -73,10 +78,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
       4,
     ],
     ["Объекты сравниваются и мутируют через ссылки.", 3],
-    [
-      "Spread копирует верхний уровень; structuredClone имеет ограничения.",
-      4,
-    ],
+    ["Spread копирует верхний уровень; structuredClone имеет ограничения.", 4],
   ] as const) {
     await startUnit(page);
     await checkChecklist(page, checklistCount);
@@ -229,6 +231,120 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   ).toBeVisible();
 });
 
+test("publishes a curriculum graph and keeps an active session on its original revision", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto("/settings/curriculum");
+  await page.getByText("Новая отдельная программа").click();
+  await page.getByLabel("ID программы").fill("e2e-curriculum");
+  await page.getByLabel("Slug").fill("a-e2e-curriculum");
+  await page.getByLabel("Название программы").fill("E2E Curriculum");
+  await page.getByLabel("Название ревизии").fill("E2E Revision");
+  await page.getByRole("button", { name: "Создать черновик" }).click();
+
+  await expect(page.getByText("В черновике пока нет недель")).toBeVisible();
+  await page.getByRole("button", { name: "Добавить неделю" }).click();
+  const weekForm = page.getByRole("form", { name: "Добавить неделю" });
+  await weekForm.getByLabel("Стабильный ID").fill("e2e-week");
+  await weekForm.getByLabel("Название").fill("E2E Week");
+  await weekForm.getByRole("button", { name: "Добавить неделю" }).click();
+  await expect(page.getByText("E2E Week")).toBeVisible();
+
+  await page.getByRole("button", { name: "Добавить день" }).click();
+  const dayForm = page.getByRole("form", { name: "Добавить день" });
+  await dayForm.getByLabel("Стабильный ID").fill("e2e-day");
+  await dayForm.getByLabel("Название").fill("E2E Day");
+  await dayForm.getByLabel("Цель").fill("Проверить authoring snapshot");
+  await dayForm.getByRole("button", { name: "Добавить день" }).click();
+  await expect(page.getByText("E2E Day")).toBeVisible();
+
+  await addEditorUnit(page, "Первый E2E unit", "e2e-unit-first");
+  await addEditorUnit(page, "Второй E2E unit", "e2e-unit-second");
+  await page
+    .getByRole("button", { name: "Поднять юнит Второй E2E unit" })
+    .click();
+
+  const publish = page.getByRole("button", {
+    name: "Опубликовать неизменяемую ревизию",
+  });
+  await page
+    .getByLabel("Я понимаю, что опубликованную ревизию нельзя редактировать.")
+    .check();
+  await publish.click();
+  await expect(page.getByText("Опубликована · read-only")).toBeVisible();
+
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "E2E Curriculum", exact: true }),
+  ).toBeVisible();
+  const e2eDay = page.getByRole("article", { name: "E2E Day" });
+  await e2eDay.getByRole("button", { name: "Начать занятие" }).click();
+  await expect(page).toHaveURL(/\/session\?id=/u);
+
+  const currentBefore = await currentLearningSession(request);
+  expect(currentBefore.snapshot.curriculumTitle).toBe("E2E Curriculum");
+  const capturedVersionId = currentBefore.snapshot.curriculumVersionId;
+
+  await page.goto("/settings/curriculum");
+  const publishedRevision = page.getByRole("button", {
+    name: /r1 · E2E Revision/u,
+  });
+  await publishedRevision.click();
+  await publishedRevision
+    .locator("..")
+    .getByRole("button", { name: "Клонировать в черновик" })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: "E2E Revision — новая редакция",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Граф выбранной ревизии" })
+      .getByText("Черновик", { exact: true }),
+  ).toBeVisible();
+
+  const currentAfter = await currentLearningSession(request);
+  expect(currentAfter.snapshot.curriculumVersionId).toBe(capturedVersionId);
+  expect(currentAfter.snapshot.curriculumTitle).toBe("E2E Curriculum");
+});
+
+test("runs and restores the dedicated interview workflow", async ({ page }) => {
+  await page.goto("/interview");
+  await page.getByLabel("Темы через запятую").fill("JavaScript, TypeScript");
+  await page.getByLabel("Количество вопросов").selectOption("2");
+  await page.getByRole("button", { name: "Начать интервью" }).click();
+
+  await expect(
+    page.locator('li[role="status"][aria-live="polite"]'),
+  ).toBeVisible();
+  await page
+    .getByLabel("Текст ответа")
+    .fill(
+      "Microtasks выполняются после текущего стека до следующей macrotask; примером служит Promise callback.",
+    );
+  await page.getByRole("button", { name: "Отправить ответ" }).click();
+  await expect(page.getByText("1 / 2")).toBeVisible();
+
+  await page
+    .getByLabel("Текст ответа")
+    .fill(
+      "Второй ответ уточняет порядок очередей и объясняет, почему таймер выполняется после накопленных microtasks.",
+    );
+  await page.getByRole("button", { name: "Отправить ответ" }).click();
+  await page.getByRole("button", { name: "Завершить и открыть отчёт" }).click();
+  await expect(page.getByText("Отчёт по интервью")).toBeVisible();
+  await expect(page.getByText("100%")).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText("Отчёт по интервью")).toBeVisible();
+  await expect(page.getByText("100%")).toBeVisible();
+});
+
 async function startUnit(page: Page): Promise<void> {
   const button = page.getByRole("button", { name: "Начать юнит" });
   await expect(button).toBeVisible();
@@ -236,7 +352,10 @@ async function startUnit(page: Page): Promise<void> {
   await expect(button).toBeHidden();
 }
 
-async function checkChecklist(page: Page, expectedCount: number): Promise<void> {
+async function checkChecklist(
+  page: Page,
+  expectedCount: number,
+): Promise<void> {
   const checkboxes = page
     .getByRole("group", { name: "Checklist" })
     .getByRole("checkbox");
@@ -244,6 +363,36 @@ async function checkChecklist(page: Page, expectedCount: number): Promise<void> 
   for (let index = 0; index < expectedCount; index += 1) {
     await checkboxes.nth(index).check();
   }
+}
+
+async function addEditorUnit(
+  page: Page,
+  title: string,
+  stableId: string,
+): Promise<void> {
+  await page.getByRole("button", { name: "Добавить юнит" }).click();
+  const form = page.getByRole("form", { name: "Добавить юнит" });
+  await form.getByLabel("Стабильный ID").fill(stableId);
+  await form.getByLabel("Название").fill(title);
+  await form.getByRole("button", { name: "Добавить юнит" }).click();
+  await expect(page.getByText(title)).toBeVisible();
+}
+
+async function currentLearningSession(request: APIRequestContext): Promise<{
+  snapshot: { curriculumTitle: string; curriculumVersionId: string };
+}> {
+  const response = await request.get(
+    `${orchestratorOrigin}/api/learning/sessions/current`,
+    { headers: { "X-DLH-Client": "web", Origin: webOrigin } },
+  );
+  expect(response.ok()).toBe(true);
+  const body = (await response.json()) as {
+    session: {
+      snapshot: { curriculumTitle: string; curriculumVersionId: string };
+    } | null;
+  };
+  if (!body.session) throw new Error("Expected an active learning session");
+  return body.session;
 }
 
 const passingImplementation = `export interface NormalizedProfile {
