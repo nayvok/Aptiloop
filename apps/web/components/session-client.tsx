@@ -224,7 +224,7 @@ const progressPayloadSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("quiz"),
       attemptedQuestionIds: z.array(idSchema),
-      correctQuestionIds: z.array(idSchema),
+      correctQuestionIds: z.array(idSchema).optional(),
       score: z.number().min(0).max(1).nullable(),
     })
     .passthrough(),
@@ -1410,15 +1410,16 @@ function QuizUnit({
           score: null,
         };
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const persistedCorrectQuestionIds = payload.correctQuestionIds;
   const [results, setResults] = useState<Array<{
     questionId: string;
     correct: boolean;
   }> | null>(
-    payload.score === null
+    payload.score === null || persistedCorrectQuestionIds === undefined
       ? null
       : payload.attemptedQuestionIds.map((questionId) => ({
           questionId,
-          correct: payload.correctQuestionIds.includes(questionId),
+          correct: persistedCorrectQuestionIds.includes(questionId),
         })),
   );
   const minimumScore =

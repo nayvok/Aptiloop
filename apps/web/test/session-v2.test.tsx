@@ -59,7 +59,7 @@ type ProgressPayloadFixture =
   | {
       type: "quiz";
       attemptedQuestionIds: string[];
-      correctQuestionIds: string[];
+      correctQuestionIds?: string[];
       score: number | null;
     }
   | {
@@ -665,7 +665,6 @@ describe("guided versioned session", () => {
     const scoredPayload = {
       type: "quiz" as const,
       attemptedQuestionIds: ["quiz-q1", "quiz-q2"],
-      correctQuestionIds: ["quiz-q1"],
       score: 0.5,
     };
     const scored = replaceProgress(session, "in_progress", scoredPayload);
