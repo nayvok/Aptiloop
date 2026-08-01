@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { unitStatusLabels, unitTypeLabels } from "@/lib/unit-labels";
 import { cn } from "@/lib/utils";
 
 const unitTypeSchema = z.enum([
@@ -136,34 +137,11 @@ type LearningDay = NonNullable<
 >["weeks"][number]["days"][number];
 type LearnerUnit = LearningDay["units"][number];
 
-const unitTypeLabels: Record<LearnerUnit["type"], string> = {
-  briefing: "Брифинг",
-  study: "Изучение",
-  recall: "Воспроизведение",
-  "teacher-dialogue": "Диалог с Teacher",
-  quiz: "Квиз",
-  "code-reading": "Чтение кода",
-  exercise: "Упражнение",
-  review: "Review",
-  interview: "Интервью",
-  summary: "Итоги",
-  checkpoint: "Контрольная точка",
-  "spaced-review": "Интервальное повторение",
-};
-
 const dayStatusLabels: Record<LearningDay["status"], string> = {
   completed: "Завершён",
   in_progress: "Текущий",
   available: "Доступен",
   locked: "Заблокирован",
-};
-
-const unitStatusLabels: Record<LearnerUnit["status"], string> = {
-  completed: "Готово",
-  skipped: "Пропущено",
-  in_progress: "Сейчас",
-  ready: "Доступно",
-  locked: "Заблокировано",
 };
 
 export function DashboardClient() {
