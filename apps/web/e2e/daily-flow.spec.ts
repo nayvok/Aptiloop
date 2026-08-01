@@ -345,7 +345,7 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
     page.locator('li[role="status"][aria-live="polite"]'),
   ).toBeVisible();
   await page
-    .getByLabel("Текст ответа")
+    .getByLabel("Сообщение")
     .fill(
       "Microtasks выполняются после текущего стека до следующей macrotask; примером служит Promise callback.",
     );
@@ -353,7 +353,7 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
   await expect(page.getByText("1 / 2")).toBeVisible();
 
   await page
-    .getByLabel("Текст ответа")
+    .getByLabel("Сообщение")
     .fill(
       "Второй ответ уточняет порядок очередей и объясняет, почему таймер выполняется после накопленных microtasks.",
     );

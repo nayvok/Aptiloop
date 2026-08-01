@@ -11,10 +11,10 @@ import { z } from "zod";
 
 import { api, ApiError } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
+import { InterviewChatView } from "@/components/interview-chat-view";
 import { QueryError } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -100,7 +100,7 @@ const finishResponseSchema = z
   .object({ interview: interviewSchema, report: reportSchema })
   .strict();
 
-type Interview = z.infer<typeof interviewSchema>;
+export type Interview = z.infer<typeof interviewSchema>;
 type Difficulty = z.infer<typeof difficultySchema>;
 
 const pendingAnswerSchema = z
@@ -530,183 +530,28 @@ export function InterviewClient() {
     );
   }
 
-  const hasPendingQuestion =
-    interview.progress.questionsAsked ===
-    interview.progress.questionsAnswered + 1;
-  const hasRecoverableAnswer =
-    persistedAnswer?.interviewId === interview.id &&
-    interview.progress.questionsAsked === interview.progress.questionsAnswered;
-  const pendingQuestionId = hasPendingQuestion
-    ? interview.transcript.findLast((message) => message.role === "assistant")
-        ?.id
-    : undefined;
-  const progressPercent =
-    interview.setup.questionCount === 0
-      ? 0
-      : Math.round(
-          (interview.progress.questionsAnswered /
-            interview.setup.questionCount) *
-            100,
-        );
-
   return (
     <div data-slot="interview-session" className="flex flex-col gap-6">
       <PageHeader
         title="Техническое интервью"
         description="Отвечай на текущий вопрос. Transcript и прогресс сохраняются сервером после каждого шага."
-        actions={<Badge variant="outline">{interview.setup.difficulty}</Badge>}
+        actions={
+          <Badge variant="outline">
+            {interview.progress.questionsAnswered} /{" "}
+            {interview.setup.questionCount}
+          </Badge>
+        }
       />
-      <section
-        className="grid gap-4 rounded-lg border border-border bg-card p-4 sm:grid-cols-[1fr_auto] sm:p-6"
-        aria-labelledby="interview-progress-title"
-      >
-        <div>
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <h3 id="interview-progress-title" className="font-semibold">
-              Прогресс
-            </h3>
-            <span className="tabular-nums text-muted-foreground">
-              {interview.progress.questionsAnswered} /{" "}
-              {interview.setup.questionCount}
-            </span>
-          </div>
-          <Progress
-            className="mt-3"
-            value={progressPercent}
-            aria-label={`Отвечено ${interview.progress.questionsAnswered} из ${interview.setup.questionCount}`}
-          />
-          <p className="mt-3 text-sm text-muted-foreground">
-            Темы: {interview.setup.topics.join(", ")}
-          </p>
-        </div>
-        <Badge
-          variant={interview.progress.readyToFinish ? "success" : "secondary"}
-          className="self-start"
-        >
-          {interview.progress.readyToFinish ? "Готово к отчёту" : "В процессе"}
-        </Badge>
-      </section>
-
-      <section
-        className="rounded-lg border border-border bg-card p-4 sm:p-6"
-        aria-labelledby="transcript-title"
-      >
-        <h3 id="transcript-title" className="font-semibold">
-          Transcript
-        </h3>
-        <ol className="mt-4 flex flex-col gap-4">
-          {interview.transcript.map((message) => (
-            <li
-              key={message.id}
-              role={message.id === pendingQuestionId ? "status" : undefined}
-              aria-live={
-                message.id === pendingQuestionId ? "polite" : undefined
-              }
-              aria-atomic={
-                message.id === pendingQuestionId ? "true" : undefined
-              }
-              className={
-                message.role === "assistant"
-                  ? "mr-4 rounded-lg bg-muted p-4 sm:mr-12"
-                  : "ml-4 rounded-lg border border-border p-4 sm:ml-12"
-              }
-            >
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {message.role === "assistant" ? "Интервьюер" : "Ваш ответ"}
-              </p>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6">
-                {message.content}
-              </p>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      {interview.progress.readyToFinish ? (
-        <section className="rounded-lg border border-border bg-card p-4 sm:p-6">
-          <h3 className="font-semibold">Все вопросы отвечены</h3>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Сервер сформирует честный отчёт по сохранённому transcript.
-            Техническая корректность без review не будет считаться доказанной.
-          </p>
-          {actionError ? (
-            <p role="alert" className="mt-3 text-sm text-destructive">
-              {actionError}
-            </p>
-          ) : null}
-          <Button
-            className="mt-4"
-            onClick={() => void finishInterview()}
-            disabled={action !== null}
-          >
-            {action === "finish" ? (
-              <>
-                <Spinner />
-                Формирую отчёт…
-              </>
-            ) : (
-              <>
-                <CheckCircleIcon aria-hidden className="size-4" />
-                Завершить и открыть отчёт
-              </>
-            )}
-          </Button>
-        </section>
-      ) : hasPendingQuestion || hasRecoverableAnswer ? (
-        <section
-          className="rounded-lg border border-border bg-card p-4 sm:p-6"
-          aria-labelledby="answer-title"
-        >
-          <h3 id="answer-title" className="font-semibold">
-            {hasRecoverableAnswer
-              ? "Повторить получение следующего вопроса"
-              : "Ответ"}
-          </h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {hasRecoverableAnswer
-              ? "Ответ уже сохранён сервером. Повтор отправляет тот же operation ID."
-              : "Один ответ — на один ожидающий вопрос."}
-          </p>
-          <label className="mt-4 grid gap-2 text-sm font-medium">
-            Текст ответа
-            <textarea
-              className={`${fieldClassName} min-h-36 resize-y py-3 leading-6`}
-              value={answer}
-              onChange={(event) => setAnswer(event.target.value)}
-              maxLength={20_000}
-              disabled={action !== null}
-            />
-          </label>
-          {actionError ? (
-            <p role="alert" className="mt-3 text-sm text-destructive">
-              {actionError}
-            </p>
-          ) : null}
-          <Button
-            className="mt-4"
-            onClick={() => void submitAnswer()}
-            disabled={!answer.trim() || action !== null}
-          >
-            {action === "answer" ? (
-              <>
-                <Spinner />
-                Получаю следующий вопрос…
-              </>
-            ) : hasRecoverableAnswer ? (
-              "Повторить запрос"
-            ) : (
-              "Отправить ответ"
-            )}
-          </Button>
-        </section>
-      ) : (
-        <div
-          role="status"
-          className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground"
-        >
-          Синхронизирую следующий вопрос…
-        </div>
-      )}
+      <InterviewChatView
+        interview={interview}
+        action={action}
+        actionError={actionError}
+        answer={answer}
+        onAnswerChange={setAnswer}
+        onSend={() => void submitAnswer()}
+        onRetry={() => void submitAnswer()}
+        onFinish={() => void finishInterview()}
+      />
     </div>
   );
 }

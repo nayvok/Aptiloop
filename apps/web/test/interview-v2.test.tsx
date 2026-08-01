@@ -207,7 +207,7 @@ describe("versioned interview workflow", () => {
       }),
     );
 
-    fireEvent.change(screen.getByLabelText("Текст ответа"), {
+    fireEvent.change(screen.getByLabelText("Сообщение"), {
       target: {
         value: "Lexical scope определяется местом объявления функции.",
       },
@@ -223,7 +223,7 @@ describe("versioned interview workflow", () => {
       "Чем lexical scope отличается от dynamic scope?",
     );
 
-    fireEvent.change(screen.getByLabelText("Текст ответа"), {
+    fireEvent.change(screen.getByLabelText("Сообщение"), {
       target: { value: "Narrowing уточняет union после runtime-проверки." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Отправить ответ" }));
@@ -262,7 +262,7 @@ describe("versioned interview workflow", () => {
       await screen.findByText(/Как TypeScript narrowing/u),
     ).toBeInTheDocument();
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
-    expect(screen.getByLabelText("Текст ответа")).toHaveValue("");
+    expect(screen.getByLabelText("Сообщение")).toHaveValue("");
     expect(apiMock).toHaveBeenCalledWith("/interviews/v2/current");
   });
 
@@ -294,7 +294,7 @@ describe("versioned interview workflow", () => {
       );
     renderWithQuery(<InterviewClient />);
 
-    fireEvent.change(await screen.findByLabelText("Текст ответа"), {
+    fireEvent.change(await screen.findByLabelText("Сообщение"), {
       target: { value: "Ответ, который нельзя потерять." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Отправить ответ" }));
@@ -302,7 +302,7 @@ describe("versioned interview workflow", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Ответ сохранён в форме",
     );
-    expect(screen.getByLabelText("Текст ответа")).toHaveValue(
+    expect(screen.getByLabelText("Сообщение")).toHaveValue(
       "Ответ, который нельзя потерять.",
     );
     const persisted = JSON.parse(
@@ -329,5 +329,86 @@ describe("versioned interview workflow", () => {
       "Protected interview field received",
     );
     expect(screen.queryByText("Скрытый эталон")).not.toBeInTheDocument();
+  });
+
+  it("renders chat bubbles, typing state and a single live pending question", async () => {
+    let resolveAnswer!: (value: ReturnType<typeof interviewFixture>) => void;
+    const nextQuestion = new Promise<ReturnType<typeof interviewFixture>>(
+      (resolve) => {
+        resolveAnswer = resolve;
+      },
+    );
+    apiMock
+      .mockResolvedValueOnce({ interview: interviewFixture() })
+      .mockReturnValueOnce(nextQuestion);
+    renderWithQuery(<InterviewClient />);
+
+    expect(
+      await screen.findByText(/Чем lexical scope отличается/u),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Интервьюер")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Чем lexical scope отличается от dynamic scope?",
+    );
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+
+    fireEvent.change(screen.getByLabelText("Сообщение"), {
+      target: {
+        value: "Lexical scope определяется местом объявления функции.",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Отправить ответ" }));
+    expect(await screen.findByText("Интервьюер печатает…")).toBeInTheDocument();
+    resolveAnswer(
+      interviewFixture({ transcript: transcriptWithFirstAnswer() }),
+    );
+    expect(
+      await screen.findByText(/Как TypeScript narrowing/u),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Вы")).toBeInTheDocument();
+    expect(screen.queryByText("Интервьюер печатает…")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Как TypeScript narrowing меняет доступный тип?",
+    );
+  });
+
+  it("sends with Enter and keeps Shift+Enter as a newline", async () => {
+    apiMock.mockResolvedValueOnce({ interview: interviewFixture() });
+    renderWithQuery(<InterviewClient />);
+    const composer = await screen.findByLabelText("Сообщение");
+    fireEvent.change(composer, { target: { value: "Мой ответ" } });
+    fireEvent.keyDown(composer, { key: "Enter", shiftKey: true });
+    expect(apiMock).not.toHaveBeenCalledWith(
+      "/interviews/v2/interview-1/answers",
+      expect.anything(),
+    );
+    fireEvent.keyDown(composer, { key: "Enter" });
+    expect(apiMock).toHaveBeenCalledWith(
+      "/interviews/v2/interview-1/answers",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("shows a retry control when a saved answer awaits the next question", async () => {
+    apiMock.mockResolvedValueOnce({
+      interview: interviewFixture({
+        transcript: transcriptWithFirstAnswer().slice(0, 2),
+      }),
+    });
+    window.localStorage.setItem(
+      "dlh-interview-v2-pending-answer",
+      JSON.stringify({
+        interviewId: "interview-1",
+        operationId: "operation-1",
+        answer: "Lexical scope определяется местом объявления функции.",
+      }),
+    );
+
+    renderWithQuery(<InterviewClient />);
+
+    expect(
+      await screen.findByRole("button", { name: "Повторить запрос" }),
+    ).toBeInTheDocument();
   });
 });
