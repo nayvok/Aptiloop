@@ -42,11 +42,17 @@ describe("SQLite database", () => {
       journal_mode: string;
     };
     const migrations = connection.sqlite
-      .prepare("SELECT count(*) AS count FROM __dlh_migrations")
-      .get() as { count: number };
+      .prepare("SELECT id FROM __dlh_migrations ORDER BY id")
+      .all() as Array<{ id: string }>;
     expect(foreignKeys.foreign_keys).toBe(1);
     expect(journal.journal_mode).toBe("wal");
-    expect(migrations.count).toBe(4);
+    expect(migrations.map((migration) => migration.id)).toEqual([
+      "0000_initial",
+      "0001_versioned_curriculum",
+      "0002_snapshot_contract_and_hints",
+      "0003_unit_evidence",
+      "0004_unit_progress_compatibility",
+    ]);
     expect(() =>
       connection.sqlite
         .prepare(

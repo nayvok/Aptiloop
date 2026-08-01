@@ -91,6 +91,85 @@ describe("versioned curriculum migration", () => {
         .get(),
     ).toEqual({ current_learning_session_id: "legacy-session" });
   });
+
+  it("repairs a legacy snapshot even when migration 0002 is already recorded", async () => {
+    const { connection } = tempConnection();
+    connection.sqlite.exec(
+      readFileSync(join(migrationsDirectory, "0000_initial.sql"), "utf8"),
+    );
+    connection.sqlite.exec(`
+      INSERT INTO curriculum_days
+        (id, slug, week_number, day_number, title, summary, estimated_minutes,
+         goals_json, sources_json, created_at, updated_at)
+      VALUES ('legacy-day', 'legacy-day', 1, 1, 'Legacy day', 'History', 60,
+              '["goal"]', '[]', 10, 10);
+      INSERT INTO learning_sessions
+        (id, day_id, status, current_step, started_at, updated_at)
+      VALUES ('legacy-session', 'legacy-day', 'active', 'questions', 20, 20);
+    `);
+    migrateDatabase(connection);
+    connection.sqlite.exec(`
+      DROP INDEX IF EXISTS unit_progress_session_order_idx;
+      CREATE TABLE unit_progress_legacy_contract (
+        id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL REFERENCES learning_sessions(id) ON DELETE CASCADE,
+        unit_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        progress_json TEXT NOT NULL DEFAULT '{}',
+        started_at INTEGER,
+        completed_at INTEGER,
+        skipped_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(session_id, unit_id)
+      );
+      INSERT INTO unit_progress_legacy_contract
+        (id, session_id, unit_id, status, progress_json, started_at,
+         completed_at, skipped_at, updated_at)
+      SELECT id, session_id, unit_id, status, progress_json, started_at,
+             completed_at, skipped_at, updated_at
+      FROM unit_progress;
+      DROP TABLE unit_progress;
+      ALTER TABLE unit_progress_legacy_contract RENAME TO unit_progress;
+      CREATE INDEX unit_progress_session_order_idx
+        ON unit_progress(session_id, updated_at);
+    `);
+    connection.sqlite
+      .prepare(
+        `UPDATE session_snapshots
+         SET schema_version = 1,
+             snapshot_json = '{"week":{"id":"w","title":"Week"},"day":{"id":"legacy-day","stableId":"legacy-day","title":"Legacy"},"units":[],"capturedAt":20}'
+         WHERE session_id = 'legacy-session'`,
+      )
+      .run();
+    connection.sqlite
+      .prepare(
+        "UPDATE unit_progress SET progress_json = '{}' WHERE session_id = 'legacy-session'",
+      )
+      .run();
+
+    migrateDatabase(connection);
+
+    const repaired = connection.sqlite
+      .prepare(
+        "SELECT schema_version, snapshot_json FROM session_snapshots WHERE session_id = 'legacy-session'",
+      )
+      .get() as { schema_version: number; snapshot_json: string };
+    expect(repaired.schema_version).toBe(2);
+    expect(
+      connection.sqlite
+        .prepare("PRAGMA table_info(unit_progress)")
+        .all()
+        .some((column) => (column as { name: string }).name === "unit_type"),
+    ).toBe(true);
+    expect(
+      SessionSnapshotSchema.parse(JSON.parse(repaired.snapshot_json)),
+    ).toMatchObject({ schemaVersion: 2, day: { stableId: "legacy-day" } });
+    const learning = createLearningRepository(connection);
+    expect(await learning.getCurrentVersionedSession()).toBeNull();
+    expect(
+      (await learning.getVersionedSession("legacy-session")).session.id,
+    ).toBe("legacy-session");
+  });
 });
 
 describe("curriculum authoring", () => {

@@ -253,6 +253,50 @@ function finalizeSnapshotContractV2(connection: DatabaseConnection): void {
   }
 }
 
+function ensureUnitProgressContract(connection: DatabaseConnection): void {
+  const columns = connection.sqlite
+    .prepare("PRAGMA table_info(unit_progress)")
+    .all() as Array<{ name: string }>;
+  if (
+    !columns.length ||
+    columns.some((column) => column.name === "unit_type")
+  ) {
+    return;
+  }
+
+  connection.sqlite.exec(`
+    DROP INDEX IF EXISTS unit_progress_session_order_idx;
+    CREATE TABLE unit_progress_v2_contract (
+      id TEXT PRIMARY KEY NOT NULL,
+      session_id TEXT NOT NULL REFERENCES learning_sessions(id) ON DELETE CASCADE,
+      unit_id TEXT NOT NULL,
+      unit_type TEXT NOT NULL CHECK(unit_type IN (
+        'briefing', 'study', 'recall', 'teacher-dialogue', 'quiz', 'code-reading',
+        'exercise', 'review', 'interview', 'summary', 'checkpoint', 'spaced-review'
+      )),
+      status TEXT NOT NULL CHECK(status IN ('locked','ready','in_progress','completed','skipped')),
+      progress_json TEXT NOT NULL DEFAULT '{}',
+      started_at INTEGER,
+      completed_at INTEGER,
+      skipped_at INTEGER,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(session_id, unit_id)
+    );
+    INSERT INTO unit_progress_v2_contract
+      (id, session_id, unit_id, unit_type, status, progress_json, started_at,
+       completed_at, skipped_at, updated_at)
+    SELECT p.id, p.session_id, p.unit_id,
+           COALESCE((SELECT u.type FROM curriculum_units u WHERE u.id = p.unit_id), 'study'),
+           p.status, p.progress_json, p.started_at, p.completed_at, p.skipped_at,
+           p.updated_at
+    FROM unit_progress p;
+    DROP TABLE unit_progress;
+    ALTER TABLE unit_progress_v2_contract RENAME TO unit_progress;
+    CREATE INDEX unit_progress_session_order_idx
+      ON unit_progress(session_id, updated_at);
+  `);
+}
+
 export function migrateDatabase(
   connection: DatabaseConnection,
   directory = migrationsDirectory,
@@ -283,11 +327,41 @@ export function migrateDatabase(
         finalizeVersionedCurriculumBackfill(connection);
       }
       if (id === "0002_snapshot_contract_and_hints") {
+        ensureUnitProgressContract(connection);
         finalizeSnapshotContractV2(connection);
       }
       connection.sqlite
         .prepare("INSERT INTO __dlh_migrations (id, applied_at) VALUES (?, ?)")
         .run(id, Date.now());
+      connection.sqlite.exec("COMMIT");
+    } catch (error) {
+      connection.sqlite.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  const versionedCurriculumApplied = connection.sqlite
+    .prepare(
+      "SELECT 1 FROM __dlh_migrations WHERE id = '0001_versioned_curriculum'",
+    )
+    .get();
+  if (versionedCurriculumApplied) {
+    connection.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      // Some prototype databases recorded an older form of migration 0001
+      // where unit_progress did not yet contain unit_type. The rebuild is
+      // lossless and no-ops on the current schema.
+      ensureUnitProgressContract(connection);
+      const snapshotContractApplied = connection.sqlite
+        .prepare(
+          "SELECT 1 FROM __dlh_migrations WHERE id = '0002_snapshot_contract_and_hints'",
+        )
+        .get();
+      if (snapshotContractApplied) {
+        // Older builds could record migration 0002 before its TypeScript
+        // normalization hook ran. This repair is intentionally repeatable.
+        finalizeSnapshotContractV2(connection);
+      }
       connection.sqlite.exec("COMMIT");
     } catch (error) {
       connection.sqlite.exec("ROLLBACK");

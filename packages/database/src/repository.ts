@@ -706,7 +706,10 @@ export class LearningRepository {
       .prepare(
         `SELECT s.id FROM learner_state l
          JOIN learning_sessions s ON s.id = l.current_learning_session_id
-         WHERE l.id = 'default' AND s.status = 'active'`,
+         JOIN session_snapshots snapshot ON snapshot.session_id = s.id
+         WHERE l.id = 'default' AND s.status = 'active'
+           AND snapshot.schema_version >= 2
+           AND snapshot.curriculum_version_id != 'legacy-v1'`,
       )
       .get() as { id: string } | undefined;
     return current ? this.getVersionedSession(current.id) : null;
