@@ -1,5 +1,7 @@
 import { PageHeader } from "@/components/page-header";
 import { SettingsForm } from "@/components/settings-form";
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
 
 export default function SettingsPage() {
   return (
@@ -7,6 +9,11 @@ export default function SettingsPage() {
       <PageHeader
         title="Настройки"
         description="Пути, модели и локальные endpoints. Credentials остаются в provider-owned хранилище или environment и никогда не возвращаются в UI."
+        actions={
+          <Button asChild variant="outline">
+            <Link href="/settings/curriculum">Редактор программы</Link>
+          </Button>
+        }
       />
       <SettingsForm />
     </div>
