@@ -1,36 +1,81 @@
 # Troubleshooting
 
-## npm использует старое или смешанное дерево
-
-Проверьте Node/npm и workspace root:
+## npm использует не тот workspace/runtime
 
 ```powershell
 node --version
 npm --version
 npm config get prefix
+git status --short
 ```
 
-Проект npm-only. Удалите появившиеся `pnpm-lock.yaml`/локальные pnpm workspace files вручную, затем выполните `npm install` из корня. Не используйте `--legacy-peer-deps`: root намеренно фиксирует TypeScript 6, совместимый с текущим typescript-eslint.
+Нужны Node 24+ и npm 11+. Запускайте команды из корня с общим `package-lock.json`; не используйте pnpm/yarn, `workspace:*` и `--legacy-peer-deps`.
 
-## SQLite не открывается
+## SQLite открывается не из корня проекта
 
-Node должен быть 24+, поскольку используется `node:sqlite`. Проверьте путь `DATABASE_URL`, права на родительскую папку и отсутствие процесса, удерживающего файл. Затем:
+Canonical default — `<repo>/.data/dev-learning-harness.sqlite`. Database CLI учитывает `DATABASE_PROJECT_ROOT`, поэтому workspace cwd не должен создавать `packages/database/.data`.
 
 ```powershell
+$env:DATABASE_PROJECT_ROOT = (Get-Location).Path
+$env:DATABASE_URL = ".data/dev-learning-harness.sqlite"
+npm run db:backup
 npm run db:migrate
 npm run db:seed
 ```
 
-Для Docker смотрите `docker compose logs orchestrator` и состояние volume через `docker volume ls`. Не удаляйте volume, если нужны учебные данные.
+Если ранее prototype уже создал другую DB под package directory, не удаляйте её вслепую. `db:backup` обнаруживает configured/canonical/legacy `data/` candidates, создаёт отдельные timestamped copies и печатает их absolute paths. Сравните содержимое осознанно.
 
-## Порты заняты в Windows
+## Backup не создаётся
+
+`db:backup` ожидает существующую file DB и не работает с `:memory:`. Он откажется от source с ошибкой `integrity_check`/foreign keys и не перезапишет existing destination. Исправьте путь/права; не обходите проверку обычным копированием активного WAL-файла.
+
+## Старая DB не открывает current session
+
+В ранних prototype schema migration 0002 могла быть записана до выполнения TypeScript normalization или без `unit_progress.unit_type`. Повторно запустите:
 
 ```powershell
-Get-NetTCPConnection -LocalPort 3000,8787,4096 -ErrorAction SilentlyContinue
-Get-Process -Id (Get-NetTCPConnection -LocalPort 8787).OwningProcess
+npm run db:backup
+npm run db:migrate
+npm run db:seed
 ```
 
-Остановите известный процесс или согласованно измените `PORT`, `WEB_ORIGIN` и web/orchestrator URL. Не переводите orchestrator на `0.0.0.0` для обычного local run.
+Migration включает repeatable repair schema/snapshot. Legacy session сохраняется в истории, но current versioned UI выбирает активную сессию revision 2; старый `legacy-v1` не подменяет новый путь.
+
+## Порты заняты
+
+Обычный dev: `3000/8787`; E2E: `3100/8887`; OpenCode: `4096`.
+
+```powershell
+Get-NetTCPConnection -LocalPort 3000,8787,3100,8887,4096 -ErrorAction SilentlyContinue |
+  Select-Object LocalPort,State,OwningProcess
+```
+
+Завершайте только проверенный PID. Не убивайте все Node-процессы. Для dev согласованно меняйте `PORT`, `WEB_ORIGIN` и `ORCHESTRATOR_URL`; не используйте `0.0.0.0`.
+
+## E2E не стартует или видит Next lock
+
+```powershell
+npx playwright install chromium
+npm run test:e2e
+```
+
+Освободите `3100/8887`; удаление lock не заменяет остановку владельца процесса. E2E использует `.next-e2e`, in-memory DB, отдельные attempts, `reuseExistingServer: false` и `retries: 0`. Failure означает реальную ошибку текущего прогона; изучите retained trace/test-results, не включайте retries для маскировки flake.
+
+## Занятие не продолжилось после reload
+
+Проверьте, что оба приложения смотрят на одну DB и путь возвращает published revision 2:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8787/health/ready
+```
+
+API routes требуют локальный client header, а mutations также Origin/JSON. Проще проверить через UI. Не создавайте вручную second active session; `GET /api/learning/sessions/current` должен вернуть сохранённый snapshot/progress.
+
+## Review пишет «нужен актуальный passed test»
+
+После любой правки файлов нужно снова нажать «Запустить тесты». Review отклоняется, если diff пуст, latest test failed или filesystem `mtime` новее test completion. Если tool сохранил старый timestamp, текущая mtime-проверка может быть недостаточна; это известное ограничение, диагностируйте diff и запускайте новый test.
+
+Reviewer никогда не применяет патч. После `changes_requested` исправьте код в Zed, затем создайте новый test/review cycle.
 
 ## Zed не открывается
 
@@ -38,9 +83,7 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 8787).OwningProcess
 Get-Command zed -ErrorAction SilentlyContinue
 ```
 
-Если CLI не в PATH, задайте `ZED_EXECUTABLE` абсолютным путём к executable. Значение — один command/path, не строка shell с аргументами. UI должен показать проверенный path для копирования; откройте папку вручную.
-
-В Docker desktop Zed не запускается из Linux container — используйте copy-path fallback или npm-запуск на host.
+`ZED_EXECUTABLE` — один executable/path без аргументов shell. UI показывает проверенный attempt path для ручного открытия. В Docker desktop Zed из Linux container не запускается.
 
 ## Codex unavailable/misconfigured
 
@@ -50,9 +93,9 @@ codex --version
 codex login status
 ```
 
-Harness запускает `codex app-server --listen stdio://`. Перезапустите orchestrator после обновления/login. Если версия app-server изменила RPC, Mock остаётся доступным; не подменяйте ошибочный status на connected.
+Перезапустите orchestrator после install/login. Status `connected` подтверждает health/discovery, но не model response: выполните реальный Teacher turn перед заявлением smoke success.
 
-## OpenCode не подключается
+## OpenCode unavailable
 
 ```powershell
 Get-Command opencode
@@ -60,34 +103,20 @@ opencode --version
 Invoke-WebRequest http://127.0.0.1:4096/global/health
 ```
 
-Проверьте, что server слушает именно loopback, а `.env` использует `OPENCODE_ENDPOINT`, не устаревшее `OPENCODE_BASE_URL`. Username/password у sidecar и harness должны совпадать. SDK package и CLI/server должны быть совместимы по версии.
+Проверьте `OPENCODE_ENDPOINT`, username/password и совместимость CLI/SDK. Endpoint должен быть HTTP loopback без path/credentials/query. `npm start` пытается поднять sidecar и продолжает с Mock/Codex при failure. В Compose `host.docker.internal` не принимается как loopback.
 
-OpenCode через текущий Compose не поддержан: `host.docker.internal` не является loopback для adapter-а. Запускайте web/orchestrator через npm на host.
+## Interview report не оценивает correctness
 
-## Docker build не находит package-lock или public
+Это ожидаемое ограничение MVP: отчёт хранит completion/length/structure evidence. Он не сравнивает ответы с rubric/reference и не меняет mastery. Для технической оценки используйте Teacher/Reviewer или ручную проверку; не интерпретируйте completion rate как correctness score.
 
-```powershell
-npm install
-Test-Path package-lock.json
-Test-Path apps/web/public
-docker compose build --no-cache
-```
+## Тестовый процесс завис
 
-Dockerfiles используют `npm ci` и копируют `apps/web/public`. Оба пути должны существовать. Если Compose завис в startup, выполните `docker compose ps` и `docker compose logs --tail=200 orchestrator web`.
-
-## Тест не завершается
-
-Runner ограничивает время и output. После cancel на Windows дерево завершается через `taskkill /T /F`. Если остался известный дочерний `node`/`vitest`, сначала найдите его по command line, не завершайте все процессы Node без разбора:
+Runner имеет timeout/output cap и завершает process tree. На Windows сначала найдите адресный процесс:
 
 ```powershell
-Get-CimInstance Win32_Process | Where-Object CommandLine -Match 'vitest|collection-toolkit' | Select-Object ProcessId,CommandLine
+Get-CimInstance Win32_Process |
+  Where-Object CommandLine -Match 'vitest|normalize-profile|collection-toolkit' |
+  Select-Object ProcessId,CommandLine
 ```
 
-## E2E не стартует
-
-```powershell
-npx playwright install chromium
-npm run test:e2e
-```
-
-Убедитесь, что порты 3000/8787 свободны и migrations/seed выполнены. Для диагностики используйте Playwright trace, а не отключение readiness checks.
+Не завершайте все `node.exe` без проверки command line.

@@ -1,40 +1,59 @@
 # Учебная методика
 
-## Главный цикл
+## Принцип
 
-Harness тренирует воспроизведение, а не узнавание: пользователь сначала формулирует ответ и пишет код самостоятельно, затем получает следующий минимально достаточный уровень помощи. Zed остаётся отдельным рабочим контекстом; платформа фиксирует попытку, evidence, diff, тест и correction.
+Harness тренирует воспроизведение, а не узнавание. Сначала пользователь формулирует ответ или пишет код сам, затем получает минимальную помощь. Zed остаётся отдельным рабочим контекстом; приложение хранит attempts/evidence/diff/tests/reviews, но не применяет correction.
 
-Daily Session проходит шаги: review → theory → Socratic question → quiz → practice → Zed work → first attempt → review feedback → self-correction → summary. Следующий обязательный шаг открывается только после завершения предыдущего.
+## Вертикальный срез Дня 1
 
-## Подсказки
+Основной versioned flow:
 
-Есть шесть уровней (0–5): без помощи, reflection, direction, concept, scaffold и reference. Новый уровень требует ещё одной неуспешной самостоятельной попытки. Reference раскрывает ответ и должен быть явно разрешён только после исчерпания предыдущих уровней.
+1. **Briefing** — цель дня, ожидаемый результат, глубина и out-of-scope.
+2. **Study** — конкретные пункты и источники; checklist отмечается явно.
+3. **Recall** — собственный ответ сохраняется как immutable evidence до feedback.
+4. **Teacher dialogue** — один контекстный вопрос за раз через выбранный provider.
+5. **Quiz** — server проверяет option IDs; learner DTO не содержит answer key.
+6. **Code reading** — prediction, explanation и verbal fix сохраняются до перехода.
+7. **Exercise** — отдельная attempt folder; код изменяется в Zed.
+8. **Test** — только allowlisted `test`, stdout/stderr/exit status сохраняются.
+9. **Review** — read-only анализ learner diff после актуального passed test.
+10. **Correction** — пользователь меняет код, снова запускает test и review.
+11. **Summary** — deterministic evidence aggregation, mastery/mistakes/cards.
+12. **Completion** — следующий день разблокируется; restart возвращает текущий unit.
 
-Подсказка уменьшает положительный mastery credit: множитель последовательно снижается от `1` без помощи до `0.25` после reference. Отрицательное evidence не смягчается подсказкой.
+Progression не доверяет произвольной команде browser: сервер проверяет unit state, completion criteria и evidence target. Published curriculum snapshot защищает начатое занятие от будущего редактирования программы.
+
+## First attempt и protected content
+
+First recall/quiz/code-reading attempt записывается отдельно и не перезаписывается последующими действиями. `referenceAnswer`, evaluation rubric и quiz correctness не возвращаются learner session заранее. Teacher/interview question generation не получает reference до собственного ответа пользователя.
+
+У текущего v2 learner flow подсказки представлены в contract/progress и учитываются deterministic mastery, но UI Дня 1 прежде всего реализует самостоятельную попытку и Teacher clarification; он не является полной адаптивной six-level hint tutor системой для каждого unit.
 
 ## Mastery
 
-Оценка по каждой теме разделена на шесть dimensions:
+`learning-core` вычисляет score по dimensions `understanding`, `explanation`, `codeReading`, `implementation`, `debugging`, `interview`. Outcome (`incorrect/partial/correct`), evidence type, hint level, повтор ошибки и дата влияют на deterministic delta. Score ограничен 0–5; значение выше 4 требует успешных evidence разных типов в разные UTC-дни.
 
-- understanding;
-- explanation;
-- code reading;
-- implementation;
-- debugging;
-- interview.
+LLM может сформировать ответ/review, но не назначает итоговый score напрямую. Summary строится из server-owned evidence: quiz score, recall/code reading attempts, test status, review status и correction count.
 
-LLM может предложить evidence, но итоговый score вычисляет `learning-core`. Базовый delta зависит от outcome (`incorrect`, `partial`, `correct`) и evidence type. Повтор одной ошибки добавляет растущий penalty. Score ограничен диапазоном 0–5.
+## Review и актуальность
 
-Значение выше 4 возможно только после успешных evidence минимум двух разных типов в разные UTC-дни. Давность влияет на приоритет повторения, а не стирает историю.
+Reviewer получает brief, constraints, criteria, diff, последний passed test и prior review count. Он возвращает structured result и не имеет write/apply tools. После `changes_requested` только новый learner edit + новый passed test делают следующий review допустимым.
 
-## Review и ошибки
+Текущая проверка «после последней правки» использует filesystem `mtime`. Она переживает restart, но может ошибиться при намеренном сохранении timestamp; это известное ограничение до перехода на diff/tree hash.
 
-Reviewer анализирует brief, diff, test result, использованные hints и критерии. Он не меняет файлы. Пользователь самостоятельно вносит correction в Zed, после чего повторно запускает проверку. Mistake journal должен хранить наблюдаемый симптом и correction, а не ярлык «не знает тему».
+## Ошибки и карточки
 
-## Interview isolation
+Day summary создаёт mistake candidates с fingerprint/symptom/correction и flashcard candidates, связанные с evidence. Повторный fingerprint увеличивает occurrence count вместо создания дубля. Карточка проходит local candidate → approved/rejected и экспортируется в Markdown/CSV/TSV. AnkiConnect и автоматический sync не входят в MVP.
 
-Генерация вопроса не получает reference answer. Оценка создаётся отдельным turn только после сохранения ответа и получает rubric/reference. Это предотвращает преждевременную утечку решения.
+## Interview
 
-## Flashcards
+Interview — отдельный workflow, а не Agent Playground. Пользователь задаёт topics, difficulty и 1–12 вопросов; сервер сохраняет setup, задаёт вопросы по одному и восстанавливает transcript после reload.
 
-Карточка — следствие подтверждённой ошибки или полезного recall prompt, а не автоматический пересказ всего урока. Пользователь может отредактировать карточку до экспорта. Экспорт остаётся file-based; AnkiConnect не входит в MVP.
+Текущий финальный report честно измеряет только:
+
+- число заданных/отвеченных вопросов;
+- completion rate;
+- длину и структурность ответов;
+- evidence формата вроде developed/brief.
+
+Он **не проверяет техническую корректность**, не сравнивает ответ с expert rubric/reference и не обновляет mastery. Поэтому report — материал для саморефлексии, а не сертификат знания.

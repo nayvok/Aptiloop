@@ -1,37 +1,42 @@
 # AI-провайдеры
 
-Все adapters реализуют общий `AgentProvider`: status, models, session, streaming и cancel. Orchestrator отдаёт UI только нормализованные события. Mock остаётся рабочим, даже если внешние CLI недоступны.
+Все adapters реализуют общий lifecycle `status → models → session → normalized stream → cancel`. Orchestrator выбирает provider/model из локальных settings; browser не получает credentials, raw RPC/events, provider session handles или tool API. Mock доступен независимо от внешних CLI.
+
+## Что означает status
+
+`GET /api/providers` и экран настроек показывают результат реального health/discovery check:
+
+- `connected` — adapter/CLI доступен и, где поддерживается, список моделей получен;
+- `unavailable` — executable/sidecar/endpoint недоступен;
+- `misconfigured` — endpoint/auth/model configuration некорректны;
+- `error` — проверка завершилась ошибкой.
+
+`connected` **не доказывает**, что фактический model turn успешно выполнен. External provider smoke считается успешным только после authenticated запроса, terminal event и содержательного ответа от выбранной модели. Unit/contract tests и наличие CLI этого не подтверждают.
 
 ## Mock
 
-Mock — провайдер по умолчанию для разработки, Docker, тестов и offline flow. Он детерминированно поддерживает streaming, error/retry, review и interview scenarios, не использует сеть и credentials.
+Mock — offline default для разработки и тестов. Он детерминированно выдаёт stream, Teacher/interview replies и correction-cycle review: первый review запрашивает изменения, последующий при server-derived prior-review context может пройти. Credentials и сеть не нужны.
+
+Mock проверяет продуктовый flow и boundary contracts, но не качество внешней модели.
 
 ## Codex
 
-Требуется установленный и авторизованный Codex CLI:
+Требуется локальный Codex CLI и авторизация:
 
 ```powershell
 codex --version
 codex login status
 ```
 
-Harness сам запускает дочерний процесс:
+Harness запускает `codex app-server --listen stdio://` как дочерний процесс и использует узкий JSON-RPC набор: initialize/account/model discovery, thread start/resume, turn start/interrupt. Server-initiated tools/approval requests отклоняются; raw RPC не выходит из adapter.
 
-```text
-codex app-server --listen stdio://
-```
+Для Reviewer применяются `sandbox=read-only`, network disabled и `approvalPolicy=never`. Orchestrator дополнительно сравнивает Git diff до/после review. Для остальных ролей provider policy не расширяет browser/orchestrator API: произвольного shell или apply-patch endpoint всё равно нет.
 
-Adapter реализует узкий JSON-RPC клиент только для `initialize`, `account/read`, `model/list`, `thread/start`/`thread/resume`, `turn/start` и `turn/interrupt`. Raw RPC не доступен browser. Server-initiated client methods, tools и approval prompts отклоняются.
-
-Для Reviewer thread создаётся с read-only sandbox и `approvalPolicy: never`; turn также получает read-only policy без network. Другие роли используют workspace-write policy, но orchestrator всё равно не предоставляет произвольный API применения патчей. Аутентификация переиспользует локальное хранилище Codex CLI; секрет в `.env` не нужен.
-
-После запуска harness откройте `Настройки → Роли агентов`, выберите `codex` для нужной роли и укажите модель из обнаруженного списка. Настройки сохраняются в локальной SQLite и применяются к следующему сообщению без перезапуска приложения.
-
-Если CLI не найден, не выполнен login или RPC несовместим, UI должен показать `unavailable`, `misconfigured` или `error`, не маскируя проблему под Mock.
+Auth переиспользует локальное хранилище Codex CLI; Codex token в `.env` не нужен. После выбора Codex/модели в `Настройки` настройка применяется к новому provider session.
 
 ## OpenCode
 
-Версия SDK должна совпадать с версией sidecar. Запустите server в отдельном терминале:
+Можно запустить sidecar вручную:
 
 ```powershell
 $env:OPENCODE_SERVER_USERNAME = "opencode"
@@ -39,30 +44,32 @@ $env:OPENCODE_SERVER_PASSWORD = "replace-me"
 opencode serve --hostname 127.0.0.1 --port 4096
 ```
 
-В `.env` harness:
-
 ```dotenv
 OPENCODE_ENDPOINT=http://127.0.0.1:4096
 OPENCODE_SERVER_USERNAME=opencode
 OPENCODE_SERVER_PASSWORD=replace-me
 ```
 
-Endpoint намеренно принимает только `http` на loopback (`localhost`, `127.0.0.0/8` или `::1`), без credentials, path, query и fragment. Password преобразуется в Basic Auth header в памяти и не должен сохраняться в SQLite/logs.
+Или используйте `npm start`: launcher сначала проверяет `/global/health`, при необходимости пытается запустить `opencode serve`, а при неудаче продолжает с Mock/Codex. Созданный launcher-ом sidecar завершается вместе с приложением.
 
-Adapter проверяет health, получает connected providers/models, создаёт session, подписывается на SSE до async prompt, нормализует parts/tool events, запрашивает итоговое message и поддерживает abort. Reviewer session получает deny permissions для patch/write/edit/mutation-capable tools.
+Endpoint принимает только HTTP loopback (`localhost`, `127.0.0.0/8`, `::1`) без embedded credentials, path, query и fragment. Password превращается в Basic Auth header в памяти и не сохраняется в SQLite/logs.
 
-Корневой `.env` автоматически загружается orchestrator-ом при локальном запуске. Затем в `Настройки → Роли агентов` выберите `opencode` и модель; endpoint также можно изменить в форме настроек, он применяется сразу. Сам sidecar должен продолжать работать в отдельном терминале — либо используйте `npm start`, который запустит его вместе с приложением.
+Adapter получает health/models через SDK, создаёт session, подписывается на events, нормализует message/tool events и поддерживает abort. Reviewer получает deny permissions для patch/write/edit и других mutation-capable tools.
 
-## Docker и внешние провайдеры
+## Ручной smoke
 
-Mock полностью работает в Compose. Codex app-server находится на host и не включён в image. Текущий OpenCode security policy отвергает `host.docker.internal`, потому что это не loopback относительно контейнера; для OpenCode запускайте harness через npm на host. Не публикуйте OpenCode server на `0.0.0.0` ради обхода этого ограничения.
+Для каждого внешнего provider отдельно:
 
-## Ручной smoke checklist
+1. Проверить CLI/sidecar и status `connected`.
+2. Получить server-reported model list и выбрать существующую модель.
+3. Выполнить фактический Teacher turn и дождаться terminal `completed`.
+4. Проверить сохранение assistant message после reload.
+5. Отменить длинный turn и проверить cleanup.
+6. Выполнить Reviewer turn на learner diff и сравнить workspace до/после.
+7. Записать точную версию CLI/model и фактический результат; не переносить успех одного provider на другой.
 
-1. Убедиться, что provider status — `connected`.
-2. Получить реальный список моделей и выбрать доступную модель для роли.
-3. Отправить короткое сообщение, увидеть delta и terminal event.
-4. Отменить длинный turn и проверить освобождение процесса/session.
-5. Для Reviewer передать diff и убедиться, что файлы до и после идентичны.
+Если CLI/auth/request не проверены в текущем окружении, acceptance report должен писать «не проверено» или точный blocker, а не `passed`.
 
-Наличие unit test adapter-а не подтверждает реальную авторизацию или доступность внешней модели.
+## Docker
+
+Compose гарантированно покрывает Mock. Codex CLI находится на host и не входит в image. `host.docker.internal` не loopback относительно container, поэтому текущий OpenCode adapter его отвергает; не публикуйте sidecar на `0.0.0.0` ради обхода. Для внешних providers используйте npm-запуск на host.

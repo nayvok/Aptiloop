@@ -1,73 +1,92 @@
 # Dev Learning Harness
 
-Локальная single-user платформа для восстановления самостоятельного навыка JavaScript/TypeScript: сначала собственный ответ и код в Zed, затем ограниченная подсказка, тесты и read-only review. Интерфейс не заменяет IDE и не применяет исправления за пользователя.
+Локальная single-user платформа для самостоятельного обучения JavaScript/TypeScript. Пользователь изучает короткие units, сначала отвечает и пишет код сам в Zed, затем получает Teacher-вопрос, запускает разрешённые тесты и запрашивает read-only review. Приложение хранит evidence и продолжает незавершённое занятие после перезапуска; встроенного редактора, терминала и автоматического применения исправлений нет.
 
-## Что входит в MVP
+## Реализованный MVP
 
-- недельный учебный план, Daily Session и детерминированный mastery;
-- вопросы, ошибки, knowledge map, flashcards и interview mode;
-- упражнение в отдельной рабочей папке, Git baseline/diff и история проверок;
-- потоковый чат с ролями Teacher, Reviewer и Interviewer;
-- всегда доступный детерминированный Mock provider;
-- опциональные Codex app-server и OpenCode sidecar;
-- Next.js web, Hono orchestrator, SQLite через встроенный `node:sqlite` и Drizzle.
+- versioned учебный путь: published revision → неделя → день → короткие units;
+- полностью наполненная первая неделя и рабочий вертикальный срез Дня 1;
+- briefing, study checklist, recall, Teacher dialogue, quiz, code reading, practice, review и итог дня;
+- immutable snapshot программы в каждой сессии и перезапуск с сохранённого unit;
+- отдельная папка каждой практической попытки, Git baseline/diff и настоящий `npm test`;
+- correction cycle: тест → read-only review → самостоятельная правка → новый тест/review;
+- серверный deterministic summary, mastery evidence, журнал ошибок и кандидаты в карточки;
+- отдельный workflow интервью с setup, вопросами по одному, transcript и restart-safe отчётом;
+- draft Curriculum Editor: создание/клонирование ревизии, порядок week/day/unit и необратимая публикация;
+- Mock provider без сети и опциональные Codex app-server/OpenCode sidecar;
+- светлая, тёмная и системная темы, keyboard/focus и reduced-motion states.
+
+Важно: отчёт интервью в текущем MVP фиксирует полноту и форму ответов, но **не подтверждает их техническую корректность и не меняет mastery**. Подробнее — в [методике](docs/learning-methodology.md).
 
 ## Требования
 
-- Node.js 24 или новее;
-- npm 11 или новее;
+- Node.js 24+;
+- npm 11+;
 - Git;
-- Zed — опционально, для кнопки «Открыть в Zed»;
-- Docker 29+ и Docker Compose v2/v5 — только для контейнерного quick start;
-- Codex CLI или OpenCode CLI — только если нужен соответствующий провайдер.
+- Zed — опционально, для кнопки открытия из практики;
+- Codex CLI или OpenCode CLI — только для соответствующего внешнего провайдера;
+- Docker/Compose — опционально для Mock-oriented запуска.
 
-Проект npm-only. Не используйте pnpm и не создавайте `pnpm-lock.yaml`.
+Проект npm-only: один `package-lock.json`, без pnpm/yarn и `workspace:*`.
 
-## Быстрый запуск через npm
+## Первый запуск
+
+Из корня репозитория:
 
 ```powershell
 npm install
-npm start
+npm run db:migrate
+npm run db:seed
+npm run dev
 ```
 
-Откройте <http://127.0.0.1:3000>. `npm start` автоматически запускает локальный OpenCode sidecar, если он ещё не работает, и останавливает созданный процесс вместе с приложением. Codex app-server запускается самим harness по требованию. Миграции SQLite и seed первой недели выполняются автоматически.
+Откройте <http://127.0.0.1:3000>. Orchestrator слушает <http://127.0.0.1:8787>, readiness — <http://127.0.0.1:8787/health/ready>. Web проксирует `/api/*` через server-side rewrite.
 
-Для Mock/Codex без автозапуска OpenCode используйте `npm run dev`. `.env` не обязателен; скопируйте `.env.example` только если хотите изменить порты, путь SQLite или OpenCode credentials. Orchestrator доступен на <http://127.0.0.1:8787>; readiness probe — <http://127.0.0.1:8787/health/ready>.
+`npm start` запускает тот же локальный stack через `scripts/dev-local.mjs` и пытается поднять OpenCode sidecar. Для обучения без внешних CLI достаточно Mock. Корневой `.env` не обязателен; при необходимости скопируйте `.env.example`.
 
-## Быстрый запуск через Docker Compose
-
-Сначала должен существовать актуальный `package-lock.json` (`npm install` создаёт его):
+Перед миграцией существующей базы рекомендуется сделать проверенную копию:
 
 ```powershell
-docker compose up --build
+npm run db:backup
+npm run db:migrate
+npm run db:seed
 ```
 
-После готовности healthchecks откройте <http://127.0.0.1:3000>. SQLite хранится в named volume `dev-learning-harness_harness-data`, упражнения монтируются из `workspaces/exercises`.
-
-```powershell
-docker compose logs -f orchestrator web
-docker compose down
-```
-
-Compose — быстрый воспроизводимый запуск с Mock. Codex CLI и Zed запускаются на машине пользователя, поэтому полный external-tool flow удобнее запускать через npm. Текущий OpenCode adapter принимает только loopback endpoint; адрес `host.docker.internal` из контейнера не проходит эту защиту — для OpenCode используйте локальный npm-запуск.
+CLI базы разрешает относительные пути от корня проекта, даже когда npm запускает workspace-script. Backup использует `VACUUM INTO`, проверяет `integrity_check` и foreign keys у источника и копии и не перезаписывает существующий файл. Подробности — в [разработке](docs/development.md).
 
 ## Основные команды
 
 ```powershell
-npm run dev          # web + orchestrator
-npm start            # web + orchestrator + локальный OpenCode sidecar
-npm run db:migrate   # применить SQL migrations
-npm run db:seed      # идемпотентно загрузить первую неделю
-npm run test:fast    # unit/integration/component tests
-npm run test:e2e     # Playwright
+npm run dev          # Next.js + Hono
+npm start            # локальный launcher, включая OpenCode sidecar при возможности
+npm run db:backup    # проверенная timestamped-копия SQLite
+npm run db:migrate   # ordered migrations и repeatable legacy repair
+npm run db:seed      # идемпотентный versioned curriculum seed
+npm run format:check
 npm run lint
 npm run typecheck
+npm run test:fast    # unit/integration/component tests
+npm run test:e2e     # Playwright, изолированные порты и БД
 npm run build
-npm run verify       # format check + lint + types + fast tests + build
+npm run verify       # format + lint + types + fast tests + build (без E2E)
 ```
 
-Настройка провайдеров описана в [docs/providers.md](docs/providers.md), разработка — в [docs/development.md](docs/development.md), типичные проблемы Windows и Docker — в [docs/troubleshooting.md](docs/troubleshooting.md).
+`npm test` запускает `test:fast`, затем E2E. Playwright намеренно использует порты `3100/8887`, отдельный `.next-e2e`, in-memory SQLite, отдельный root попыток, `retries: 0` и не переиспользует чужие dev-серверы.
 
-## Безопасность и границы
+## Docker Compose
 
-Harness рассчитан только на доверенные bundled exercises. Allowlist предотвращает подстановку shell-команд, но запуск JavaScript не является sandbox. Reviewer получает diff/context и deny-write policy; отдельного API для применения патча нет. Подробности: [docs/security.md](docs/security.md).
+```powershell
+docker compose up --build
+docker compose logs -f orchestrator web
+docker compose down
+```
+
+Compose ориентирован на Mock. SQLite хранится в named volume. Codex CLI и Zed находятся на host, а OpenCode adapter принимает только loopback endpoint, поэтому внешний provider/Zed flow удобнее проверять локальным npm-запуском.
+
+## Границы доверия
+
+Browser отправляет operation/entity IDs и учебные данные, но не executable, args, cwd, filesystem handles или provider RPC. Все mutations проверяют Origin, JSON content type и локальный client header. Пути canonicalized; процессы запускаются с `shell: false`, timeout и output cap.
+
+Allowlist — защита от command injection, **не sandbox JavaScript**. Запускайте только доверенные упражнения из репозитория. Reviewer получает diff/context и deny-write policy; route применения патча отсутствует.
+
+Документы: [архитектура](docs/architecture.md), [безопасность](docs/security.md), [провайдеры](docs/providers.md), [авторинг](docs/curriculum-authoring.md), [acceptance-аудит](docs/acceptance-audit.md), [troubleshooting](docs/troubleshooting.md).

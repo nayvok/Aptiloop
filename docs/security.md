@@ -1,47 +1,73 @@
 # Модель безопасности
 
-## Scope
+## Scope и actors
 
-Это local single-user приложение, но browser, provider output и пути считаются недоверенными. В MVP нет auth и remote deployment. Bind по умолчанию — `127.0.0.1`; публикация orchestrator в локальную сеть не поддерживается как безопасный режим.
+Это локальное single-user приложение без auth. Тем не менее browser input, provider output, DB JSON, пути и содержимое exercise считаются недоверенными. Поддерживаемый bind — HTTP loopback; remote/LAN deployment не является безопасным режимом MVP.
 
-## HTTP boundary
+Allowlisted exercise — доверенный код из репозитория. Allowlist предотвращает выбор произвольной команды, но не создаёт sandbox для выполняемого JavaScript.
 
-- `WEB_ORIGIN` задаёт точный разрешённый Origin.
-- State-changing requests должны проверять Origin и ожидаемый content type.
-- Bodies, DB JSON и structured provider output валидируются Zod.
-- SSE не раскрывает raw provider protocol, stack traces или credentials.
-- Provider failure не должен блокировать DB, curriculum, diff, tests и export.
+## Browser → HTTP boundary
 
-## Файлы и пути
+Каждый `/api/*` request требует `X-DLH-Client: web` (кроме test environment). Mutations требуют точный loopback `Origin`, совпадающий с `WEB_ORIGIN`, и `Content-Type: application/json`. Bodies проверяются strict Zod schemas.
 
-Browser отправляет entity ID и относительный subpath. `exercise-core` отклоняет absolute/drive/UNC/device paths, `.`/`..`, control characters, reserved Windows names, NTFS alternate data stream syntax и reparse/symlink escape. Root и существующие segments canonicalized через `realpath`.
+Browser mutations отправляют operation ID, entity ID и учебные данные. Они не выбирают executable, args, cwd, provider RPC или raw tool. Локальные workspace/Zed settings доступны только как read-only diagnostic strings; mutation schema намеренно их исключает. Реальные filesystem objects/handles browser не получает.
 
-Git baseline создаётся для отдельного упражнения до изменений. Diff — наблюдение, не механизм записи. Zed получает только проверенный absolute path как отдельный аргумент.
+Learner session/path DTO не содержит protected reference answers и quiz answer keys. Quiz response сообщает aggregate score/attempted IDs, а не правильный option каждого вопроса. Raw Codex/OpenCode protocol не отдаётся UI: adapter переводит его в общий event contract.
+
+Local client header не заменяет auth; защита опирается также на loopback bind и Origin. Не выставляйте orchestrator в сеть.
+
+## Filesystem и Git
+
+Templates разрешаются внутри `WORKSPACE_ROOT`; попытки создаются только внутри `EXERCISE_ATTEMPTS_ROOT`. Canonical path checks отклоняют traversal, absolute/drive/UNC/device paths, control characters, Windows reserved names, alternate-data-stream syntax и symlink/junction/reparse escape.
+
+Template копируется до работы пользователя. Baseline создаётся в изолированной attempt folder и фиксируется marker/commit hash. Diff строится read-only относительно ожидаемого baseline с отключёнными external diff/textconv. Zed получает проверенный absolute attempt path одним аргументом.
+
+Не удаляйте attempt roots по непроверенному вычисленному пути. E2E cleanup отдельно доказывает, что canonical target находится под repo `.data`.
 
 ## Процессы
 
-Публичный контракт использует operation ID; executable, args, cwd, timeout и output cap выбирает server. `AllowedProcessRunner` использует `spawn(..., { shell: false })`, ограничивает общий stdout/stderr, завершает process tree при cancel/timeout/output limit; на Windows используется `taskkill /T /F` fallback.
+Public API принимает только `commandId: "test"`. Server выбирает executable/args/cwd/timeout; `AllowedProcessRunner` использует `spawn` с `shell: false`, sanitizes inherited environment, ограничивает суммарный output и завершает process tree при cancel/timeout/output limit. На Windows допустим адресный `taskkill /T /F` fallback для известного PID.
 
-Allowlist защищает от command injection, но не изолирует код упражнения. Запускайте только доверенные упражнения из репозитория. Для стороннего кода нужен отдельный container/low-privilege sandbox, которого в MVP нет.
+Git/Zed/provider child processes также не используют browser command lines. Никогда не добавляйте endpoint вида `run(command)` или terminal UI.
 
 ## Reviewer
 
-У Reviewer нет route «apply», writable handle или mutation API. Codex получает read-only sandbox, no network и approval `never`. OpenCode получает deny rules для patch/write/edit и других mutation-capable tools. Дополнительный invariant: workspace/diff до и после review не должен меняться.
+Reviewer получает сериализованный brief, constraints, criteria, diff, test output и prior review count, но не writable filesystem handle.
 
-## Секреты
+- Codex thread/turn: read-only sandbox, network disabled, approval `never`.
+- OpenCode session: deny patch/write/edit/mutation tools.
+- Orchestrator сравнивает baseline/diff до и после review и отвергает изменение.
+- В API нет apply/edit route.
 
-Credentials читаются только из environment. В SQLite допустимы endpoint, provider/model IDs и non-secret flags. Не логируйте Authorization, password, token, cookie, provider stderr или полный raw event. Ошибки пользователю должны быть безопасными и без production stack.
+Review остаётся советом. Пользователь применяет correction сам в Zed и подтверждает новым test/review cycle.
 
-## Docker
+## Secrets и provider data
 
-Compose публикует web и orchestrator только на loopback. Container работает непривилегированным пользователем и хранит SQLite в named volume. Bind-mounted exercise directory остаётся writable host-состоянием; это не security sandbox. Не подключайте Docker socket и не запускайте container privileged.
+OpenCode password читается из environment и превращается в Authorization header только в памяти. Codex auth берётся из локального CLI store. В SQLite допустимы endpoint, provider/model IDs, normalized transcript/result и non-secret settings; token/password/cookie/Authorization хранить нельзя.
 
-## Перед релизом
+Process environment проходит allowlist/sanitization перед упражнением. Logs/errors не должны содержать credentials, provider stderr, headers или stack trace в пользовательском response. Structured provider output валидируется до использования. Сохранённый raw assistant response нужен для audit/reparse, но не должен содержать секреты и не возвращается как raw provider protocol.
 
-- path traversal, UNC и symlink/junction escape tests;
-- unknown operation ID rejection;
-- Origin/content-type tests для mutations;
-- log redaction tests;
-- reviewer no-write contract и before/after diff;
-- cancel/timeout/output-limit cleanup на Windows и POSIX;
-- поиск секретов и запрещённых shell/process surfaces.
+## Database
+
+Foreign keys включены; file DB использует WAL. Перед миграцией создаётся verified backup через `VACUUM INTO`; source/copy проходят integrity и foreign-key checks. Migration repair сохраняет legacy rows, rebuild выполняется транзакционно.
+
+Curriculum publication immutable и transactional. Session snapshot сохраняет content hash, поэтому draft/published changes не переписывают historical evidence.
+
+## Известные ограничения
+
+- JS tests выполняются с полномочиями локального пользователя: это trusted-only execution, не sandbox.
+- Актуальность test/review после learner edit основана на `mtime`; подделка timestamp может обойти check. Требуемое усиление — diff/tree hash.
+- Отсутствие remote auth означает, что LAN exposure запрещён operational rule, а не поддерживаемая configuration.
+- Mock boundary tests не доказывают policies фактической версии внешнего provider; это проверяется отдельным smoke.
+
+## Security regression checklist
+
+- Origin/content-type/client-header rejection;
+- Zod rejects unknown fields and forged quiz/reference payloads;
+- traversal/UNC/symlink/junction escape tests;
+- unknown operation/command ID rejection;
+- process env redaction, timeout, cap и cleanup;
+- Reviewer before/after diff invariant;
+- published revision mutation rejection;
+- backup integrity/FK check и legacy migration test;
+- grep на Pi, AnkiConnect, Monaco, arbitrary shell/apply endpoints и secrets.
