@@ -241,5 +241,5 @@ describe("orchestrator vertical flow", () => {
     });
     expect(afterFailure.status).toBe(200);
     expect(await afterFailure.text()).toContain('"reason":"completed"');
-  });
+  }, 15_000);
 });

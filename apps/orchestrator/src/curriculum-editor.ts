@@ -704,7 +704,9 @@ export function registerCurriculumEditorRoutes(
           )
           .get(id, versionId);
         if (existing) {
-          const graph = toEditorDto(await repository.getVersionGraph(versionId));
+          const graph = toEditorDto(
+            await repository.getVersionGraph(versionId),
+          );
           return context.json({
             day: graph.weeks
               .flatMap((week) => week.days)
@@ -832,7 +834,9 @@ export function registerCurriculumEditorRoutes(
           )
           .get(id, versionId);
         if (existing) {
-          const graph = toEditorDto(await repository.getVersionGraph(versionId));
+          const graph = toEditorDto(
+            await repository.getVersionGraph(versionId),
+          );
           return context.json({
             unit: graph.weeks
               .flatMap((week) => week.days)
