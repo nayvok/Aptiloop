@@ -94,7 +94,7 @@ function MessageScrollerButton({
       data-direction={direction}
       direction={direction}
       className={cn(
-        "absolute inset-s-1/2 -translate-x-1/2 border border-border bg-background text-foreground transition-all data-[active=false]:pointer-events-none data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[direction=end]:bottom-4 data-[direction=start]:top-4 data-[direction=start]:[&_svg]:rotate-180 rtl:translate-x-1/2",
+        "absolute inset-s-1/2 -translate-x-1/2 border border-border bg-background text-foreground transition-[opacity,scale] duration-200 data-[active=false]:pointer-events-none data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[direction=end]:bottom-4 data-[direction=start]:top-4 data-[direction=start]:[&_svg]:rotate-180 motion-reduce:transition-none rtl:translate-x-1/2",
         className,
       )}
       render={render ?? <Button variant={variant} size={size} />}

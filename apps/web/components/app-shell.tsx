@@ -7,7 +7,6 @@ import {
   ArticleIcon,
   BrainIcon,
   CardsIcon,
-  ChatCircleDotsIcon,
   CodeIcon,
   GearSixIcon,
   HouseIcon,
@@ -22,9 +21,8 @@ import { Button } from "@/components/ui/button";
 import { ProviderHealth } from "@/components/provider-health";
 
 const nav = [
-  { href: "/", label: "Обзор", icon: HouseIcon },
+  { href: "/", label: "Путь", icon: HouseIcon },
   { href: "/session", label: "Занятие", icon: PathIcon },
-  { href: "/chat", label: "Агенты", icon: ChatCircleDotsIcon },
   { href: "/exercise", label: "Практика", icon: CodeIcon },
   { href: "/knowledge", label: "Карта знаний", icon: BrainIcon },
   { href: "/mistakes", label: "Ошибки", icon: ArticleIcon },
@@ -33,19 +31,51 @@ const nav = [
 ] as const;
 
 const titles: Record<string, string> = Object.fromEntries(
-  nav.map((item) => [item.href, item.label]),
+  [
+    ...nav,
+    { href: "/settings", label: "Настройки" },
+    {
+      href: "/settings/developer-tools",
+      label: "Инструменты разработчика",
+    },
+    { href: "/chat", label: "Agent Playground" },
+  ].map((item) => [item.href, item.label]),
 );
+
+const settingsNav = [
+  { href: "/settings", label: "Настройки" },
+  {
+    href: "/settings/developer-tools",
+    label: "Инструменты разработчика",
+  },
+] as const;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { resolvedTheme, setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const title = titles[pathname] ?? "Dev Learning Harness";
+  const nextTheme =
+    theme === "system" ? "light" : theme === "light" ? "dark" : "system";
+  const mobileSettings =
+    pathname === "/settings/developer-tools"
+      ? {
+          href: "/settings/developer-tools",
+          label: "Dev tools",
+          icon: GearSixIcon,
+        }
+      : { href: "/settings", label: "Настройки", icon: GearSixIcon };
 
   return (
     <div
       data-slot="app-shell"
       className="min-h-dvh bg-background text-foreground"
     >
+      <a
+        href="#main-content"
+        className="sr-only fixed left-3 top-3 z-50 rounded-md bg-primary px-4 py-3 text-sm font-medium text-primary-foreground outline-none focus:not-sr-only focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"
+      >
+        К основному содержимому
+      </a>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-border bg-sidebar md:flex md:flex-col">
         <div className="flex h-16 items-center gap-3 border-b border-border px-5">
           <div className="grid size-8 place-items-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
@@ -75,8 +105,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 data-slot="sidebar-link"
                 data-active={active}
                 href={item.href}
+                aria-current={pathname === item.href ? "page" : undefined}
                 className={cn(
-                  "flex min-h-10 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                  "flex min-h-11 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground outline-none transition-colors duration-200 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
                   active && "bg-accent font-medium text-accent-foreground",
                 )}
               >
@@ -91,13 +122,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="border-t border-border p-3">
-          <Link
-            href="/settings"
-            className="flex min-h-10 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <GearSixIcon aria-hidden className="size-4.5" />
-            Настройки
-          </Link>
+          {settingsNav.map((item, index) => {
+            const active = pathname === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "flex min-h-11 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground outline-none transition-colors duration-200 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                  index === 1 && "pl-10 text-xs",
+                  active && "bg-accent font-medium text-accent-foreground",
+                )}
+              >
+                {index === 0 ? (
+                  <GearSixIcon aria-hidden className="size-4.5" />
+                ) : null}
+                {item.label}
+              </Link>
+            );
+          })}
         </div>
       </aside>
 
@@ -113,11 +157,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <ProviderHealth />
             <Button
               aria-label="Переключить тему"
+              title={`Тема: ${theme === "dark" ? "тёмная" : theme === "light" ? "светлая" : "системная"}`}
               variant="ghost"
               size="icon"
-              onClick={() =>
-                setTheme(resolvedTheme === "dark" ? "light" : "dark")
-              }
+              onClick={() => setTheme(nextTheme)}
             >
               <SunIcon aria-hidden className="hidden dark:block" />
               <MoonIcon aria-hidden className="block dark:hidden" />
@@ -127,27 +170,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <nav
           aria-label="Мобильная навигация"
-          className="flex gap-1 overflow-x-auto border-b border-border p-2 md:hidden"
+          className="grid grid-cols-4 gap-1 border-b border-border bg-sidebar p-2 md:hidden"
         >
-          {[
-            ...nav,
-            { href: "/settings", label: "Настройки", icon: GearSixIcon },
-          ].map((item) => (
-            <Button
-              key={item.href}
-              asChild
-              variant={pathname === item.href ? "secondary" : "ghost"}
-              size="sm"
-              className="shrink-0"
-            >
-              <Link href={item.href}>
-                <item.icon aria-hidden /> {item.label}
-              </Link>
-            </Button>
-          ))}
+          {[...nav, mobileSettings].map((item) => {
+            const active = pathname === item.href;
+            return (
+              <Button
+                key={item.href}
+                asChild
+                variant={active ? "secondary" : "ghost"}
+                size="sm"
+                className="h-auto min-h-11 min-w-0 whitespace-normal px-1 py-1.5 text-center text-[0.6875rem] leading-4"
+              >
+                <Link
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className="flex-col gap-0.5"
+                >
+                  <item.icon aria-hidden className="size-4" />
+                  <span className="line-clamp-2">{item.label}</span>
+                </Link>
+              </Button>
+            );
+          })}
         </nav>
 
-        <main className="mx-auto w-full max-w-[1440px] p-4 md:p-6 lg:p-8">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="mx-auto w-full max-w-[1440px] p-4 outline-none md:p-6 lg:p-8"
+        >
           {children}
         </main>
       </div>

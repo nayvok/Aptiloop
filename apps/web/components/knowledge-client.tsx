@@ -31,7 +31,13 @@ export function KnowledgeClient() {
     queryKey: ["knowledge"],
     queryFn: () => api<{ topics: Topic[] }>("/knowledge"),
   });
-  if (query.isLoading) return <Skeleton className="h-96" />;
+  if (query.isLoading)
+    return (
+      <div role="status" aria-label="Загружаю карту знаний">
+        <Skeleton aria-hidden className="h-96" />
+        <span className="sr-only">Загружаю карту знаний…</span>
+      </div>
+    );
   if (query.isError || !query.data)
     return (
       <QueryError
@@ -39,9 +45,28 @@ export function KnowledgeClient() {
         retry={() => void query.refetch()}
       />
     );
+  if (!query.data.topics.length)
+    return (
+      <div
+        data-slot="knowledge-empty"
+        className="flex flex-col gap-1 rounded-xl border border-border bg-card p-6"
+      >
+        <h3 className="font-semibold">Пока нет подтверждённых знаний</h3>
+        <p className="max-w-[70ch] text-sm leading-6 text-muted-foreground">
+          Заверши первое занятие: карта появится после сохранения evidence из
+          нескольких типов заданий.
+        </p>
+      </div>
+    );
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
+    <div
+      data-slot="knowledge-table"
+      className="overflow-x-auto rounded-xl border border-border"
+    >
       <table className="w-full min-w-[900px] border-collapse text-sm">
+        <caption className="sr-only">
+          Уровень знаний по темам и измерениям, шкала от 0 до 5
+        </caption>
         <thead className="bg-muted text-left text-xs text-muted-foreground">
           <tr>
             <th className="p-3 font-medium">Тема</th>
@@ -71,7 +96,10 @@ export function KnowledgeClient() {
                 <td key={dimension} className="p-3">
                   <div className="flex items-center gap-2">
                     <Progress
-                      value={topic.scores[dimension] * 20}
+                      value={topic.scores[dimension]}
+                      max={5}
+                      aria-label={`${topic.title}: ${labels[dimension]}`}
+                      aria-valuetext={`${topic.scores[dimension].toFixed(1)} из 5`}
                       className="w-16"
                     />
                     <span className="font-mono text-xs">

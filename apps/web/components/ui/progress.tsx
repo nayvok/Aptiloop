@@ -6,13 +6,18 @@ import { cn } from "@/lib/utils";
 
 export function Progress({
   value = 0,
+  max = 100,
   className,
   ...props
 }: React.ComponentProps<typeof ProgressPrimitive.Root>) {
-  const safeValue = Math.min(100, Math.max(0, value ?? 0));
+  const safeMax = Math.max(1, max);
+  const safeValue = Math.min(safeMax, Math.max(0, value ?? 0));
+  const percentage = (safeValue / safeMax) * 100;
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
+      value={safeValue}
+      max={safeMax}
       className={cn(
         "relative h-1.5 w-full overflow-hidden rounded-full bg-secondary",
         className,
@@ -22,7 +27,7 @@ export function Progress({
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
         className="h-full bg-primary transition-transform duration-200 motion-reduce:transition-none"
-        style={{ transform: `translateX(-${100 - safeValue}%)` }}
+        style={{ transform: `translateX(-${100 - percentage}%)` }}
       />
     </ProgressPrimitive.Root>
   );
