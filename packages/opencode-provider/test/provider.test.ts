@@ -192,11 +192,16 @@ class FakeOpenCodeTransport implements OpenCodeTransport {
 
 function createProvider(
   transport: FakeOpenCodeTransport,
+  deadlines: {
+    readonly requestTimeoutMs?: number;
+    readonly turnTimeoutMs?: number;
+  } = {},
 ): OpenCodeAgentProvider {
   return new OpenCodeAgentProvider({
     directory: "C:\\learning-workspace",
     transport,
     now: () => NOW,
+    ...deadlines,
   });
 }
 
@@ -245,6 +250,50 @@ describe("OpenCodeAgentProvider", () => {
     ]);
   });
 
+  it("bounds a provider-list request even when the transport ignores abort", async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = new FakeOpenCodeTransport();
+      let requestSignal: AbortSignal | undefined;
+      transport.listProviders = vi.fn(async (_directory, signal) => {
+        requestSignal = signal;
+        return new Promise<OpenCodeProviderSnapshot>(() => {});
+      });
+      const provider = createProvider(transport, { requestTimeoutMs: 25 });
+
+      const pending = provider.listModels();
+      const rejected = expect(pending).rejects.toMatchObject({
+        code: "unavailable",
+        retryable: true,
+      });
+      await vi.advanceTimersByTimeAsync(25);
+
+      await rejected;
+      expect(requestSignal?.aborted).toBe(true);
+      expect(requestSignal?.reason).toMatchObject({ name: "TimeoutError" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("propagates caller cancellation into a provider-list request", async () => {
+    const transport = new FakeOpenCodeTransport();
+    let requestSignal: AbortSignal | undefined;
+    transport.listProviders = vi.fn(async (_directory, signal) => {
+      requestSignal = signal;
+      return new Promise<OpenCodeProviderSnapshot>(() => {});
+    });
+    const provider = createProvider(transport);
+    const controller = new AbortController();
+
+    const pending = provider.listModels(controller.signal);
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: "unavailable" });
+    expect(requestSignal?.aborted).toBe(true);
+    expect(requestSignal?.reason).toMatchObject({ name: "AbortError" });
+  });
+
   it("returns misconfigured status without contacting a real server", async () => {
     const provider = new OpenCodeAgentProvider({
       directory: "C:\\learning-workspace",
@@ -277,6 +326,31 @@ describe("OpenCodeAgentProvider", () => {
         systemPrompt: "Teach.",
       }),
     ).rejects.toMatchObject({ code: "model_unavailable" });
+  });
+
+  it("bounds remote session creation when the sidecar stops responding", async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = new FakeOpenCodeTransport();
+      let requestSignal: AbortSignal | undefined;
+      transport.createSession = vi.fn(async (_input, signal) => {
+        requestSignal = signal;
+        return new Promise<OpenCodeSessionRecord>(() => {});
+      });
+      const provider = createProvider(transport, { requestTimeoutMs: 25 });
+
+      const pending = createTeacherSession(provider);
+      const rejected = expect(pending).rejects.toMatchObject({
+        code: "provider_error",
+        retryable: true,
+      });
+      await vi.advanceTimersByTimeAsync(25);
+
+      await rejected;
+      expect(requestSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("filters SSE by session, computes text deltas, and fetches the final message", async () => {
@@ -600,6 +674,93 @@ describe("OpenCodeAgentProvider", () => {
     expect(transport.abortCalls).toEqual(["ses-1"]);
   });
 
+  it("fails a turn at its deadline when the event stream goes silent", async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = new FakeOpenCodeTransport();
+      let subscriptionSignal: AbortSignal | undefined;
+      transport.subscribe = vi.fn(async (_directory, signal) => {
+        subscriptionSignal = signal;
+        return {
+          [Symbol.asyncIterator]() {
+            let connected = false;
+            return {
+              next: () => {
+                if (!connected) {
+                  connected = true;
+                  return Promise.resolve({
+                    done: false as const,
+                    value: rawEvent("server.connected", {}),
+                  });
+                }
+                return new Promise<IteratorResult<Event>>(() => {});
+              },
+            };
+          },
+        };
+      });
+      const provider = createProvider(transport, {
+        requestTimeoutMs: 25,
+        turnTimeoutMs: 50,
+      });
+      await createTeacherSession(provider);
+
+      const pending = collect(
+        provider.streamMessage({
+          sessionId: "ses-1",
+          message: "Question",
+          responseFormat: "text",
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(50);
+
+      await expect(pending).resolves.toEqual([
+        expect.objectContaining({
+          type: "error",
+          error: {
+            code: "unavailable",
+            message: "OpenCode response deadline was exceeded",
+            retryable: true,
+          },
+        }),
+        expect.objectContaining({
+          type: "session.completed",
+          reason: "failed",
+        }),
+      ]);
+      expect(subscriptionSignal?.aborted).toBe(true);
+      expect(transport.abortCalls).toEqual(["ses-1"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds cancellation when the remote abort endpoint hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = new FakeOpenCodeTransport();
+      const provider = createProvider(transport, { requestTimeoutMs: 25 });
+      await createTeacherSession(provider);
+      let abortSignal: AbortSignal | undefined;
+      transport.abortSession = vi.fn(async (_sessionID, _directory, signal) => {
+        abortSignal = signal;
+        return new Promise<void>(() => {});
+      });
+
+      const pending = provider.cancelSession("ses-1");
+      const rejected = expect(pending).rejects.toMatchObject({
+        code: "provider_error",
+        retryable: true,
+      });
+      await vi.advanceTimersByTimeAsync(25);
+
+      await rejected;
+      expect(abortSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("gracefully shuts down all active sessions once", async () => {
     const transport = new FakeOpenCodeTransport();
     const provider = createProvider(transport);
@@ -612,6 +773,31 @@ describe("OpenCodeAgentProvider", () => {
     await expect(provider.getStatus()).resolves.toMatchObject({
       state: "unavailable",
     });
+  });
+
+  it("bounds shutdown and shares one completion promise", async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = new FakeOpenCodeTransport();
+      const provider = createProvider(transport, { requestTimeoutMs: 25 });
+      await createTeacherSession(provider);
+      let abortSignal: AbortSignal | undefined;
+      transport.abortSession = vi.fn(async (_sessionID, _directory, signal) => {
+        abortSignal = signal;
+        return new Promise<void>(() => {});
+      });
+
+      const first = provider.shutdown();
+      const second = provider.shutdown();
+      expect(second).toBe(first);
+      await vi.advanceTimersByTimeAsync(25);
+
+      await expect(first).resolves.toBeUndefined();
+      expect(abortSignal?.aborted).toBe(true);
+      expect(transport.abortSession).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("aborts a session whose remote creation finishes during shutdown", async () => {

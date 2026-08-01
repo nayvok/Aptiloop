@@ -26,13 +26,15 @@ ENV HOST=0.0.0.0
 ENV PORT=8787
 ENV DATABASE_URL=/data/dev-learning-harness.sqlite
 ENV WORKSPACE_ROOT=/app/workspaces/exercises
+ENV EXERCISE_ATTEMPTS_ROOT=/app/.data/exercise-attempts
 WORKDIR /app
 RUN groupadd --system harness && useradd --system --gid harness --home-dir /app harness
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=builder --chown=harness:harness /app/apps/orchestrator/dist ./apps/orchestrator/dist
 COPY --from=builder --chown=harness:harness /app/packages/database/migrations ./packages/database/migrations
 COPY --from=builder --chown=harness:harness /app/workspaces/exercises ./workspaces/exercises
-RUN mkdir -p /data /workspace && chown harness:harness /data /workspace
+RUN mkdir -p /data /app/.data/exercise-attempts && \
+    chown -R harness:harness /data /app/.data
 USER harness
 EXPOSE 8787
 CMD ["node", "apps/orchestrator/dist/server.js"]

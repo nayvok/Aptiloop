@@ -111,6 +111,8 @@ export interface VersionedCurriculumUnit {
   readonly misconceptions: readonly string[];
   readonly completionCriteria: readonly UnitCompletionCriterion[];
   readonly unlockRule: UnitUnlockRule;
+  /** Authored code shown to the learner by a code-reading unit. */
+  readonly codeSnippet?: string;
   readonly exercise?: VersionedExercisePayload;
 }
 

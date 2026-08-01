@@ -20,8 +20,8 @@ describe("versioned prompt contracts", () => {
       expect(PromptDefinitionSchema.safeParse(prompt).success).toBe(true);
       expect(getLatestWorkflowPrompt(prompt.id)).toBe(prompt);
       if (prompt.id === prompt.role) {
-        expect(listPromptVersions(prompt.role)).toEqual(["v1.0.0"]);
-        expect(getPrompt(prompt.role, "v1.0.0")).toBe(prompt);
+        expect(listPromptVersions(prompt.role)).toEqual(["v1.1.0"]);
+        expect(getPrompt(prompt.role, "v1.1.0")).toBe(prompt);
         expect(getLatestPrompt(prompt.role)).toBe(prompt);
       }
     }
@@ -38,6 +38,9 @@ describe("versioned prompt contracts", () => {
       expect(prompt.systemPrompt).toContain("RESULT FORMAT");
       expect(prompt.systemPrompt).toContain("HONESTY AND CONTEXT");
       expect(prompt.systemPrompt).toContain("DEPTH LEVEL");
+      expect(prompt.systemPrompt).toContain(
+        "Always respond to the learner in Russian",
+      );
       expect(prompt.systemPrompt).toContain("STRUCTURED OUTPUT SCHEMA");
       expect(prompt.contextPolicy).toBeTruthy();
       expect(prompt.structuredOutputSchema).toBeTruthy();

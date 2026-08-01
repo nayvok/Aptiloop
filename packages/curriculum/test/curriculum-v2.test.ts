@@ -6,7 +6,9 @@ import {
   curriculum,
   draftRoadmapWeeks,
   foundationWeekV2,
+  publishedCurriculumRevision2,
   publishedCurriculumV2,
+  publishedCurriculumV3,
   toLearnerUnit,
   weekOneCurriculum,
 } from "../src/index.js";
@@ -22,7 +24,7 @@ describe("published curriculum v2", () => {
       "JavaScript, TypeScript и React: восстановление фундамента",
     );
     expect(activeCurriculumVersion.parentVersionId).toBe(
-      publishedCurriculumV2.id,
+      publishedCurriculumV3.id,
     );
     expect(publishedCurriculumV2.parentVersionId).toBe(
       archivedLegacyCurriculumVersion.id,
@@ -32,18 +34,56 @@ describe("published curriculum v2", () => {
     );
     expect(activeCurriculumVersion.contentHash).toMatch(/^[a-f0-9]{64}$/);
     expect(activeCurriculumVersion).toMatchObject({
+      id: "curriculum-foundation-v2-r4",
+      revision: 4,
+      createdAt: "2026-08-02T00:00:00.000Z",
+      publishedAt: "2026-08-02T00:00:00.000Z",
+    });
+    expect(publishedCurriculumRevision2).toMatchObject({
       id: "curriculum-foundation-v2-r2",
       revision: 2,
-      createdAt: "2026-08-01T00:00:00.000Z",
-      publishedAt: "2026-08-01T00:00:00.000Z",
+      parentVersionId: publishedCurriculumV2.id,
+      contentHash:
+        "920a36a5484ba88f01477a28a281fcc781935ef4124ef8ace7b689536d543427",
     });
     expect(publishedCurriculumV2).toMatchObject({
       id: "curriculum-foundation-v2-r1",
       revision: 1,
     });
+    expect(publishedCurriculumV3).toMatchObject({
+      id: "curriculum-foundation-v2-r3",
+      revision: 3,
+      parentVersionId: publishedCurriculumRevision2.id,
+      contentHash:
+        "7ee9586b13cd47d693d2d1ac354fa1c5c36651e580c375c382898784cd663262",
+    });
     expect(activeCurriculumVersion.contentHash).not.toBe(
-      publishedCurriculumV2.contentHash,
+      publishedCurriculumRevision2.contentHash,
     );
+    expect(activeCurriculumVersion.contentHash).not.toBe(
+      publishedCurriculumV3.contentHash,
+    );
+  });
+
+  it("rewrites the Day 1 briefing checklist in plain Russian and keeps revision 3 immutable", () => {
+    const revisionThreeBriefing =
+      publishedCurriculumV3.weeks[0]?.days[0]?.units[0];
+    const revisionFourBriefing =
+      activeCurriculumVersion.weeks[0]?.days[0]?.units[0];
+
+    expect(revisionThreeBriefing?.checklist).toEqual([
+      "Прочитать outcomes",
+      "Зафиксировать out of scope",
+      "Подготовить Zed для практики",
+    ]);
+    expect(revisionFourBriefing?.stableId).toBe(
+      revisionThreeBriefing?.stableId,
+    );
+    expect(revisionFourBriefing?.checklist).toEqual([
+      "Прочитать «Результат дня» — цели занятия",
+      "Просмотреть «Вне занятия» — что сегодня не разбираем",
+      "Открыть Zed и подготовить папку для практики",
+    ]);
   });
 
   it("uses stable unique IDs and consecutive authored order", () => {
@@ -215,6 +255,126 @@ describe("published curriculum v2", () => {
       expect(
         item.options?.some((option) =>
           correctOptionStableIds.includes(option.stableId),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("publishes an executable single-choice quiz for every day", () => {
+    const publishedDays = activeCurriculumVersion.weeks.flatMap(
+      (week) => week.days,
+    );
+
+    for (const day of publishedDays) {
+      const quiz = day.units.find((unit) => unit.type === "quiz");
+      expect(quiz?.questions, `Day ${day.dayNumber} quiz`).toHaveLength(4);
+
+      for (const question of quiz?.questions ?? []) {
+        const optionIds = (question.options ?? []).map(
+          (option) => option.stableId,
+        );
+        const answerKey =
+          question.protectedEvaluation.correctOptionStableIds ?? [];
+
+        expect(question.kind).toBe("multiple-choice");
+        expect(optionIds.length).toBeGreaterThanOrEqual(3);
+        expect(optionIds.length).toBeLessThanOrEqual(4);
+        expect(new Set(optionIds).size).toBe(optionIds.length);
+        expect(answerKey).toHaveLength(1);
+        expect(optionIds).toContain(answerKey[0]);
+      }
+    }
+  });
+
+  it("publishes code separately from the code-reading question", () => {
+    const publishedDays = activeCurriculumVersion.weeks.flatMap(
+      (week) => week.days,
+    );
+
+    for (const day of publishedDays) {
+      const reading = day.units.find((unit) => unit.type === "code-reading");
+      const snippet = reading?.codeSnippet ?? "";
+
+      expect(snippet, `Day ${day.dayNumber} code snippet`).toMatch(
+        /\b(?:const|let|function|type|import|console|Promise|setTimeout)\b/,
+      );
+      expect(snippet).toMatch(/[{}();=]/);
+      expect(snippet.trim().length).toBeGreaterThan(40);
+      expect(snippet).not.toBe(reading?.description);
+      for (const question of reading?.questions ?? []) {
+        expect(snippet).not.toBe(question.prompt);
+      }
+    }
+  });
+
+  it("keeps every published day within its honest three-hour budget", () => {
+    const publishedDays = activeCurriculumVersion.weeks.flatMap(
+      (week) => week.days,
+    );
+
+    for (const day of publishedDays) {
+      const unitMinutes = day.units.reduce(
+        (total, unit) => total + unit.estimatedMinutes,
+        0,
+      );
+
+      expect(day.estimatedMinutes, `Day ${day.dayNumber} estimate`).toBe(
+        unitMinutes,
+      );
+      expect(unitMinutes, `Day ${day.dayNumber} budget`).toBeLessThanOrEqual(
+        180,
+      );
+    }
+  });
+
+  it("preserves revision 2 estimates as immutable parent content", () => {
+    const revisionTwoDays = publishedCurriculumRevision2.weeks.flatMap(
+      (week) => week.days,
+    );
+
+    expect(revisionTwoDays.map((day) => day.estimatedMinutes)).toEqual([
+      195, 215, 197, 197, 197, 215, 209,
+    ]);
+    expect(
+      revisionTwoDays.map((day) =>
+        day.units.map((unit) => unit.estimatedMinutes),
+      ),
+    ).toEqual([
+      [8, 18, 20, 22, 24, 18, 15, 12, 15, 45, 15, 8],
+      [8, 18, 18, 18, 18, 18, 15, 12, 15, 50, 15, 10],
+      [8, 18, 18, 18, 18, 15, 12, 15, 50, 15, 10],
+      [8, 18, 18, 18, 18, 15, 12, 15, 50, 15, 10],
+      [8, 18, 18, 18, 18, 15, 12, 15, 50, 15, 10],
+      [8, 18, 18, 18, 18, 18, 15, 12, 15, 50, 15, 10],
+      [8, 18, 18, 18, 15, 12, 15, 50, 15, 5, 25, 10],
+    ]);
+  });
+
+  it("keeps revision 2 scoped to the original Day 1 answer-key change", () => {
+    const revisionTwoDays = publishedCurriculumRevision2.weeks.flatMap(
+      (week) => week.days,
+    );
+    const dayOneQuiz = revisionTwoDays[0]?.units.find(
+      (unit) => unit.type === "quiz",
+    );
+
+    expect(
+      dayOneQuiz?.questions.map(
+        (question) => question.protectedEvaluation.correctOptionStableIds,
+      ),
+    ).toEqual([["q1-b"], ["q2-b"], ["q3-b"], ["q4-b"]]);
+
+    for (const day of revisionTwoDays) {
+      const reading = day.units.find((unit) => unit.type === "code-reading");
+      expect(reading?.codeSnippet).toBeUndefined();
+      if (day.dayNumber === 1) continue;
+
+      const quiz = day.units.find((unit) => unit.type === "quiz");
+      expect(
+        quiz?.questions.every(
+          (question) =>
+            question.options === undefined &&
+            question.protectedEvaluation.correctOptionStableIds === undefined,
         ),
       ).toBe(true);
     }

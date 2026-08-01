@@ -119,6 +119,21 @@ export class AllowedProcessRunner {
       command.maxOutputBytes ?? this.#defaultMaxOutputBytes;
     const startedAt = performance.now();
 
+    // An already-cancelled operation must not start a process with observable
+    // side effects merely to terminate it immediately afterwards.
+    if (options.signal?.aborted === true) {
+      return {
+        commandId,
+        exitCode: null,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        terminationReason: "cancelled",
+        truncated: false,
+      };
+    }
+
     return await new Promise<ProcessResult>((resolve) => {
       let child!: ChildProcess;
       let settled = false;
@@ -128,6 +143,13 @@ export class AllowedProcessRunner {
       let stderr = Buffer.alloc(0);
       // eslint-disable-next-line prefer-const -- assigned after spawn so the synchronous catch can call finish safely.
       let timeout: NodeJS.Timeout | undefined;
+      let forceKillTimer: NodeJS.Timeout | undefined;
+
+      const clearForceKillTimer = (): void => {
+        if (forceKillTimer === undefined) return;
+        clearTimeout(forceKillTimer);
+        forceKillTimer = undefined;
+      };
 
       const finish = (
         exitCode: number | null,
@@ -136,6 +158,7 @@ export class AllowedProcessRunner {
         if (settled) return;
         settled = true;
         if (timeout !== undefined) clearTimeout(timeout);
+        clearForceKillTimer();
         options.signal?.removeEventListener("abort", cancel);
         resolve({
           commandId,
@@ -155,11 +178,20 @@ export class AllowedProcessRunner {
         if (settled || terminationReason !== "exit") return;
         terminationReason = reason;
         terminateProcessTree(child, "SIGTERM");
-        const forceTimer = setTimeout(
-          () => terminateProcessTree(child, "SIGKILL"),
-          1_000,
-        );
-        forceTimer.unref();
+        // taskkill /F is already forceful on Windows. Scheduling a second PID-
+        // based taskkill would create an avoidable PID-reuse race.
+        if (process.platform !== "win32" && child.pid !== undefined) {
+          forceKillTimer = setTimeout(() => {
+            forceKillTimer = undefined;
+            // The exit listener clears this timer as soon as the original
+            // process exits. Never signal a process group after its leader is
+            // gone because the numeric PID may already have been reused.
+            if (settled || child.exitCode !== null || child.signalCode !== null)
+              return;
+            terminateProcessTree(child, "SIGKILL");
+          }, 1_000);
+          forceKillTimer.unref();
+        }
       };
 
       const append = (target: "stdout" | "stderr", chunk: Buffer): void => {
@@ -197,13 +229,15 @@ export class AllowedProcessRunner {
       child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
       child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
       child.once("error", (error) => {
-        terminationReason = "spawn_error";
+        // A kill failure can emit `error` after timeout/cancellation. Preserve
+        // the initiating reason and wait for `close` so cleanup is complete.
+        if (terminationReason === "exit") terminationReason = "spawn_error";
         stderr = Buffer.concat([stderr, Buffer.from(error.message)]).subarray(
           0,
           maxOutputBytes,
         );
-        finish(null, null);
       });
+      child.once("exit", clearForceKillTimer);
       child.once("close", finish);
 
       timeout = setTimeout(() => terminate("timeout"), timeoutMs);

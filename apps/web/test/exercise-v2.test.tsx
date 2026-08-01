@@ -111,6 +111,10 @@ beforeEach(() => {
     configurable: true,
     value: { randomUUID: vi.fn(() => `operation-${++operation}`) },
   });
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
 });
 
 afterEach(() => {
@@ -119,6 +123,40 @@ afterEach(() => {
 });
 
 describe("restart-safe v2 practice", () => {
+  it("keeps practice locked until the exercise unit is available", async () => {
+    const locked = {
+      ...exerciseState(),
+      attempt: undefined,
+      workspacePath: null,
+      exerciseUnitProgress: {
+        status: "locked",
+        payload: {
+          type: "exercise",
+          attemptId: null,
+          latestTestRunId: null,
+          latestReviewId: null,
+        },
+      },
+    };
+    apiMock.mockResolvedValue(locked);
+    renderWithQuery(<ExerciseClient />);
+
+    expect(
+      await screen.findByText("Текущий шаг ещё не практика"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Нормализуйте unknown без any"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Создать попытку" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Вернуться к занятию" }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/session?id=session-v2");
+  });
+
   it("restores diff, latest passed test, and review after a full remount", async () => {
     const restored = exerciseState({ review: "changes_requested" });
     apiMock.mockResolvedValue(restored);
@@ -137,6 +175,22 @@ describe("restart-safe v2 practice", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Нужно исправление")).toBeInTheDocument();
     expect(apiMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("copies the server-owned workspace path on demand", async () => {
+    apiMock.mockResolvedValue(exerciseState());
+    renderWithQuery(<ExerciseClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Скопировать путь" }),
+    );
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "C:/attempts/attempt-v2",
+    );
+    expect(
+      await screen.findByText("Путь скопирован в буфер обмена."),
+    ).toBeInTheDocument();
   });
 
   it("keeps review disabled when the latest test failed or predates the current files", async () => {

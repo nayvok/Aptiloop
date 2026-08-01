@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 const unitTypeSchema = z.enum([
   "briefing",
@@ -258,6 +259,52 @@ export function DashboardClient() {
         }
       />
 
+      {start.isError ? (
+        <div
+          data-slot="start-session-error"
+          role="alert"
+          className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
+        >
+          {start.error instanceof Error
+            ? start.error.message
+            : "Не удалось начать занятие."}
+        </div>
+      ) : null}
+
+      {actionableDay ? (
+        <section
+          data-slot="next-learning-step"
+          aria-labelledby="next-learning-step-title"
+          className="flex flex-col gap-5"
+        >
+          <header className="flex flex-col gap-1 border-b border-border pb-4">
+            <h2 id="next-learning-step-title" className="text-xl font-semibold">
+              Следующий шаг
+            </h2>
+            <p className="max-w-[70ch] text-sm leading-6 text-muted-foreground">
+              Продолжи с ближайшего доступного шага. Ниже можно свериться со
+              всем маршрутом, не раскрывая будущие задания раньше времени.
+            </p>
+          </header>
+          <ol data-slot="current-curriculum-day">
+            <DayRail
+              day={actionableDay}
+              isActionable
+              isStarting={
+                start.isPending && start.variables === actionableDay.id
+              }
+              onOpen={(sessionId) => router.push(`/session?id=${sessionId}`)}
+              onStart={(dayId) => start.mutate(dayId)}
+            />
+          </ol>
+        </section>
+      ) : (
+        <EmptyState
+          title="Опубликованный маршрут завершён"
+          description="Все доступные дни пройдены. Результаты и повторение остаются в карте знаний и журнале ошибок."
+        />
+      )}
+
       <section
         data-slot="path-progress"
         aria-labelledby="path-progress-title"
@@ -279,32 +326,17 @@ export function DashboardClient() {
         <Progress aria-label="Общий прогресс маршрута" value={totalProgress} />
       </section>
 
-      {start.isError ? (
-        <div
-          data-slot="start-session-error"
-          role="alert"
-          className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
-        >
-          {start.error instanceof Error
-            ? start.error.message
-            : "Не удалось начать занятие."}
-        </div>
-      ) : null}
-
-      <div data-slot="curriculum-weeks" className="flex flex-col gap-10">
+      <div data-slot="curriculum-weeks" className="flex flex-col gap-8">
         {curriculum.weeks.map((week) => (
           <section
             key={week.id}
             data-slot="curriculum-week"
             aria-labelledby={`week-${week.id}`}
-            className="flex flex-col gap-6"
+            className="flex flex-col gap-4"
           >
             <header className="flex flex-col gap-1 border-b border-border pb-4">
-              <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
-                Неделя {week.order}
-              </p>
-              <h2 id={`week-${week.id}`} className="text-xl font-semibold">
-                {week.title}
+              <h2 id={`week-${week.id}`} className="text-lg font-semibold">
+                {formatWeekTitle(week.order, week.title)}
               </h2>
               {week.description ? (
                 <p className="max-w-[70ch] text-sm leading-6 text-muted-foreground">
@@ -313,17 +345,16 @@ export function DashboardClient() {
               ) : null}
             </header>
 
-            <ol data-slot="curriculum-days" className="flex flex-col gap-8">
+            <ol
+              data-slot="curriculum-days-overview"
+              aria-label={`Обзор дней недели ${week.order}`}
+              className="divide-y divide-border border-y border-border"
+            >
               {week.days.map((day) => (
-                <DayRail
+                <DaySummary
                   key={day.id}
                   day={day}
-                  isActionable={day.id === actionableDay?.id}
-                  isStarting={start.isPending && start.variables === day.id}
-                  onOpen={(sessionId) =>
-                    router.push(`/session?id=${sessionId}`)
-                  }
-                  onStart={(dayId) => start.mutate(dayId)}
+                  current={day.id === actionableDay?.id}
                 />
               ))}
             </ol>
@@ -331,6 +362,56 @@ export function DashboardClient() {
         ))}
       </div>
     </div>
+  );
+}
+
+function DaySummary({ day, current }: { day: LearningDay; current: boolean }) {
+  const completed = countCompletedUnits(day.units);
+  const progress = day.units.length
+    ? Math.round((completed / day.units.length) * 100)
+    : 0;
+  const DayStatusIcon = statusIcon(day.status);
+
+  return (
+    <li
+      data-slot="curriculum-day-summary"
+      data-status={day.status}
+      className={cn(
+        "flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:gap-4",
+        current && "bg-accent/35 px-3",
+      )}
+    >
+      <span className="grid size-9 shrink-0 place-items-center rounded-full border border-border font-mono text-sm font-semibold">
+        {String(day.order).padStart(2, "0")}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="font-medium">{day.title}</h3>
+          <Badge variant={dayBadgeVariant(day.status)}>
+            <DayStatusIcon aria-hidden />
+            {dayStatusLabels[day.status]}
+          </Badge>
+        </div>
+        <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
+          {day.description}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-4 sm:w-48">
+        <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+          <ClockIcon aria-hidden />
+          {day.estimatedMinutes} мин
+        </span>
+        <div className="min-w-20 flex-1">
+          <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+            <span>
+              {completed}/{day.units.length}
+            </span>
+            <span className="font-mono">{progress}%</span>
+          </div>
+          <Progress aria-label={`Прогресс дня ${day.order}`} value={progress} />
+        </div>
+      </div>
+    </li>
   );
 }
 
@@ -415,6 +496,25 @@ function DayRail({
           </div>
         </div>
 
+        {isActionable ? (
+          <div className="flex justify-start">
+            <Button
+              type="button"
+              disabled={isStarting}
+              onClick={() =>
+                day.sessionId ? onOpen(day.sessionId) : onStart(day.id)
+              }
+            >
+              {isStarting
+                ? "Создаю занятие…"
+                : day.sessionId
+                  ? "Продолжить занятие"
+                  : "Начать занятие"}
+              <ArrowRightIcon aria-hidden />
+            </Button>
+          </div>
+        ) : null}
+
         <dl className="grid gap-4 rounded-lg bg-muted/55 p-4 text-sm md:grid-cols-2">
           <div className="flex flex-col gap-1">
             <dt className="font-medium">Цель</dt>
@@ -460,24 +560,7 @@ function DayRail({
           ))}
         </ol>
 
-        {isActionable ? (
-          <div className="flex justify-end">
-            <Button
-              type="button"
-              disabled={isStarting}
-              onClick={() =>
-                day.sessionId ? onOpen(day.sessionId) : onStart(day.id)
-              }
-            >
-              {isStarting
-                ? "Создаю занятие…"
-                : day.sessionId
-                  ? "Продолжить занятие"
-                  : "Начать занятие"}
-              <ArrowRightIcon aria-hidden />
-            </Button>
-          </div>
-        ) : day.status === "locked" ? (
+        {!isActionable && day.status === "locked" ? (
           <div className="flex justify-end">
             <Button type="button" variant="outline" disabled>
               <LockKeyIcon aria-hidden />
@@ -555,6 +638,12 @@ function countCompletedUnits(units: readonly LearnerUnit[]): number {
   return units.filter(
     (unit) => unit.status === "completed" || unit.status === "skipped",
   ).length;
+}
+
+function formatWeekTitle(order: number, title: string): string {
+  return new RegExp(`^неделя\\s+0*${order}(?:\\b|\\.)`, "iu").test(title)
+    ? title
+    : `Неделя ${order}. ${title}`;
 }
 
 function dayBadgeVariant(status: LearningDay["status"]) {

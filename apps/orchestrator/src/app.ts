@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +23,7 @@ import {
   buildZedOpenPlan,
   createExerciseAttemptWorkspace,
   ensureExerciseBaseline,
+  fingerprintExerciseDiff,
   getExerciseDiff,
   openInZed,
   resolveWorkspacePath,
@@ -112,6 +113,8 @@ interface TestRunRecord {
   stdout: string;
   stderr: string;
   durationMs: number | null;
+  diffFingerprint: string | null;
+  diffTruncated: number;
   startedAt: number;
   completedAt: number | null;
 }
@@ -251,7 +254,10 @@ export function createApp(options: AppOptions = {}) {
     }
     const isMutation = mutationMethods.has(context.req.method.toUpperCase());
     const origin = context.req.header("Origin");
-    if ((isMutation && !origin) || (origin && origin !== allowedWebOrigin)) {
+    if (
+      (isMutation && !origin) ||
+      (origin && !isAllowedWebOrigin(origin, allowedWebOrigin))
+    ) {
       return context.json({ error: "Origin is not allowed" }, 403);
     }
     if (isMutation && !isJsonContentType(context.req.header("Content-Type"))) {
@@ -686,6 +692,23 @@ export function createApp(options: AppOptions = {}) {
       context.req.param("id"),
     );
     const { exercise } = resolved;
+    const versioned = await readVersionedExerciseProgress(
+      state,
+      body.sessionId,
+    );
+    if (
+      versioned &&
+      versioned.exerciseUnitProgress.status !== "ready" &&
+      versioned.exerciseUnitProgress.status !== "in_progress"
+    ) {
+      return context.json(
+        {
+          error:
+            "Практика ещё заблокирована. Завершите предыдущие шаги занятия.",
+        },
+        409,
+      );
+    }
     const existing = findAttemptByExercise(
       state.connection,
       body.sessionId,
@@ -742,7 +765,7 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.get("/api/exercise-attempts/:id/diff", async (context) => {
-    const attempt = requireAttempt(state.connection, context.req.param("id"));
+    const attempt = await requireAttempt(state, context.req.param("id"));
     const diff = await getExerciseDiff(attempt.workspacePath, {
       expectedBaselineHash: attempt.baselineHash,
     });
@@ -754,7 +777,7 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.post("/api/exercise-attempts/:id/commands", async (context) => {
-    const attempt = requireAttempt(state.connection, context.req.param("id"));
+    const attempt = await requireAttempt(state, context.req.param("id"));
     const body = z
       .object({
         operationId: z.string().trim().min(1).max(200),
@@ -797,12 +820,17 @@ export function createApp(options: AppOptions = {}) {
         cwd: attempt.workspacePath,
         signal: context.req.raw.signal,
       });
+      const testedDiff = await getExerciseDiff(attempt.workspacePath, {
+        expectedBaselineHash: attempt.baselineHash,
+      });
+      const diffFingerprint = fingerprintExerciseDiff(testedDiff);
       const now = Date.now();
       state.connection.sqlite
         .prepare(
           `UPDATE test_runs
            SET status = ?, exit_code = ?, stdout = ?, stderr = ?,
-               duration_ms = ?, completed_at = ?
+               duration_ms = ?, diff_fingerprint = ?, diff_truncated = ?,
+               completed_at = ?
            WHERE id = ?`,
         )
         .run(
@@ -811,6 +839,8 @@ export function createApp(options: AppOptions = {}) {
           result.stdout,
           result.stderr,
           result.durationMs,
+          diffFingerprint,
+          testedDiff.truncated ? 1 : 0,
           now,
           testRunId,
         );
@@ -841,7 +871,7 @@ export function createApp(options: AppOptions = {}) {
     z.object({})
       .strict()
       .parse(await context.req.json());
-    const attempt = requireAttempt(state.connection, context.req.param("id"));
+    const attempt = await requireAttempt(state, context.req.param("id"));
     const before = await getExerciseDiff(attempt.workspacePath, {
       expectedBaselineHash: attempt.baselineHash,
     });
@@ -851,14 +881,21 @@ export function createApp(options: AppOptions = {}) {
         409,
       );
     }
+    if (before.truncated) {
+      return context.json(
+        {
+          error:
+            "Review requires a complete diff; the current diff exceeds the review limit",
+        },
+        409,
+      );
+    }
     const latestTest = findLatestTestRun(state.connection, attempt.id);
     if (
       !latestTest ||
       latestTest.status !== "passed" ||
-      (await workspaceChangedAfter(
-        attempt.workspacePath,
-        latestTest.completedAt,
-      ))
+      latestTest.diffTruncated !== 0 ||
+      latestTest.diffFingerprint !== fingerprintExerciseDiff(before)
     ) {
       return context.json(
         {
@@ -917,7 +954,7 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.post("/api/exercise-attempts/:id/open", async (context) => {
-    const attempt = requireAttempt(state.connection, context.req.param("id"));
+    const attempt = await requireAttempt(state, context.req.param("id"));
     const configured = process.env.ZED_EXECUTABLE ?? "zed";
     const plan = buildZedOpenPlan(attempt.workspacePath, {
       executable: configured,
@@ -1050,6 +1087,30 @@ export function createApp(options: AppOptions = {}) {
       ...parsed,
       opencodeBaseUrl: validateOpenCodeEndpoint(parsed.opencodeBaseUrl),
     };
+    const nextOpenCodeProvider = new OpenCodeAgentProvider({
+      directory: state.projectRoot,
+      endpoint: body.opencodeBaseUrl,
+    });
+    const activeOpenCodeEndpoint = validateOpenCodeEndpoint(
+      process.env.OPENCODE_ENDPOINT ??
+        readSettingSync<string>(state.connection, "opencodeBaseUrl") ??
+        defaultOpenCodeEndpoint,
+    );
+    if (body.opencodeBaseUrl !== activeOpenCodeEndpoint) {
+      const status = await nextOpenCodeProvider.getStatus().catch(() => null);
+      if (status?.state !== "connected") {
+        return context.json(
+          {
+            error: `OpenCode сервер недоступен по адресу ${body.opencodeBaseUrl}. Запустите sidecar или верните прежний адрес.`,
+          },
+          400,
+        );
+      }
+    }
+    await validateProviderModelSelections(
+      { ...state.providers, opencode: nextOpenCodeProvider },
+      body,
+    );
     const previousOpenCodeProvider = state.providers.opencode;
     for (const [key, session] of state.providerSessions) {
       if (session.providerId === "opencode") {
@@ -1067,10 +1128,7 @@ export function createApp(options: AppOptions = {}) {
         state.repository.setSetting(key, value),
       ),
     );
-    state.providers.opencode = new OpenCodeAgentProvider({
-      directory: state.projectRoot,
-      endpoint: body.opencodeBaseUrl,
-    });
+    state.providers.opencode = nextOpenCodeProvider;
     return context.json({ saved: true });
   });
 
@@ -1091,6 +1149,43 @@ export function createApp(options: AppOptions = {}) {
   };
 }
 
+async function validateProviderModelSelections(
+  providers: Record<ProviderId, AgentProvider>,
+  settings: z.infer<typeof settingsMutationSchema>,
+): Promise<void> {
+  const selections = [
+    [settings.teacherProvider, settings.teacherModel],
+    [settings.reviewerProvider, settings.reviewerModel],
+    [settings.interviewerProvider, settings.interviewerModel],
+    [settings.curatorProvider, settings.curatorModel],
+    [settings.codexExpertProvider, settings.codexExpertModel],
+  ] as const;
+  const modelsByProvider = new Map<ProviderId, Set<string>>();
+
+  for (const providerId of new Set(selections.map(([id]) => id))) {
+    const provider = providers[providerId];
+    const models = await provider.listModels().catch(() => {
+      throw new Error(`Models are unavailable for provider ${providerId}`);
+    });
+    modelsByProvider.set(
+      providerId,
+      new Set(
+        models
+          .filter((model) => model.providerId === providerId && model.available)
+          .map((model) => model.id),
+      ),
+    );
+  }
+
+  for (const [providerId, modelId] of selections) {
+    if (!modelsByProvider.get(providerId)?.has(modelId)) {
+      throw new Error(
+        `Model ${modelId} is unavailable for provider ${providerId}`,
+      );
+    }
+  }
+}
+
 function validateWebOrigin(origin: string): string {
   try {
     const url = new URL(origin);
@@ -1108,6 +1203,35 @@ function validateWebOrigin(origin: string): string {
     return url.origin;
   } catch {
     throw new Error("WEB_ORIGIN must be an HTTP loopback origin");
+  }
+}
+
+function isLoopbackOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === ""
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedWebOrigin(origin: string, allowedWebOrigin: string): boolean {
+  if (origin === allowedWebOrigin) return true;
+  if (!isLoopbackOrigin(origin) || !isLoopbackOrigin(allowedWebOrigin)) {
+    return false;
+  }
+  try {
+    return new URL(origin).port === new URL(allowedWebOrigin).port;
+  } catch {
+    return false;
   }
 }
 
@@ -1192,11 +1316,11 @@ function findAttemptByExercise(
     .get(sessionId, exerciseId) as AttemptRecord | undefined;
 }
 
-function requireAttempt(
-  connection: DatabaseConnection,
+async function requireAttempt(
+  state: Pick<AppState, "connection" | "exerciseAttemptsRoot">,
   attemptId: string,
-): AttemptRecord {
-  const attempt = connection.sqlite
+): Promise<AttemptRecord> {
+  const attempt = state.connection.sqlite
     .prepare(
       `SELECT id, session_id AS sessionId, exercise_id AS exerciseId,
               workspace_path AS workspacePath, baseline_hash AS baselineHash
@@ -1204,7 +1328,25 @@ function requireAttempt(
     )
     .get(attemptId) as AttemptRecord | undefined;
   if (!attempt) throw new Error("Unknown exercise attempt");
-  return attempt;
+  let storedRealPath: string;
+  let trustedRealPath: string;
+  try {
+    const trustedWorkspace = await resolveWorkspacePath(
+      state.exerciseAttemptsRoot,
+      attempt.id,
+      { mustExist: true, expectedType: "directory" },
+    );
+    [storedRealPath, trustedRealPath] = await Promise.all([
+      realpath(attempt.workspacePath),
+      realpath(trustedWorkspace),
+    ]);
+  } catch {
+    throw new Error("Exercise attempt workspace is unavailable or untrusted");
+  }
+  if (path.relative(trustedRealPath, storedRealPath) !== "") {
+    throw new Error("Exercise attempt workspace is unavailable or untrusted");
+  }
+  return { ...attempt, workspacePath: trustedRealPath };
 }
 
 async function readVersionedExerciseProgress(
@@ -1264,12 +1406,13 @@ async function readAttemptEvidence(
     expectedBaselineHash: attempt.baselineHash,
   });
   const latestTest = findLatestTestRun(connection, attempt.id);
-  const testFresh = latestTest
-    ? !(await workspaceChangedAfter(
-        attempt.workspacePath,
-        latestTest.completedAt,
-      ))
-    : false;
+  const currentDiffFingerprint = fingerprintExerciseDiff(currentDiff);
+  const testFresh = Boolean(
+    latestTest &&
+    latestTest.diffTruncated === 0 &&
+    latestTest.diffFingerprint !== null &&
+    latestTest.diffFingerprint === currentDiffFingerprint,
+  );
   const latestReviewRecord = findLatestReview(connection, attempt.id);
   const reviewIsCurrent = Boolean(
     latestReviewRecord &&
@@ -1327,30 +1470,6 @@ function findLatestReview(
     .get(attemptId) as ReviewRecord | undefined;
 }
 
-async function workspaceChangedAfter(
-  workspacePath: string,
-  completedAt: number | null,
-): Promise<boolean> {
-  if (completedAt === null) return true;
-  return (await latestLearnerFileMtime(workspacePath)) > completedAt;
-}
-
-async function latestLearnerFileMtime(directory: string): Promise<number> {
-  let latest = 0;
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.name === ".git" || entry.name === "node_modules") continue;
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory()) {
-      latest = Math.max(latest, await latestLearnerFileMtime(entryPath));
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    latest = Math.max(latest, (await lstat(entryPath)).mtimeMs);
-  }
-  return latest;
-}
-
 function findTestRunByOperation(
   connection: DatabaseConnection,
   operationId: string,
@@ -1360,6 +1479,8 @@ function findTestRunByOperation(
       `SELECT id, exercise_attempt_id AS exerciseAttemptId,
               operation_id AS operationId, status, exit_code AS exitCode,
               stdout, stderr, duration_ms AS durationMs,
+              diff_fingerprint AS diffFingerprint,
+              diff_truncated AS diffTruncated,
               started_at AS startedAt, completed_at AS completedAt
        FROM test_runs WHERE operation_id = ? LIMIT 1`,
     )
@@ -1375,6 +1496,8 @@ function findLatestTestRun(
       `SELECT id, exercise_attempt_id AS exerciseAttemptId,
               operation_id AS operationId, status, exit_code AS exitCode,
               stdout, stderr, duration_ms AS durationMs,
+              diff_fingerprint AS diffFingerprint,
+              diff_truncated AS diffTruncated,
               started_at AS startedAt, completed_at AS completedAt
        FROM test_runs WHERE exercise_attempt_id = ?
        ORDER BY started_at DESC, rowid DESC LIMIT 1`,

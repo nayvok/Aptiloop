@@ -102,7 +102,7 @@ describe("MockAgentProvider", () => {
     );
     expect(completed).toMatchObject({
       type: "message.completed",
-      content: expect.stringContaining("60 seconds"),
+      content: expect.stringContaining("За 60 секунд"),
     });
   });
 });

@@ -21,25 +21,28 @@ export interface MockAgentProviderOptions {
 
 const MOCK_REVIEW: ReviewResult = {
   status: "changes_requested",
-  summary: "The solution is close, but one edge case needs another attempt.",
+  summary: "Решение близко, но один краевой случай требует ещё одной попытки.",
   findings: [
     {
       severity: "warning",
       category: "edge_case",
       file: "src/solution.ts",
       line: 7,
-      message: "Consider what happens when the input collection is empty.",
+      message: "Подумай, что произойдёт, если входная коллекция будет пустой.",
       hintLevel: 1,
     },
   ],
-  strengths: ["The main path is readable and keeps the input immutable."],
+  strengths: [
+    "Основной путь читаемый и сохраняет входные данные неизменяемыми.",
+  ],
   suggestedMasteryChanges: [
     {
       topicId: "javascript-arrays",
       dimension: "implementation",
       delta: 0.25,
-      reason: "The main transformation is correct.",
-      evidence: "The submitted diff uses an immutable array operation.",
+      reason: "Основное преобразование корректно.",
+      evidence:
+        "Отправленный diff использует неизменяемую операцию над массивом.",
     },
   ],
 };
@@ -47,20 +50,21 @@ const MOCK_REVIEW: ReviewResult = {
 const MOCK_PASSED_REVIEW: ReviewResult = {
   status: "passed",
   summary:
-    "The correction cycle is complete and the tested learner change now meets the exercise contract.",
+    "Цикл исправлений завершён: протестированное изменение теперь соответствует контракту упражнения.",
   findings: [],
   strengths: [
-    "The learner reran the allowlisted tests after the correction.",
-    "The implementation keeps the input immutable and covers the requested edge case.",
+    "Ученик повторно запустил разрешённые тесты после исправления.",
+    "Реализация сохраняет входные данные неизменяемыми и покрывает запрошенный краевой случай.",
   ],
   suggestedMasteryChanges: [
     {
       topicId: "javascript-arrays",
       dimension: "debugging",
       delta: 0.25,
-      reason: "A persisted correction cycle ended with a fresh passing test.",
+      reason:
+        "Завершённый цикл исправлений закончился свежим прохождением тестов.",
       evidence:
-        "The second read-only review follows a new successful test run.",
+        "Второй read-only review следует за новым успешным запуском тестов.",
     },
   ],
 };
@@ -71,12 +75,12 @@ const responseFor = (role: AgentRole, message: string): string => {
     return JSON.stringify(hasPriorReview ? MOCK_PASSED_REVIEW : MOCK_REVIEW);
   }
   if (role === "interviewer")
-    return "In 60 seconds, explain how the JavaScript event loop orders microtasks and macrotasks.";
+    return "За 60 секунд объясни, как event loop в JavaScript упорядочивает microtasks и macrotasks.";
   if (role === "teacher")
-    return "What is one concrete difference between a shallow copy and a deep copy?";
+    return "В чём одно конкретное отличие поверхностного копирования (shallow copy) от глубокого (deep copy)?";
   if (role === "curator")
-    return "Today we will revisit the weakest topic before adding one small new concept.";
-  return `Mock ${role} response to: ${message}`;
+    return "Сегодня мы повторим самую слабую тему, а затем добавим один небольшой новый концепт.";
+  return `Mock-ответ для роли ${role} на сообщение: ${message}`;
 };
 
 const chunksOf = (value: string, size: number): string[] => {

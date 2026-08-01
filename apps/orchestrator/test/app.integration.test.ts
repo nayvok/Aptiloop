@@ -90,14 +90,28 @@ describe("orchestrator vertical flow", () => {
     expect(historyBody.messages[1]?.role).toBe("assistant");
   });
 
-  it("accepts only the exact configured browser origin", async () => {
+  it("accepts only loopback browser origins on the configured port", async () => {
     const { app } = runtime();
-    const alternateLoopback = await request(app, "/api/learning/sessions", {
+    const localhostLoopback = await request(app, "/api/learning/sessions", {
       method: "POST",
       headers: { Origin: "http://localhost:3000" },
       body: JSON.stringify({ dayNumber: 1 }),
     });
-    expect(alternateLoopback.status).toBe(403);
+    expect(localhostLoopback.status).toBe(201);
+
+    const wrongPort = await request(app, "/api/learning/sessions", {
+      method: "POST",
+      headers: { Origin: "http://localhost:3001" },
+      body: JSON.stringify({ dayNumber: 1 }),
+    });
+    expect(wrongPort.status).toBe(403);
+
+    const remoteOrigin = await request(app, "/api/learning/sessions", {
+      method: "POST",
+      headers: { Origin: "http://evil.example:3000" },
+      body: JSON.stringify({ dayNumber: 1 }),
+    });
+    expect(remoteOrigin.status).toBe(403);
 
     const missingOrigin = await app.request("/api/learning/sessions", {
       method: "POST",
@@ -176,6 +190,48 @@ describe("orchestrator vertical flow", () => {
     const updated = await request(app, "/api/settings");
     const updatedSettings = (await updated.json()) as Record<string, unknown>;
     expect(updatedSettings.zedExecutable).toBe(configuredExecutable);
+  });
+
+  it("rejects an unreachable new OpenCode endpoint without persisting it", async () => {
+    const { app, state } = runtime();
+    const settingsResponse = await request(app, "/api/settings");
+    const settings = (await settingsResponse.json()) as Record<string, unknown>;
+    delete settings.providers;
+
+    const response = await request(app, "/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        ...settings,
+        opencodeBaseUrl: "http://127.0.0.1:4097",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("OpenCode сервер недоступен");
+    expect(await state.repository.getSetting("opencodeBaseUrl")).toBeNull();
+  });
+
+  it("rejects a model that does not belong to the selected provider", async () => {
+    const { app, state } = runtime();
+    const settingsResponse = await request(app, "/api/settings");
+    const settings = (await settingsResponse.json()) as Record<string, unknown>;
+    delete settings.providers;
+
+    const response = await request(app, "/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        ...settings,
+        teacherProvider: "mock",
+        teacherModel: "codex-model",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Model codex-model is unavailable for provider mock",
+    });
+    expect(await state.repository.getSetting("teacherModel")).toBeNull();
   });
 
   it("evicts cancelled and failed agent sessions so the same chat can retry", async () => {

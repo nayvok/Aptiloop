@@ -10,6 +10,7 @@ interface FakeServer {
   child: ChildProcessWithoutNullStreams;
   requests: Array<Record<string, unknown>>;
   send(message: unknown): void;
+  writeStdout(value: string): void;
 }
 
 function createFakeServer(
@@ -38,6 +39,9 @@ function createFakeServer(
     requests,
     send(message) {
       stdout.write(`${JSON.stringify(message)}\n`);
+    },
+    writeStdout(value) {
+      stdout.write(value);
     },
   };
   let buffer = "";
@@ -192,6 +196,123 @@ describe("CodexAppServerTransport", () => {
           "Client method is not available: item/fileChange/requestApproval",
       },
     });
+  });
+
+  it("sanitizes tool notifications before notifying subscribers", async () => {
+    const server = createFakeServer(standardResponse);
+    const transport = new CodexAppServerTransport({
+      spawn: () => server.child,
+    });
+    const listener = vi.fn();
+    transport.subscribe(listener);
+    await transport.connect();
+
+    server.send({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "tool-1",
+          type: "commandExecution",
+          command: "type C:/secret.txt",
+          argv: ["--token", "sk-proj-12345678901234567890"],
+          cwd: "C:/private",
+        },
+      },
+    });
+    server.send({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "mcp-1",
+          type: "mcpToolCall",
+          server: "private-server",
+          tool: "read_secret",
+          arguments: { password: "hunter2" },
+          result: { apiKey: "top-secret" },
+          error: { message: "Bearer secret-token-value" },
+          status: "completed",
+        },
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(listener).toHaveBeenNthCalledWith(1, {
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "tool-1",
+          type: "commandExecution",
+          status: "unknown",
+        },
+      },
+    });
+    expect(listener).toHaveBeenNthCalledWith(2, {
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "mcp-1",
+          type: "mcpToolCall",
+          status: "completed",
+        },
+      },
+    });
+    expect(JSON.stringify(listener.mock.calls)).not.toMatch(
+      /secret\.txt|sk-proj|C:\/private|private-server|read_secret|hunter2|top-secret|secret-token/,
+    );
+  });
+
+  it("fails closed when an unterminated JSONL line exceeds the size limit", async () => {
+    const server = createFakeServer(() => undefined);
+    const transport = new CodexAppServerTransport({
+      spawn: () => server.child,
+      requestTimeoutMs: 5_000,
+    });
+
+    const connecting = transport.connect();
+    await new Promise((resolve) => setImmediate(resolve));
+    server.writeStdout("x".repeat(1024 * 1024 + 1));
+
+    await expect(connecting).rejects.toMatchObject({
+      code: "protocol",
+      message: "Codex app-server response exceeded the safe size limit",
+    });
+    expect(server.child.kill).toHaveBeenCalledOnce();
+  });
+
+  it("does not expose raw JSON-RPC error messages", async () => {
+    const token = "sk-proj-12345678901234567890";
+    const server = createFakeServer((message, fakeServer) => {
+      if (message.method === "account/read") {
+        fakeServer.send({
+          id: message.id,
+          error: {
+            code: -32_000,
+            message: `password=hunter2 ${token}`,
+          },
+        });
+        return undefined;
+      }
+      return standardResponse(message);
+    });
+    const transport = new CodexAppServerTransport({
+      spawn: () => server.child,
+    });
+
+    const account = transport.readAccount();
+
+    await expect(account).rejects.toMatchObject({
+      code: "protocol",
+      message: "Codex RPC request failed (-32000)",
+    });
+    await expect(account).rejects.not.toThrow(/hunter2|sk-proj/);
   });
 
   it("reports a missing executable as unavailable", async () => {

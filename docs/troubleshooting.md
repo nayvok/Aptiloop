@@ -39,7 +39,7 @@ npm run db:migrate
 npm run db:seed
 ```
 
-Migration включает repeatable repair schema/snapshot. Legacy session сохраняется в истории, но current versioned UI выбирает активную сессию revision 2; старый `legacy-v1` не подменяет новый путь.
+Migration включает repeatable repair schema/snapshot. Legacy session сохраняется в истории, но current versioned UI выбирает активную versioned session; старый `legacy-v1` не подменяет новый путь.
 
 ## Порты заняты
 
@@ -63,7 +63,7 @@ npm run test:e2e
 
 ## Занятие не продолжилось после reload
 
-Проверьте, что оба приложения смотрят на одну DB и путь возвращает published revision 2:
+Проверьте, что оба приложения смотрят на одну DB и путь возвращает active published revision:
 
 ```powershell
 Invoke-WebRequest http://127.0.0.1:8787/health/ready

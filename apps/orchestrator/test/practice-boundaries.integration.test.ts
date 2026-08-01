@@ -3,6 +3,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -140,7 +142,7 @@ describe("practice execution and reviewer boundaries", () => {
     );
     expect(rejectedLegacyAlias.status).not.toBe(201);
 
-    const attemptResponse = await request(
+    const prematureAttempt = await request(
       current.app,
       `/api/exercises/${exercise.id}/attempts`,
       {
@@ -148,16 +150,15 @@ describe("practice execution and reviewer boundaries", () => {
         body: JSON.stringify({ sessionId }),
       },
     );
-    expect(attemptResponse.status).toBe(201);
-    const { id: attemptId } = (await attemptResponse.json()) as { id: string };
-    const attempt = current.state.connection.sqlite
-      .prepare(
-        `SELECT exercise_id AS exerciseId, workspace_path AS workspacePath
-         FROM exercise_attempts WHERE id = ?`,
-      )
-      .get(attemptId) as { exerciseId: string; workspacePath: string };
-    expect(attempt.exerciseId).toBe("w1d1-normalize-profile");
-    expect(attempt.workspacePath).toContain("practice-boundary-test-");
+    expect(prematureAttempt.status).toBe(409);
+    expect(await prematureAttempt.json()).toEqual({
+      error: "Практика ещё заблокирована. Завершите предыдущие шаги занятия.",
+    });
+    expect(
+      current.state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM exercise_attempts")
+        .get(),
+    ).toEqual({ count: 0 });
     expect(readFileSync(templateFile, "utf8")).toBe(sourceBefore);
   });
 
@@ -213,6 +214,28 @@ describe("practice execution and reviewer boundaries", () => {
         .prepare("SELECT count(*) AS count FROM test_runs")
         .get(),
     ).toEqual({ count: 0 });
+  });
+
+  it("rejects a persisted attempt path that no longer matches its server-owned id", async () => {
+    const current = runtime();
+    const { attemptId } = await createAttempt(current);
+    const outsideRoot = mkdtempSync(
+      path.join(process.env.TEMP ?? projectRoot, "dlh-attempt-escape-"),
+    );
+    cleanupRoots.push(outsideRoot);
+    current.state.connection.sqlite
+      .prepare("UPDATE exercise_attempts SET workspace_path = ? WHERE id = ?")
+      .run(outsideRoot, attemptId);
+
+    const response = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/diff`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Exercise attempt workspace is unavailable or untrusted",
+    });
   });
 
   it("rejects review when there is no learner diff", async () => {
@@ -399,6 +422,132 @@ describe("practice execution and reviewer boundaries", () => {
     expect((await after.json()) as { diff: string }).toEqual(
       correctedBeforeReview,
     );
+  }, 30_000);
+
+  it("invalidates an idempotent passing test when content changes without a newer mtime", async () => {
+    const current = runtime();
+    const { attemptId, sessionId, workspacePath } =
+      await createAttempt(current);
+    const learnerFile = path.join(workspacePath, "src", "normalize-profile.ts");
+    writeFileSync(learnerFile, passingImplementation, "utf8");
+
+    const testResponse = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/commands`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          operationId: "same-mtime-passing-test",
+          commandId: "test",
+        }),
+      },
+    );
+    expect(await testResponse.json()).toMatchObject({ status: "passed" });
+    const persisted = current.state.connection.sqlite
+      .prepare(
+        `SELECT diff_fingerprint AS diffFingerprint,
+                diff_truncated AS diffTruncated
+         FROM test_runs WHERE operation_id = ?`,
+      )
+      .get("same-mtime-passing-test") as {
+      diffFingerprint: string | null;
+      diffTruncated: number;
+    };
+    expect(persisted.diffFingerprint).toMatch(/^[0-9a-f]{64}$/u);
+    expect(persisted.diffTruncated).toBe(0);
+
+    const timestamps = statSync(learnerFile);
+    writeFileSync(
+      learnerFile,
+      `${passingImplementation}\n// changed while preserving the tested mtime\n`,
+      "utf8",
+    );
+    utimesSync(learnerFile, timestamps.atime, timestamps.mtime);
+
+    const idempotentRetry = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/commands`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          operationId: "same-mtime-passing-test",
+          commandId: "test",
+        }),
+      },
+    );
+    expect(await idempotentRetry.json()).toMatchObject({ status: "passed" });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          "SELECT count(*) AS count FROM test_runs WHERE operation_id = ?",
+        )
+        .get("same-mtime-passing-test"),
+    ).toEqual({ count: 1 });
+
+    const resumed = (await (
+      await request(
+        current.app,
+        `/api/exercises/current?sessionId=${sessionId}`,
+      )
+    ).json()) as {
+      attempt?: { latestTestRun?: { workspaceCurrent?: boolean } };
+    };
+    expect(resumed.attempt?.latestTestRun?.workspaceCurrent).toBe(false);
+
+    const reviewResponse = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      { method: "POST", body: "{}" },
+    );
+    expect(reviewResponse.status).toBe(409);
+    expect(await reviewResponse.json()).toEqual({
+      error: "Review requires a passing test run after the latest learner edit",
+    });
+  }, 30_000);
+
+  it("rejects review when the tested diff exceeds the complete-diff limit", async () => {
+    const current = runtime();
+    const { attemptId, workspacePath } = await createAttempt(current);
+    const learnerFile = path.join(workspacePath, "src", "normalize-profile.ts");
+    writeFileSync(learnerFile, passingImplementation, "utf8");
+    writeFileSync(
+      path.join(workspacePath, "oversized-evidence.txt"),
+      "x".repeat(1_010_000),
+      "utf8",
+    );
+
+    const testResponse = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/commands`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          operationId: "truncated-diff-test",
+          commandId: "test",
+        }),
+      },
+    );
+    expect(await testResponse.json()).toMatchObject({ status: "passed" });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT diff_fingerprint AS diffFingerprint,
+                  diff_truncated AS diffTruncated
+           FROM test_runs WHERE operation_id = ?`,
+        )
+        .get("truncated-diff-test"),
+    ).toEqual({ diffFingerprint: null, diffTruncated: 1 });
+
+    const reviewResponse = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      { method: "POST", body: "{}" },
+    );
+    expect(reviewResponse.status).toBe(409);
+    expect(await reviewResponse.json()).toEqual({
+      error:
+        "Review requires a complete diff; the current diff exceeds the review limit",
+    });
   }, 30_000);
 });
 

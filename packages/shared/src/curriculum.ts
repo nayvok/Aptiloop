@@ -188,6 +188,8 @@ export type UnitUnlockRule = z.infer<typeof UnitUnlockRuleSchema>;
 export const BriefingUnitPayloadSchema = z.object({
   type: z.literal("briefing"),
   scope: StringListSchema.default([]),
+  /** What the day deliberately does not cover; shown to the learner in the briefing. */
+  outOfScope: StringListSchema.default([]),
 });
 export const StudyUnitPayloadSchema = z.object({
   type: z.literal("study"),
@@ -468,6 +470,16 @@ export const StudyProgressPayloadSchema = ProgressBaseSchema.extend({
 });
 export const RecallProgressPayloadSchema = ProgressBaseSchema.extend({
   type: z.literal("recall"),
+  answers: z
+    .array(
+      z.object({
+        questionId: IdSchema,
+        draft: z.string().max(50_000),
+        firstAttemptId: IdSchema,
+      }),
+    )
+    .default([]),
+  // Kept for snapshots written before recall answers became question-scoped.
   draft: z.string().max(50_000).default(""),
   firstAttemptId: IdSchema.nullable().default(null),
 });

@@ -17,6 +17,12 @@ type Flashcard = {
   status: "candidate" | "approved" | "rejected";
 };
 
+const statusLabels: Record<Flashcard["status"], string> = {
+  candidate: "На проверке",
+  approved: "Подтверждена",
+  rejected: "Отклонена",
+};
+
 export function FlashcardsClient() {
   const client = useQueryClient();
   const query = useQuery({
@@ -31,7 +37,13 @@ export function FlashcardsClient() {
       }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["flashcards"] }),
   });
-  if (query.isLoading) return <Skeleton className="h-80" />;
+  if (query.isLoading)
+    return (
+      <div role="status" aria-label="Загружаю карточки">
+        <Skeleton aria-hidden className="h-80" />
+        <span className="sr-only">Загружаю карточки…</span>
+      </div>
+    );
   if (query.isError || !query.data)
     return (
       <QueryError
@@ -48,6 +60,16 @@ export function FlashcardsClient() {
     );
   return (
     <div className="flex flex-col gap-4">
+      {update.isError ? (
+        <p
+          role="alert"
+          className="rounded-md border border-destructive/35 bg-destructive/10 p-4 text-sm text-destructive"
+        >
+          {update.error instanceof Error
+            ? update.error.message
+            : "Не удалось сохранить статус карточки."}
+        </p>
+      ) : null}
       <div className="flex flex-wrap justify-end gap-2">
         {(["markdown", "csv", "tsv"] as const).map((format) => (
           <Button key={format} asChild variant="outline" size="sm">
@@ -74,7 +96,7 @@ export function FlashcardsClient() {
                       : "warning"
                 }
               >
-                {card.status}
+                {statusLabels[card.status]}
               </Badge>
               <p className="mt-2 text-xs text-muted-foreground">{card.topic}</p>
             </div>
@@ -91,8 +113,10 @@ export function FlashcardsClient() {
             <div className="flex gap-1">
               <Button
                 aria-label="Подтвердить карточку"
+                aria-busy={update.isPending && update.variables?.id === card.id}
                 size="icon"
                 variant="outline"
+                disabled={update.isPending && update.variables?.id === card.id}
                 onClick={() =>
                   update.mutate({ id: card.id, status: "approved" })
                 }
@@ -101,8 +125,10 @@ export function FlashcardsClient() {
               </Button>
               <Button
                 aria-label="Отклонить карточку"
+                aria-busy={update.isPending && update.variables?.id === card.id}
                 size="icon"
                 variant="ghost"
+                disabled={update.isPending && update.variables?.id === card.id}
                 onClick={() =>
                   update.mutate({ id: card.id, status: "rejected" })
                 }

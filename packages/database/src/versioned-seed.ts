@@ -1,7 +1,9 @@
 import {
   activeCurriculumVersion,
   archivedLegacyCurriculumVersion,
+  publishedCurriculumRevision2,
   publishedCurriculumV2,
+  publishedCurriculumV3,
   type UnitCompletionCriterion as AuthoredCriterion,
   type VersionedCurriculumDay as AuthoredDay,
   type VersionedCurriculumQuestion as AuthoredQuestion,
@@ -112,7 +114,11 @@ function mapPayload(
 ): UnitPayload {
   switch (unit.type) {
     case "briefing":
-      return { type: "briefing", scope: [...unit.objectives] };
+      return {
+        type: "briefing",
+        scope: [...unit.objectives],
+        outOfScope: [...day.outOfScope],
+      };
     case "study":
       return { type: "study", body: unit.description };
     case "recall":
@@ -136,7 +142,9 @@ function mapPayload(
     case "code-reading":
       return {
         type: "code-reading",
-        snippet: questions[0]?.prompt ?? unit.description,
+        // Published v3 authors code separately from the learner's question.
+        // The fallback keeps immutable legacy curriculum revisions seedable.
+        snippet: unit.codeSnippet ?? questions[0]?.prompt ?? unit.description,
       };
     case "exercise": {
       if (!unit.exercise)
@@ -494,7 +502,12 @@ export function seedVersionedCurriculum(
 ): VersionedSeedResult {
   const sources =
     source === undefined
-      ? [publishedCurriculumV2, activeCurriculumVersion]
+      ? [
+          publishedCurriculumV2,
+          publishedCurriculumRevision2,
+          publishedCurriculumV3,
+          activeCurriculumVersion,
+        ]
       : [source];
   return sources.reduce<VersionedSeedResult>(
     (total, candidate) => {

@@ -1,14 +1,18 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { AllowedProcessRunner } from "../src/process-runner.js";
 
 const cwd = await mkdtemp(path.join(tmpdir(), "dlh-process-runner-"));
 
 afterAll(async () => await rm(cwd, { recursive: true, force: true }));
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("AllowedProcessRunner", () => {
   it("does not inherit provider credentials or other secret environment values", async () => {
@@ -93,20 +97,30 @@ describe("AllowedProcessRunner", () => {
     });
   });
 
-  it("supports timeout and AbortSignal cancellation", async () => {
+  it("terminates a command when its timeout expires", async () => {
     const runner = new AllowedProcessRunner({
       timeout: {
         executable: process.execPath,
         args: ["-e", "setInterval(() => {}, 1000)"],
-        timeoutMs: 25,
+        timeoutMs: 1_000,
       },
+    });
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = runner.run("timeout", { cwd });
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(pending).resolves.toMatchObject({
+      terminationReason: "timeout",
+    });
+  });
+
+  it("supports AbortSignal cancellation", async () => {
+    const runner = new AllowedProcessRunner({
       cancelled: {
         executable: process.execPath,
         args: ["-e", "setInterval(() => {}, 1000)"],
       },
-    });
-    await expect(runner.run("timeout", { cwd })).resolves.toMatchObject({
-      terminationReason: "timeout",
     });
 
     const controller = new AbortController();
@@ -115,5 +129,57 @@ describe("AllowedProcessRunner", () => {
     await expect(pending).resolves.toMatchObject({
       terminationReason: "cancelled",
     });
+  });
+
+  it("does not spawn a command for an already-aborted signal", async () => {
+    const marker = path.join(cwd, `pre-aborted-${crypto.randomUUID()}`);
+    const runner = new AllowedProcessRunner({
+      "side-effect": {
+        executable: process.execPath,
+        args: [
+          "-e",
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+        ],
+      },
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      runner.run("side-effect", { cwd, signal: controller.signal }),
+    ).resolves.toMatchObject({ terminationReason: "cancelled" });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("clears a pending force-kill timer when the original child exits", async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const runner = new AllowedProcessRunner({
+      cancelled: {
+        executable: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+      },
+    });
+    const controller = new AbortController();
+    const pending = runner.run("cancelled", { cwd, signal: controller.signal });
+
+    controller.abort();
+    await expect(pending).resolves.toMatchObject({
+      terminationReason: "cancelled",
+    });
+
+    const forceKillCallIndex = setTimeoutSpy.mock.calls.findIndex(
+      ([, delay]) => delay === 1_000,
+    );
+    if (process.platform === "win32") {
+      expect(forceKillCallIndex).toBe(-1);
+    } else {
+      expect(forceKillCallIndex).toBeGreaterThanOrEqual(0);
+      const forceKillTimer = setTimeoutSpy.mock.results[forceKillCallIndex]
+        ?.value as NodeJS.Timeout;
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(forceKillTimer);
+    }
   });
 });

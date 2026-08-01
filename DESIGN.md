@@ -4,61 +4,47 @@
 
 Физическая сцена: разработчик поздним вечером возвращает навык за широким монитором, рядом открыт Zed; интерфейс должен давать ясный маршрут и снижать усталость, а не соревноваться с кодом за внимание.
 
-Стратегия цвета — restrained. Янтарный seed используется только для primary action, текущего шага и небольших акцентов. Остальная поверхность нейтральна; success, warning и destructive — функциональные семантические цвета.
+Стратегия цвета — restrained. Спокойный зелёный используется для primary action и текущего шага, а холодный сине-серый задаёт нейтральные поверхности. Отдельные activity accents помогают различать типы учебной работы; success, warning и destructive остаются функциональными семантическими цветами.
 
 ## Foundations
 
 ### Color tokens
 
-Все цвета задаются в OKLCH и маппятся на semantic shadcn tokens.
+Все цвета задаются в OKLCH и маппятся на semantic shadcn tokens. Полное актуальное определение находится в `apps/web/app/globals.css`; ниже зафиксированы опорные identity tokens.
 
 ```css
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.18 0.01 60);
-  --card: oklch(0.985 0.003 60);
-  --card-foreground: oklch(0.18 0.01 60);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.01 60);
-  --primary: oklch(0.58 0.15 55);
+  --background: oklch(0.977 0.006 255);
+  --foreground: oklch(0.25 0.025 255);
+  --card: oklch(1 0 0);
+  --primary: oklch(0.49 0.14 151);
+  --primary-hover: oklch(0.44 0.13 151);
   --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.955 0.008 60);
-  --secondary-foreground: oklch(0.27 0.02 60);
-  --muted: oklch(0.96 0.006 60);
-  --muted-foreground: oklch(0.46 0.015 60);
-  --accent: oklch(0.94 0.025 60);
-  --accent-foreground: oklch(0.3 0.06 55);
-  --destructive: oklch(0.55 0.2 27);
-  --destructive-foreground: oklch(0.99 0 0);
-  --success: oklch(0.52 0.13 155);
-  --warning: oklch(0.67 0.14 78);
-  --border: oklch(0.9 0.008 60);
-  --input: oklch(0.9 0.008 60);
-  --ring: oklch(0.58 0.15 55);
+  --secondary: oklch(0.94 0.012 255);
+  --accent: oklch(0.93 0.025 151);
+  --success: oklch(0.86 0.065 151);
+  --warning: oklch(0.9 0.075 78);
+  --border: oklch(0.88 0.015 255);
+  --ring: oklch(0.49 0.14 151);
+  --activity-practice: oklch(0.47 0.15 250);
+  --activity-recall: oklch(0.43 0.105 76);
 }
 
 .dark {
-  --background: oklch(0.13 0 0);
-  --foreground: oklch(0.94 0.006 60);
-  --card: oklch(0.17 0.006 60);
-  --card-foreground: oklch(0.94 0.006 60);
-  --popover: oklch(0.17 0.006 60);
-  --popover-foreground: oklch(0.94 0.006 60);
-  --primary: oklch(0.7 0.13 60);
-  --primary-foreground: oklch(0.13 0 0);
-  --secondary: oklch(0.22 0.008 60);
-  --secondary-foreground: oklch(0.9 0.006 60);
-  --muted: oklch(0.21 0.006 60);
-  --muted-foreground: oklch(0.7 0.01 60);
-  --accent: oklch(0.25 0.025 60);
-  --accent-foreground: oklch(0.88 0.07 60);
-  --destructive: oklch(0.66 0.18 27);
-  --destructive-foreground: oklch(0.13 0 0);
-  --success: oklch(0.68 0.12 155);
-  --warning: oklch(0.77 0.12 78);
-  --border: oklch(0.27 0.008 60);
-  --input: oklch(0.27 0.008 60);
-  --ring: oklch(0.7 0.13 60);
+  --background: oklch(0.19 0.018 255);
+  --foreground: oklch(0.97 0.006 255);
+  --card: oklch(0.23 0.022 255);
+  --primary: oklch(0.77 0.14 151);
+  --primary-hover: oklch(0.82 0.13 151);
+  --primary-foreground: oklch(0.19 0.018 255);
+  --secondary: oklch(0.28 0.022 255);
+  --accent: oklch(0.31 0.045 151);
+  --success: oklch(0.32 0.065 151);
+  --warning: oklch(0.34 0.07 78);
+  --border: oklch(0.34 0.025 255);
+  --ring: oklch(0.77 0.14 151);
+  --activity-practice: oklch(0.76 0.12 250);
+  --activity-recall: oklch(0.82 0.115 76);
 }
 ```
 

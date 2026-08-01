@@ -49,7 +49,16 @@ type UnitStatus = "locked" | "ready" | "in_progress" | "completed" | "skipped";
 type ProgressPayloadFixture =
   | { type: "briefing"; acknowledged: boolean; checkedItemIds: string[] }
   | { type: "study"; checkedItemIds: string[]; notes: string }
-  | { type: "recall"; draft: string; firstAttemptId: string | null }
+  | {
+      type: "recall";
+      answers: Array<{
+        questionId: string;
+        draft: string;
+        firstAttemptId: string;
+      }>;
+      draft: string;
+      firstAttemptId: string | null;
+    }
   | {
       type: "teacher-dialogue";
       conversationId: string | null;
@@ -146,7 +155,7 @@ function progressPayload(type: UnitType): ProgressPayloadFixture {
     case "study":
       return { type, checkedItemIds: [], notes: "" };
     case "recall":
-      return { type, draft: "", firstAttemptId: null };
+      return { type, answers: [], draft: "", firstAttemptId: null };
     case "teacher-dialogue":
       return {
         type,
@@ -217,6 +226,12 @@ function questions(type: UnitType) {
         id: "recall-q1",
         kind: "explain",
         prompt: "Чем binding отличается от значения?",
+        options: [],
+      },
+      {
+        id: "recall-q2",
+        kind: "explain",
+        prompt: "Почему присваивание не меняет исходный binding?",
         options: [],
       },
     ];
@@ -482,12 +497,14 @@ describe("guided versioned session", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Начать юнит" }));
     expect(
-      await screen.findByLabelText("Цель и границы дня понятны"),
+      await screen.findByLabelText("Подтверждаю: цели и границы дня понятны"),
     ).toBeEnabled();
     const finish = screen.getByRole("button", { name: /Завершить briefing/u });
     expect(finish).toBeDisabled();
     fireEvent.click(screen.getByLabelText(/Обязательный пункт/u));
-    fireEvent.click(screen.getByLabelText("Цель и границы дня понятны"));
+    fireEvent.click(
+      screen.getByLabelText("Подтверждаю: цели и границы дня понятны"),
+    );
     expect(finish).toBeEnabled();
     fireEvent.click(finish);
 
@@ -546,65 +563,163 @@ describe("guided versioned session", () => {
     });
   });
 
-  it("submits recall evidence to the dedicated endpoint and preserves the returned first attempt", async () => {
+  it("persists a distinct immutable first attempt for every recall question", async () => {
     const session = makeSession("recall");
-    const savedPayload = {
+    const firstDraft =
+      "Binding — это имя, связанное со значением, а не само значение.";
+    const secondDraft =
+      "Присваивание связывает имя с другим значением, не изменяя прежнее имя.";
+    const firstPayload: ProgressPayloadFixture = {
       type: "recall" as const,
-      draft: "Binding — это имя, связанное со значением, а не само значение.",
+      answers: [
+        {
+          questionId: "recall-q1",
+          draft: firstDraft,
+          firstAttemptId: "recall-evidence-1",
+        },
+      ],
+      draft: firstDraft,
       firstAttemptId: "recall-evidence-1",
     };
-    const saved = replaceProgress(session, "in_progress", savedPayload);
-    apiMock.mockResolvedValueOnce({ session }).mockResolvedValueOnce({
-      evidence: {
-        id: "recall-evidence-1",
-        operationId: "operation-1",
-        questionId: "recall-q1",
-        payload: { answer: savedPayload.draft },
-        correctness: null,
-        createdAt: now,
-      },
-      session: saved,
-    });
+    const completePayload: ProgressPayloadFixture = {
+      ...firstPayload,
+      answers: [
+        ...firstPayload.answers,
+        {
+          questionId: "recall-q2",
+          draft: secondDraft,
+          firstAttemptId: "recall-evidence-2",
+        },
+      ],
+    };
+    const firstSaved = replaceProgress(session, "in_progress", firstPayload);
+    const bothSaved = replaceProgress(session, "in_progress", completePayload);
+    apiMock
+      .mockResolvedValueOnce({ session })
+      .mockResolvedValueOnce({
+        evidence: {
+          id: "recall-evidence-1",
+          isFirstAttempt: true,
+          questionId: "recall-q1",
+        },
+        session: firstSaved,
+      })
+      .mockResolvedValueOnce({
+        evidence: {
+          id: "recall-evidence-2",
+          isFirstAttempt: true,
+          questionId: "recall-q2",
+        },
+        session: bothSaved,
+      });
     renderWithQuery(<SessionClient />);
 
-    fireEvent.change(await screen.findByLabelText("Объяснение по памяти"), {
-      target: { value: savedPayload.draft },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Сохранить первую попытку" }),
+    fireEvent.change(
+      await screen.findByLabelText(/Чем binding отличается от значения/u),
+      { target: { value: firstDraft } },
+    );
+    fireEvent.change(
+      screen.getByLabelText(/Почему присваивание не меняет исходный binding/u),
+      { target: { value: secondDraft } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить ответ 1" }));
+
+    await vi.waitFor(() =>
+      expect(
+        screen.getByLabelText(/Чем binding отличается от значения/u),
+      ).toBeDisabled(),
+    );
+    expect(
+      screen.queryByRole("button", { name: /Завершить recall/u }),
+    ).not.toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Сохранить ответ 2" }),
+      ).toBeEnabled(),
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить ответ 2" }));
+
     await vi.waitFor(() => {
-      expect(apiMock).toHaveBeenLastCalledWith(
-        "/learning/sessions/v2/session-v2/units/unit-recall/recall-attempts",
-        expect.objectContaining({
-          body: JSON.stringify({
-            operationId: "operation-1",
-            answer: savedPayload.draft,
-          }),
-        }),
+      const recallCalls = apiMock.mock.calls.filter(([path]) =>
+        String(path).endsWith("/recall-attempts"),
       );
+      expect(recallCalls).toHaveLength(2);
+      expect(recallCalls.map(([, init]) => JSON.parse(init.body))).toEqual([
+        {
+          operationId: "operation-1",
+          questionId: "recall-q1",
+          answer: firstDraft,
+        },
+        {
+          operationId: "operation-2",
+          questionId: "recall-q2",
+          answer: secondDraft,
+        },
+      ]);
     });
     expect(
       await screen.findByRole("button", { name: /Завершить recall/u }),
     ).toBeEnabled();
-    expect(screen.getByLabelText("Объяснение по памяти")).toBeDisabled();
+  });
+
+  it("restores question-scoped recall answers after reload and keeps unfinished recall open", async () => {
+    const firstDraft =
+      "Binding — это имя, связанное со значением, а не само значение.";
+    const saved = makeSession("recall", "in_progress", {
+      type: "recall",
+      answers: [
+        {
+          questionId: "recall-q1",
+          draft: firstDraft,
+          firstAttemptId: "recall-evidence-1",
+        },
+      ],
+      draft: firstDraft,
+      firstAttemptId: "recall-evidence-1",
+    });
+    apiMock.mockResolvedValue({ session: saved });
+
+    renderWithQuery(<SessionClient />);
+
+    const restored = await screen.findByLabelText(
+      /Чем binding отличается от значения/u,
+    );
+    expect(restored).toHaveValue(firstDraft);
+    expect(restored).toBeDisabled();
+    expect(
+      screen.getByLabelText(/Почему присваивание не меняет исходный binding/u),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: /Завершить recall/u }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/Сохранено ответов: 1 из 2/u)).toBeInTheDocument();
   });
 
   it("restores Teacher history by session and persists a learner revision after the real stream", async () => {
     const session = makeSession("teacher-dialogue");
-    const revisedPayload = {
+    const firstRevisionPayload = {
       type: "teacher-dialogue" as const,
       conversationId: null,
       turnCount: 1,
       revisionAttemptIds: ["operation-1"],
     };
-    const revised = replaceProgress(session, "in_progress", revisedPayload);
-    apiMock.mockImplementation((path: string) => {
+    const followUpPayload = {
+      ...firstRevisionPayload,
+      turnCount: 2,
+      revisionAttemptIds: ["operation-1", "operation-4"],
+    };
+    const firstRevised = replaceProgress(
+      session,
+      "in_progress",
+      firstRevisionPayload,
+    );
+    const followedUp = replaceProgress(session, "in_progress", followUpPayload);
+    apiMock.mockImplementation((path: string, init?: RequestInit) => {
       if (path === "/learning/sessions/v2/session-v2") {
         return Promise.resolve({ session });
       }
-      if (path === "/agent/history?role=teacher&sessionId=session-v2") {
+      if (path === "/learning/sessions/v2/session-v2/teacher-transcript") {
         return Promise.resolve({
           messages: [
             {
@@ -618,7 +733,12 @@ describe("guided versioned session", () => {
       if (
         path === "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue"
       ) {
-        return Promise.resolve({ session: revised });
+        const body = JSON.parse(String(init?.body)) as {
+          payload: { turnCount: number };
+        };
+        return Promise.resolve({
+          session: body.payload.turnCount === 1 ? firstRevised : followedUp,
+        });
       }
       throw new Error(`Unexpected API path: ${path}`);
     });
@@ -632,7 +752,9 @@ describe("guided versioned session", () => {
     fireEvent.change(screen.getByLabelText("Уточнённое объяснение"), {
       target: { value: revision },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Отправить revision" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Отправить объяснение" }),
+    );
 
     await vi.waitFor(() => expect(streamAgentMock).toHaveBeenCalledTimes(1));
     expect(streamAgentMock).toHaveBeenCalledWith(
@@ -649,8 +771,43 @@ describe("guided versioned session", () => {
         expect.objectContaining({
           body: JSON.stringify({
             status: "in_progress",
-            payload: revisedPayload,
+            payload: firstRevisionPayload,
             operationId: "operation-3",
+          }),
+        }),
+      );
+    });
+    expect(
+      screen.queryByRole("button", { name: /Завершить диалог/u }),
+    ).not.toBeInTheDocument();
+
+    const followUp =
+      "Потому что оба binding хранят одну и ту же ссылку на объект.";
+    fireEvent.change(
+      await screen.findByLabelText("Ответ на уточнение Teacher"),
+      { target: { value: followUp } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ответить на уточнение" }),
+    );
+
+    await vi.waitFor(() => expect(streamAgentMock).toHaveBeenCalledTimes(2));
+    expect(streamAgentMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining(
+          `Ответ ученика на уточнение Teacher:\n${followUp}`,
+        ),
+      }),
+      expect.any(AbortSignal),
+    );
+    await vi.waitFor(() => {
+      expect(apiMock).toHaveBeenCalledWith(
+        "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue",
+        expect.objectContaining({
+          body: JSON.stringify({
+            status: "in_progress",
+            payload: followUpPayload,
+            operationId: "operation-6",
           }),
         }),
       );
@@ -705,6 +862,70 @@ describe("guided versioned session", () => {
           answers: [
             { questionId: "quiz-q1", selectedOptionId: "q1-a" },
             { questionId: "quiz-q2", selectedOptionId: "q2-b" },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("keeps the first quiz score and allows a failed quiz to be retried after reload", async () => {
+    const failedPayload = {
+      type: "quiz" as const,
+      attemptedQuestionIds: ["quiz-q1", "quiz-q2"],
+      correctQuestionIds: ["quiz-q1"],
+      score: 0.5,
+    };
+    const failed = makeSession("quiz", "in_progress", failedPayload);
+    const quizUnit = failed.snapshot.units[0];
+    if (!quizUnit || quizUnit.payload.type !== "quiz") {
+      throw new Error("Quiz fixture is missing");
+    }
+    quizUnit.payload.minimumScore = 0.75;
+
+    const passedPayload = {
+      ...failedPayload,
+      correctQuestionIds: ["quiz-q1", "quiz-q2"],
+      score: 1,
+    };
+    const passed = replaceProgress(failed, "in_progress", passedPayload);
+    apiMock.mockResolvedValueOnce({ session: failed }).mockResolvedValueOnce({
+      attempt: {
+        operationId: "operation-1",
+        score: 1,
+        results: [
+          { questionId: "quiz-q1", correct: true },
+          { questionId: "quiz-q2", correct: true },
+        ],
+      },
+      session: passed,
+    });
+    renderWithQuery(<SessionClient />);
+
+    expect(
+      await screen.findByText("Серверная оценка: 50%. Порог: 75%."),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("string")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Пересдать квиз" }));
+    expect(screen.getByLabelText("string")).toBeEnabled();
+    fireEvent.click(screen.getByLabelText("string"));
+    fireEvent.click(screen.getByLabelText("Shallow copy"));
+    fireEvent.click(screen.getByRole("button", { name: "Проверить повторно" }));
+
+    expect(
+      await screen.findByText("Серверная оценка: 100%. Порог: 75%."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Завершить квиз" }),
+    ).toBeEnabled();
+    expect(apiMock).toHaveBeenLastCalledWith(
+      "/learning/sessions/v2/session-v2/units/unit-quiz/quiz-attempts",
+      expect.objectContaining({
+        body: JSON.stringify({
+          operationId: "operation-1",
+          answers: [
+            { questionId: "quiz-q1", selectedOptionId: "q1-a" },
+            { questionId: "quiz-q2", selectedOptionId: "q2-a" },
           ],
         }),
       }),

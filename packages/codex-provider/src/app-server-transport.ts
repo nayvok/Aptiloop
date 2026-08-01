@@ -19,6 +19,7 @@ import {
   type StartThreadParams,
   type StartTurnParams,
 } from "./protocol.js";
+import { redactSensitiveText, safeToolStatus } from "./sanitization.js";
 
 type SpawnProcess = (
   command: string,
@@ -37,6 +38,8 @@ interface PendingRequest {
   reject: (reason: Error) => void;
   timeout: NodeJS.Timeout;
 }
+
+const MAX_JSONL_LINE_BYTES = 1024 * 1024;
 
 export interface CodexAppServerOptions {
   command?: string;
@@ -58,7 +61,9 @@ export class CodexAppServerTransport implements CodexTransport {
   #connectPromise: Promise<void> | undefined;
   #nextId = 1;
   #stdoutBuffer = "";
+  #stdoutBufferBytes = 0;
   #closed = false;
+  #failed = false;
 
   constructor(options: CodexAppServerOptions = {}) {
     this.#command = options.command ?? "codex";
@@ -275,14 +280,38 @@ export class CodexAppServerTransport implements CodexTransport {
   }
 
   #onStdout(chunk: string): void {
-    this.#stdoutBuffer += chunk;
-    let newline = this.#stdoutBuffer.indexOf("\n");
+    if (this.#failed || this.#closed) return;
+    let offset = 0;
+    let newline = chunk.indexOf("\n", offset);
     while (newline >= 0) {
-      const line = this.#stdoutBuffer.slice(0, newline).trim();
-      this.#stdoutBuffer = this.#stdoutBuffer.slice(newline + 1);
+      if (!this.#appendStdout(chunk.slice(offset, newline))) return;
+      const line = this.#stdoutBuffer.trim();
+      this.#stdoutBuffer = "";
+      this.#stdoutBufferBytes = 0;
       if (line) this.#handleLine(line);
-      newline = this.#stdoutBuffer.indexOf("\n");
+      if (this.#failed || this.#closed) return;
+      offset = newline + 1;
+      newline = chunk.indexOf("\n", offset);
     }
+    this.#appendStdout(chunk.slice(offset));
+  }
+
+  #appendStdout(value: string): boolean {
+    const valueBytes = Buffer.byteLength(value, "utf8");
+    if (this.#stdoutBufferBytes + valueBytes > MAX_JSONL_LINE_BYTES) {
+      this.#stdoutBuffer = "";
+      this.#stdoutBufferBytes = 0;
+      this.#fail(
+        new CodexTransportError(
+          "protocol",
+          "Codex app-server response exceeded the safe size limit",
+        ),
+      );
+      return false;
+    }
+    this.#stdoutBuffer += value;
+    this.#stdoutBufferBytes += valueBytes;
+    return true;
   }
 
   #handleLine(line: string): void {
@@ -320,7 +349,7 @@ export class CodexAppServerTransport implements CodexTransport {
         pending.reject(
           new CodexTransportError(
             "protocol",
-            `Codex RPC error ${message.error.code}: ${message.error.message}`,
+            `Codex RPC request failed (${message.error.code})`,
           ),
         );
       } else {
@@ -330,10 +359,8 @@ export class CodexAppServerTransport implements CodexTransport {
     }
 
     if (typeof message.method === "string" && isRecord(message.params)) {
-      const notification: CodexNotification = {
-        method: message.method,
-        params: message.params,
-      };
+      const notification = sanitizeNotification(message.method, message.params);
+      if (!notification) return;
       for (const listener of this.#listeners) listener(notification);
     }
   }
@@ -347,13 +374,138 @@ export class CodexAppServerTransport implements CodexTransport {
   }
 
   #fail(error: Error): void {
+    if (this.#failed || this.#closed) return;
+    this.#failed = true;
     this.#rejectPending(error);
+    const child = this.#child;
+    if (child && child.exitCode === null && !child.killed) child.kill();
     const notification: CodexNotification = {
       method: "transport/error",
       params: { message: "Codex app-server became unavailable" },
     };
     for (const listener of this.#listeners) listener(notification);
   }
+}
+
+function sanitizeNotification(
+  method: string,
+  params: Record<string, unknown>,
+): CodexNotification | undefined {
+  const identifiers = notificationIdentifiers(params);
+
+  if (method === "item/agentMessage/delta") {
+    if (typeof params.delta !== "string") return undefined;
+    return {
+      method,
+      params: {
+        ...identifiers,
+        delta: redactSensitiveText(params.delta),
+      },
+    };
+  }
+
+  if (
+    (method === "item/started" || method === "item/completed") &&
+    isRecord(params.item)
+  ) {
+    const item = sanitizeItem(params.item);
+    if (!item) return undefined;
+    return { method, params: { ...identifiers, item } };
+  }
+
+  if (method === "turn/completed" && isRecord(params.turn)) {
+    const id = safeProtocolId(params.turn.id);
+    const status = safeTurnStatus(params.turn.status);
+    if (!id || !status) return undefined;
+    return {
+      method,
+      params: {
+        ...identifiers,
+        turn: {
+          id,
+          status,
+          ...(status === "failed" ? { error: {} } : {}),
+        },
+      },
+    };
+  }
+
+  if (method === "error") {
+    return {
+      method,
+      params: {
+        ...identifiers,
+        error: {},
+        willRetry: params.willRetry === true,
+      },
+    };
+  }
+
+  return undefined;
+}
+
+function sanitizeItem(
+  item: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const id = safeProtocolId(item.id);
+  if (!id || typeof item.type !== "string") return undefined;
+
+  if (item.type === "agentMessage") {
+    if (typeof item.text !== "string") return undefined;
+    return { id, type: item.type, text: redactSensitiveText(item.text) };
+  }
+
+  const status = safeToolStatus(item.status);
+  switch (item.type) {
+    case "commandExecution":
+      return {
+        id,
+        type: item.type,
+        status,
+        ...(typeof item.exitCode === "number" &&
+        Number.isSafeInteger(item.exitCode)
+          ? { exitCode: item.exitCode }
+          : {}),
+      };
+    case "fileChange":
+    case "mcpToolCall":
+      return { id, type: item.type, status };
+    case "dynamicToolCall":
+      return {
+        id,
+        type: item.type,
+        status,
+        ...(typeof item.success === "boolean" ? { success: item.success } : {}),
+      };
+    default:
+      return undefined;
+  }
+}
+
+function notificationIdentifiers(
+  params: Record<string, unknown>,
+): Record<string, string> {
+  const identifiers: Record<string, string> = {};
+  for (const key of ["threadId", "turnId", "itemId"] as const) {
+    const value = safeProtocolId(params[key]);
+    if (value) identifiers[key] = value;
+  }
+  return identifiers;
+}
+
+function safeProtocolId(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    value.length <= 128 &&
+    /^[A-Za-z0-9._:-]+$/.test(value)
+    ? value
+    : undefined;
+}
+
+function safeTurnStatus(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    ["completed", "failed", "interrupted"].includes(value)
+    ? value
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -415,13 +567,11 @@ function isCodexModel(value: unknown): value is CodexModel {
 }
 
 function unavailableError(
-  command: string,
-  error: unknown,
+  _command: string,
+  _error: unknown,
 ): CodexTransportError {
-  const detail = error instanceof Error ? error.message : String(error);
   return new CodexTransportError(
     "unavailable",
-    `Could not start ${command}: ${detail}`,
-    { cause: error },
+    "Could not start Codex app-server",
   );
 }

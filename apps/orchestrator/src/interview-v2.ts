@@ -429,6 +429,7 @@ async function requestQuestion(
       "Ask exactly one bounded question.",
       "Include a time or answer-length limit.",
       "Do not reveal an answer, rubric, evaluation criteria, or hidden context.",
+      "Write the question and all learner-facing text in Russian; keep code and technical terms in English.",
     ],
   });
   let content = "";

@@ -8,7 +8,9 @@ import {
   CheckCircleIcon,
   ClipboardTextIcon,
   CodeIcon,
+  CopyIcon,
   FlaskIcon,
+  LockKeyIcon,
   PlayIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
@@ -18,7 +20,7 @@ import { api } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
-import { QueryError } from "@/components/query-state";
+import { EmptyState, QueryError } from "@/components/query-state";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const protectedKeys = new Set([
@@ -193,6 +195,7 @@ export function ExerciseClient() {
   const [localTest, setLocalTest] = useState<TestRun | null>(null);
   const [localReview, setLocalReview] = useState<Review | null>(null);
   const [zedFallback, setZedFallback] = useState<string | null>(null);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
 
   const query = useQuery({
     queryKey: ["exercise", requestedSessionId ?? "current"],
@@ -465,6 +468,37 @@ export function ExerciseClient() {
   }
 
   const exercise = query.data;
+  const exerciseStatus = exercise.exerciseUnitProgress?.status;
+  const exerciseLocked =
+    exercise.exerciseUnitId !== null &&
+    (exerciseStatus === "locked" || exerciseStatus === "skipped");
+  if (exerciseLocked) {
+    return (
+      <div data-slot="exercise-locked" className="flex flex-col gap-6">
+        <PageHeader
+          title="Практика откроется по ходу занятия"
+          description="Сначала завершите обязательные объяснения, recall, квиз и чтение кода. Условие упражнения появится только на своём шаге."
+        />
+        <EmptyState
+          title="Текущий шаг ещё не практика"
+          description="Вернитесь в занятие: там уже отмечен один следующий доступный шаг."
+          action={
+            <Button
+              type="button"
+              onClick={() =>
+                router.push(
+                  `/session?id=${encodeURIComponent(exercise.sessionId)}`,
+                )
+              }
+            >
+              <LockKeyIcon aria-hidden />
+              Вернуться к занятию
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
   const attemptId = exercise.attempt?.id;
   const diff = localDiff ?? exercise.attempt?.diff ?? null;
   const latestTest = localTest ?? exercise.attempt?.latestTestRun ?? null;
@@ -476,6 +510,21 @@ export function ExerciseClient() {
     latestTest.workspaceCurrent &&
     !review,
   );
+  const nextAction = !attemptId
+    ? "Создайте изолированную попытку."
+    : !diff?.changed
+      ? "Внесите самостоятельную правку в Zed, затем обновите Git diff."
+      : !latestTest
+        ? "Запустите разрешённые тесты на текущем diff."
+        : latestTest.status !== "passed"
+          ? "Исправьте код и снова запустите тесты."
+          : !latestTest.workspaceCurrent
+            ? "Код изменился после теста — запустите тесты повторно."
+            : !review
+              ? "Тесты прошли. Теперь запросите read-only review."
+              : review.status === "changes_requested"
+                ? "Примените замечания самостоятельно и повторите diff → тесты → review."
+                : "Review принят — сохраните evidence и вернитесь к занятию.";
   const error =
     attempt.error ??
     loadDiff.error ??
@@ -483,6 +532,18 @@ export function ExerciseClient() {
     runReview.error ??
     openZed.error ??
     acceptReview.error;
+
+  async function copyWorkspacePath() {
+    if (!exercise.workspacePath) return;
+    try {
+      await navigator.clipboard.writeText(exercise.workspacePath);
+      setWorkspaceNotice("Путь скопирован в буфер обмена.");
+    } catch {
+      setWorkspaceNotice(
+        "Не удалось скопировать путь автоматически. Выделите его вручную.",
+      );
+    }
+  }
 
   return (
     <div data-slot="exercise-client" className="flex flex-col gap-6">
@@ -568,14 +629,20 @@ export function ExerciseClient() {
                 </p>
               </div>
               {attemptId ? (
-                <Button
-                  variant="outline"
-                  onClick={() => openZed.mutate()}
-                  disabled={openZed.isPending}
-                >
-                  <ArrowSquareOutIcon aria-hidden />
-                  {openZed.isPending ? "Открываю…" : "Открыть в Zed"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={copyWorkspacePath}>
+                    <CopyIcon aria-hidden />
+                    Скопировать путь
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => openZed.mutate()}
+                    disabled={openZed.isPending}
+                  >
+                    <ArrowSquareOutIcon aria-hidden />
+                    {openZed.isPending ? "Открываю…" : "Открыть в Zed"}
+                  </Button>
+                </div>
               ) : (
                 <Button
                   onClick={() => attempt.mutate()}
@@ -591,12 +658,21 @@ export function ExerciseClient() {
                 {zedFallback}
               </p>
             ) : null}
+            {workspaceNotice ? (
+              <p role="status" className="text-sm text-muted-foreground">
+                {workspaceNotice}
+              </p>
+            ) : null}
           </div>
 
           <div
             data-slot="exercise-evidence"
             className="overflow-hidden rounded-xl border border-border bg-card"
           >
+            <div className="border-b border-border bg-muted/35 px-4 py-3 text-sm">
+              <span className="font-medium">Следующий шаг: </span>
+              <span className="text-muted-foreground">{nextAction}</span>
+            </div>
             <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
               <Button
                 size="sm"

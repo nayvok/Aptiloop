@@ -119,6 +119,11 @@ function completionPayload(unit: LearnerUnit): Record<string, unknown> {
     case "recall":
       return {
         type: unit.type,
+        answers: unit.questions.map((question, index) => ({
+          questionId: question.id,
+          draft: `Самостоятельный ответ ${index + 1} до подсказки`,
+          firstAttemptId: `${unit.stableId}-attempt-${index + 1}`,
+        })),
         draft: "Самостоятельный first attempt до подсказки",
         firstAttemptId: `${unit.stableId}-attempt-1`,
       };
@@ -236,6 +241,74 @@ describe("versioned learning API", () => {
     ).session;
     expect(current.id).toBe(firstSession.id);
     expect(current.status).toBe("active");
+  });
+
+  it("keeps an active session resumable after a newer curriculum revision is published", async () => {
+    const { app, state } = createRuntime();
+    state.connection.sqlite
+      .prepare(
+        `UPDATE curricula
+         SET active_version_id = 'curriculum-foundation-v2-r2'
+         WHERE id = 'curriculum-foundation'`,
+      )
+      .run();
+    const revisionTwoPath = (await (
+      await request(app, "/api/learning/path")
+    ).json()) as {
+      curriculum: {
+        weeks: Array<{
+          days: Array<{ id: string; stableId: string }>;
+        }>;
+      };
+    };
+    const revisionTwoDay = revisionTwoPath.curriculum.weeks[0]!.days[0]!;
+    const started = await request(app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId: revisionTwoDay.id,
+        operationId: "revision-two-session",
+      }),
+    });
+    expect(started.status).toBe(201);
+    const startedSession = (await started.json()) as {
+      session: { id: string };
+    };
+
+    state.connection.sqlite
+      .prepare(
+        `UPDATE curricula
+         SET active_version_id = 'curriculum-foundation-v2-r3'
+         WHERE id = 'curriculum-foundation'`,
+      )
+      .run();
+    const revisionThreePath = (await (
+      await request(app, "/api/learning/path")
+    ).json()) as {
+      curriculum: {
+        version: { revision: number };
+        weeks: Array<{
+          days: Array<{
+            id: string;
+            stableId: string;
+            status: string;
+            sessionId: string | null;
+            units: Array<{ stableId: string; status: string }>;
+          }>;
+        }>;
+      };
+    };
+    const resumedDay = revisionThreePath.curriculum.weeks[0]!.days[0]!;
+    expect(revisionThreePath.curriculum.version.revision).toBe(3);
+    expect(resumedDay.id).not.toBe(revisionTwoDay.id);
+    expect(resumedDay.stableId).toBe(revisionTwoDay.stableId);
+    expect(resumedDay).toMatchObject({
+      status: "in_progress",
+      sessionId: startedSession.session.id,
+    });
+    expect(resumedDay.units[0]?.status).toBe("ready");
+    expect(
+      resumedDay.units.slice(1).every((unit) => unit.status === "locked"),
+    ).toBe(true);
   });
 
   it("enforces evidence, unlocks units, persists reloads, and completes safely", async () => {
@@ -363,6 +436,10 @@ describe("versioned learning API", () => {
       }
 
       if (unit.type === "recall") {
+        const [firstQuestion, ...remainingQuestions] = unit.questions;
+        if (!firstQuestion || remainingQuestions.length === 0) {
+          throw new Error("Recall fixture requires multiple questions");
+        }
         const unexpectedField = await request(
           restartedRuntime.app,
           `/api/learning/sessions/v2/${session.id}/units/${unit.id}/recall-attempts`,
@@ -370,6 +447,7 @@ describe("versioned learning API", () => {
             method: "POST",
             body: JSON.stringify({
               operationId: "day1-recall-invalid",
+              questionId: firstQuestion.id,
               answer: "Ответ",
               referenceAnswer: "browser must not supply this",
             }),
@@ -383,6 +461,7 @@ describe("versioned learning API", () => {
             method: "POST",
             body: JSON.stringify({
               operationId: "day1-recall-first",
+              questionId: firstQuestion.id,
               answer: "Первый самостоятельный ответ до любой подсказки",
             }),
           },
@@ -393,6 +472,55 @@ describe("versioned learning API", () => {
           session: LearnerSession;
         };
         expect(firstBody.evidence.isFirstAttempt).toBe(true);
+        const incompleteCompletion = await request(
+          restartedRuntime.app,
+          `/api/learning/sessions/v2/${session.id}/units/${unit.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              status: "completed",
+              payload: unitProgressPayload(firstBody.session, unit.id),
+            }),
+          },
+        );
+        expect(incompleteCompletion.status).toBe(400);
+        expect(await incompleteCompletion.json()).toEqual({
+          error: "Unit completion criteria are not satisfied",
+        });
+
+        const distinctAnswers = new Map<string, string>([
+          [firstQuestion.id, "Первый самостоятельный ответ до любой подсказки"],
+        ]);
+        for (const [index, question] of remainingQuestions.entries()) {
+          const answer = `Отдельный ответ ${index + 2} на вопрос ${question.id}`;
+          distinctAnswers.set(question.id, answer);
+          const response = await request(
+            restartedRuntime.app,
+            `/api/learning/sessions/v2/${session.id}/units/${unit.id}/recall-attempts`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                operationId: `day1-recall-${index + 2}`,
+                questionId: question.id,
+                answer,
+              }),
+            },
+          );
+          expect(response.status).toBe(201);
+          const responseBody = (await response.json()) as {
+            evidence: {
+              id: string;
+              questionId: string;
+              isFirstAttempt: boolean;
+            };
+            session: LearnerSession;
+          };
+          expect(responseBody.evidence).toMatchObject({
+            questionId: question.id,
+            isFirstAttempt: true,
+          });
+          session = responseBody.session;
+        }
 
         const revision = await request(
           restartedRuntime.app,
@@ -401,6 +529,7 @@ describe("versioned learning API", () => {
             method: "POST",
             body: JSON.stringify({
               operationId: "day1-recall-revision",
+              questionId: firstQuestion.id,
               answer: "Уточнённый ответ после самостоятельной проверки",
             }),
           },
@@ -415,6 +544,115 @@ describe("versioned learning API", () => {
         expect(payload).toMatchObject({
           firstAttemptId: firstBody.evidence.id,
           draft: "Первый самостоятельный ответ до любой подсказки",
+          answers: expect.arrayContaining(
+            [...distinctAnswers].map(([questionId, draft]) =>
+              expect.objectContaining({ questionId, draft }),
+            ),
+          ),
+        });
+        expect((payload as { answers: unknown[] }).answers).toHaveLength(
+          unit.questions.length,
+        );
+
+        const reloaded = await request(
+          restartedRuntime.app,
+          `/api/learning/sessions/v2/${session.id}`,
+        );
+        expect(reloaded.status).toBe(200);
+        const reloadedSession = (await reloaded.json()) as {
+          session: LearnerSession;
+        };
+        expect(
+          unitProgressPayload(reloadedSession.session, unit.id),
+        ).toMatchObject(payload);
+      }
+
+      if (unit.type === "teacher-dialogue") {
+        const conversationId = "day1-teacher-conversation";
+        restartedRuntime.state.connection.sqlite
+          .prepare(
+            `INSERT INTO agent_conversations
+             (id, learning_session_id, role, provider_id, model_id,
+              provider_session_id, status, created_at, updated_at)
+             VALUES (?, ?, 'teacher', 'mock', 'mock-deterministic', ?,
+                     'active', 1000, 1000)`,
+          )
+          .run(conversationId, session.id, "provider-teacher-session");
+        const insertMessage = restartedRuntime.state.connection.sqlite.prepare(
+          `INSERT INTO agent_messages
+           (id, conversation_id, role, content, tool_events_json,
+            raw_event_json, status, sequence, idempotency_key, created_at)
+           VALUES (?, ?, ?, ?, '[]', NULL, 'completed', ?, NULL, ?)`,
+        );
+        insertMessage.run(
+          "teacher-user-1",
+          conversationId,
+          "user",
+          "Первое уточнённое объяснение",
+          1,
+          1001,
+        );
+        insertMessage.run(
+          "teacher-assistant-1",
+          conversationId,
+          "assistant",
+          "Почему это следует из общей ссылки?",
+          2,
+          1002,
+        );
+        const firstTurnPayload = {
+          type: "teacher-dialogue",
+          conversationId,
+          turnCount: 1,
+          revisionAttemptIds: ["teacher-user-1"],
+        };
+        const incomplete = await request(
+          restartedRuntime.app,
+          `/api/learning/sessions/v2/${session.id}/units/${unit.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              status: "completed",
+              payload: firstTurnPayload,
+            }),
+          },
+        );
+        expect(incomplete.status).toBe(400);
+
+        insertMessage.run(
+          "teacher-user-2",
+          conversationId,
+          "user",
+          "Ответ ученика на уточнение Teacher",
+          3,
+          1003,
+        );
+        insertMessage.run(
+          "teacher-assistant-2",
+          conversationId,
+          "assistant",
+          "Теперь причинная цепочка полная.",
+          4,
+          1004,
+        );
+        payload = {
+          ...firstTurnPayload,
+          turnCount: 2,
+          revisionAttemptIds: ["teacher-user-1", "teacher-user-2"],
+        };
+
+        const transcript = await request(
+          restartedRuntime.app,
+          `/api/learning/sessions/v2/${session.id}/teacher-transcript`,
+        );
+        expect(transcript.status).toBe(200);
+        expect(await transcript.json()).toMatchObject({
+          messages: [
+            { id: "teacher-user-1", role: "user" },
+            { id: "teacher-assistant-1", role: "assistant" },
+            { id: "teacher-user-2", role: "user" },
+            { id: "teacher-assistant-2", role: "assistant" },
+          ],
         });
       }
 

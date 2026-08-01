@@ -21,7 +21,7 @@ packages/agent-core      provider contract и normalized events
 packages/codex-provider  узкий Codex app-server stdio adapter
 packages/opencode-provider OpenCode SDK/sidecar adapter
 packages/exercise-core   canonical paths, isolated attempts, Git, runner, Zed
-packages/curriculum      published revision 2 первой недели
+packages/curriculum      published revision 3 первой недели + immutable parents
 packages/database        node:sqlite, schema, migrations, repositories, seed
 ```
 
@@ -55,7 +55,7 @@ SQLite работает через встроенный `node:sqlite` и Drizzle
 - добавляет потерянный в раннем prototype `unit_progress.unit_type` через безопасный rebuild;
 - нормализует legacy snapshot к schema v2 и заново проверяет Zod contract;
 - запускается даже если старый prototype уже записал marker 0002, но не выполнил TypeScript hook;
-- сохраняет legacy rows/history, однако legacy revision не становится текущей revision 2.
+- сохраняет legacy rows/history, однако legacy revision не становится текущей active revision.
 
 Относительные `DATABASE_URL` и backup directory разрешаются от project root, а не от npm workspace cwd. Перед миграцией file DB используется `npm run db:backup`: source и `VACUUM INTO` copy проходят SQLite integrity/foreign-key проверки.
 

@@ -60,6 +60,7 @@ const operationIdSchema = z.string().trim().min(1).max(100);
 const recallAttemptSchema = z
   .object({
     operationId: operationIdSchema,
+    questionId: z.string().trim().min(1).max(200),
     answer: z.string().trim().min(1).max(50_000),
   })
   .strict();
@@ -206,11 +207,13 @@ export function registerVersionedLearningRoutes(
 
     const authoring = new CurriculumAuthoringRepository(state.connection);
     const graph = await authoring.getVersionGraph(active.active_version_id);
-    const latestSessions = latestSessionsByDay(state.connection);
-    const completedDayIds = completedVersionedDayIds(state.connection);
+    const latestSessions = latestSessionsByDayStableId(state.connection);
+    const completedDayStableIds = completedVersionedDayStableIds(
+      state.connection,
+    );
     const current = await state.repository.getCurrentVersionedSession();
-    const orderedDayIds = graph.weeks.flatMap((week) =>
-      week.days.map((day) => day.id),
+    const orderedDayStableIds = graph.weeks.flatMap((week) =>
+      week.days.map((day) => day.stableId),
     );
 
     return context.json({
@@ -254,22 +257,30 @@ export function registerVersionedLearningRoutes(
                 payload: unit.payload,
               }),
             );
-            const session = latestSessions.get(day.id);
-            const dayIndex = orderedDayIds.indexOf(day.id);
-            const precedingDaysCompleted = orderedDayIds
+            const session = latestSessions.get(day.stableId);
+            const currentDay = current?.snapshot.day.stableId === day.stableId;
+            const dayIndex = orderedDayStableIds.indexOf(day.stableId);
+            const precedingDaysCompleted = orderedDayStableIds
               .slice(0, dayIndex)
-              .every((dayId) => completedDayIds.has(dayId));
-            const dayStatus = completedDayIds.has(day.id)
+              .every((stableId) => completedDayStableIds.has(stableId));
+            const dayStatus = completedDayStableIds.has(day.stableId)
               ? "completed"
-              : current?.snapshot.day.id === day.id
+              : currentDay
                 ? "in_progress"
                 : dayIndex === 0 || precedingDaysCompleted
                   ? "available"
                   : "locked";
             const sessionProgress =
-              current?.snapshot.day.id === day.id
+              currentDay && current
                 ? new Map(
-                    current.unitProgress.map((item) => [item.unitId, item]),
+                    current.unitProgress.flatMap((item) => {
+                      const snapshotUnit = current.snapshot.units.find(
+                        (unit) => unit.id === item.unitId,
+                      );
+                      return snapshotUnit
+                        ? [[snapshotUnit.stableId, item]]
+                        : [];
+                    }),
                   )
                 : null;
             const initial = new Map(
@@ -292,7 +303,9 @@ export function registerVersionedLearningRoutes(
               outOfScope: day.outOfScope,
               topics: day.topics,
               status: dayStatus,
-              sessionId: session?.id ?? null,
+              sessionId: currentDay
+                ? current.session.id
+                : (session?.id ?? null),
               units: units.map((unit) => ({
                 ...toLearnerUnit(unit),
                 status:
@@ -300,7 +313,7 @@ export function registerVersionedLearningRoutes(
                     ? unit.optional
                       ? "skipped"
                       : "completed"
-                    : (sessionProgress?.get(unit.id)?.status ??
+                    : (sessionProgress?.get(unit.stableId)?.status ??
                       initial.get(unit.id) ??
                       "locked"),
               })),
@@ -341,39 +354,88 @@ export function registerVersionedLearningRoutes(
     return context.json({ session: toLearnerSession(detail) });
   });
 
+  app.get(
+    "/api/learning/sessions/v2/:id/teacher-transcript",
+    async (context) => {
+      const sessionId = context.req.param("id");
+      await state.repository.getVersionedSession(sessionId);
+      const messages = state.connection.sqlite
+        .prepare(
+          `SELECT m.id, m.role, m.content
+           FROM agent_messages m
+           JOIN agent_conversations c ON c.id = m.conversation_id
+           WHERE c.learning_session_id = ? AND c.role = 'teacher'
+             AND m.role IN ('user', 'assistant') AND m.status = 'completed'
+           ORDER BY c.created_at ASC, m.sequence ASC`,
+        )
+        .all(sessionId) as Array<{
+        id: string;
+        role: "user" | "assistant";
+        content: string;
+      }>;
+      return context.json({
+        messages: messages.map((message) => ({
+          ...message,
+          content:
+            message.role === "user"
+              ? learnerTeacherMessage(message.content)
+              : message.content,
+        })),
+      });
+    },
+  );
+
   app.post(
     "/api/learning/sessions/v2/:id/units/:unitId/recall-attempts",
     async (context) => {
       const body = recallAttemptSchema.parse(await context.req.json());
       const sessionId = context.req.param("id");
       const unitId = context.req.param("unitId");
-      requireEvidenceTarget(
+      const unit = requireEvidenceTarget(
         await state.repository.getVersionedSession(sessionId),
         unitId,
         "recall",
       );
+      if (!unit.questions.some((question) => question.id === body.questionId)) {
+        throw new Error("Unknown recall question");
+      }
       const recorded = await state.repository.recordVersionedUnitEvidence({
         sessionId,
         unitId,
         evidenceType: "recall-attempt",
         operationId: body.operationId,
+        questionId: body.questionId,
         payload: { answer: body.answer },
       });
       const attempts = await state.repository.listVersionedUnitEvidence(
         sessionId,
         { unitId, evidenceType: "recall-attempt" },
       );
-      const first = attempts[0];
+      const firstByQuestion = firstRecallEvidenceByQuestion(unit, attempts);
+      const first = firstByQuestion.get(body.questionId);
       if (!first) throw new Error("Persisted recall attempt disappeared");
-      const firstAnswer = evidenceString(first.payload, "answer");
+      const answers = unit.questions.flatMap((question) => {
+        const evidence = firstByQuestion.get(question.id);
+        return evidence
+          ? [
+              {
+                questionId: question.id,
+                firstAttemptId: evidence.id,
+                draft: evidenceString(evidence.payload, "answer"),
+              },
+            ]
+          : [];
+      });
+      const legacyFirst = answers[0];
       await state.repository.updateUnitProgress({
         sessionId,
         unitId,
         status: "in_progress",
         progress: {
           type: "recall",
-          firstAttemptId: first.id,
-          draft: firstAnswer,
+          answers,
+          firstAttemptId: legacyFirst?.firstAttemptId ?? null,
+          draft: legacyFirst?.draft ?? "",
         },
       });
       return context.json(
@@ -381,6 +443,7 @@ export function registerVersionedLearningRoutes(
           evidence: {
             id: recorded.id,
             isFirstAttempt: recorded.id === first.id,
+            questionId: body.questionId,
           },
           session: toLearnerSession(
             await state.repository.getVersionedSession(sessionId),
@@ -1275,15 +1338,18 @@ function evidenceString(payload: unknown, key: string): string {
   return value;
 }
 
-function completedVersionedDayIds(connection: DatabaseConnection): Set<string> {
+function completedVersionedDayStableIds(
+  connection: DatabaseConnection,
+): Set<string> {
   const rows = connection.sqlite
     .prepare(
-      `SELECT DISTINCT curriculum_day_v2_id AS day_id
-       FROM learning_sessions
-       WHERE curriculum_day_v2_id IS NOT NULL AND status = 'completed'`,
+      `SELECT DISTINCT day.stable_id AS stable_id
+       FROM learning_sessions session
+       JOIN curriculum_days_v2 day ON day.id = session.curriculum_day_v2_id
+       WHERE session.status = 'completed'`,
     )
-    .all() as Array<{ day_id: string }>;
-  return new Set(rows.map((row) => row.day_id));
+    .all() as Array<{ stable_id: string }>;
+  return new Set(rows.map((row) => row.stable_id));
 }
 
 function assertDayCanStart(
@@ -1316,8 +1382,11 @@ function assertDayCanStart(
          AND (previous_week.order_index < ? OR
               (previous_week.order_index = ? AND previous.order_index < ?))
          AND NOT EXISTS (
-           SELECT 1 FROM learning_sessions session
-           WHERE session.curriculum_day_v2_id = previous.id
+           SELECT 1
+           FROM learning_sessions session
+           JOIN curriculum_days_v2 completed_day
+             ON completed_day.id = session.curriculum_day_v2_id
+           WHERE completed_day.stable_id = previous.stable_id
              AND session.status = 'completed'
          )
        ORDER BY previous_week.order_index, previous.order_index
@@ -1432,21 +1501,21 @@ function persistTransition(
   }
 }
 
-function latestSessionsByDay(
+function latestSessionsByDayStableId(
   connection: DatabaseConnection,
 ): Map<string, { id: string; status: string }> {
   const rows = connection.sqlite
     .prepare(
-      `SELECT curriculum_day_v2_id AS day_id, id, status
-       FROM learning_sessions
-       WHERE curriculum_day_v2_id IS NOT NULL
-       ORDER BY updated_at DESC`,
+      `SELECT day.stable_id AS stable_id, session.id, session.status
+       FROM learning_sessions session
+       JOIN curriculum_days_v2 day ON day.id = session.curriculum_day_v2_id
+       ORDER BY session.updated_at DESC`,
     )
-    .all() as Array<{ day_id: string; id: string; status: string }>;
+    .all() as Array<{ stable_id: string; id: string; status: string }>;
   const result = new Map<string, { id: string; status: string }>();
   for (const row of rows) {
-    if (!result.has(row.day_id)) {
-      result.set(row.day_id, { id: row.id, status: row.status });
+    if (!result.has(row.stable_id)) {
+      result.set(row.stable_id, { id: row.id, status: row.status });
     }
   }
   return result;
@@ -1532,10 +1601,12 @@ async function assertCompletionCriteria(
             : evidenceAttemptCount(unit, payload) < criterion.minimum;
         break;
       case "dialogue":
-        failed = !(
-          payload.type === "teacher-dialogue" &&
-          payload.turnCount >= criterion.minimumTurns &&
-          (!criterion.requiresRevision || payload.revisionAttemptIds.length > 0)
+        failed = !hasPersistedTeacherDialogue(
+          connection,
+          sessionId,
+          payload,
+          criterion.minimumTurns,
+          criterion.requiresRevision,
         );
         break;
       case "score":
@@ -1591,9 +1662,7 @@ function evidenceAttemptCount(
 ): number {
   switch (payload.type) {
     case "recall":
-      return payload.firstAttemptId && payload.draft.trim()
-        ? Math.max(1, unit.questions.length)
-        : 0;
+      return payload.answers.length;
     case "quiz":
       return payload.attemptedQuestionIds.length;
     case "teacher-dialogue":
@@ -1621,6 +1690,51 @@ function hasEvidenceField(
   return typeof value === "string" ? value.trim().length > 0 : value != null;
 }
 
+function hasPersistedTeacherDialogue(
+  connection: DatabaseConnection,
+  sessionId: string,
+  payload: UnitProgressPayload,
+  minimumTurns: number,
+  requiresRevision: boolean,
+): boolean {
+  if (payload.type !== "teacher-dialogue") return false;
+  const requiredTurns = Math.max(minimumTurns, requiresRevision ? 2 : 1);
+  if (
+    payload.turnCount < requiredTurns ||
+    payload.revisionAttemptIds.length < requiredTurns
+  ) {
+    return false;
+  }
+  const counts = connection.sqlite
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN m.role = 'user' THEN 1 ELSE 0 END) AS learner_turns,
+         SUM(CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END) AS teacher_turns
+       FROM agent_messages m
+       JOIN agent_conversations c ON c.id = m.conversation_id
+       WHERE c.learning_session_id = ? AND c.role = 'teacher'
+         AND m.role IN ('user', 'assistant') AND m.status = 'completed'`,
+    )
+    .get(sessionId) as
+    { learner_turns: number | null; teacher_turns: number | null } | undefined;
+  return (
+    (counts?.learner_turns ?? 0) >= requiredTurns &&
+    (counts?.teacher_turns ?? 0) >= requiredTurns
+  );
+}
+
+function learnerTeacherMessage(content: string): string {
+  const markers = [
+    "\n\nОтвет ученика на уточнение Teacher:\n",
+    "\n\nУточнённое объяснение ученика:\n",
+  ];
+  for (const marker of markers) {
+    const index = content.lastIndexOf(marker);
+    if (index >= 0) return content.slice(index + marker.length).trim();
+  }
+  return content;
+}
+
 async function hasPersistedRecallEvidence(
   repository: LearningRepository,
   sessionId: string,
@@ -1633,13 +1747,45 @@ async function hasPersistedRecallEvidence(
     unitId: unit.id,
     evidenceType: "recall-attempt",
   });
-  const first = evidence[0];
-  if (!first) return false;
-  return Boolean(
-    payload.firstAttemptId === first.id &&
-    payload.draft === evidenceString(first.payload, "answer") &&
-    Math.max(1, unit.questions.length) >= minimum,
+  const firstByQuestion = firstRecallEvidenceByQuestion(unit, evidence);
+  const payloadByQuestion = new Map(
+    payload.answers.map((answer) => [answer.questionId, answer]),
   );
+  const requiredQuestionIds = unit.questions.map((question) => question.id);
+  if (requiredQuestionIds.length < minimum) return false;
+  return requiredQuestionIds.every((questionId) => {
+    const first = firstByQuestion.get(questionId);
+    const answer = payloadByQuestion.get(questionId);
+    return Boolean(
+      first &&
+      answer &&
+      answer.firstAttemptId === first.id &&
+      answer.draft === evidenceString(first.payload, "answer") &&
+      answer.draft.trim(),
+    );
+  });
+}
+
+function firstRecallEvidenceByQuestion(
+  unit: CurriculumUnit,
+  evidence: Awaited<
+    ReturnType<LearningRepository["listVersionedUnitEvidence"]>
+  >,
+): Map<string, (typeof evidence)[number]> {
+  const firstByQuestion = new Map<string, (typeof evidence)[number]>();
+  for (const item of evidence) {
+    if (item.questionId && !firstByQuestion.has(item.questionId)) {
+      firstByQuestion.set(item.questionId, item);
+    }
+  }
+  // A legacy recall attempt had no question_id. It represented only the first
+  // visible question; mapping it to every question would fabricate evidence.
+  const firstQuestionId = unit.questions[0]?.id;
+  const legacy = evidence.find((item) => item.questionId === null);
+  if (firstQuestionId && legacy && !firstByQuestion.has(firstQuestionId)) {
+    firstByQuestion.set(firstQuestionId, legacy);
+  }
+  return firstByQuestion;
 }
 
 async function hasPersistedQuizEvidence(

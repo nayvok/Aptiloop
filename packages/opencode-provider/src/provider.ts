@@ -50,6 +50,108 @@ const REVIEWER_PERMISSION = [
   { permission: "*", pattern: "*", action: "deny" as const },
 ];
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_TURN_TIMEOUT_MS = 10 * 60_000;
+
+interface Deadline {
+  readonly controller: AbortController;
+  dispose(): void;
+}
+
+function abortError(reason: unknown): Error {
+  return reason instanceof Error
+    ? reason
+    : new DOMException("The operation was aborted", "AbortError");
+}
+
+function timeoutError(operation: string): DOMException {
+  return new DOMException(
+    `OpenCode ${operation} exceeded its deadline`,
+    "TimeoutError",
+  );
+}
+
+function validateTimeout(value: number, option: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new OpenCodeConfigurationError(
+      `${option} must be a positive integer in milliseconds`,
+    );
+  }
+  return value;
+}
+
+function createDeadline(
+  timeoutMs: number,
+  operation: string,
+  parentSignal?: AbortSignal,
+): Deadline {
+  const controller = new AbortController();
+  const abortFromParent = () => {
+    controller.abort(abortError(parentSignal?.reason));
+  };
+
+  if (parentSignal?.aborted === true) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  const timeout = setTimeout(() => {
+    controller.abort(timeoutError(operation));
+  }, timeoutMs);
+  timeout.unref();
+
+  return {
+    controller,
+    dispose() {
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
+async function waitWithSignal<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) {
+    throw abortError(signal.reason);
+  }
+
+  let removeAbortListener: () => void = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    const onAbort = () => reject(abortError(signal.reason));
+    removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    removeAbortListener();
+  }
+}
+
+async function runWithDeadline<T>(
+  timeoutMs: number,
+  operation: string,
+  task: (signal: AbortSignal) => Promise<T>,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  const deadline = createDeadline(timeoutMs, operation, parentSignal);
+  try {
+    if (deadline.controller.signal.aborted) {
+      throw abortError(deadline.controller.signal.reason);
+    }
+    return await waitWithSignal(
+      Promise.resolve().then(() => task(deadline.controller.signal)),
+      deadline.controller.signal,
+    );
+  } finally {
+    deadline.dispose();
+  }
+}
+
 interface StoredSession {
   readonly id: string;
   readonly role: CreateAgentSessionInput["role"];
@@ -68,6 +170,10 @@ export interface OpenCodeAgentProviderOptions {
   readonly env?: OpenCodeEnvironment;
   readonly transport?: OpenCodeTransport;
   readonly now?: () => Date;
+  /** Deadline for one HTTP/session lifecycle request. Defaults to 15 seconds. */
+  readonly requestTimeoutMs?: number;
+  /** Maximum duration of one streamed model turn. Defaults to 10 minutes. */
+  readonly turnTimeoutMs?: number;
 }
 
 function parseModelId(modelId: string): {
@@ -171,7 +277,9 @@ function safeJson(value: unknown): JsonValue | undefined {
 
 function isAbortError(error: unknown): boolean {
   return (
-    error instanceof DOMException &&
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
     (error.name === "AbortError" || error.name === "TimeoutError")
   );
 }
@@ -214,15 +322,26 @@ export class OpenCodeAgentProvider implements AgentProvider {
 
   readonly #directory: string;
   readonly #now: () => Date;
+  readonly #requestTimeoutMs: number;
+  readonly #turnTimeoutMs: number;
   readonly #transport?: OpenCodeTransport;
   readonly #configurationError?: OpenCodeConfigurationError;
   readonly #sessions = new Map<string, StoredSession>();
   readonly #streamControllers = new Map<string, AbortController>();
   #shuttingDown = false;
+  #shutdownPromise?: Promise<void>;
 
   public constructor(options: OpenCodeAgentProviderOptions) {
     this.#directory = resolve(options.directory);
     this.#now = options.now ?? (() => new Date());
+    this.#requestTimeoutMs = validateTimeout(
+      options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      "requestTimeoutMs",
+    );
+    this.#turnTimeoutMs = validateTimeout(
+      options.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS,
+      "turnTimeoutMs",
+    );
 
     if (options.directory.trim() === "") {
       this.#configurationError = new OpenCodeConfigurationError(
@@ -274,7 +393,11 @@ export class OpenCodeAgentProvider implements AgentProvider {
     }
 
     try {
-      const health = await this.#requireTransport().health(signal);
+      const health = await this.#request(
+        "health check",
+        (requestSignal) => this.#requireTransport().health(requestSignal),
+        signal,
+      );
       return {
         providerId: this.id,
         state: health.healthy ? "connected" : "error",
@@ -297,8 +420,13 @@ export class OpenCodeAgentProvider implements AgentProvider {
     signal?: AbortSignal,
   ): Promise<OpenCodeProviderSnapshot> {
     try {
-      return await this.#requireTransport().listProviders(
-        this.#directory,
+      return await this.#request(
+        "provider list",
+        (requestSignal) =>
+          this.#requireTransport().listProviders(
+            this.#directory,
+            requestSignal,
+          ),
         signal,
       );
     } catch (error) {
@@ -332,15 +460,20 @@ export class OpenCodeAgentProvider implements AgentProvider {
     this.#assertRunning();
 
     try {
-      const remote = await this.#requireTransport().createSession({
-        directory: this.#directory,
-        title: `Dev Learning Harness · ${input.role}`,
-        ...(input.role === "reviewer"
-          ? { permission: REVIEWER_PERMISSION }
-          : {}),
-      });
+      const remote = await this.#request("session creation", (signal) =>
+        this.#requireTransport().createSession(
+          {
+            directory: this.#directory,
+            title: `Dev Learning Harness · ${input.role}`,
+            ...(input.role === "reviewer"
+              ? { permission: REVIEWER_PERMISSION }
+              : {}),
+          },
+          signal,
+        ),
+      );
       if (this.#shuttingDown) {
-        await this.#requireTransport().abortSession(remote.id, this.#directory);
+        await this.#abortRemoteSession(remote.id);
         throw new AgentProviderError(
           "unavailable",
           "OpenCode adapter is shutting down",
@@ -396,7 +529,8 @@ export class OpenCodeAgentProvider implements AgentProvider {
       );
     }
 
-    const controller = new AbortController();
+    const turnDeadline = createDeadline(this.#turnTimeoutMs, "session turn");
+    const controller = turnDeadline.controller;
     this.#streamControllers.set(session.id, controller);
     let sequence = 0;
     let assistantMessageID: string | undefined;
@@ -411,12 +545,16 @@ export class OpenCodeAgentProvider implements AgentProvider {
     });
 
     try {
-      const stream = await this.#requireTransport().subscribe(
-        this.#directory,
-        controller.signal,
+      const stream = await this.#turnRequest(
+        "event subscription",
+        controller,
+        (signal) => this.#requireTransport().subscribe(this.#directory, signal),
       );
       const iterator = stream[Symbol.asyncIterator]();
-      const connectedEvent = await iterator.next();
+      const connectedEvent = await waitWithSignal(
+        iterator.next(),
+        controller.signal,
+      );
       if (connectedEvent.done) {
         throw new AgentProviderError(
           "unavailable",
@@ -426,26 +564,28 @@ export class OpenCodeAgentProvider implements AgentProvider {
       }
       let bufferedEvent: Event | undefined = connectedEvent.value;
 
-      await this.#requireTransport().promptAsync(
-        {
-          sessionID: session.id,
-          directory: this.#directory,
-          providerID: session.providerID,
-          modelID: session.nativeModelID,
-          prompt: input.message,
-          responseFormat: input.responseFormat,
-          system: session.systemPrompt,
-          ...(session.role === "reviewer"
-            ? { tools: REVIEWER_DENIED_TOOLS }
-            : {}),
-        },
-        controller.signal,
+      await this.#turnRequest("session prompt", controller, (signal) =>
+        this.#requireTransport().promptAsync(
+          {
+            sessionID: session.id,
+            directory: this.#directory,
+            providerID: session.providerID,
+            modelID: session.nativeModelID,
+            prompt: input.message,
+            responseFormat: input.responseFormat,
+            system: session.systemPrompt,
+            ...(session.role === "reviewer"
+              ? { tools: REVIEWER_DENIED_TOOLS }
+              : {}),
+          },
+          signal,
+        ),
       );
 
       while (true) {
         const item =
           bufferedEvent === undefined
-            ? await iterator.next()
+            ? await waitWithSignal(iterator.next(), controller.signal)
             : { done: false as const, value: bufferedEvent };
         bufferedEvent = undefined;
         if (item.done) {
@@ -588,6 +728,24 @@ export class OpenCodeAgentProvider implements AgentProvider {
         }
       }
     } catch (error) {
+      if (
+        isAbortError(error) &&
+        (error as DOMException).name === "TimeoutError"
+      ) {
+        session.status = "failed";
+        yield {
+          ...eventBase(),
+          type: "error",
+          error: {
+            code: "unavailable",
+            message: "OpenCode response deadline was exceeded",
+            retryable: true,
+          },
+        };
+        yield { ...eventBase(), type: "session.completed", reason: "failed" };
+        return;
+      }
+
       if (controller.signal.aborted || isAbortError(error)) {
         session.status = "cancelled";
         yield {
@@ -620,16 +778,14 @@ export class OpenCodeAgentProvider implements AgentProvider {
       yield { ...eventBase(), type: "session.completed", reason: "failed" };
     } finally {
       controller.abort();
+      turnDeadline.dispose();
       this.#streamControllers.delete(session.id);
       if (!remoteTurnFinished && session.status !== "cancelled") {
         if (session.status === "active") {
           session.status = "cancelled";
         }
         try {
-          await this.#requireTransport().abortSession(
-            session.id,
-            this.#directory,
-          );
+          await this.#abortRemoteSession(session.id);
         } catch {
           // The local iterator is already closed; shutdown/cancel remains best-effort here.
         }
@@ -649,7 +805,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
     session.status = "cancelled";
     this.#streamControllers.get(sessionId)?.abort();
     try {
-      await this.#requireTransport().abortSession(sessionId, this.#directory);
+      await this.#abortRemoteSession(sessionId);
     } catch (error) {
       throw new AgentProviderError(
         "provider_error",
@@ -661,12 +817,17 @@ export class OpenCodeAgentProvider implements AgentProvider {
   }
 
   /** Stops active SSE streams and asks OpenCode to abort active sessions. */
-  public async shutdown(): Promise<void> {
-    if (this.#shuttingDown) {
-      return;
+  public shutdown(): Promise<void> {
+    if (this.#shutdownPromise !== undefined) {
+      return this.#shutdownPromise;
     }
     this.#shuttingDown = true;
 
+    this.#shutdownPromise = this.#shutdownActiveSessions();
+    return this.#shutdownPromise;
+  }
+
+  async #shutdownActiveSessions(): Promise<void> {
     const activeSessions = [...this.#sessions.values()].filter(
       (session) => session.status === "active",
     );
@@ -677,10 +838,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
     await Promise.allSettled(
       activeSessions.map(async (session) => {
         session.status = "cancelled";
-        await this.#requireTransport().abortSession(
-          session.id,
-          this.#directory,
-        );
+        await this.#abortRemoteSession(session.id);
       }),
     );
     this.#streamControllers.clear();
@@ -709,6 +867,50 @@ export class OpenCodeAgentProvider implements AgentProvider {
     }
   }
 
+  #request<T>(
+    operation: string,
+    task: (signal: AbortSignal) => Promise<T>,
+    parentSignal?: AbortSignal,
+  ): Promise<T> {
+    return runWithDeadline(
+      this.#requestTimeoutMs,
+      operation,
+      task,
+      parentSignal,
+    );
+  }
+
+  #turnRequest<T>(
+    operation: string,
+    turnController: AbortController,
+    task: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const requestDeadline = createDeadline(
+      this.#requestTimeoutMs,
+      operation,
+      turnController.signal,
+    );
+    const request = task(turnController.signal);
+
+    return waitWithSignal(request, requestDeadline.controller.signal)
+      .catch((error: unknown) => {
+        if (
+          isAbortError(error) &&
+          (error as { readonly name: string }).name === "TimeoutError"
+        ) {
+          turnController.abort(error);
+        }
+        throw error;
+      })
+      .finally(() => requestDeadline.dispose());
+  }
+
+  #abortRemoteSession(sessionID: string): Promise<void> {
+    return this.#request("session abort", (signal) =>
+      this.#requireTransport().abortSession(sessionID, this.#directory, signal),
+    );
+  }
+
   #assertRunnableModel(
     snapshot: OpenCodeProviderSnapshot,
     providerID: string,
@@ -734,17 +936,23 @@ export class OpenCodeAgentProvider implements AgentProvider {
   ): Promise<OpenCodeMessageRecord> {
     const transport = this.#requireTransport();
     if (messageID !== undefined) {
-      return transport.getMessage(
-        sessionID,
-        messageID,
-        this.#directory,
+      return this.#request(
+        "session message",
+        (requestSignal) =>
+          transport.getMessage(
+            sessionID,
+            messageID,
+            this.#directory,
+            requestSignal,
+          ),
         signal,
       );
     }
 
-    const messages = await transport.listMessages(
-      sessionID,
-      this.#directory,
+    const messages = await this.#request(
+      "session messages",
+      (requestSignal) =>
+        transport.listMessages(sessionID, this.#directory, requestSignal),
       signal,
     );
     const assistant = messages.findLast(

@@ -20,7 +20,7 @@
     "typecheck": "turbo run typecheck",
     "test": "npm run test:fast && npm run test:e2e",
     "test:fast": "turbo run test",
-    "test:e2e": "npm run test:e2e --workspace=@dlh/web",
+    "test:e2e": "node scripts/test-e2e.mjs",
     "db:generate": "npm run db:generate --workspace=@dlh/database",
     "db:backup": "npm run db:backup --workspace=@dlh/database",
     "db:migrate": "npm run db:migrate --workspace=@dlh/database",

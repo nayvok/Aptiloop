@@ -1,6 +1,7 @@
 import type { AgentError, AgentEvent, JsonValue } from "@dlh/shared";
 
 import type { CodexNotification } from "./protocol.js";
+import { redactSensitiveText, safeToolStatus } from "./sanitization.js";
 
 interface NormalizerOptions {
   now?: () => Date;
@@ -22,13 +23,23 @@ export class CodexEventNormalizer {
       method === "item/agentMessage/delta" &&
       typeof params.delta === "string"
     ) {
-      return [this.#event({ type: "message.delta", delta: params.delta })];
+      return [
+        this.#event({
+          type: "message.delta",
+          delta: redactSensitiveText(params.delta),
+        }),
+      ];
     }
 
     if (method === "item/completed" && isRecord(params.item)) {
       const item = params.item;
       if (item.type === "agentMessage" && typeof item.text === "string") {
-        return [this.#event({ type: "message.completed", content: item.text })];
+        return [
+          this.#event({
+            type: "message.completed",
+            content: redactSensitiveText(item.text),
+          }),
+        ];
       }
       const tool = toolDetails(item);
       if (tool) {
@@ -62,14 +73,14 @@ export class CodexEventNormalizer {
     }
 
     if (method === "transport/error") {
-      const message =
-        typeof params.message === "string"
-          ? params.message
-          : "Codex app-server became unavailable";
       return [
         this.#event({
           type: "error",
-          error: { code: "unavailable", message, retryable: true },
+          error: {
+            code: "unavailable",
+            message: "Codex app-server became unavailable",
+            retryable: true,
+          },
         }),
         this.#event({ type: "session.completed", reason: "failed" }),
       ];
@@ -130,43 +141,34 @@ function toolDetails(item: Record<string, unknown>): ToolDetails | undefined {
       return {
         id: item.id,
         name: "commandExecution",
-        input: { command: jsonString(item.command), cwd: jsonString(item.cwd) },
+        input: { kind: "command" },
         output: {
-          status: jsonString(item.status),
-          exitCode: jsonScalar(item.exitCode),
-          output: jsonString(item.aggregatedOutput),
+          status: safeToolStatus(item.status),
+          exitCode: safeExitCode(item.exitCode),
         },
       };
     case "fileChange":
       return {
         id: item.id,
         name: "fileChange",
-        input: { changes: toJson(item.changes) },
-        output: {
-          status: jsonString(item.status),
-          changes: toJson(item.changes),
-        },
+        input: { kind: "file-change" },
+        output: { status: safeToolStatus(item.status) },
       };
     case "mcpToolCall":
       return {
         id: item.id,
-        name: `mcp:${jsonString(item.server)}:${jsonString(item.tool)}`,
-        input: toJson(item.arguments),
-        output: {
-          status: jsonString(item.status),
-          result: toJson(item.result),
-          error: toJson(item.error),
-        },
+        name: "mcpToolCall",
+        input: { kind: "mcp" },
+        output: { status: safeToolStatus(item.status) },
       };
     case "dynamicToolCall":
       return {
         id: item.id,
-        name: jsonString(item.tool) || "dynamicToolCall",
-        input: toJson(item.arguments),
+        name: "dynamicToolCall",
+        input: { kind: "dynamic-tool" },
         output: {
-          status: jsonString(item.status),
-          success: jsonScalar(item.success),
-          contentItems: toJson(item.contentItems),
+          status: safeToolStatus(item.status),
+          success: typeof item.success === "boolean" ? item.success : null,
         },
       };
     default:
@@ -175,13 +177,9 @@ function toolDetails(item: Record<string, unknown>): ToolDetails | undefined {
 }
 
 function notificationError(params: Record<string, unknown>): AgentError {
-  const rawError = isRecord(params.error) ? params.error : {};
   return {
     code: "provider_error",
-    message:
-      typeof rawError.message === "string"
-        ? rawError.message
-        : "Codex reported an error",
+    message: "Codex reported an error",
     retryable: params.willRetry === true,
   };
 }
@@ -190,28 +188,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function jsonString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function jsonScalar(value: unknown): JsonValue {
-  return value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean" ||
-    (typeof value === "number" && Number.isFinite(value))
+function safeExitCode(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value)
     ? value
     : null;
-}
-
-function toJson(value: unknown): JsonValue {
-  if (value === null || typeof value === "string" || typeof value === "boolean")
-    return value;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (Array.isArray(value)) return value.map(toJson);
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, toJson(item)]),
-    );
-  }
-  return null;
 }

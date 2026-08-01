@@ -4,21 +4,21 @@
 
 ## Вертикальный срез Дня 1
 
-| Требование                     | Реализация/проверяемое evidence                                         | Статус                                               |
-| ------------------------------ | ----------------------------------------------------------------------- | ---------------------------------------------------- |
-| Подробный путь и блокировки    | active published revision, week/day/unit DTO, sequential unlock         | Реализовано                                          |
-| Briefing и study checklist     | versioned units, goals/depth/out-of-scope/sources/checklist             | Реализовано                                          |
-| First recall before feedback   | immutable `unit_evidence`, server-owned recall endpoint                 | Реализовано                                          |
-| Teacher dialogue               | role-specific provider selection, normalized stream, saved messages     | Реализовано; качество зависит от выбранного provider |
-| Quiz без утечки ключа          | server scoring, learner DTO redacts correct options/reference           | Реализовано                                          |
-| Code reading evidence          | prediction/explanation/verbal fix endpoint                              | Реализовано                                          |
-| Изолированная практика         | template copy → attempt root → private Git baseline/diff                | Реализовано                                          |
-| Настоящие тесты                | allowlisted `commandId=test`, persisted output/status                   | Реализовано для trusted exercise                     |
-| Read-only review               | passed-current-test gate, provider deny-write, before/after diff        | Реализовано                                          |
-| Correction cycle               | edit → новый test → последующий review; Mock deterministic cycle        | Реализовано                                          |
-| Summary/mastery/mistakes/cards | deterministic server summary и transactional persistence                | Реализовано                                          |
-| Следующий день                 | completion unlock по ordered days                                       | Реализовано                                          |
-| Restart/resume                 | DB current session, immutable snapshot и unit progress/attempt evidence | Реализовано                                          |
+| Требование                     | Реализация/проверяемое evidence                                  | Статус                                               |
+| ------------------------------ | ---------------------------------------------------------------- | ---------------------------------------------------- |
+| Подробный путь и блокировки    | active published revision, week/day/unit DTO, sequential unlock  | Реализовано                                          |
+| Briefing и study checklist     | versioned units, goals/depth/out-of-scope/sources/checklist      | Реализовано                                          |
+| First recall before feedback   | отдельный immutable `unit_evidence` по каждому `questionId`      | Реализовано                                          |
+| Teacher dialogue               | объяснение → вопрос Teacher → обязательный learner follow-up     | Реализовано; качество зависит от выбранного provider |
+| Quiz без утечки ключа          | server scoring, learner DTO redacts correct options/reference    | Реализовано                                          |
+| Code reading evidence          | prediction/explanation/verbal fix endpoint                       | Реализовано                                          |
+| Изолированная практика         | template copy → attempt root → private Git baseline/diff         | Реализовано                                          |
+| Настоящие тесты                | allowlisted `commandId=test`, persisted output/status            | Реализовано для trusted exercise                     |
+| Read-only review               | passed-current-test gate, provider deny-write, before/after diff | Реализовано                                          |
+| Correction cycle               | edit → новый test → последующий review; Mock deterministic cycle | Реализовано                                          |
+| Summary/mastery/mistakes/cards | deterministic server summary и transactional persistence         | Реализовано                                          |
+| Следующий день                 | completion unlock по ordered days                                | Реализовано                                          |
+| Restart/resume                 | immutable snapshot, evidence и stable-ID resume между revisions  | Реализовано                                          |
 
 Playwright покрывает продуктовый путь с Mock и реальной изолированной папкой, authoring/publish/clone со snapshot preservation, отдельное интервью и theme hydration. Тесты не меняют template, используют `3100/8887`, in-memory DB, `.next-e2e`, `retries: 0` и отдельный attempts root.
 
@@ -60,10 +60,12 @@ Playwright покрывает продуктовый путь с Mock и реа�
 - canonical/reparse-safe paths;
 - processes: `shell: false`, timeout, output cap, cleanup;
 - Reviewer read-only/deny-write и no-apply API;
+- Codex events whitelist/redaction и 1 MiB fail-closed JSONL limit;
+- конечные deadlines OpenCode HTTP/SSE/cancel/shutdown;
 - OpenCode endpoint только HTTP loopback, credentials только environment;
 - trusted exercises only: allowlist не sandbox.
 
-Известный риск: test/review freshness основана на filesystem `mtime`. Она restart-safe, но timestamp можно подделать; production hardening должен заменить/дополнить её hash diff/tree.
+Test/review freshness основана на сохранённом SHA-256 полного Git diff. Review отклоняется при несовпадающем или truncated diff; filesystem `mtime` не считается evidence.
 
 ## Финальный gate
 
@@ -85,44 +87,45 @@ npm run build
 
 `db:backup` пропускается только для новой/`:memory:` DB. После migrate/seed полезно повторить команды для idempotency и выполнить `PRAGMA integrity_check`/`foreign_key_check`.
 
-Browser acceptance проверяет light/dark hydration, path, start/resume, practice, correction, summary, Day 2 unlock, Editor draft/publish/clone guard и Interview reload/report. Component tests покрывают основные loading/empty/error/protected-data states. Desktop light/dark проверены вручную; полноценная mobile visual regression и автоматический contrast audit в текущий gate не входят.
+Browser acceptance проверяет light/dark hydration, path, start/resume, practice, correction, summary, Day 2 unlock, Editor draft/publish/clone guard и Interview reload/report. Component tests покрывают основные loading/empty/error/protected-data states. Dashboard, session и locked Practice дополнительно проверены вручную при 390×844 и 1280×800; автоматический contrast audit в текущий gate не входит.
 
 ## Фактический результат 2026-08-01
 
-| Gate                  | Результат                                                                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------- |
-| `npm install`         | успешно, lockfile не потребовал непредусмотренной смены package manager                           |
-| DB backup             | две новые копии через `VACUUM INTO`, integrity/foreign keys проверены                             |
-| migrate + seed x2     | успешно и идемпотентно; 7 дней, 14 topics                                                         |
-| SQLite                | `integrity_check=ok`, `foreign_key_check=[]`                                                      |
-| format/lint/typecheck | успешно во всех workspaces                                                                        |
-| fast tests            | 21 Turbo task; orchestrator 22/22, web 41/41 и остальные packages успешно                         |
-| Playwright            | 4/4: theme, Day 1, Curriculum Editor snapshot, Interview restore                                  |
-| production build      | 12/12 workspace builds, 13 Next routes prerendered                                                |
-| runtime               | production web/orchestrator отвечают; readiness `database=connected`                              |
-| Codex                 | фактический authenticated `gpt-5.6-sol` turn завершился `message.completed` и `session.completed` |
-| OpenCode              | честно `unavailable`: локальный `opencode serve` недоступен; model turn не выполнен               |
-| Zed                   | CLI обнаружен (`Zed 1.11.3`); фактическое открытие GUI не выполнялось                             |
+| Gate                  | Результат                                                                                 |
+| --------------------- | ----------------------------------------------------------------------------------------- |
+| `npm install`         | успешно; npm workspaces и lockfile сохранены, `tsup` выровнен до одной 8.5.1              |
+| DB backup             | две новые копии через `VACUUM INTO`, integrity/foreign keys проверены                     |
+| migrate + seed x2     | успешно и идемпотентно; 7 дней, 14 topics                                                 |
+| SQLite                | `integrity_check=ok`, `foreign_key_check=[]`                                              |
+| format/lint/typecheck | успешно во всех workspaces                                                                |
+| fast tests            | 21 свежая Turbo task без test cache; 305 тестов, orchestrator 27/27, web 48/48            |
+| Playwright            | 4/4: theme, Day 1, Curriculum Editor snapshot, Interview restore                          |
+| production build      | 12/12 workspace builds, 13 Next routes prerendered                                        |
+| runtime               | web/orchestrator отвечают; desktop/mobile browser smoke и readiness `database=connected`  |
+| Docker                | image собран; non-root user пишет в attempt-root и резолвит Vitest из `/app/node_modules` |
+| Codex                 | health/model discovery работает; authenticated model turn в этом аудите не выполнялся     |
+| OpenCode              | честно `unavailable`: локальный `opencode serve` недоступен; model turn не выполнен       |
+| Zed                   | фактическое открытие GUI в этом аудите не выполнялось                                     |
 
 `npm audit` после обновления `@hono/node-server` 1.x → 2.0.12 больше не содержит Hono advisory. Остаются 3 high production advisories в latest `next@16.2.12` через его pinned `postcss@8.4.31` и optional `sharp@0.34.5`, а также 1 low dev-only advisory в `esbuild` через `tsup`. На дату среза registry не предлагает совместимый Next update: автоматический fix ошибочно предлагает downgrade до Next 9.3.3, поэтому `--force` и несовместимые transitive overrides не применялись.
 
 ## Итог по acceptance criteria
 
-| Группа                                                          | Статус                        | Комментарий                                                   |
-| --------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------- |
-| Запуск, migrations, seed, persistence, restart                  | Выполнено                     | canonical DB сохранена и повторно проверена                   |
-| Light/dark/system, path, units, active session                  | Выполнено                     | component + E2E + ручные desktop screenshots                  |
-| Day 1: briefing → summary → Day 2                               | Выполнено                     | полный Playwright vertical slice                              |
-| Практика, Zed path, Git diff, tests, read-only correction cycle | Выполнено                     | реальный isolated attempt; Zed CLI проверен без запуска GUI   |
-| Mastery, mistake journal, flashcard candidates/export           | Выполнено                     | summary E2E и deterministic export unit tests                 |
-| Curriculum Editor/versioning/history                            | Выполнено                     | draft/CRUD/reorder/publish/clone + snapshot E2E               |
-| Interview как отдельный workflow                                | Выполнено                     | setup/questions/report/reload E2E                             |
-| Interview technical mastery evaluation                          | Частично                      | report честно оценивает полноту/форму, не correctness/mastery |
-| Mock provider                                                   | Выполнено                     | offline fast/E2E provider                                     |
-| Codex provider                                                  | Выполнено в текущем окружении | health/model discovery + реальный terminal turn               |
-| OpenCode provider                                               | Невозможно проверить turn     | sidecar unavailable; диагностика и fallback работают          |
-| Security boundaries и запрещённые расширения                    | Выполнено                     | tests + финальный grep; Pi/IDE/AnkiConnect отсутствуют        |
-| Dependency audit                                                | Частично                      | Hono исправлен; 3 upstream Next high + 1 dev low остаются     |
+| Группа                                                          | Статус                    | Комментарий                                                   |
+| --------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------- |
+| Запуск, migrations, seed, persistence, restart                  | Выполнено                 | canonical DB сохранена и повторно проверена                   |
+| Light/dark/system, path, units, active session                  | Выполнено                 | component + E2E + ручные desktop screenshots                  |
+| Day 1: briefing → summary → Day 2                               | Выполнено                 | полный Playwright vertical slice                              |
+| Практика, Zed path, Git diff, tests, read-only correction cycle | Выполнено                 | реальный isolated attempt; Zed CLI проверен без запуска GUI   |
+| Mastery, mistake journal, flashcard candidates/export           | Выполнено                 | summary E2E и deterministic export unit tests                 |
+| Curriculum Editor/versioning/history                            | Выполнено                 | draft/CRUD/reorder/publish/clone + snapshot E2E               |
+| Interview как отдельный workflow                                | Выполнено                 | setup/questions/report/reload E2E                             |
+| Interview technical mastery evaluation                          | Частично                  | report честно оценивает полноту/форму, не correctness/mastery |
+| Mock provider                                                   | Выполнено                 | offline fast/E2E provider                                     |
+| Codex provider                                                  | Turn не перепроверен      | health/model discovery работают; unit tests не заменяют turn  |
+| OpenCode provider                                               | Невозможно проверить turn | sidecar unavailable; диагностика и fallback работают          |
+| Security boundaries и запрещённые расширения                    | Выполнено                 | tests + финальный grep; Pi/IDE/AnkiConnect отсутствуют        |
+| Dependency audit                                                | Частично                  | Hono исправлен; 3 upstream Next high + 1 dev low остаются     |
 
 ## External provider matrix
 

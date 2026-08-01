@@ -17,22 +17,22 @@ npm run dev
 
 ## Переменные окружения
 
-| Переменная                 | Default                             | Назначение                                                  |
-| -------------------------- | ----------------------------------- | ----------------------------------------------------------- |
-| `HOST`                     | `127.0.0.1`                         | bind orchestrator; loopback — security default              |
-| `PORT`                     | `8787`                              | orchestrator port                                           |
-| `WEB_ORIGIN`               | `http://127.0.0.1:3000`             | единственный разрешённый browser Origin                     |
-| `ORCHESTRATOR_URL`         | `http://127.0.0.1:8787`             | Next rewrite target                                         |
-| `NEXT_DIST_DIR`            | `.next`                             | отдельный Next build/dev output, E2E использует `.next-e2e` |
-| `DATABASE_PROJECT_ROOT`    | repo root                           | root для относительных DB/backup paths                      |
-| `DATABASE_URL`             | `.data/dev-learning-harness.sqlite` | SQLite file или `:memory:`                                  |
-| `DATABASE_BACKUP_DIR`      | `.data/backups`                     | timestamped verified backups                                |
-| `WORKSPACE_ROOT`           | `workspaces/exercises`              | trusted exercise templates                                  |
-| `EXERCISE_ATTEMPTS_ROOT`   | `.data/exercise-attempts`           | изолированные learner copies                                |
-| `ZED_EXECUTABLE`           | `zed`                               | executable/path, не shell-строка                            |
-| `OPENCODE_ENDPOINT`        | `http://127.0.0.1:4096`             | только HTTP loopback sidecar                                |
-| `OPENCODE_SERVER_USERNAME` | `opencode`                          | Basic Auth username                                         |
-| `OPENCODE_SERVER_PASSWORD` | отсутствует                         | secret только в environment                                 |
+| Переменная                 | Default                             | Назначение                                                       |
+| -------------------------- | ----------------------------------- | ---------------------------------------------------------------- |
+| `HOST`                     | `127.0.0.1`                         | bind orchestrator; loopback — security default                   |
+| `PORT`                     | `8787`                              | orchestrator port                                                |
+| `WEB_ORIGIN`               | `http://127.0.0.1:3000`             | разрешённый browser Origin (любой loopback хост на том же порту) |
+| `ORCHESTRATOR_URL`         | `http://127.0.0.1:8787`             | Next rewrite target                                              |
+| `NEXT_DIST_DIR`            | `.next`                             | отдельный Next build/dev output, E2E использует `.next-e2e`      |
+| `DATABASE_PROJECT_ROOT`    | repo root                           | root для относительных DB/backup paths                           |
+| `DATABASE_URL`             | `.data/dev-learning-harness.sqlite` | SQLite file или `:memory:`                                       |
+| `DATABASE_BACKUP_DIR`      | `.data/backups`                     | timestamped verified backups                                     |
+| `WORKSPACE_ROOT`           | `workspaces/exercises`              | trusted exercise templates                                       |
+| `EXERCISE_ATTEMPTS_ROOT`   | `.data/exercise-attempts`           | изолированные learner copies                                     |
+| `ZED_EXECUTABLE`           | `zed`                               | executable/path, не shell-строка                                 |
+| `OPENCODE_ENDPOINT`        | `http://127.0.0.1:4096`             | только HTTP loopback sidecar                                     |
+| `OPENCODE_SERVER_USERNAME` | `opencode`                          | Basic Auth username                                              |
+| `OPENCODE_SERVER_PASSWORD` | отсутствует                         | secret только в environment                                      |
 
 Не передавайте секреты через UI/settings. Codex использует локальное auth-хранилище CLI.
 
@@ -48,7 +48,7 @@ npm run db:seed
 
 Backup ищет configured/canonical candidates, отказывается перезаписывать файл, выполняет `PRAGMA integrity_check` и `foreign_key_check` у source, создаёт консистентную копию через `VACUUM INTO` и повторяет проверки у копии.
 
-`db:migrate` применяет SQL по имени и записывает `__dlh_migrations`. После ordered migrations запускается repeatable compatibility repair старых prototype DB: rebuild отсутствующего `unit_type`, snapshot schema v2 normalization и Zod validation. Он не удаляет legacy history. `db:seed` идемпотентен по stable IDs и публикует revision 2 первой недели, не переписывая snapshot активной сессии.
+`db:migrate` применяет SQL по имени и записывает `__dlh_migrations`. После ordered migrations запускается repeatable compatibility repair старых prototype DB: rebuild отсутствующего `unit_type`, snapshot schema v2 normalization и Zod validation. Он не удаляет legacy history. `db:seed` идемпотентен по stable IDs, сохраняет immutable r1/r2 и публикует revision 3 первой недели, не переписывая snapshot активной сессии.
 
 Если `DATABASE_URL=:memory:`, backup неприменим.
 
@@ -63,7 +63,7 @@ npm run test:e2e
 npm run build
 ```
 
-`npm run verify` выполняет format/lint/typecheck/fast tests/build, но намеренно не E2E. `npm test` выполняет fast tests и E2E.
+`npm run verify` выполняет format/lint/typecheck/fast tests/build, но намеренно не E2E. `npm test` выполняет fast tests и E2E. Turbo cache для задачи `test` отключён, поэтому `test:fast` действительно запускает suites, а не подтверждает прошлый результат из кэша.
 
 Точечные примеры:
 
@@ -84,7 +84,9 @@ npm run typecheck --workspace=@dlh/web
 - `reuseExistingServer: false`, `fullyParallel: false`, `retries: 0`;
 - trace сохраняется только при failure.
 
-Это предотвращает ложный green из чужого запущенного dev server и не смешивает Day 1 evidence с пользовательскими данными. E2E не редактирует и не удаляет template workspace.
+Корневая команда запускает Playwright через `scripts/test-e2e.mjs`: wrapper сохраняет исходный tracked `apps/web/next-env.d.ts` и восстанавливает его в `finally`, включая failed test process.
+
+Это предотвращает ложный green из чужого запущенного dev server, не смешивает Day 1 evidence с пользовательскими данными и не оставляет E2E-generated type reference в рабочем дереве. E2E не редактирует и не удаляет template workspace.
 
 ## Изменение контрактов
 
@@ -105,4 +107,4 @@ docker compose ps
 docker compose logs -f orchestrator web
 ```
 
-Compose использует `npm ci`, loopback-публикацию и named volume для SQLite. Это Mock-oriented среда. Zed/Codex на host и OpenCode loopback restriction означают, что полный внешний-provider flow проверяется npm-запуском на host.
+Compose использует `npm ci`, loopback-публикацию и два named volumes: `harness-data` для SQLite в `/data` и `harness-attempts` для server-created attempt folders в `/app/.data`. Runner заранее создаёт оба writable location до переключения на непривилегированного пользователя `harness`. Это Mock-oriented среда. Zed/Codex на host и OpenCode loopback restriction означают, что полный внешний-provider flow проверяется npm-запуском на host.

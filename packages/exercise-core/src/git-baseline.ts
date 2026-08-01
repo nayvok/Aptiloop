@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   lstat,
@@ -12,11 +12,13 @@ import {
 import path from "node:path";
 
 import { createSanitizedChildEnvironment } from "./child-environment.js";
+import { AllowedProcessRunner } from "./process-runner.js";
 import { resolveWorkspacePath } from "./workspace-path.js";
 
 const BASELINE_MARKER = "dev-learning-harness-baseline.json";
 const DEFAULT_DIFF_CAP = 1_000_000;
 const GIT_OUTPUT_CAP = 1_100_000;
+const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 
 export class ExerciseGitError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -39,64 +41,94 @@ export interface ExerciseDiff {
   readonly truncated: boolean;
 }
 
+/** Hashes a complete diff. Truncated evidence deliberately has no fingerprint. */
+export function fingerprintExerciseDiff(
+  diff: Pick<ExerciseDiff, "baselineCommit" | "patch" | "truncated">,
+): string | null {
+  if (diff.truncated) return null;
+  return createHash("sha256")
+    .update("dlh-exercise-diff-v1\0", "utf8")
+    .update(diff.baselineCommit, "utf8")
+    .update("\0", "utf8")
+    .update(diff.patch, "utf8")
+    .digest("hex");
+}
+
+export interface ExerciseGitOperationOptions {
+  readonly signal?: AbortSignal;
+  readonly gitTimeoutMs?: number;
+}
+
 interface BaselineMarker {
   readonly version: 1;
   readonly commit: string;
 }
 
-export type GetExerciseDiffOptions =
-  | {
-      readonly expectedBaselineHash: string;
-      readonly expectedBaselineCommit?: never;
-      readonly allowMarkerBaseline?: false;
-      readonly maxOutputBytes?: number;
-    }
-  | {
-      readonly expectedBaselineCommit: string;
-      readonly expectedBaselineHash?: never;
-      readonly allowMarkerBaseline?: false;
-      readonly maxOutputBytes?: number;
-    }
-  | {
-      readonly allowMarkerBaseline: true;
-      readonly expectedBaselineHash?: never;
-      readonly expectedBaselineCommit?: never;
-      readonly maxOutputBytes?: number;
-    };
+export type GetExerciseDiffOptions = ExerciseGitOperationOptions &
+  (
+    | {
+        readonly expectedBaselineHash: string;
+        readonly expectedBaselineCommit?: never;
+        readonly allowMarkerBaseline?: false;
+        readonly maxOutputBytes?: number;
+      }
+    | {
+        readonly expectedBaselineCommit: string;
+        readonly expectedBaselineHash?: never;
+        readonly allowMarkerBaseline?: false;
+        readonly maxOutputBytes?: number;
+      }
+    | {
+        readonly allowMarkerBaseline: true;
+        readonly expectedBaselineHash?: never;
+        readonly expectedBaselineCommit?: never;
+        readonly maxOutputBytes?: number;
+      }
+  );
 
 /** Creates one private Git repository per exercise and records an immutable baseline commit. */
 export async function ensureExerciseBaseline(
   exerciseRoot: string,
+  options: ExerciseGitOperationOptions = {},
 ): Promise<ExerciseBaseline> {
+  const gitOptions = normalizeGitOperationOptions(options);
   const root = await requireExerciseDirectory(exerciseRoot);
   const gitDirectory = path.join(root, ".git");
 
   if (await pathExists(gitDirectory)) {
     const marker = await readBaselineMarker(root);
-    await assertRepositoryRoot(root);
-    await verifyCommit(root, marker.commit);
+    await assertRepositoryRoot(root, gitOptions);
+    await verifyCommit(root, marker.commit, gitOptions);
     return { exerciseRoot: root, commit: marker.commit, created: false };
   }
 
-  await runGit(root, ["init", "--quiet", "--initial-branch=baseline", "."]);
+  await runGit(
+    root,
+    ["init", "--quiet", "--initial-branch=baseline", "."],
+    gitOptions,
+  );
   await mkdir(path.join(gitDirectory, "harness-disabled-hooks"), {
     recursive: true,
   });
-  await runGit(root, ["add", "--all", "--", "."]);
-  await runGit(root, [
-    "-c",
-    "user.name=Dev Learning Harness",
-    "-c",
-    "user.email=harness@localhost.invalid",
-    "commit",
-    "--quiet",
-    "--allow-empty",
-    "--no-verify",
-    "-m",
-    "chore: exercise baseline",
-  ]);
+  await runGit(root, ["add", "--all", "--", "."], gitOptions);
+  await runGit(
+    root,
+    [
+      "-c",
+      "user.name=Dev Learning Harness",
+      "-c",
+      "user.email=harness@localhost.invalid",
+      "commit",
+      "--quiet",
+      "--allow-empty",
+      "--no-verify",
+      "-m",
+      "chore: exercise baseline",
+    ],
+    gitOptions,
+  );
   const commit = (
-    await runGit(root, ["rev-parse", "--verify", "HEAD"])
+    await runGit(root, ["rev-parse", "--verify", "HEAD"], gitOptions)
   ).stdout.trim();
   if (!/^[0-9a-f]{40,64}$/u.test(commit))
     throw new ExerciseGitError("Git returned an invalid baseline commit id.");
@@ -121,12 +153,13 @@ export async function getExerciseDiff(
   exerciseRoot: string,
   options?: GetExerciseDiffOptions,
 ): Promise<ExerciseDiff> {
+  const gitOptions = normalizeGitOperationOptions(options);
   const maxOutputBytes = options?.maxOutputBytes ?? DEFAULT_DIFF_CAP;
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new TypeError("maxOutputBytes must be a positive integer.");
   }
   const root = await requireExerciseDirectory(exerciseRoot);
-  await assertRepositoryRoot(root);
+  await assertRepositoryRoot(root, gitOptions);
   const marker = await readBaselineMarker(root);
   const expectedBaseline =
     options === undefined
@@ -150,7 +183,7 @@ export async function getExerciseDiff(
       "Exercise marker does not match the server-owned baseline.",
     );
   }
-  await verifyCommit(root, baselineCommit);
+  await verifyCommit(root, baselineCommit, gitOptions);
 
   const tracked = await runGit(
     root,
@@ -165,16 +198,16 @@ export async function getExerciseDiff(
       "--",
       ".",
     ],
-    Math.min(GIT_OUTPUT_CAP, maxOutputBytes + 1),
+    {
+      ...gitOptions,
+      outputCap: Math.min(GIT_OUTPUT_CAP, maxOutputBytes + 1),
+    },
   );
-  const untrackedResult = await runGit(root, [
-    "ls-files",
-    "--others",
-    "--exclude-standard",
-    "-z",
-    "--",
-    ".",
-  ]);
+  const untrackedResult = await runGit(
+    root,
+    ["ls-files", "--others", "--exclude-standard", "-z", "--", "."],
+    gitOptions,
+  );
   const untrackedFiles = untrackedResult.stdout
     .split("\0")
     .filter((entry) => entry.length > 0)
@@ -288,9 +321,12 @@ async function requireExerciseDirectory(exerciseRoot: string): Promise<string> {
   }
 }
 
-async function assertRepositoryRoot(root: string): Promise<void> {
+async function assertRepositoryRoot(
+  root: string,
+  options: NormalizedGitOperationOptions,
+): Promise<void> {
   const repositoryRoot = (
-    await runGit(root, ["rev-parse", "--show-toplevel"])
+    await runGit(root, ["rev-parse", "--show-toplevel"], options)
   ).stdout.trim();
   const canonicalRepositoryRoot = await realpath(repositoryRoot);
   if (!samePath(root, canonicalRepositoryRoot)) {
@@ -343,8 +379,12 @@ async function readBaselineMarker(root: string): Promise<BaselineMarker> {
   }
 }
 
-async function verifyCommit(root: string, commit: string): Promise<void> {
-  await runGit(root, ["cat-file", "-e", `${commit}^{commit}`]);
+async function verifyCommit(
+  root: string,
+  commit: string,
+  options: NormalizedGitOperationOptions,
+): Promise<void> {
+  await runGit(root, ["cat-file", "-e", `${commit}^{commit}`], options);
 }
 
 interface GitResult {
@@ -352,11 +392,21 @@ interface GitResult {
   readonly stderr: string;
 }
 
+interface NormalizedGitOperationOptions {
+  readonly signal?: AbortSignal;
+  readonly gitTimeoutMs: number;
+}
+
+interface RunGitOptions extends NormalizedGitOperationOptions {
+  readonly outputCap?: number;
+}
+
 async function runGit(
   root: string,
   operationArgs: readonly string[],
-  outputCap = GIT_OUTPUT_CAP,
+  options: RunGitOptions,
 ): Promise<GitResult> {
+  const outputCap = options.outputCap ?? GIT_OUTPUT_CAP;
   const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
   const safeArgs = [
     "-c",
@@ -367,64 +417,65 @@ async function runGit(
     "diff.external=",
     ...operationArgs,
   ];
-  const env = createSanitizedChildEnvironment();
-  delete env.GIT_DIR;
-  delete env.GIT_WORK_TREE;
-  delete env.GIT_INDEX_FILE;
-  delete env.GIT_OBJECT_DIRECTORY;
-  delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
-  env.GIT_CONFIG_NOSYSTEM = "1";
-  env.GIT_CONFIG_GLOBAL = nullDevice;
-  env.GIT_TERMINAL_PROMPT = "0";
-  env.GIT_PAGER = "cat";
-  env.GIT_EXTERNAL_DIFF = "";
-
-  return await new Promise<GitResult>((resolve, reject) => {
-    const child = spawn("git", safeArgs, {
-      cwd: root,
-      env,
-      shell: false,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
-    let exceeded = false;
-    const append = (target: "stdout" | "stderr", chunk: Buffer): void => {
-      const used = stdout.byteLength + stderr.byteLength;
-      const kept = chunk.subarray(0, Math.max(0, outputCap - used));
-      if (target === "stdout") stdout = Buffer.concat([stdout, kept]);
-      else stderr = Buffer.concat([stderr, kept]);
-      if (kept.byteLength < chunk.byteLength) {
-        exceeded = true;
-        child.kill("SIGKILL");
-      }
-    };
-    child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
-    child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
-    child.once("error", (error) =>
-      reject(new ExerciseGitError("Unable to start Git.", { cause: error })),
-    );
-    child.once("close", (code) => {
-      const result = {
-        stdout: stdout.toString("utf8"),
-        stderr: stderr.toString("utf8"),
-      };
-      if (exceeded) {
-        reject(
-          new ExerciseGitError(
-            "Git output exceeded the configured safety limit.",
-          ),
-        );
-      } else if (code !== 0) {
-        reject(
-          new ExerciseGitError(
-            `Git command failed (${code ?? "signal"}): ${result.stderr.trim()}`,
-          ),
-        );
-      } else resolve(result);
-    });
+  const baseEnv = createSanitizedChildEnvironment();
+  const runner = new AllowedProcessRunner(
+    {
+      git: {
+        executable: "git",
+        args: safeArgs,
+        env: {
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_CONFIG_GLOBAL: nullDevice,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_PAGER: "cat",
+          GIT_EXTERNAL_DIFF: "",
+        },
+        timeoutMs: options.gitTimeoutMs,
+        maxOutputBytes: outputCap,
+      },
+    },
+    { baseEnv },
+  );
+  const result = await runner.run("git", {
+    cwd: root,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
+
+  if (result.terminationReason === "spawn_error") {
+    throw new ExerciseGitError("Unable to start Git.", {
+      cause: new Error(result.stderr),
+    });
+  }
+  if (result.terminationReason === "output_limit") {
+    throw new ExerciseGitError(
+      "Git output exceeded the configured safety limit.",
+    );
+  }
+  if (result.terminationReason === "timeout") {
+    throw new ExerciseGitError("Git command exceeded the configured timeout.");
+  }
+  if (result.terminationReason === "cancelled") {
+    throw new ExerciseGitError("Git command was cancelled.");
+  }
+  if (result.exitCode !== 0) {
+    throw new ExerciseGitError(
+      `Git command failed (${result.exitCode ?? "signal"}): ${result.stderr.trim()}`,
+    );
+  }
+  return { stdout: result.stdout, stderr: result.stderr };
+}
+
+function normalizeGitOperationOptions(
+  options: ExerciseGitOperationOptions | undefined,
+): NormalizedGitOperationOptions {
+  const gitTimeoutMs = options?.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
+  if (!Number.isSafeInteger(gitTimeoutMs) || gitTimeoutMs <= 0) {
+    throw new TypeError("gitTimeoutMs must be a positive integer.");
+  }
+  return {
+    gitTimeoutMs,
+    ...(options?.signal === undefined ? {} : { signal: options.signal }),
+  };
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

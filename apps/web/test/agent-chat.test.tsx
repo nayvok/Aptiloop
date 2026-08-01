@@ -10,6 +10,7 @@ const mockAgentState = vi.hoisted(() => ({
     role: "user" | "assistant";
     content: string;
   }>,
+  streamFails: false,
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -31,6 +32,9 @@ vi.mock("@/lib/api", () => ({
     });
   }),
   streamAgent: vi.fn(async function* (input: { message: string }) {
+    if (mockAgentState.streamFails) {
+      throw new Error("provider transport failed");
+    }
     mockAgentState.messages = [
       { id: "user-message", role: "user", content: input.message },
       {
@@ -47,6 +51,7 @@ vi.mock("@/lib/api", () => ({
 afterEach(cleanup);
 beforeEach(() => {
   mockAgentState.messages = [];
+  mockAgentState.streamFails = false;
 });
 
 function renderAgentChat() {
@@ -86,5 +91,23 @@ describe("AgentChat", () => {
     expect(
       screen.getByText(/Reviewer работает только с зафиксированным diff/u),
     ).toBeInTheDocument();
+  });
+
+  it("shows a transport failure as an actionable assistant state", async () => {
+    mockAgentState.streamFails = true;
+    renderAgentChat();
+
+    fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
+      target: { value: "Проверь мой ответ" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Не удалось получить ответ: provider transport failed",
+    );
+    expect(
+      screen.getByText("Не удалось получить ответ: provider transport failed"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ответ был отменён.")).not.toBeInTheDocument();
   });
 });

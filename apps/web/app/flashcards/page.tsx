@@ -6,7 +6,7 @@ export default function FlashcardsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Карточки"
-        description="Отредактируй и подтверди только те формулировки, которые действительно хочешь повторять. Экспорт остаётся локальным."
+        description="Проверь формулировку и подтверди только те карточки, которые действительно хочешь повторять. Экспорт остаётся локальным."
       />
       <FlashcardsClient />
     </div>

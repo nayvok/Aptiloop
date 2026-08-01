@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   ensureExerciseBaseline,
+  fingerprintExerciseDiff,
   getExerciseDiff,
 } from "../src/git-baseline.js";
 
@@ -60,6 +61,7 @@ describe.skipIf(!gitAvailable)("exercise Git baseline", () => {
     expect(diff.patch).toContain("new file mode 100644");
     expect(diff.patch).toContain("+independent attempt");
     expect(diff.untrackedFiles).toContain("notes.txt");
+    expect(fingerprintExerciseDiff(diff)).toMatch(/^[0-9a-f]{64}$/u);
 
     const marker = path.join(root, "external-diff-was-run");
     const maliciousScript = path.join(root, "external.cjs");
@@ -91,6 +93,7 @@ describe.skipIf(!gitAvailable)("exercise Git baseline", () => {
     });
     expect(Buffer.byteLength(diff.patch)).toBeLessThanOrEqual(128);
     expect(diff.truncated).toBe(true);
+    expect(fingerprintExerciseDiff(diff)).toBeNull();
   });
 
   it("rejects a learner-tampered marker instead of changing the server-owned baseline", async () => {
@@ -135,6 +138,27 @@ describe.skipIf(!gitAvailable)("exercise Git baseline", () => {
     await expect(
       getExerciseDiff(root, { allowMarkerBaseline: true }),
     ).resolves.toMatchObject({ baselineCommit: baseline.commit });
+  });
+
+  it("rejects invalid Git timeouts before starting a child process", async () => {
+    const root = await temporaryDirectory();
+
+    await expect(
+      ensureExerciseBaseline(root, { gitTimeoutMs: 0 }),
+    ).rejects.toThrow("gitTimeoutMs must be a positive integer");
+    await expect(
+      readFile(path.join(root, ".git"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("cancels Git through an AbortSignal", async () => {
+    const root = await temporaryDirectory();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      ensureExerciseBaseline(root, { signal: controller.signal }),
+    ).rejects.toThrow("Git command was cancelled");
   });
 });
 

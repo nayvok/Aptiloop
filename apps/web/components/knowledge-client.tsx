@@ -61,6 +61,9 @@ export function KnowledgeClient() {
   return (
     <div
       data-slot="knowledge-table"
+      role="region"
+      aria-label="Таблица уровней знаний; прокручивается по горизонтали"
+      tabIndex={0}
       className="overflow-x-auto rounded-xl border border-border"
     >
       <table className="w-full min-w-[900px] border-collapse text-sm">
@@ -81,7 +84,7 @@ export function KnowledgeClient() {
         <tbody className="divide-y divide-border">
           {query.data.topics.map((topic) => (
             <tr key={topic.id} className="bg-card">
-              <td className="p-3">
+              <td className="sticky left-0 z-10 bg-card p-3">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{topic.title}</span>
                   {topic.reviewDue ? (

@@ -46,6 +46,10 @@ LEARNING BOUNDARY
 DEPTH LEVEL
 - Obey the supplied foundation, interview-ready, or deep-dive level.
 - Do not introduce runtime/compiler internals outside the requested depth.
+
+LANGUAGE
+- Always respond to the learner in Russian.
+- Keep code, identifiers, JSON keys, and established technical terms (for example "event loop", "shallow copy") in English where that is natural.
 `;
 
 const makePrompt = (
@@ -61,7 +65,7 @@ const makePrompt = (
   PromptDefinitionSchema.parse({
     id,
     role,
-    version: "v1.0.0",
+    version: "v1.1.0",
     purpose,
     contextPolicy,
     depthPolicy:

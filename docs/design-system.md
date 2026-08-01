@@ -13,6 +13,8 @@
 - feedback: `success`, `warning`, `muted`;
 - activity accents: `theory`, `practice`, `recall`, `interview`, `ai` и paired surfaces.
 
+Primary/ring используют спокойный зелёный, а background/sidebar/border — холодную сине-серую нейтраль. Янтарный не является brand/primary: он остаётся семантическим warning и отдельным accent для recall. Activity colors не заменяют status colors.
+
 Компоненты используют semantic Tailwind classes (`bg-card`, `text-muted-foreground`, `ring-ring`), а не локальные hex/палитры. Цвет activity дополняет label/icon/status и не остаётся единственным сигналом.
 
 ThemeProvider хранит `system|light|dark` под key `theme`, включает `color-scheme` и отключает transition при смене темы. `prefers-reduced-motion` глобально сокращает animation/transition.

@@ -39,6 +39,10 @@ const titles: Record<string, string> = Object.fromEntries(
       href: "/settings/developer-tools",
       label: "Инструменты разработчика",
     },
+    {
+      href: "/settings/curriculum",
+      label: "Редактор программы",
+    },
     { href: "/chat", label: "Agent Playground" },
   ].map((item) => [item.href, item.label]),
 );
@@ -48,6 +52,10 @@ const settingsNav = [
   {
     href: "/settings/developer-tools",
     label: "Инструменты разработчика",
+  },
+  {
+    href: "/settings/curriculum",
+    label: "Редактор программы",
   },
 ] as const;
 
@@ -63,14 +71,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       : visibleTheme === "light"
         ? "dark"
         : "system";
-  const mobileSettings =
-    pathname === "/settings/developer-tools"
-      ? {
-          href: "/settings/developer-tools",
-          label: "Dev tools",
-          icon: GearSixIcon,
-        }
-      : { href: "/settings", label: "Настройки", icon: GearSixIcon };
+  const mobileSettings = {
+    href: pathname.startsWith("/settings") ? pathname : "/settings",
+    label: "Настройки",
+    icon: GearSixIcon,
+  };
 
   useEffect(() => {
     setThemeMounted(true);
@@ -97,7 +102,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               Dev Learning Harness
             </p>
             <p className="text-xs text-muted-foreground">
-              Неделя 01 · фундамент
+              Локальный учебный контур
             </p>
           </div>
         </div>
@@ -142,7 +147,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 aria-current={active ? "page" : undefined}
                 className={cn(
                   "flex min-h-11 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground outline-none transition-colors duration-200 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-                  index === 1 && "pl-10 text-xs",
+                  index > 0 && "pl-10 text-xs",
                   active && "bg-accent font-medium text-accent-foreground",
                 )}
               >
@@ -167,7 +172,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <ProviderHealth />
             <Button
-              aria-label="Переключить тему"
+              aria-label={`Включить ${nextTheme === "dark" ? "тёмную" : nextTheme === "light" ? "светлую" : "системную"} тему`}
               title={`Тема: ${visibleTheme === "dark" ? "тёмная" : visibleTheme === "light" ? "светлая" : "системная"}`}
               variant="ghost"
               size="icon"
@@ -199,7 +204,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   className="flex-col gap-0.5"
                 >
                   <item.icon aria-hidden className="size-4" />
-                  <span className="line-clamp-2">{item.label}</span>
+                  <span className="line-clamp-2 text-sm">{item.label}</span>
                 </Link>
               </Button>
             );

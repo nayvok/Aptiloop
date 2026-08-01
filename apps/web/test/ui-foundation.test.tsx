@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -65,7 +66,10 @@ const settingsResponse = {
     {
       id: "codex",
       status: "connected",
-      models: [{ id: "gpt-review", name: "GPT Review" }],
+      models: [
+        { id: "gpt-review", name: "GPT Review" },
+        { id: "gpt-expert", name: "GPT Expert" },
+      ],
     },
   ],
 } as const;
@@ -103,7 +107,12 @@ describe("UI foundation", () => {
       expect(current).toHaveAttribute("href", "/");
     }
 
-    fireEvent.click(screen.getByRole("button", { name: "Переключить тему" }));
+    expect(
+      screen.getByRole("link", { name: "Редактор программы" }),
+    ).toHaveAttribute("href", "/settings/curriculum");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Включить светлую тему" }),
+    );
     expect(setThemeMock).toHaveBeenCalledWith("light");
   });
 
@@ -168,6 +177,73 @@ describe("UI foundation", () => {
       expect(body).not.toHaveProperty("zedExecutable");
       expect(body.theme).toBe("dark");
     });
+  });
+
+  it("limits each role to models from its selected provider", async () => {
+    apiMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === "/settings" && init) return Promise.resolve({ saved: true });
+      if (path === "/settings") return Promise.resolve(settingsResponse);
+      return Promise.resolve({ providers: [] });
+    });
+
+    renderWithQuery(<SettingsForm />);
+
+    const teacher = await screen.findByRole("group", { name: "Teacher" });
+    fireEvent.change(within(teacher).getByLabelText("Провайдер"), {
+      target: { value: "codex" },
+    });
+
+    const model = within(teacher).getByLabelText("Модель");
+    expect(model).toHaveValue("gpt-review");
+    expect(within(model).queryByText("Mock")).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить настройки" }),
+    );
+    await waitFor(() => {
+      const mutation = apiMock.mock.calls.find(
+        ([path, init]) => path === "/settings" && init?.method === "PUT",
+      );
+      const body = JSON.parse(String(mutation?.[1]?.body)) as Record<
+        string,
+        unknown
+      >;
+      expect(body.teacherProvider).toBe("codex");
+      expect(body.teacherModel).toBe("gpt-review");
+    });
+  });
+
+  it("shows a field error and blocks a stale provider/model pair", async () => {
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/settings")
+        return Promise.resolve({
+          ...settingsResponse,
+          teacherModel: "gpt-review",
+        });
+      return Promise.resolve({ providers: [] });
+    });
+
+    renderWithQuery(<SettingsForm />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Сохранить настройки" }),
+    );
+
+    const teacher = screen.getByRole("group", { name: "Teacher" });
+    await waitFor(() =>
+      expect(within(teacher).getByLabelText("Модель")).toHaveAttribute(
+        "aria-invalid",
+        "true",
+      ),
+    );
+    expect(
+      within(teacher).getByText("Модель недоступна у провайдера mock"),
+    ).toBeInTheDocument();
+    expect(
+      apiMock.mock.calls.some(
+        ([path, init]) => path === "/settings" && init?.method === "PUT",
+      ),
+    ).toBe(false);
   });
 
   it("summarizes every provider instead of choosing the first connection", async () => {

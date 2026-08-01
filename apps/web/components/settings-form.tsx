@@ -3,19 +3,19 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { useTheme } from "next-themes";
 import { z } from "zod";
 
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { QueryError } from "@/components/query-state";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const providerSchema = z.enum(["mock", "opencode", "codex"]);
-const schema = z.object({
+const baseSchema = z.object({
   opencodeBaseUrl: z
     .url()
     .refine(
@@ -35,12 +35,12 @@ const schema = z.object({
   codexExpertModel: z.string().min(1),
   theme: z.enum(["system", "light", "dark"]),
 });
-type Settings = z.infer<typeof schema>;
+type Settings = z.infer<typeof baseSchema>;
 type ProviderStatus = {
-  id: string;
+  id: z.infer<typeof providerSchema>;
   status: string;
   message?: string;
-  models: Array<{ id: string; name: string }>;
+  models: Array<{ id: string; name: string; available?: boolean }>;
 };
 type SettingsQuery = Settings & {
   workspaceRoot: string;
@@ -55,6 +55,35 @@ const statusLabels: Record<string, string> = {
   starting: "Запускается",
   error: "Ошибка",
 };
+
+const roleSelections = [
+  ["teacherProvider", "teacherModel"],
+  ["reviewerProvider", "reviewerModel"],
+  ["interviewerProvider", "interviewerModel"],
+  ["curatorProvider", "curatorModel"],
+  ["codexExpertProvider", "codexExpertModel"],
+] as const;
+
+function settingsSchema(providers: ProviderStatus[]) {
+  return baseSchema.superRefine((values, context) => {
+    for (const [providerField, modelField] of roleSelections) {
+      const provider = providers.find(
+        (candidate) => candidate.id === values[providerField],
+      );
+      const models =
+        provider?.models.filter((model) => model.available !== false) ?? [];
+      if (!models.some((model) => model.id === values[modelField])) {
+        context.addIssue({
+          code: "custom",
+          path: [modelField],
+          message: provider
+            ? `Модель недоступна у провайдера ${provider.id}`
+            : "Провайдер недоступен",
+        });
+      }
+    }
+  });
+}
 
 export function SettingsForm() {
   const queryClient = useQueryClient();
@@ -105,7 +134,15 @@ export function SettingsForm() {
         codexExpertModel: "mock-deterministic",
         theme: "system",
       };
-  const form = useForm<Settings>({ resolver: zodResolver(schema), values });
+  const validationSchema = useMemo(
+    () => settingsSchema(query.data?.providers ?? []),
+    [query.data?.providers],
+  );
+  const form = useForm<Settings>({
+    resolver: zodResolver(validationSchema),
+    values,
+    mode: "onChange",
+  });
   useEffect(() => {
     if (query.data?.theme) setTheme(query.data.theme);
   }, [query.data?.theme, setTheme]);
@@ -242,6 +279,16 @@ export function SettingsForm() {
         {roleFields.map((field) => {
           const helpId = `${field.provider}-help`;
           const modelError = form.formState.errors[field.model];
+          const selectedProvider = form.watch(field.provider);
+          const selectedModel = form.watch(field.model);
+          const availableModels =
+            query.data.providers
+              .find((provider) => provider.id === selectedProvider)
+              ?.models.filter((model) => model.available !== false) ?? [];
+          const hasSelectedModel = availableModels.some(
+            (model) => model.id === selectedModel,
+          );
+          const providerRegistration = form.register(field.provider);
           return (
             <fieldset
               key={field.label}
@@ -268,7 +315,21 @@ export function SettingsForm() {
                   </label>
                   <select
                     id={field.provider}
-                    {...form.register(field.provider)}
+                    {...providerRegistration}
+                    onChange={(event) => {
+                      void providerRegistration.onChange(event);
+                      const provider = query.data.providers.find(
+                        (candidate) => candidate.id === event.target.value,
+                      );
+                      const firstModel = provider?.models.find(
+                        (model) => model.available !== false,
+                      );
+                      form.setValue(field.model, firstModel?.id ?? "", {
+                        shouldDirty: true,
+                        shouldTouch: true,
+                        shouldValidate: true,
+                      });
+                    }}
                     className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <option value="mock">Mock</option>
@@ -283,16 +344,29 @@ export function SettingsForm() {
                   >
                     Модель
                   </label>
-                  <input
+                  <select
                     id={field.model}
                     {...form.register(field.model)}
-                    list="available-agent-models"
                     aria-invalid={Boolean(modelError)}
                     aria-describedby={
                       modelError ? `${field.model}-error` : undefined
                     }
                     className="h-11 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring"
-                  />
+                  >
+                    {!hasSelectedModel && selectedModel ? (
+                      <option value={selectedModel} disabled>
+                        {selectedModel} · недоступна
+                      </option>
+                    ) : null}
+                    {availableModels.length === 0 ? (
+                      <option value="">Нет доступных моделей</option>
+                    ) : null}
+                    {availableModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </select>
                   {modelError ? (
                     <p
                       id={`${field.model}-error`}
@@ -306,15 +380,6 @@ export function SettingsForm() {
             </fieldset>
           );
         })}
-        <datalist id="available-agent-models">
-          {query.data.providers.flatMap((provider) =>
-            provider.models.map((model) => (
-              <option key={`${provider.id}:${model.id}`} value={model.id}>
-                {provider.id} · {model.name}
-              </option>
-            )),
-          )}
-        </datalist>
         <div className="grid gap-2 py-5 sm:grid-cols-[220px_1fr]">
           <div className="flex flex-col gap-1">
             <label htmlFor="theme" className="text-sm font-medium">
@@ -355,7 +420,9 @@ export function SettingsForm() {
             {save.isSuccess
               ? "Сохранено"
               : save.isError
-                ? "Не удалось сохранить настройки. Повтори попытку."
+                ? save.error instanceof ApiError
+                  ? save.error.message
+                  : "Не удалось сохранить настройки. Повтори попытку."
                 : "Секреты здесь не сохраняются"}
           </span>
           <Button type="submit" disabled={save.isPending}>

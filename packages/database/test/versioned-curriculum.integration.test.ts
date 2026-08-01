@@ -4,7 +4,12 @@ import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionSnapshotSchema, UnitProgressSchema } from "@dlh/shared";
-import { publishedCurriculumV2 } from "@dlh/curriculum";
+import {
+  activeCurriculumVersion,
+  publishedCurriculumRevision2,
+  publishedCurriculumV2,
+  publishedCurriculumV3,
+} from "@dlh/curriculum";
 
 import {
   createCurriculumAuthoringRepository,
@@ -383,7 +388,8 @@ describe("versioned curriculum seed", () => {
         `SELECT id, curriculum_id, revision, parent_version_id, status,
                 content_hash, created_at, published_at, updated_at
          FROM curriculum_versions
-         WHERE id IN ('curriculum-foundation-v2-r1', 'curriculum-foundation-v2-r2')
+         WHERE id IN ('curriculum-foundation-v2-r1', 'curriculum-foundation-v2-r2',
+                      'curriculum-foundation-v2-r3', 'curriculum-foundation-v2-r4')
          ORDER BY revision`,
       )
       .all();
@@ -393,14 +399,15 @@ describe("versioned curriculum seed", () => {
         `SELECT id, curriculum_id, revision, parent_version_id, status,
                 content_hash, created_at, published_at, updated_at
          FROM curriculum_versions
-         WHERE id IN ('curriculum-foundation-v2-r1', 'curriculum-foundation-v2-r2')
+         WHERE id IN ('curriculum-foundation-v2-r1', 'curriculum-foundation-v2-r2',
+                      'curriculum-foundation-v2-r3', 'curriculum-foundation-v2-r4')
          ORDER BY revision`,
       )
       .all();
 
     expect(second).toEqual(first);
     expect(versionsAfter).toEqual(versionsBefore);
-    expect(versionsBefore).toHaveLength(2);
+    expect(versionsBefore).toHaveLength(4);
     expect(versionsBefore[0]).toMatchObject({
       id: "curriculum-foundation-v2-r1",
       curriculum_id: "curriculum-foundation",
@@ -412,18 +419,110 @@ describe("versioned curriculum seed", () => {
       curriculum_id: "curriculum-foundation",
       revision: 2,
       parent_version_id: "curriculum-foundation-v2-r1",
+      content_hash:
+        "920a36a5484ba88f01477a28a281fcc781935ef4124ef8ace7b689536d543427",
+    });
+    expect(versionsBefore[2]).toMatchObject({
+      id: "curriculum-foundation-v2-r3",
+      curriculum_id: "curriculum-foundation",
+      revision: 3,
+      parent_version_id: "curriculum-foundation-v2-r2",
+    });
+    expect(versionsBefore[3]).toMatchObject({
+      id: "curriculum-foundation-v2-r4",
+      curriculum_id: "curriculum-foundation",
+      revision: 4,
+      parent_version_id: "curriculum-foundation-v2-r3",
+      status: "published",
     });
     const authoring = createCurriculumAuthoringRepository(connection);
     const path = await authoring.getActivePath("curriculum-foundation");
     const dayOne = path?.weeks[0]?.days.find(
       (day) => day.stableId === "w1d1-values-types-objects",
     );
-    expect(path?.version.id).toBe("curriculum-foundation-v2-r2");
+    expect(path?.version.id).toBe("curriculum-foundation-v2-r4");
     expect(dayOne?.units).toHaveLength(12);
     expect(dayOne?.units[0]).toMatchObject({
       stableId: "w1d1-u01-briefing",
       orderIndex: 0,
     });
+  });
+
+  it("upgrades an existing immutable r2 database to r3 without moving its active session", async () => {
+    const { connection } = tempConnection();
+    migrateDatabase(connection);
+    seedVersionedCurriculum(connection, publishedCurriculumV2);
+    seedVersionedCurriculum(connection, publishedCurriculumRevision2);
+
+    const authoring = createCurriculumAuthoringRepository(connection);
+    let id = 0;
+    const learning = createLearningRepository(connection, {
+      id: () => `existing-r2-${++id}`,
+      now: () => 2_000,
+    });
+    const r2Path = await authoring.getActivePath("curriculum-foundation");
+    const r2Day = r2Path?.weeks[0]?.days[0];
+    if (!r2Day) throw new Error("Seeded r2 Day 1 is missing");
+    const r2Session = await learning.startOrResumeVersionedSession({
+      dayId: r2Day.id,
+    });
+    const immutableR2Before = connection.sqlite
+      .prepare(
+        `SELECT id, revision, parent_version_id, status, content_hash,
+                created_at, published_at, updated_at
+         FROM curriculum_versions WHERE id = ?`,
+      )
+      .get(publishedCurriculumRevision2.id);
+
+    seedVersionedCurriculum(connection);
+
+    const versionsAfterUpgrade = connection.sqlite
+      .prepare(
+        `SELECT id, revision, parent_version_id, status, content_hash,
+                created_at, published_at, updated_at
+         FROM curriculum_versions
+         WHERE curriculum_id = 'curriculum-foundation'
+         ORDER BY revision`,
+      )
+      .all();
+    const activePath = await authoring.getActivePath("curriculum-foundation");
+    const preservedSession = await learning.getVersionedSession(
+      r2Session.session.id,
+    );
+
+    expect(versionsAfterUpgrade).toHaveLength(4);
+    expect(versionsAfterUpgrade[1]).toEqual(immutableR2Before);
+    expect(versionsAfterUpgrade[2]).toMatchObject({
+      id: "curriculum-foundation-v2-r3",
+      revision: 3,
+      parent_version_id: publishedCurriculumRevision2.id,
+      status: "published",
+      content_hash: publishedCurriculumV3.contentHash,
+    });
+    expect(versionsAfterUpgrade[3]).toMatchObject({
+      id: "curriculum-foundation-v2-r4",
+      revision: 4,
+      parent_version_id: publishedCurriculumV3.id,
+      status: "published",
+      content_hash: activeCurriculumVersion.contentHash,
+    });
+    expect(activePath?.version.id).toBe(activeCurriculumVersion.id);
+    expect(preservedSession.snapshot.curriculumVersionId).toBe(
+      publishedCurriculumRevision2.id,
+    );
+
+    seedVersionedCurriculum(connection);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT id, revision, parent_version_id, status, content_hash,
+                  created_at, published_at, updated_at
+           FROM curriculum_versions
+           WHERE curriculum_id = 'curriculum-foundation'
+           ORDER BY revision`,
+        )
+        .all(),
+    ).toEqual(versionsAfterUpgrade);
   });
 
   it("records persisted hint usage at levels zero through five", async () => {
@@ -519,6 +618,44 @@ describe("versioned curriculum seed", () => {
       expect.objectContaining({ level: 0, unitId: unit.id }),
       expect.objectContaining({ level: 5, unitId: unit.id }),
     ]);
+  });
+
+  it("seeds authored code-reading snippets into learner snapshots", async () => {
+    for (const authoredDay of activeCurriculumVersion.weeks.flatMap(
+      (week) => week.days,
+    )) {
+      const { connection } = tempConnection();
+      migrateDatabase(connection);
+      seedDatabase(connection, undefined, 1_000);
+      let id = 0;
+      const learning = createLearningRepository(connection, {
+        id: () => `code-reading-${authoredDay.dayNumber}-${++id}`,
+        now: () => 2_000,
+      });
+      const authoring = createCurriculumAuthoringRepository(connection);
+      const path = await authoring.getActivePath("curriculum-foundation");
+      const authoredReading = authoredDay.units.find(
+        (unit) => unit.type === "code-reading",
+      );
+      const seededDay = path?.weeks
+        .flatMap((week) => week.days)
+        .find((day) => day.stableId === authoredDay.stableId);
+      if (!authoredReading?.codeSnippet || !seededDay) {
+        throw new Error(`Code reading is missing for ${authoredDay.stableId}`);
+      }
+
+      const session = await learning.startOrResumeVersionedSession({
+        dayId: seededDay.id,
+      });
+      const snapshotReading = session.snapshot.units.find(
+        (unit) => unit.type === "code-reading",
+      );
+
+      expect(snapshotReading?.payload).toEqual({
+        type: "code-reading",
+        snippet: authoredReading.codeSnippet,
+      });
+    }
   });
 });
 

@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { fingerprintExerciseDiff, getExerciseDiff } from "@dlh/exercise-core";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -111,6 +112,13 @@ describe("restart-safe versioned practice", () => {
         payload: { type: "exercise" },
       },
     });
+    first.state.connection.sqlite
+      .prepare(
+        `UPDATE unit_progress
+         SET status = 'ready', updated_at = ?
+         WHERE session_id = ? AND unit_type = 'exercise'`,
+      )
+      .run(Date.now(), sessionId);
 
     const attemptResponse = await request(
       first.app,
@@ -123,25 +131,34 @@ describe("restart-safe versioned practice", () => {
     const { id: attemptId } = (await attemptResponse.json()) as { id: string };
     const attemptRow = first.state.connection.sqlite
       .prepare(
-        "SELECT workspace_path AS workspacePath FROM exercise_attempts WHERE id = ?",
+        `SELECT workspace_path AS workspacePath, baseline_hash AS baselineHash
+         FROM exercise_attempts WHERE id = ?`,
       )
-      .get(attemptId) as { workspacePath: string };
+      .get(attemptId) as { workspacePath: string; baselineHash: string };
     writeFileSync(
       path.join(attemptRow.workspacePath, "learner-note.txt"),
       "learner-authored change\n",
       "utf8",
     );
+    const testedDiff = await getExerciseDiff(attemptRow.workspacePath, {
+      expectedBaselineHash: attemptRow.baselineHash,
+    });
+    const testedFingerprint = fingerprintExerciseDiff(testedDiff);
+    if (!testedFingerprint || testedDiff.truncated) {
+      throw new Error("Resume fixture requires a complete diff fingerprint");
+    }
 
     const now = Date.now();
     first.state.connection.sqlite
       .prepare(
         `INSERT INTO test_runs
          (id, exercise_attempt_id, operation_id, status, exit_code, stdout,
-          stderr, duration_ms, started_at, completed_at)
+          stderr, duration_ms, diff_fingerprint, diff_truncated, started_at,
+          completed_at)
          VALUES ('test-latest', ?, 'operation-latest', 'passed', 0,
-                 '12 tests passed', '', 42, ?, ?)`,
+                 '12 tests passed', '', 42, ?, 0, ?, ?)`,
       )
-      .run(attemptId, now, now + 5_000);
+      .run(attemptId, testedFingerprint, now, now + 5_000);
     first.state.connection.sqlite
       .prepare(
         `INSERT INTO reviews

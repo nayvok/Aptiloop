@@ -210,6 +210,10 @@ export const testRuns = sqliteTable(
     stdout: text("stdout").notNull(),
     stderr: text("stderr").notNull(),
     durationMs: integer("duration_ms"),
+    diffFingerprint: text("diff_fingerprint"),
+    diffTruncated: integer("diff_truncated", { mode: "boolean" })
+      .notNull()
+      .default(false),
     startedAt: integer("started_at").notNull(),
     completedAt: integer("completed_at"),
   },

@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 
 const protectedFields = new Set([
   "referenceAnswer",
@@ -463,10 +464,17 @@ export function InterviewClient() {
               onClick={() => void startInterview()}
               disabled={action !== null}
             >
-              <ChatCircleDotsIcon aria-hidden className="size-4" />
-              {action === "start"
-                ? "Формирую первый вопрос…"
-                : "Начать интервью"}
+              {action === "start" ? (
+                <>
+                  <Spinner />
+                  Формирую первый вопрос…
+                </>
+              ) : (
+                <>
+                  <ChatCircleDotsIcon aria-hidden className="size-4" />
+                  Начать интервью
+                </>
+              )}
             </Button>
           </div>
         </section>
@@ -505,8 +513,17 @@ export function InterviewClient() {
             onClick={() => draft && void startInterview(draft)}
             disabled={!draft || action !== null}
           >
-            <ArrowClockwiseIcon aria-hidden className="size-4" />
-            {action === "start" ? "Повторяю…" : "Повторить запуск"}
+            {action === "start" ? (
+              <>
+                <Spinner />
+                Повторяю…
+              </>
+            ) : (
+              <>
+                <ArrowClockwiseIcon aria-hidden className="size-4" />
+                Повторить запуск
+              </>
+            )}
           </Button>
         </section>
       </div>
@@ -622,10 +639,17 @@ export function InterviewClient() {
             onClick={() => void finishInterview()}
             disabled={action !== null}
           >
-            <CheckCircleIcon aria-hidden className="size-4" />
-            {action === "finish"
-              ? "Формирую отчёт…"
-              : "Завершить и открыть отчёт"}
+            {action === "finish" ? (
+              <>
+                <Spinner />
+                Формирую отчёт…
+              </>
+            ) : (
+              <>
+                <CheckCircleIcon aria-hidden className="size-4" />
+                Завершить и открыть отчёт
+              </>
+            )}
           </Button>
         </section>
       ) : hasPendingQuestion || hasRecoverableAnswer ? (
@@ -663,11 +687,16 @@ export function InterviewClient() {
             onClick={() => void submitAnswer()}
             disabled={!answer.trim() || action !== null}
           >
-            {action === "answer"
-              ? "Получаю следующий вопрос…"
-              : hasRecoverableAnswer
-                ? "Повторить запрос"
-                : "Отправить ответ"}
+            {action === "answer" ? (
+              <>
+                <Spinner />
+                Получаю следующий вопрос…
+              </>
+            ) : hasRecoverableAnswer ? (
+              "Повторить запрос"
+            ) : (
+              "Отправить ответ"
+            )}
           </Button>
         </section>
       ) : (

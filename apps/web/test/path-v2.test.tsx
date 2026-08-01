@@ -149,14 +149,21 @@ afterEach(() => {
 });
 
 describe("versioned learning path", () => {
-  it("renders all 12 Day 1 unit types, explicit statuses, metadata, and a locked day", async () => {
+  it("keeps the actionable day detailed and renders the remaining path as a compact overview", async () => {
     apiMock.mockResolvedValue(pathFixture());
     const { container } = renderWithQuery(<DashboardClient />);
 
-    expect(await screen.findByText("Фундамент языка")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", {
+        name: "Неделя 1. Фундамент языка",
+      }),
+    ).toBeInTheDocument();
     expect(
       container.querySelectorAll('[data-slot="curriculum-unit"]'),
-    ).toHaveLength(13);
+    ).toHaveLength(12);
+    expect(
+      container.querySelectorAll('[data-slot="curriculum-day-summary"]'),
+    ).toHaveLength(2);
     for (const type of unitTypes) {
       expect(
         container.querySelector(`[data-unit-type="${type}"]`),
@@ -166,18 +173,18 @@ describe("versioned learning path", () => {
     expect(screen.getAllByText(/^Сейчас ·/u).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/^Доступно ·/u).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/^Заблокировано ·/u).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Глубина: foundation")).toHaveLength(2);
+    expect(screen.getAllByText("Глубина: foundation")).toHaveLength(1);
     expect(
       screen.getAllByText("Объяснить механизм своими словами"),
-    ).toHaveLength(2);
-    expect(screen.getAllByText("Оптимизация движка")).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(screen.getAllByText("Оптимизация движка")).toHaveLength(1);
     expect(screen.getAllByText("JavaScript").length).toBeGreaterThan(0);
     expect(screen.getByText("1 из 13 юнитов завершено")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Сначала завершите предыдущий день",
-      }),
-    ).toBeDisabled();
+    const lockedDay = container.querySelector(
+      '[data-slot="curriculum-day-summary"][data-status="locked"]',
+    );
+    expect(lockedDay).toHaveTextContent("Функции и замыкания");
+    expect(lockedDay).toHaveTextContent("Заблокирован");
 
     const current = container.querySelector('[aria-current="step"]');
     expect(current).toHaveAttribute("data-status", "in_progress");

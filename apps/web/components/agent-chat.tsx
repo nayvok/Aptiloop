@@ -58,6 +58,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
   >([]);
   const [tools, setTools] = useState<string[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const history = useQuery({
     queryKey: ["agent-history", role],
@@ -110,6 +111,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
     ]);
     setInput("");
     setStreaming(true);
+    setStreamError(null);
     const controller = new AbortController();
     abortRef.current = controller;
     try {
@@ -151,8 +153,26 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
           );
         }
       }
+    } catch (error) {
+      assistantContent = controller.signal.aborted
+        ? "Ответ остановлен."
+        : error instanceof Error
+          ? `Не удалось получить ответ: ${error.message}`
+          : "Не удалось получить ответ.";
+      if (!controller.signal.aborted) setStreamError(assistantContent);
+      setMessages((current) =>
+        current.map((entry) =>
+          entry.id === assistantId
+            ? { ...entry, content: assistantContent }
+            : entry,
+        ),
+      );
     } finally {
-      const finalContent = assistantContent || "Ответ был отменён.";
+      const finalContent =
+        assistantContent ||
+        (controller.signal.aborted
+          ? "Ответ остановлен."
+          : "Агент завершил ответ без текста.");
       queryClient.setQueryData(["agent-history", role], {
         messages: [
           ...previousMessages,
@@ -213,6 +233,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
               aria-pressed={role === item}
               variant={role === item ? "secondary" : "ghost"}
               size="sm"
+              disabled={streaming}
               onClick={() => {
                 setMessages([]);
                 setTools([]);
@@ -227,8 +248,45 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
           {selection.provider} · {selection.model}
         </Badge>
       </div>
+      {history.isError || settings.isError || streamError ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          <span>
+            {streamError ??
+              (history.error instanceof Error
+                ? `История недоступна: ${history.error.message}`
+                : settings.error instanceof Error
+                  ? `Настройки провайдера недоступны: ${settings.error.message}`
+                  : "Данные агента временно недоступны.")}
+          </span>
+          {!streamError ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                void history.refetch();
+                void settings.refetch();
+              }}
+            >
+              Повторить
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="sr-only" role="status" aria-live="polite">
+        {streaming
+          ? "Агент формирует ответ"
+          : streamError
+            ? "Ответ не получен"
+            : messages.length
+              ? "Ответ готов"
+              : ""}
+      </p>
       <MessageScrollerProvider>
-        <MessageScroller className="flex-1" aria-live="polite">
+        <MessageScroller className="flex-1">
           <MessageScrollerViewport className="p-4 md:p-6">
             <MessageScrollerContent className="gap-4">
               {messages.length === 0 ? (

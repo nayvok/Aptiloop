@@ -10,18 +10,18 @@ Harness тренирует воспроизведение, а не узнава�
 
 1. **Briefing** — цель дня, ожидаемый результат, глубина и out-of-scope.
 2. **Study** — конкретные пункты и источники; checklist отмечается явно.
-3. **Recall** — собственный ответ сохраняется как immutable evidence до feedback.
-4. **Teacher dialogue** — один контекстный вопрос за раз через выбранный provider.
-5. **Quiz** — server проверяет option IDs; learner DTO не содержит answer key.
+3. **Recall** — на каждый вопрос отдельно сохраняется immutable first attempt до feedback; завершение требует evidence по всем вопросам.
+4. **Teacher dialogue** — после первого объяснения Teacher задаёт уточнение, пользователь отвечает отдельным revision-turn и только затем завершает диалог.
+5. **Quiz** — server проверяет option IDs; learner DTO не содержит answer key. Результат ниже порога не блокирует день навсегда: пользователь пересдаёт quiz, а первая попытка остаётся сохранённым evidence.
 6. **Code reading** — prediction, explanation и verbal fix сохраняются до перехода.
-7. **Exercise** — отдельная attempt folder; код изменяется в Zed.
+7. **Exercise** — открывается только когда unit дошёл до `ready`/`in_progress`; server не создаёт раннюю попытку. Код изменяется в Zed в отдельной attempt folder.
 8. **Test** — только allowlisted `test`, stdout/stderr/exit status сохраняются.
 9. **Review** — read-only анализ learner diff после актуального passed test.
 10. **Correction** — пользователь меняет код, снова запускает test и review.
 11. **Summary** — deterministic evidence aggregation, mastery/mistakes/cards.
 12. **Completion** — следующий день разблокируется; restart возвращает текущий unit.
 
-Progression не доверяет произвольной команде browser: сервер проверяет unit state, completion criteria и evidence target. Published curriculum snapshot защищает начатое занятие от будущего редактирования программы.
+Progression не доверяет произвольной команде browser: сервер проверяет unit state, completion criteria и evidence target. Published curriculum snapshot защищает начатое занятие от будущего редактирования программы. При публикации новой revision главная сопоставляет день и units по stable IDs, поэтому активная session продолжает старый immutable snapshot, не исчезая из нового маршрута.
 
 ## First attempt и protected content
 
@@ -39,7 +39,7 @@ LLM может сформировать ответ/review, но не назна�
 
 Reviewer получает brief, constraints, criteria, diff, последний passed test и prior review count. Он возвращает structured result и не имеет write/apply tools. После `changes_requested` только новый learner edit + новый passed test делают следующий review допустимым.
 
-Текущая проверка «после последней правки» использует filesystem `mtime`. Она переживает restart, но может ошибиться при намеренном сохранении timestamp; это известное ограничение до перехода на diff/tree hash.
+После allowlisted test сервер сохраняет SHA-256 полного Git diff. Review допускается только если текущий diff имеет тот же fingerprint; сохранение старого `mtime`, rename или удаление файла инвалидируют test evidence. Truncated diff нельзя отправить на review.
 
 ## Ошибки и карточки
 

@@ -26,7 +26,13 @@ export function MistakesClient() {
     queryKey: ["mistakes"],
     queryFn: () => api<{ mistakes: Mistake[] }>("/mistakes"),
   });
-  if (query.isLoading) return <Skeleton className="h-80" />;
+  if (query.isLoading)
+    return (
+      <div role="status" aria-label="Загружаю журнал ошибок">
+        <Skeleton aria-hidden className="h-80" />
+        <span className="sr-only">Загружаю журнал ошибок…</span>
+      </div>
+    );
   if (query.isError || !query.data)
     return (
       <QueryError

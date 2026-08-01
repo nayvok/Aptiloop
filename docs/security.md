@@ -8,7 +8,7 @@ Allowlisted exercise — доверенный код из репозитория
 
 ## Browser → HTTP boundary
 
-Каждый `/api/*` request требует `X-DLH-Client: web` (кроме test environment). Mutations требуют точный loopback `Origin`, совпадающий с `WEB_ORIGIN`, и `Content-Type: application/json`. Bodies проверяются strict Zod schemas.
+Каждый `/api/*` request требует `X-DLH-Client: web` (кроме test environment). Mutations требуют loopback `Origin` на порту из `WEB_ORIGIN` (`127.0.0.1`, `localhost` или `[::1]`), и `Content-Type: application/json`. Bodies проверяются strict Zod schemas.
 
 Browser mutations отправляют operation ID, entity ID и учебные данные. Они не выбирают executable, args, cwd, provider RPC или raw tool. Локальные workspace/Zed settings доступны только как read-only diagnostic strings; mutation schema намеренно их исключает. Реальные filesystem objects/handles browser не получает.
 

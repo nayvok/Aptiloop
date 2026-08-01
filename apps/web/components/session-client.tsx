@@ -96,7 +96,11 @@ const completionCriterionSchema = z
 
 const unitPayloadSchema = z.discriminatedUnion("type", [
   z
-    .object({ type: z.literal("briefing"), scope: z.array(z.string()) })
+    .object({
+      type: z.literal("briefing"),
+      scope: z.array(z.string()),
+      outOfScope: z.array(z.string()).default([]),
+    })
     .passthrough(),
   z
     .object({ type: z.literal("study"), body: z.string().optional() })
@@ -208,6 +212,16 @@ const progressPayloadSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("recall"),
+      answers: z
+        .array(
+          z.object({
+            questionId: idSchema,
+            draft: z.string(),
+            firstAttemptId: idSchema,
+          }),
+        )
+        .optional()
+        .default([]),
       draft: z.string(),
       firstAttemptId: idSchema.nullable(),
     })
@@ -641,6 +655,9 @@ export function SessionClient() {
   const completed = session.unitProgress.filter(
     (item) => item.status === "completed",
   ).length;
+  const focusedIndex = session.snapshot.units.findIndex(
+    (unit) => unit.id === focusedUnit.id,
+  );
 
   return (
     <div
@@ -678,47 +695,31 @@ export function SessionClient() {
       <div className="grid min-w-0 gap-4 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-6">
         <nav
           data-slot="unit-step-rail"
-          aria-label="Юниты занятия"
+          aria-label="Этапы занятия"
           className="min-w-0"
         >
-          <ol className="flex flex-col gap-2">
-            {session.snapshot.units.map((unit) => {
-              const progress = progressByUnit.get(unit.id);
-              const status = progress?.status ?? "locked";
-              const current = unit.id === focusedUnit.id;
-              return (
-                <li
-                  key={unit.id}
-                  data-slot="unit-step"
-                  data-status={status}
-                  aria-current={current ? "step" : undefined}
-                  className={`flex min-w-0 items-start gap-2 rounded-md border p-3 text-sm ${
-                    current
-                      ? "border-primary bg-accent"
-                      : "border-border bg-background"
-                  }`}
-                >
-                  <span
-                    className={`grid size-6 shrink-0 place-items-center rounded-full border text-xs ${status === "completed" ? "border-success bg-success text-success-foreground" : "border-border"}`}
-                  >
-                    {status === "completed" ? (
-                      <CheckIcon aria-hidden />
-                    ) : (
-                      unit.order
-                    )}
-                  </span>
-                  <span className="flex min-w-0 flex-col gap-1">
-                    <span className="block font-medium leading-5">
-                      {unit.title}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">
-                      {statusLabels[status]}
-                    </span>
-                  </span>
-                </li>
-              );
-            })}
-          </ol>
+          <details className="group rounded-lg border border-border bg-card md:border-0 md:bg-transparent">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden">
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">
+                  Шаг {focusedIndex + 1} из {session.snapshot.units.length}
+                </span>
+                <span className="block truncate text-sm text-muted-foreground">
+                  {focusedUnit.title}
+                </span>
+              </span>
+              <Badge variant="secondary">
+                {statusLabels[focusedProgress.status]}
+              </Badge>
+            </summary>
+            <div className="hidden max-h-72 overflow-y-auto border-t border-border p-2 group-open:block md:block md:max-h-none md:overflow-visible md:border-0 md:p-0">
+              <UnitStepList
+                units={session.snapshot.units}
+                progressByUnit={progressByUnit}
+                focusedUnitId={focusedUnit.id}
+              />
+            </div>
+          </details>
         </nav>
 
         <UnitShell unit={focusedUnit} progress={focusedProgress}>
@@ -764,6 +765,51 @@ export function SessionClient() {
         </UnitShell>
       </div>
     </div>
+  );
+}
+
+function UnitStepList({
+  units,
+  progressByUnit,
+  focusedUnitId,
+}: {
+  units: LearnerSession["snapshot"]["units"];
+  progressByUnit: Map<string, LearnerSession["unitProgress"][number]>;
+  focusedUnitId: string;
+}) {
+  return (
+    <ol className="flex flex-col gap-2">
+      {units.map((unit) => {
+        const progress = progressByUnit.get(unit.id);
+        const status = progress?.status ?? "locked";
+        const current = unit.id === focusedUnitId;
+        return (
+          <li
+            key={unit.id}
+            data-slot="unit-step"
+            data-status={status}
+            aria-current={current ? "step" : undefined}
+            className={`flex min-w-0 items-start gap-2 rounded-md border p-3 text-sm ${
+              current
+                ? "border-primary bg-accent"
+                : "border-border bg-background"
+            }`}
+          >
+            <span
+              className={`grid size-6 shrink-0 place-items-center rounded-full border text-xs ${status === "completed" ? "border-success bg-success text-success-foreground" : "border-border"}`}
+            >
+              {status === "completed" ? <CheckIcon aria-hidden /> : unit.order}
+            </span>
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="block font-medium leading-5">{unit.title}</span>
+              <span className="block text-xs text-muted-foreground">
+                {statusLabels[status]}
+              </span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -875,9 +921,14 @@ function Checklist({
   onToggle: (id: string) => void;
 }) {
   if (!items.length) return null;
+  const requiredCount = items.filter((item) => item.required).length;
   return (
     <fieldset data-slot="unit-checklist" className="flex flex-col gap-2">
-      <legend className="pb-2 text-sm font-medium">Checklist</legend>
+      <legend className="pb-1 text-sm font-medium">Что нужно сделать</legend>
+      <p className="pb-1 text-xs leading-5 text-muted-foreground">
+        Отмечай галочкой пункты, которые уже выполнил.
+        {requiredCount > 0 ? " Без обязательных пунктов шаг не завершить." : ""}
+      </p>
       {items.map((item) => (
         <label
           key={item.id}
@@ -893,11 +944,17 @@ function Checklist({
           <span>
             {item.label}
             {item.required ? (
-              <span className="text-muted-foreground"> · обязательно</span>
+              <span className="text-muted-foreground">
+                {" "}
+                · обязательно отметить
+              </span>
             ) : null}
           </span>
         </label>
       ))}
+      <p className="pt-1 text-xs text-muted-foreground">
+        Отмечено {checked.length} из {items.length}
+      </p>
     </fieldset>
   );
 }
@@ -917,10 +974,11 @@ function BriefingUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
     acknowledged && required.every((id) => checked.includes(id));
   return (
     <div className="flex flex-col gap-6">
-      {unit.payload.type === "briefing" && unit.payload.scope.length ? (
-        <InfoList title="Границы дня" items={unit.payload.scope} />
-      ) : null}
       <InfoList title="Результат дня" items={unit.objectives} />
+      {unit.payload.type === "briefing" &&
+      (unit.payload.outOfScope ?? []).length ? (
+        <InfoList title="Вне занятия" items={unit.payload.outOfScope} />
+      ) : null}
       <Checklist
         items={unit.checklist}
         checked={checked}
@@ -941,7 +999,7 @@ function BriefingUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
           onChange={(event) => setAcknowledged(event.target.checked)}
           className="size-4 accent-primary"
         />
-        Цель и границы дня понятны
+        Подтверждаю: цели и границы дня понятны
       </label>
       {!complete ? (
         <div className="flex justify-end">
@@ -1056,14 +1114,51 @@ function RecallUnit({
   const payload =
     progress.payload.type === "recall"
       ? progress.payload
-      : { type: "recall" as const, draft: "", firstAttemptId: null };
-  const [answer, setAnswer] = useState(payload.draft);
-  const firstQuestion = unit.questions[0];
-  const saved = Boolean(payload.firstAttemptId);
-  async function submit() {
-    if (!firstQuestion) return;
+      : {
+          type: "recall" as const,
+          answers: [],
+          draft: "",
+          firstAttemptId: null,
+        };
+  const persistedAnswers = new Map(
+    payload.answers.map((answer) => [answer.questionId, answer]),
+  );
+  const firstQuestionId = unit.questions[0]?.id;
+  if (
+    firstQuestionId &&
+    payload.firstAttemptId &&
+    payload.draft.trim() &&
+    !persistedAnswers.has(firstQuestionId)
+  ) {
+    persistedAnswers.set(firstQuestionId, {
+      questionId: firstQuestionId,
+      draft: payload.draft,
+      firstAttemptId: payload.firstAttemptId,
+    });
+  }
+  const [answers, setAnswers] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      unit.questions.map((question) => [
+        question.id,
+        persistedAnswers.get(question.id)?.draft ?? "",
+      ]),
+    ),
+  );
+  const allAnswered =
+    unit.questions.length > 0 &&
+    unit.questions.every((question) => persistedAnswers.has(question.id));
+  const completionPayload = {
+    ...payload,
+    answers: unit.questions.flatMap((question) => {
+      const answer = persistedAnswers.get(question.id);
+      return answer ? [answer] : [];
+    }),
+  };
+  async function submit(questionId: string) {
+    const answer = answers[questionId]?.trim() ?? "";
+    if (!answer) return;
     await runAction(
-      `recall:${unit.id}`,
+      `recall:${unit.id}:${questionId}`,
       async () => {
         const raw = await api<unknown>(
           `/learning/sessions/v2/${encodeURIComponent(session.id)}/units/${encodeURIComponent(unit.id)}/recall-attempts`,
@@ -1071,7 +1166,8 @@ function RecallUnit({
             method: "POST",
             body: JSON.stringify({
               operationId: operationId(),
-              answer: answer.trim(),
+              questionId,
+              answer,
             }),
           },
         );
@@ -1083,57 +1179,81 @@ function RecallUnit({
   }
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-5">
         {unit.questions.map((question, index) => (
-          <div key={question.id} className="flex gap-2 text-sm leading-6">
-            <span className="font-medium">{index + 1}.</span>
-            <p>{question.prompt}</p>
+          <div
+            key={question.id}
+            className="flex flex-col gap-3 rounded-lg border border-border/70 p-4"
+          >
+            <label
+              className="flex flex-col gap-2 text-sm font-medium"
+              htmlFor={`recall-${question.id}`}
+            >
+              <span className="leading-6">
+                {index + 1}. {question.prompt}
+              </span>
+              <textarea
+                id={`recall-${question.id}`}
+                rows={5}
+                value={answers[question.id] ?? ""}
+                disabled={
+                  persistedAnswers.has(question.id) ||
+                  progress.status === "completed" ||
+                  pending
+                }
+                onChange={(event) =>
+                  setAnswers((current) => ({
+                    ...current,
+                    [question.id]: event.target.value,
+                  }))
+                }
+                aria-describedby={`recall-help-${unit.id}`}
+                className="min-h-32 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-70"
+              />
+            </label>
+            {!persistedAnswers.has(question.id) &&
+            progress.status !== "completed" ? (
+              <div className="flex justify-end">
+                <Button
+                  disabled={
+                    pending || (answers[question.id]?.trim().length ?? 0) < 20
+                  }
+                  onClick={() => void submit(question.id)}
+                >
+                  <PaperPlaneTiltIcon aria-hidden />
+                  Сохранить ответ {index + 1}
+                </Button>
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
-      <label
-        className="flex flex-col gap-2 text-sm font-medium"
-        htmlFor={`recall-${unit.id}`}
-      >
-        Объяснение по памяти
-        <textarea
-          id={`recall-${unit.id}`}
-          rows={8}
-          value={answer}
-          disabled={saved || progress.status === "completed" || pending}
-          onChange={(event) => setAnswer(event.target.value)}
-          aria-describedby={`recall-help-${unit.id}`}
-          className="min-h-44 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-70"
-        />
-      </label>
       <p
         id={`recall-help-${unit.id}`}
         className="text-xs text-muted-foreground"
       >
-        Первая попытка сохраняется отдельно и не перезаписывается.
+        Для каждого вопроса первая попытка сохраняется отдельно и не
+        перезаписывается.
       </p>
       {progress.status === "completed" ? (
         <CompletedNote />
-      ) : saved ? (
+      ) : allAnswered ? (
         <div className="flex justify-end">
           <Button
             disabled={pending}
-            onClick={() => void patchUnit(unit, progress, "completed", payload)}
+            onClick={() =>
+              void patchUnit(unit, progress, "completed", completionPayload)
+            }
           >
             Завершить recall
             <CheckIcon aria-hidden />
           </Button>
         </div>
       ) : (
-        <div className="flex justify-end">
-          <Button
-            disabled={pending || answer.trim().length < 20 || !firstQuestion}
-            onClick={() => void submit()}
-          >
-            <PaperPlaneTiltIcon aria-hidden />
-            Сохранить первую попытку
-          </Button>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Сохранено ответов: {persistedAnswers.size} из {unit.questions.length}.
+          Завершение станет доступно после ответа на каждый вопрос.
+        </p>
       )}
     </div>
   );
@@ -1185,7 +1305,7 @@ function TeacherDialogueUnit({
         .passthrough()
         .parse(
           await api<unknown>(
-            `/agent/history?role=teacher&sessionId=${encodeURIComponent(session.id)}`,
+            `/learning/sessions/v2/${encodeURIComponent(session.id)}/teacher-transcript`,
           ),
         ),
   });
@@ -1198,11 +1318,16 @@ function TeacherDialogueUnit({
     (item) => item.payload.type === "recall",
   )?.payload;
   const firstDraft = recallDraft?.type === "recall" ? recallDraft.draft : "";
+  const requiredTurns = Math.max(
+    unit.payload.type === "teacher-dialogue" ? unit.payload.minimumTurns : 1,
+    unit.payload.type === "teacher-dialogue" && unit.payload.requiresRevision
+      ? 2
+      : 1,
+  );
   const canComplete =
-    payload.turnCount >=
-      (unit.payload.type === "teacher-dialogue"
-        ? unit.payload.minimumTurns
-        : 1) && payload.revisionAttemptIds.length > 0;
+    payload.turnCount >= requiredTurns &&
+    payload.revisionAttemptIds.length >= requiredTurns;
+  const answeringFollowUp = payload.revisionAttemptIds.length === 1;
 
   async function sendRevision() {
     const text = revision.trim();
@@ -1229,7 +1354,9 @@ function TeacherDialogueUnit({
         {
           role: "teacher",
           sessionId: session.id,
-          message: `${opening}\n\nПервая попытка ученика:\n${firstDraft}\n\nУточнённое объяснение ученика:\n${text}`,
+          message: answeringFollowUp
+            ? `${opening}\n\nПервая попытка ученика:\n${firstDraft}\n\nОтвет ученика на уточнение Teacher:\n${text}`
+            : `${opening}\n\nПервая попытка ученика:\n${firstDraft}\n\nУточнённое объяснение ученика:\n${text}`,
         },
         controller.signal,
       )) {
@@ -1342,21 +1469,29 @@ function TeacherDialogueUnit({
         <CompletedNote />
       ) : (
         <>
-          <label
-            className="flex flex-col gap-2 text-sm font-medium"
-            htmlFor={`teacher-revision-${unit.id}`}
-          >
-            Уточнённое объяснение
-            <textarea
-              id={`teacher-revision-${unit.id}`}
-              rows={5}
-              value={revision}
-              disabled={streaming || pending}
-              onChange={(event) => setRevision(event.target.value)}
-              placeholder="Перепиши механизм точнее после follow-up…"
-              className="min-h-28 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
+          {!canComplete ? (
+            <label
+              className="flex flex-col gap-2 text-sm font-medium"
+              htmlFor={`teacher-revision-${unit.id}`}
+            >
+              {answeringFollowUp
+                ? "Ответ на уточнение Teacher"
+                : "Уточнённое объяснение"}
+              <textarea
+                id={`teacher-revision-${unit.id}`}
+                rows={5}
+                value={revision}
+                disabled={streaming || pending}
+                onChange={(event) => setRevision(event.target.value)}
+                placeholder={
+                  answeringFollowUp
+                    ? "Ответь на последний вопрос Teacher своими словами…"
+                    : "Перепиши механизм точнее — Teacher задаст уточняющий вопрос…"
+                }
+                className="min-h-28 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
+          ) : null}
           <div className="flex flex-wrap justify-end gap-2">
             {streaming ? (
               <Button
@@ -1382,7 +1517,9 @@ function TeacherDialogueUnit({
                 onClick={() => void sendRevision()}
               >
                 <PaperPlaneTiltIcon aria-hidden />
-                Отправить revision
+                {answeringFollowUp
+                  ? "Ответить на уточнение"
+                  : "Отправить объяснение"}
               </Button>
             )}
           </div>
@@ -1410,6 +1547,7 @@ function QuizUnit({
           score: null,
         };
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [retrying, setRetrying] = useState(false);
   const persistedCorrectQuestionIds = payload.correctQuestionIds;
   const [results, setResults] = useState<Array<{
     questionId: string;
@@ -1425,6 +1563,11 @@ function QuizUnit({
   const minimumScore =
     unit.payload.type === "quiz" ? unit.payload.minimumScore : 1;
   const scored = payload.score !== null;
+  const passed = scored && (payload.score ?? 0) >= minimumScore;
+  const answering = !scored || retrying;
+  const invalidQuestions = unit.questions.filter(
+    (question) => question.options.length < 2,
+  );
   async function submit() {
     const result = await runAction(
       `quiz:${unit.id}`,
@@ -1447,13 +1590,25 @@ function QuizUnit({
       },
       (response) => response.session,
     );
-    if (result) setResults(result.attempt.results);
+    if (result) {
+      setResults(result.attempt.results);
+      setRetrying(false);
+    }
   }
   const allAnswered = unit.questions.every((question) =>
     Boolean(answers[question.id]),
   );
   return (
     <div className="flex flex-col gap-6">
+      {invalidQuestions.length ? (
+        <p
+          role="alert"
+          className="rounded-md border border-destructive/35 bg-destructive/10 p-4 text-sm text-destructive"
+        >
+          Quiz настроен некорректно: у каждого вопроса должно быть минимум два
+          варианта ответа.
+        </p>
+      ) : null}
       {unit.questions.map((question, index) => {
         const result = results?.find((item) => item.questionId === question.id);
         return (
@@ -1475,7 +1630,7 @@ function QuizUnit({
                   value={option.id}
                   checked={answers[question.id] === option.id}
                   disabled={
-                    scored || progress.status === "completed" || pending
+                    !answering || progress.status === "completed" || pending
                   }
                   onChange={() =>
                     setAnswers((current) => ({
@@ -1506,23 +1661,42 @@ function QuizUnit({
       ) : null}
       {progress.status === "completed" ? (
         <CompletedNote />
-      ) : scored ? (
+      ) : passed ? (
         <div className="flex justify-end">
           <Button
-            disabled={pending || (payload.score ?? 0) < minimumScore}
+            disabled={pending}
             onClick={() => void patchUnit(unit, progress, "completed", payload)}
           >
-            Завершить quiz
+            Завершить квиз
             <CheckIcon aria-hidden />
+          </Button>
+        </div>
+      ) : scored && !retrying ? (
+        <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="max-w-[60ch] text-sm leading-6 text-muted-foreground">
+            Первая попытка сохранена. Повторите материал и ответьте ещё раз —
+            для разблокировки учитывается последняя попытка.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending || invalidQuestions.length > 0}
+            onClick={() => {
+              setAnswers({});
+              setResults(null);
+              setRetrying(true);
+            }}
+          >
+            Пересдать квиз
           </Button>
         </div>
       ) : (
         <div className="flex justify-end">
           <Button
-            disabled={pending || !allAnswered}
+            disabled={pending || !allAnswered || invalidQuestions.length > 0}
             onClick={() => void submit()}
           >
-            Проверить ответы
+            {retrying ? "Проверить повторно" : "Проверить ответы"}
           </Button>
         </div>
       )}

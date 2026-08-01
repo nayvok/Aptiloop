@@ -36,10 +36,14 @@ test("hydrates stored light and dark themes without an icon mismatch", async ({
     window.localStorage.setItem("theme", "dark");
   });
 
-  await page.goto("/");
+  const response = await page.goto("/");
+  expect(response?.headers()["x-frame-options"]).toBe("DENY");
+  expect(response?.headers()["content-security-policy"]).toContain(
+    "frame-ancestors 'none'",
+  );
   await expect(page.locator("html")).toHaveClass(/dark/u);
   await expect(
-    page.getByRole("button", { name: "Переключить тему" }),
+    page.getByRole("button", { name: "Включить системную тему" }),
   ).toBeVisible();
   expect(hydrationErrors).toEqual([]);
 });
@@ -64,7 +68,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
 
   await startUnit(page);
   await checkChecklist(page, 3);
-  await page.getByLabel("Цель и границы дня понятны").check();
+  await page.getByLabel("Подтверждаю: цели и границы дня понятны").check();
   const finishBriefing = page.getByRole("button", {
     name: "Завершить briefing",
   });
@@ -89,12 +93,21 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   }
 
   await startUnit(page);
-  await page
-    .getByLabel("Объяснение по памяти")
-    .fill(
-      "Binding связывает имя со значением, объект имеет identity и передаётся через ссылку; shallow copy создаёт новый внешний объект, но сохраняет вложенные ссылки.",
-    );
-  await page.getByRole("button", { name: "Сохранить первую попытку" }).click();
+  const recallAnswers = [
+    "Значение — данные, binding связывает имя со значением, а объект имеет собственную identity и передаётся через ссылку.",
+    "null задан явно, undefined означает отсутствие значения, а отсутствующее свойство проверяется через hasOwn или оператор in.",
+    "Spread копирует только внешний уровень; structuredClone не подходит для функций и некоторых специальных значений.",
+  ];
+  const recallTextareas = page.locator(
+    '[data-slot="unit-shell-content"] textarea',
+  );
+  await expect(recallTextareas).toHaveCount(recallAnswers.length);
+  for (const [index, answer] of recallAnswers.entries()) {
+    await recallTextareas.nth(index).fill(answer);
+    await page
+      .getByRole("button", { name: `Сохранить ответ ${index + 1}` })
+      .click();
+  }
   await page.getByRole("button", { name: "Завершить recall" }).click();
 
   await startUnit(page);
@@ -103,12 +116,21 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
     .fill(
       "При shallow copy меняется identity внешнего объекта, но вложенный profile остаётся общей ссылкой, поэтому его мутация видна через обе структуры.",
     );
-  await page.getByRole("button", { name: "Отправить revision" }).click();
+  await page.getByRole("button", { name: "Отправить объяснение" }).click();
   await expect(
     page.getByText(
-      "What is one concrete difference between a shallow copy and a deep copy?",
+      "В чём одно конкретное отличие поверхностного копирования (shallow copy) от глубокого (deep copy)?",
     ),
   ).toBeVisible();
+  await page
+    .getByLabel("Ответ на уточнение Teacher")
+    .fill(
+      "Shallow copy сохраняет общую ссылку на вложенный объект, а deep copy создаёт независимый вложенный объект.",
+    );
+  await page.getByRole("button", { name: "Ответить на уточнение" }).click();
+  await expect(
+    page.getByRole("button", { name: "Завершить диалог" }),
+  ).toBeEnabled();
   await page.getByRole("button", { name: "Завершить диалог" }).click();
 
   await startUnit(page);
@@ -120,7 +142,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   await expect(
     page.getByText("Серверная оценка: 75%. Порог: 75%."),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Завершить quiz" }).click();
+  await page.getByRole("button", { name: "Завершить квиз" }).click();
 
   await startUnit(page);
   await page.getByLabel("Предсказание").fill("Изменятся next и state.");
@@ -176,7 +198,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   await page.getByRole("button", { name: "Запросить review" }).click();
   await expect(
     page.getByText(
-      "The solution is close, but one edge case needs another attempt.",
+      "Решение близко, но один краевой случай требует ещё одной попытки.",
     ),
   ).toBeVisible();
   await expect(
@@ -195,7 +217,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   await page.getByRole("button", { name: "Запросить review" }).click();
   await expect(
     page.getByText(
-      "The correction cycle is complete and the tested learner change now meets the exercise contract.",
+      "Цикл исправлений завершён: протестированное изменение теперь соответствует контракту упражнения.",
     ),
   ).toBeVisible();
   await page
@@ -357,7 +379,7 @@ async function checkChecklist(
   expectedCount: number,
 ): Promise<void> {
   const checkboxes = page
-    .getByRole("group", { name: "Checklist" })
+    .getByRole("group", { name: "Что нужно сделать" })
     .getByRole("checkbox");
   await expect(checkboxes).toHaveCount(expectedCount);
   for (let index = 0; index < expectedCount; index += 1) {

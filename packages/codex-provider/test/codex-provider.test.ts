@@ -115,7 +115,7 @@ describe("CodexProvider", () => {
     });
   });
 
-  it("normalizes streamed message, tool and terminal events", async () => {
+  it("normalizes streamed messages and safe tool lifecycle events", async () => {
     const transport = new FakeTransport();
     const provider = new CodexProvider({ transport, now });
     const session = await provider.createSession({
@@ -196,6 +196,17 @@ describe("CodexProvider", () => {
       "session.completed",
     ]);
     expect(events.map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4]);
+    expect(events[0]).toMatchObject({
+      type: "tool.started",
+      toolName: "commandExecution",
+      input: { kind: "command" },
+    });
+    expect(events[2]).toMatchObject({
+      type: "tool.completed",
+      toolName: "commandExecution",
+      output: { status: "completed", exitCode: 0 },
+    });
+    expect(JSON.stringify(events)).not.toMatch(/git diff|C:\/workspace|"diff"/);
     expect(transport.startTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         approvalPolicy: "never",

@@ -52,6 +52,7 @@ describe("SQLite database", () => {
       "0002_snapshot_contract_and_hints",
       "0003_unit_evidence",
       "0004_unit_progress_compatibility",
+      "0005_test_run_diff_fingerprint",
     ]);
     expect(() =>
       connection.sqlite
