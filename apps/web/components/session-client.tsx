@@ -2,25 +2,39 @@
 
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  ArrowUpRightIcon,
   ArrowRightIcon,
   CheckIcon,
   CircleIcon,
   ClockIcon,
+  ListIcon,
   PaperPlaneTiltIcon,
   StopIcon,
 } from "@phosphor-icons/react";
 import { z } from "zod";
 
 import { api, streamAgent } from "@/lib/api";
-import { unitStatusLabels, unitTypeLabels } from "@/lib/unit-labels";
-import { DayPlan } from "@/components/day-plan";
+import {
+  activityBorderClass,
+  activityColorClass,
+  activitySurfaceClass,
+  depthLabel,
+  sourceKindLabel,
+  unitStatusLabels,
+  unitTypeLabels,
+} from "@/lib/unit-labels";
+import { DayPlanSheet } from "@/components/day-plan";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/page-header";
+import { Progress } from "@/components/ui/progress";
 import { EmptyState, QueryError } from "@/components/query-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { groupDayIntoBlocks, type LearningBlock } from "@/lib/learning-blocks";
+import { formatDuration, formatMinutesShort } from "@/lib/time";
+import { cn } from "@/lib/utils";
 
 const protectedFields = new Set([
   "referenceAnswer",
@@ -649,28 +663,43 @@ export function SessionClient() {
   const completed = session.unitProgress.filter(
     (item) => item.status === "completed",
   ).length;
-  const focusedIndex = session.snapshot.units.findIndex(
-    (unit) => unit.id === focusedUnit.id,
+
+  const blocks = groupDayIntoBlocks(
+    session.snapshot.units.map((unit) => ({
+      id: unit.id,
+      type: unit.type,
+      title: unit.title,
+      estimatedMinutes: unit.estimatedMinutes,
+    })),
+    (unit) => progressByUnit.get(unit.id)?.status ?? "locked",
   );
+  const activeBlock =
+    blocks.find(
+      (block) => block.status !== "completed" && block.totalCount > 0,
+    ) ?? null;
+  const activeBlockIndex = activeBlock ? blocks.indexOf(activeBlock) : -1;
+  const previousBlockCompleted =
+    activeBlockIndex > 0 &&
+    blocks[activeBlockIndex - 1]!.status === "completed";
+  const showBlockTransition =
+    Boolean(activeBlock) &&
+    previousBlockCompleted &&
+    focusedProgress.status === "ready" &&
+    activeBlock!.currentUnit?.id === focusedUnit.id;
 
   return (
     <div
       data-slot="guided-session"
       className="flex min-w-0 flex-col gap-4 md:gap-6"
     >
-      <PageHeader
-        title={`День ${session.snapshot.day.order}: ${session.snapshot.day.title}`}
-        description={session.snapshot.day.goal}
-        actions={
-          <Badge
-            variant={session.status === "completed" ? "success" : "outline"}
-          >
-            {completed} из {session.snapshot.units.length}
-          </Badge>
-        }
+      <SessionProgressHeader
+        session={session}
+        completed={completed}
+        blocks={blocks}
+        activeBlock={activeBlock}
+        activeBlockIndex={activeBlockIndex}
+        onContinueLater={() => router.push("/")}
       />
-
-      <DayPlan session={session} />
 
       {mutationError ? (
         <div
@@ -688,140 +717,228 @@ export function SessionClient() {
         </div>
       ) : null}
 
-      <div className="grid min-w-0 gap-4 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-6">
-        <nav
-          data-slot="unit-step-rail"
-          aria-label="Этапы занятия"
-          className="min-w-0"
+      {showBlockTransition && activeBlock ? (
+        <BlockTransition
+          block={activeBlock}
+          blockNumber={activeBlockIndex + 1}
+          previousBlocks={blocks.slice(0, activeBlockIndex)}
+          starting={pendingAction === `patch:${focusedUnit.id}`}
+          onContinue={() =>
+            void patchUnit(focusedUnit, focusedProgress, "in_progress")
+          }
+          onLater={() => router.push("/")}
+        />
+      ) : focusedProgress.status === "ready" ? (
+        <section
+          data-slot="unit-ready"
+          className="mx-auto flex w-full max-w-xl flex-col items-start gap-4 rounded-xl border border-border bg-card p-6"
         >
-          <details className="group rounded-lg border border-border bg-card md:border-0 md:bg-transparent">
-            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden">
-              <span className="min-w-0">
-                <span className="block text-sm font-medium">
-                  Шаг {focusedIndex + 1} из {session.snapshot.units.length}
-                </span>
-                <span className="block truncate text-sm text-muted-foreground">
-                  {focusedUnit.title}
-                </span>
-              </span>
-              <Badge variant="secondary">
-                {unitStatusLabels[focusedProgress.status]}
-              </Badge>
-            </summary>
-            <div className="hidden max-h-72 overflow-y-auto border-t border-border p-2 group-open:block md:block md:max-h-none md:overflow-visible md:border-0 md:p-0">
-              <UnitStepList
-                units={session.snapshot.units}
-                progressByUnit={progressByUnit}
-                focusedUnitId={focusedUnit.id}
-              />
-            </div>
-          </details>
-        </nav>
-
-        <UnitShell unit={focusedUnit} progress={focusedProgress}>
-          {focusedProgress.status === "ready" ? (
-            <div className="flex flex-col items-start gap-4">
-              <p className="max-w-[70ch] text-sm leading-6 text-muted-foreground">
-                Юнит доступен. Начало будет сохранено, поэтому после перезапуска
-                занятие продолжится с этого места.
-              </p>
-              <Button
-                disabled={pendingAction !== null}
-                onClick={() =>
-                  void patchUnit(focusedUnit, focusedProgress, "in_progress")
-                }
-              >
-                {pendingAction === `patch:${focusedUnit.id}`
-                  ? "Начинаю…"
-                  : "Начать юнит"}
-                <ArrowRightIcon aria-hidden />
-              </Button>
-            </div>
-          ) : focusedProgress.status === "locked" ? (
-            <p className="text-sm text-muted-foreground">
-              Сначала заверши предыдущий обязательный юнит.
+          <div className="flex flex-col gap-1">
+            <Badge variant="outline">{unitTypeLabels[focusedUnit.type]}</Badge>
+            <h2 className="mt-2 text-xl font-semibold">{focusedUnit.title}</h2>
+            <p className="mt-1 max-w-[60ch] text-sm leading-6 text-muted-foreground">
+              Шаг доступен. Начало будет сохранено, поэтому после перезапуска
+              занятие продолжится с этого места.
             </p>
-          ) : (
-            <UnitBody
-              session={session}
-              unit={focusedUnit}
-              progress={focusedProgress}
-              pending={pendingAction !== null}
-              patchUnit={patchUnit}
-              runAction={runAction}
-              acceptSession={acceptSession}
-              onExercise={() =>
+          </div>
+          <Button
+            disabled={pendingAction !== null}
+            onClick={() =>
+              void patchUnit(focusedUnit, focusedProgress, "in_progress")
+            }
+          >
+            {pendingAction === `patch:${focusedUnit.id}`
+              ? "Начинаю…"
+              : "Начать шаг"}
+            <ArrowRightIcon aria-hidden />
+          </Button>
+        </section>
+      ) : focusedProgress.status === "locked" ? (
+        <p className="text-sm text-muted-foreground">
+          Сначала заверши предыдущий обязательный шаг.
+        </p>
+      ) : (
+        <UnitShell unit={focusedUnit} progress={focusedProgress}>
+          <UnitBody
+            session={session}
+            unit={focusedUnit}
+            progress={focusedProgress}
+            pending={pendingAction !== null}
+            patchUnit={patchUnit}
+            runAction={runAction}
+            acceptSession={acceptSession}
+            onExercise={() =>
+              router.push(
+                `/exercise?sessionId=${encodeURIComponent(session.id)}`,
+              )
+            }
+            onInterview={() => {
+              const payload = focusedProgress.payload;
+              const interviewId =
+                payload.type === "interview"
+                  ? payload.interviewSessionId
+                  : null;
+              if (interviewId) {
+                router.push(`/interview?id=${encodeURIComponent(interviewId)}`);
+              } else {
                 router.push(
-                  `/exercise?sessionId=${encodeURIComponent(session.id)}`,
-                )
+                  `/interview?sessionId=${encodeURIComponent(session.id)}`,
+                );
               }
-              onInterview={() => {
-                const payload = focusedProgress.payload;
-                const interviewId =
-                  payload.type === "interview"
-                    ? payload.interviewSessionId
-                    : null;
-                if (interviewId) {
-                  router.push(
-                    `/interview?id=${encodeURIComponent(interviewId)}`,
-                  );
-                } else {
-                  router.push(
-                    `/interview?sessionId=${encodeURIComponent(session.id)}`,
-                  );
-                }
-              }}
-            />
-          )}
+            }}
+          />
         </UnitShell>
-      </div>
+      )}
     </div>
   );
 }
 
-function UnitStepList({
-  units,
-  progressByUnit,
-  focusedUnitId,
+function SessionProgressHeader({
+  session,
+  completed,
+  blocks,
+  activeBlock,
+  activeBlockIndex,
+  onContinueLater,
 }: {
-  units: LearnerSession["snapshot"]["units"];
-  progressByUnit: Map<string, LearnerSession["unitProgress"][number]>;
-  focusedUnitId: string;
+  session: LearnerSession;
+  completed: number;
+  blocks: LearningBlock[];
+  activeBlock: LearningBlock | null;
+  activeBlockIndex: number;
+  onContinueLater: () => void;
 }) {
+  const { day } = session.snapshot;
+  const total = session.snapshot.units.length;
+  const overall = total ? Math.round((completed / total) * 100) : 0;
   return (
-    <ol className="flex flex-col gap-2">
-      {units.map((unit) => {
-        const progress = progressByUnit.get(unit.id);
-        const status = progress?.status ?? "locked";
-        const current = unit.id === focusedUnitId;
-        return (
-          <li
-            key={unit.id}
-            data-slot="unit-step"
-            data-status={status}
-            aria-current={current ? "step" : undefined}
-            className={`flex min-w-0 items-start gap-2 rounded-md border p-3 text-sm ${
-              current
-                ? "border-primary bg-accent"
-                : "border-border bg-background"
-            }`}
-          >
-            <span
-              className={`grid size-6 shrink-0 place-items-center rounded-full border text-xs ${status === "completed" ? "border-success bg-success text-success-foreground" : "border-border"}`}
-            >
-              {status === "completed" ? <CheckIcon aria-hidden /> : unit.order}
-            </span>
-            <span className="flex min-w-0 flex-col gap-1">
-              <span className="block font-medium leading-5">{unit.title}</span>
-              <span className="block text-xs text-muted-foreground">
-                {unitTypeLabels[unit.type]} · {unit.estimatedMinutes} мин ·{" "}
-                {unitStatusLabels[status]}
-              </span>
-            </span>
-          </li>
-        );
-      })}
-    </ol>
+    <header
+      data-slot="session-progress-header"
+      className="sticky top-0 z-30 -mx-4 border-b border-border bg-background/95 px-4 py-3 backdrop-blur md:-mx-6 md:px-6"
+    >
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            День {day.order} · {day.title}
+          </p>
+          <p className="truncate text-sm font-semibold">
+            {activeBlock ? (
+              <>
+                Блок {activeBlockIndex + 1} из 3 · {activeBlock.label} · Шаг{" "}
+                {activeBlock.currentStepIndex ?? activeBlock.totalCount} из{" "}
+                {activeBlock.totalCount}
+              </>
+            ) : (
+              "День завершён"
+            )}
+          </p>
+        </div>
+        {activeBlock ? (
+          <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+            <ClockIcon aria-hidden className="size-4" />
+            Осталось в блоке: {formatDuration(activeBlock.remainingMinutes)}
+          </span>
+        ) : null}
+        <DayPlanSheet
+          session={session}
+          trigger={
+            <Button type="button" variant="outline" size="sm">
+              <ListIcon aria-hidden className="size-4" />
+              План дня
+            </Button>
+          }
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onContinueLater}
+        >
+          Продолжить позже
+        </Button>
+      </div>
+      <Progress
+        aria-label="Прогресс дня"
+        value={overall}
+        className="mt-2 h-1.5"
+      />
+    </header>
+  );
+}
+
+function BlockTransition({
+  block,
+  blockNumber,
+  previousBlocks,
+  starting,
+  onContinue,
+  onLater,
+}: {
+  block: LearningBlock;
+  blockNumber: number;
+  previousBlocks: LearningBlock[];
+  starting: boolean;
+  onContinue: () => void;
+  onLater: () => void;
+}) {
+  const covered = previousBlocks.flatMap((previous) =>
+    previous.units.map((unit) => unit.title),
+  );
+  return (
+    <section
+      data-slot="block-transition"
+      aria-labelledby="block-transition-title"
+      className="mx-auto flex w-full max-w-xl flex-col gap-5 rounded-xl border border-border bg-card p-6 md:p-8"
+    >
+      <div className="text-center">
+        <p className="text-sm text-muted-foreground">
+          Блок {blockNumber - 1} из 3 завершён
+        </p>
+        <h2 id="block-transition-title" className="mt-1 text-xl font-semibold">
+          Переходим к блоку «{block.label}»
+        </h2>
+      </div>
+      {covered.length ? (
+        <div className="flex flex-col gap-1.5 text-sm leading-6">
+          <p className="font-medium">Ты разобрал:</p>
+          <ul className="flex flex-col gap-1 text-muted-foreground">
+            {covered.map((title) => (
+              <li key={title} className="flex items-start gap-2">
+                <CheckIcon
+                  aria-hidden
+                  className="relative top-1 size-3 shrink-0 text-success"
+                />
+                {title}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div
+        className={cn(
+          "flex flex-col gap-1 rounded-lg border p-4",
+          activityBorderClass(block.units[0]?.type ?? "study"),
+        )}
+      >
+        <p className="text-sm font-medium">Следующий блок</p>
+        <p className="text-sm text-muted-foreground">
+          {block.label} · {block.totalCount} шагов ·{" "}
+          {formatDuration(block.remainingMinutes)}
+        </p>
+      </div>
+      <div className="flex flex-col justify-center gap-2 sm:flex-row">
+        <Button disabled={starting} onClick={onContinue}>
+          {starting ? "Начинаю…" : "Продолжить сейчас"}
+          <ArrowRightIcon aria-hidden />
+        </Button>
+        <Button variant="outline" onClick={onLater}>
+          Вернуться позже
+        </Button>
+      </div>
+      <p className="text-center text-xs text-muted-foreground">
+        Прогресс уже сохранён — занятие продолжится с этого блока.
+      </p>
+    </section>
   );
 }
 
@@ -971,69 +1088,156 @@ function Checklist({
   );
 }
 
-function BriefingUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
-  const payload =
-    progress.payload.type === "briefing"
-      ? progress.payload
-      : { type: "briefing" as const, acknowledged: false, checkedItemIds: [] };
-  const [acknowledged, setAcknowledged] = useState(payload.acknowledged);
-  const [checked, setChecked] = useState(payload.checkedItemIds);
-  const required = unit.checklist
-    .filter((item) => item.required)
-    .map((item) => item.id);
-  const complete = progress.status === "completed";
-  const canComplete =
-    acknowledged && required.every((id) => checked.includes(id));
+function BriefingSection({
+  title,
+  items,
+  empty,
+}: {
+  title: string;
+  items: readonly string[];
+  empty: string;
+}) {
   return (
-    <div className="flex flex-col gap-6">
-      <InfoList title="Результат дня" items={unit.objectives} />
-      {unit.payload.type === "briefing" &&
-      (unit.payload.outOfScope ?? []).length ? (
-        <InfoList title="Вне занятия" items={unit.payload.outOfScope} />
-      ) : null}
-      <Checklist
-        items={unit.checklist}
-        checked={checked}
-        disabled={complete || pending}
-        onToggle={(id) =>
-          setChecked((current) =>
-            current.includes(id)
-              ? current.filter((item) => item !== id)
-              : [...current, id],
-          )
-        }
-      />
-      <label className="flex min-h-11 items-center gap-2 text-sm font-medium">
-        <input
-          type="checkbox"
-          checked={acknowledged}
-          disabled={complete || pending}
-          onChange={(event) => setAcknowledged(event.target.checked)}
-          className="size-4 accent-primary"
-        />
-        Подтверждаю: цели и границы дня понятны
-      </label>
-      {!complete ? (
-        <div className="flex justify-end">
-          <Button
-            disabled={!canComplete || pending}
-            onClick={() =>
-              void patchUnit(unit, progress, "completed", {
-                type: "briefing",
-                acknowledged,
-                checkedItemIds: checked,
-              })
-            }
-          >
-            Завершить briefing
-            <CheckIcon aria-hidden />
-          </Button>
-        </div>
+    <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+      <h3 className="text-sm font-medium">{title}</h3>
+      {items.length ? (
+        <ul className="flex flex-col gap-1.5 text-sm leading-6 text-muted-foreground">
+          {items.map((item) => (
+            <li key={item} className="flex gap-2">
+              <CircleIcon
+                aria-hidden
+                weight="fill"
+                className="size-1.5 shrink-0 self-center text-primary"
+              />
+              {item}
+            </li>
+          ))}
+        </ul>
       ) : (
-        <CompletedNote />
+        <p className="text-sm leading-6 text-muted-foreground">{empty}</p>
       )}
     </div>
   );
+}
+
+function BriefingUnitImpl({
+  session,
+  unit,
+  progress,
+  pending,
+  patchUnit,
+}: UnitBodyProps) {
+  const router = useRouter();
+  const day = session.snapshot.day;
+  const progressByUnit = new Map(
+    session.unitProgress.map((item) => [item.unitId, item]),
+  );
+  const blocks = groupDayIntoBlocks(
+    session.snapshot.units.map((candidate) => ({
+      id: candidate.id,
+      type: candidate.type,
+      title: candidate.title,
+      estimatedMinutes: candidate.estimatedMinutes,
+    })),
+    (candidate) => progressByUnit.get(candidate.id)?.status ?? "locked",
+  );
+  const outOfScope =
+    unit.payload.type === "briefing" ? unit.payload.outOfScope : day.outOfScope;
+  const complete = progress.status === "completed";
+
+  function finish() {
+    void patchUnit(unit, progress, "completed", {
+      type: "briefing",
+      acknowledged: true,
+      checkedItemIds: unit.checklist.map((item) => item.id),
+    });
+  }
+
+  return (
+    <div data-slot="briefing" className="flex flex-col gap-6">
+      <div className="grid gap-4 md:grid-cols-2">
+        <BriefingSection
+          title="Сегодня разберём"
+          items={day.topics}
+          empty="Темы появятся в плане дня."
+        />
+        <BriefingSection
+          title="После занятия сможешь"
+          items={day.expectedOutcomes}
+          empty="Результаты появятся в плане дня."
+        />
+        <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+          <h3 className="text-sm font-medium">Уровень</h3>
+          <p className="text-lg font-semibold">{depthLabel(day.depthLevel)}</p>
+          <p className="text-sm leading-6 text-muted-foreground">
+            Понять механизм, объяснить своими словами, увидеть типичные ошибки и
+            написать небольшой код.
+          </p>
+        </div>
+        <BriefingSection
+          title="Не углубляемся"
+          items={outOfScope}
+          empty="Границы дня описаны в плане."
+        />
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+        <h3 className="text-sm font-medium">План</h3>
+        <ol className="flex flex-col gap-1.5 text-sm">
+          {blocks
+            .filter((block) => block.totalCount > 0)
+            .map((block, index) => (
+              <li key={block.id} className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    "grid size-6 shrink-0 place-items-center rounded-md text-xs font-semibold",
+                    activitySurfaceClass(block.units[0]?.type ?? "study"),
+                    activityColorClass(block.units[0]?.type ?? "study"),
+                  )}
+                >
+                  {index + 1}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{block.label}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {block.totalCount} шагов ·{" "}
+                  {formatMinutesShort(block.estimatedMinutes)}
+                </span>
+              </li>
+            ))}
+        </ol>
+      </div>
+
+      <Sources unit={unit} />
+
+      {complete ? (
+        <CompletedNote />
+      ) : (
+        <div className="flex flex-col items-start gap-3 rounded-lg bg-muted/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="max-w-[55ch] text-sm leading-6 text-muted-foreground">
+            Ничего отмечать не нужно — один клик, и можно переходить к
+            материалам.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.push("/interview")}
+            >
+              Пройти диагностику без изучения
+            </Button>
+            <Button disabled={pending} onClick={finish}>
+              {pending ? "Открываю…" : "Перейти к изучению"}
+              <ArrowRightIcon aria-hidden />
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BriefingUnit(props: UnitBodyProps) {
+  return <BriefingUnitImpl {...props} />;
 }
 
 function StudyUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
@@ -1104,7 +1308,7 @@ function StudyUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
               void patchUnit(unit, progress, "completed", nextPayload)
             }
           >
-            Завершить study
+            Завершить изучение
             <CheckIcon aria-hidden />
           </Button>
         </div>
@@ -1257,7 +1461,7 @@ function RecallUnit({
               void patchUnit(unit, progress, "completed", completionPayload)
             }
           >
-            Завершить recall
+            Завершить воспроизведение
             <CheckIcon aria-hidden />
           </Button>
         </div>
@@ -1679,7 +1883,7 @@ function QuizUnit({
             disabled={pending}
             onClick={() => void patchUnit(unit, progress, "completed", payload)}
           >
-            Завершить квиз
+            Завершить проверку
             <CheckIcon aria-hidden />
           </Button>
         </div>
@@ -1808,7 +2012,7 @@ function CodeReadingUnit({
             disabled={pending}
             onClick={() => void patchUnit(unit, progress, "completed", payload)}
           >
-            Завершить code reading
+            Завершить чтение кода
             <CheckIcon aria-hidden />
           </Button>
         </div>
@@ -1840,7 +2044,9 @@ function ExerciseHandoffUnit({ unit, progress, onExercise }: UnitBodyProps) {
     <div className="flex flex-col gap-6">
       <InfoList
         title={
-          unit.type === "review" ? "Условия review" : "Acceptance criteria"
+          unit.type === "review"
+            ? "Условия проверки решения"
+            : "Критерии приёмки"
         }
         items={criteria}
       />
@@ -1857,7 +2063,7 @@ function ExerciseHandoffUnit({ unit, progress, onExercise }: UnitBodyProps) {
         <div className="flex justify-end">
           <Button onClick={onExercise}>
             {unit.type === "review"
-              ? "Открыть read-only Review"
+              ? "Открыть проверку решения"
               : "Открыть практику"}
             <ArrowRightIcon aria-hidden />
           </Button>
@@ -1904,7 +2110,7 @@ function InterviewUnit({
                 })
               }
             >
-              Завершить юнит
+              Завершить шаг
               <CheckIcon aria-hidden />
             </Button>
           </div>
@@ -2126,32 +2332,77 @@ function SpacedReviewUnit({ unit, progress }: UnitBodyProps) {
 }
 
 function Sources({ unit }: { unit: LearnerUnit }) {
-  if (!unit.sources.length) return null;
+  if (!unit.sources.length) {
+    return (
+      <div
+        data-slot="unit-sources"
+        className="flex flex-col gap-3 rounded-lg border border-dashed border-border p-4"
+      >
+        <div className="flex flex-col gap-1">
+          <h3 className="text-sm font-medium">Источники</h3>
+          <p className="text-sm leading-6 text-muted-foreground">
+            Для этого шага источник ещё не назначен.
+          </p>
+        </div>
+        <p className="text-sm leading-6 text-muted-foreground">
+          Используй свой источник: открой его рядом и отметь пункты чек-листа,
+          когда найдёшь ответы.
+        </p>
+        <div>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/settings/curriculum">Открыть редактор программы</Link>
+          </Button>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div data-slot="unit-sources" className="flex flex-col gap-2">
+    <div data-slot="unit-sources" className="flex flex-col gap-3">
       <h3 className="text-sm font-medium">Источники</h3>
-      <ul className="flex flex-col gap-2">
+      <ul className="grid gap-3 md:grid-cols-2">
         {unit.sources.map((source) => (
-          <li key={source.id} className="text-sm leading-6">
+          <li
+            key={source.id}
+            data-slot="source-card"
+            className="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
+          >
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-medium leading-5">{source.title}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {sourceKindLabel(source.kind)} ·{" "}
+                  {formatMinutesShort(source.estimatedMinutes)}
+                </p>
+              </div>
+              <Badge variant={source.required ? "default" : "outline"}>
+                {source.required ? "Основной" : "Дополнительный"}
+              </Badge>
+            </div>
+            {source.learningGoal ? (
+              <div className="flex flex-col gap-1">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Обрати внимание
+                </p>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  {source.learningGoal}
+                </p>
+              </div>
+            ) : null}
+            {source.description ? (
+              <p className="text-sm leading-6 text-muted-foreground">
+                {source.description}
+              </p>
+            ) : null}
             {source.url ? (
               <a
                 href={source.url}
                 target="_blank"
                 rel="noreferrer"
-                className="font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {source.title}
+                Открыть материал
+                <ArrowUpRightIcon aria-hidden className="size-4" />
               </a>
-            ) : (
-              <span className="font-medium">{source.title}</span>
-            )}
-            <span className="text-muted-foreground">
-              {" "}
-              · {source.estimatedMinutes} мин
-              {source.required ? " · обязательно" : ""}
-            </span>
-            {source.learningGoal ? (
-              <p className="text-muted-foreground">{source.learningGoal}</p>
             ) : null}
           </li>
         ))}
@@ -2191,7 +2442,7 @@ function CompletedNote() {
   return (
     <p className="inline-flex items-center gap-2 text-sm font-medium text-success">
       <CheckIcon aria-hidden />
-      Юнит завершён и сохранён
+      Шаг завершён и сохранён
     </p>
   );
 }

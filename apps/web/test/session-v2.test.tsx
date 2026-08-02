@@ -433,6 +433,31 @@ function makeSummaryResponse(
   };
 }
 
+function makeMultiSession(
+  entries: Array<{ type: UnitType; status: UnitStatus }>,
+): SessionFixture {
+  const first = entries[0];
+  if (!first) throw new Error("Multi-session fixture needs at least one unit");
+  const base = makeSession(first.type, first.status);
+  return {
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      units: entries.map((entry) => makeUnit(entry.type)),
+    },
+    unitProgress: entries.map((entry) => ({
+      unitId: `unit-${entry.type}`,
+      unitType: entry.type,
+      status: entry.status,
+      payload: progressPayload(entry.type),
+      startedAt: entry.status === "ready" ? null : now,
+      completedAt: entry.status === "completed" ? now : null,
+      skippedAt: null,
+      updatedAt: now,
+    })),
+  };
+}
+
 function renderWithQuery(children: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -463,34 +488,43 @@ afterEach(() => {
 });
 
 describe("guided versioned session", () => {
-  it("shows the collapsible day plan with unique labels above the rail", async () => {
+  it("keeps the active unit in focus and shows the day plan only in the drawer", async () => {
     apiMock.mockResolvedValue({ session: makeSession("briefing") });
     renderWithQuery(<SessionClient />);
 
-    expect(await screen.findByText("План дня")).toBeVisible();
-    const plan = document.querySelector('[data-slot="day-plan"]');
-    expect(plan).toHaveTextContent("Цель");
+    const trigger = await screen.findByRole("button", { name: /План дня/u });
+    expect(trigger).toBeVisible();
+    // План не вытесняет активную работу: drawer закрыт, unit в фокусе.
+    expect(document.querySelector('[data-slot="day-plan-sheet"]')).toBeNull();
+    expect(screen.getByText("Брифинг")).toBeInTheDocument();
+    expect(screen.queryByText("Цель")).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    await screen.findByRole("dialog");
+    const plan = document.querySelector('[data-slot="day-plan-sheet"]');
+    expect(plan).toHaveTextContent("Учебные блоки");
     expect(plan).toHaveTextContent("Построить точную причинную модель");
     expect(plan).toHaveTextContent("Темы");
     expect(plan).toHaveTextContent("Ожидаемые результаты");
     expect(plan).toHaveTextContent("Вне дня");
-    expect(plan).toHaveTextContent("Юниты");
-    expect(plan).toHaveTextContent("Брифинг · 10 мин");
-    expect(plan).not.toHaveTextContent("Что нужно сделать");
-    expect(plan).not.toHaveTextContent("Начать юнит");
-    expect(screen.getAllByText("Что нужно сделать")).toHaveLength(1);
+    expect(plan).toHaveTextContent("Брифинг");
   });
 
-  it("enriches the unit rail with Russian type, minutes and status", async () => {
+  it("shows the compact progress header with block, step, time and continue-later", async () => {
     apiMock.mockResolvedValue({ session: makeSession("briefing", "ready") });
     renderWithQuery(<SessionClient />);
 
-    await screen.findByText("План дня");
-    const steps = document.querySelectorAll('[data-slot="unit-step"]');
-    expect(steps).toHaveLength(1);
-    expect(steps[0]).toHaveTextContent("Брифинг");
-    expect(steps[0]).toHaveTextContent("10 мин");
-    expect(steps[0]).toHaveTextContent("Доступно");
+    await screen.findByRole("button", { name: /Начать шаг/u });
+    const header = document.querySelector(
+      '[data-slot="session-progress-header"]',
+    );
+    expect(header).toHaveTextContent("День 1 · Значения, типы и объекты");
+    expect(header).toHaveTextContent("Блок 1 из 3 · Изучение");
+    expect(header).toHaveTextContent("Шаг 1 из 1");
+    expect(header).toHaveTextContent("Осталось в блоке:");
+
+    fireEvent.click(screen.getByRole("button", { name: "Продолжить позже" }));
+    expect(pushMock).toHaveBeenCalledWith("/");
   });
 
   it("opens a new interview from its unit with a return session id", async () => {
@@ -522,7 +556,7 @@ describe("guided versioned session", () => {
     );
     expect(pushMock).toHaveBeenCalledWith("/interview?id=interview-1");
 
-    fireEvent.click(screen.getByRole("button", { name: "Завершить юнит" }));
+    fireEvent.click(screen.getByRole("button", { name: "Завершить шаг" }));
     await vi.waitFor(() => {
       expect(apiMock).toHaveBeenLastCalledWith(
         "/learning/sessions/v2/session-v2/units/unit-interview",
@@ -537,7 +571,7 @@ describe("guided versioned session", () => {
       );
     });
     expect(
-      await screen.findByText("Юнит завершён и сохранён"),
+      await screen.findByText("Шаг завершён и сохранён"),
     ).toBeInTheDocument();
   });
 
@@ -554,7 +588,7 @@ describe("guided versioned session", () => {
     expect(pushMock).toHaveBeenCalledWith("/");
   });
 
-  it("starts a ready unit and completes briefing only after acknowledgement and required checklist", async () => {
+  it("completes briefing with one click, without mandatory checkboxes", async () => {
     const ready = makeSession("briefing", "ready");
     const active = replaceProgress(
       ready,
@@ -564,7 +598,7 @@ describe("guided versioned session", () => {
     const completePayload = {
       type: "briefing" as const,
       acknowledged: true,
-      checkedItemIds: ["briefing-required"],
+      checkedItemIds: ["briefing-required", "briefing-optional"],
     };
     const completed = replaceProgress(active, "completed", completePayload);
     apiMock
@@ -573,16 +607,18 @@ describe("guided versioned session", () => {
       .mockResolvedValueOnce({ session: completed });
     renderWithQuery(<SessionClient />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Начать юнит" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Начать шаг" }));
+    expect(await screen.findByText("Сегодня разберём")).toBeInTheDocument();
+    expect(screen.getByText("После занятия сможешь")).toBeInTheDocument();
+    expect(screen.getByText("Уровень")).toBeInTheDocument();
+    expect(screen.getByText("Не углубляемся")).toBeInTheDocument();
+    expect(screen.getByText("План")).toBeInTheDocument();
     expect(
-      await screen.findByLabelText("Подтверждаю: цели и границы дня понятны"),
-    ).toBeEnabled();
-    const finish = screen.getByRole("button", { name: /Завершить briefing/u });
-    expect(finish).toBeDisabled();
-    fireEvent.click(screen.getByLabelText(/Обязательный пункт/u));
-    fireEvent.click(
-      screen.getByLabelText("Подтверждаю: цели и границы дня понятны"),
-    );
+      screen.queryByLabelText("Подтверждаю: цели и границы дня понятны"),
+    ).not.toBeInTheDocument();
+    const finish = screen.getByRole("button", {
+      name: "Перейти к изучению",
+    });
     expect(finish).toBeEnabled();
     fireEvent.click(finish);
 
@@ -600,8 +636,107 @@ describe("guided versioned session", () => {
       );
     });
     expect(
-      await screen.findByText("Юнит завершён и сохранён"),
+      await screen.findByText("Шаг завершён и сохранён"),
     ).toBeInTheDocument();
+  });
+
+  it("shows a block transition after finishing the previous block", async () => {
+    const session = makeMultiSession([
+      { type: "study", status: "completed" },
+      { type: "recall", status: "ready" },
+    ]);
+    apiMock.mockResolvedValue({ session });
+    renderWithQuery(<SessionClient />);
+
+    expect(await screen.findByText("Блок 1 из 3 завершён")).toBeVisible();
+    expect(
+      screen.getByText(/Переходим к блоку «Проверка понимания»/u),
+    ).toBeVisible();
+    expect(screen.getByText("Ты разобрал:")).toBeVisible();
+    expect(screen.getByText("Юнит study")).toBeVisible();
+    expect(screen.getByText(/Проверка понимания · 1 шаг/u)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Продолжить сейчас" }),
+    ).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Вернуться позже" }));
+    expect(pushMock).toHaveBeenCalledWith("/");
+    expect(apiMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts the next block from the transition screen", async () => {
+    const session = makeMultiSession([
+      { type: "study", status: "completed" },
+      { type: "recall", status: "ready" },
+    ]);
+    const active = {
+      ...session,
+      unitProgress: session.unitProgress.map((item) =>
+        item.unitId === "unit-recall"
+          ? { ...item, status: "in_progress" as const, startedAt: now }
+          : item,
+      ),
+    };
+    apiMock
+      .mockResolvedValueOnce({ session })
+      .mockResolvedValueOnce({ session: active });
+    renderWithQuery(<SessionClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Продолжить сейчас" }),
+    );
+
+    await vi.waitFor(() => {
+      expect(apiMock).toHaveBeenLastCalledWith(
+        "/learning/sessions/v2/session-v2/units/unit-recall",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "in_progress",
+            payload: progressPayload("recall"),
+            operationId: "operation-1",
+          }),
+        }),
+      );
+    });
+    expect(await screen.findByText(/Чем binding отличается/u)).toBeVisible();
+  });
+
+  it("renders study source cards with kind, time and learning goal", async () => {
+    apiMock.mockResolvedValue({ session: makeSession("study") });
+    renderWithQuery(<SessionClient />);
+
+    const cards = await vi.waitFor(() => {
+      const found = document.querySelectorAll('[data-slot="source-card"]');
+      expect(found).toHaveLength(1);
+      return found;
+    });
+    expect(cards[0]).toHaveTextContent("MDN: JavaScript data types");
+    expect(cards[0]).toHaveTextContent("Документация · 12 мин");
+    expect(cards[0]).toHaveTextContent("Основной");
+    expect(cards[0]).toHaveTextContent("Разделить binding и value");
+    const link = cards[0]!.querySelector("a");
+    expect(link!).not.toBeNull();
+    expect(link!).toHaveAttribute(
+      "href",
+      "https://developer.mozilla.org/docs/Web/JavaScript/Data_structures",
+    );
+    expect(link!).toHaveTextContent("Открыть материал");
+  });
+
+  it("shows an honest empty source state with next actions", async () => {
+    const session = makeSession("study");
+    session.snapshot.units[0]!.sources = [];
+    apiMock.mockResolvedValue({ session });
+    renderWithQuery(<SessionClient />);
+
+    expect(
+      await screen.findByText("Для этого шага источник ещё не назначен."),
+    ).toBeVisible();
+    expect(screen.getByText(/Используй свой источник/u)).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Открыть редактор программы" }),
+    ).toHaveAttribute("href", "/settings/curriculum");
   });
 
   it("persists study notes with same-status PATCH and gates completion on required checklist", async () => {
@@ -618,7 +753,7 @@ describe("guided versioned session", () => {
     renderWithQuery(<SessionClient />);
 
     const complete = await screen.findByRole("button", {
-      name: /Завершить study/u,
+      name: /Завершить изучение/u,
     });
     expect(complete).toBeDisabled();
     fireEvent.click(screen.getByLabelText(/Обязательный пункт/u));
@@ -708,7 +843,7 @@ describe("guided versioned session", () => {
       ).toBeDisabled(),
     );
     expect(
-      screen.queryByRole("button", { name: /Завершить recall/u }),
+      screen.queryByRole("button", { name: /Завершить воспроизведение/u }),
     ).not.toBeInTheDocument();
     await vi.waitFor(() =>
       expect(
@@ -737,7 +872,7 @@ describe("guided versioned session", () => {
       ]);
     });
     expect(
-      await screen.findByRole("button", { name: /Завершить recall/u }),
+      await screen.findByRole("button", { name: /Завершить воспроизведение/u }),
     ).toBeEnabled();
   });
 
@@ -769,7 +904,7 @@ describe("guided versioned session", () => {
       screen.getByLabelText(/Почему присваивание не меняет исходный binding/u),
     ).toBeEnabled();
     expect(
-      screen.queryByRole("button", { name: /Завершить recall/u }),
+      screen.queryByRole("button", { name: /Завершить воспроизведение/u }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/Сохранено ответов: 1 из 2/u)).toBeInTheDocument();
   });
@@ -994,7 +1129,7 @@ describe("guided versioned session", () => {
       await screen.findByText("Серверная оценка: 100%. Порог: 75%."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Завершить квиз" }),
+      screen.getByRole("button", { name: "Завершить проверку" }),
     ).toBeEnabled();
     expect(apiMock).toHaveBeenLastCalledWith(
       "/learning/sessions/v2/session-v2/units/unit-quiz/quiz-attempts",
@@ -1073,7 +1208,7 @@ describe("guided versioned session", () => {
     apiMock.mockResolvedValue({ session: makeSession("exercise") });
     renderWithQuery(<SessionClient />);
 
-    const shell = await screen.findByText("Acceptance criteria");
+    const shell = await screen.findByText("Критерии приёмки");
     expect(
       within(shell.parentElement!).getByText("Не мутировать input"),
     ).toBeInTheDocument();

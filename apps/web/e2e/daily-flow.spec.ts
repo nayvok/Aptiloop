@@ -60,31 +60,28 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.getByText("0 из 81 юнитов завершено")).toBeVisible();
-  await page.getByRole("button", { name: "Начать занятие" }).click();
+  await expect(page.getByText("0 из 81 шагов пройдено")).toBeVisible();
+  await page.getByRole("button", { name: "Начать обучение" }).click();
   await expect(page).toHaveURL(/\/session\?id=/u);
   const sessionId = new URL(page.url()).searchParams.get("id");
   if (!sessionId) throw new Error("Session ID is missing from the guided flow");
 
-  await expect(page.getByText("План дня", { exact: true })).toBeVisible();
+  // Активный unit в фокусе; план дня открывается в drawer.
+  await expect(page.getByRole("button", { name: "План дня" })).toBeVisible();
+  await page.getByRole("button", { name: "План дня" }).click();
+  await expect(page.getByText("Учебные блоки")).toBeVisible();
   await expect(page.getByText("Темы", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Ожидаемые результаты", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Вне дня", { exact: true })).toBeVisible();
-  await expect(page.getByText("Юниты", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Брифинг · 6 мин", { exact: true }),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "Закрыть" }).click();
 
   await startUnit(page);
-  await checkChecklist(page, 3);
-  await page.getByLabel("Подтверждаю: цели и границы дня понятны").check();
-  const finishBriefing = page.getByRole("button", {
-    name: "Завершить briefing",
-  });
-  await expect(finishBriefing).toBeEnabled();
-  await finishBriefing.click();
+  await expect(page.getByText("Сегодня разберём")).toBeVisible();
+  await expect(page.getByText("После занятия сможешь")).toBeVisible();
+  await expect(page.getByText("Уровень")).toBeVisible();
+  await page.getByRole("button", { name: "Перейти к изучению" }).click();
 
   for (const [note, checklistCount] of [
     ["Примитив — значение, binding — связь имени со значением.", 3],
@@ -98,12 +95,20 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
     await startUnit(page);
     await checkChecklist(page, checklistCount);
     await page.getByLabel("Заметки").fill(note);
-    const finishStudy = page.getByRole("button", { name: "Завершить study" });
+    const finishStudy = page.getByRole("button", {
+      name: "Завершить изучение",
+    });
     await expect(finishStudy).toBeEnabled();
     await finishStudy.click();
   }
 
-  await startUnit(page);
+  // Переход между блоками: Изучение завершён → Проверка понимания.
+  await expect(page.getByText("Блок 1 из 3 завершён")).toBeVisible();
+  await expect(
+    page.getByText(/Переходим к блоку «Проверка понимания»/u),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Продолжить сейчас" }).click();
+
   const recallAnswers = [
     "Значение — данные, binding связывает имя со значением, а объект имеет собственную identity и передаётся через ссылку.",
     "null задан явно, undefined означает отсутствие значения, а отсутствующее свойство проверяется через hasOwn или оператор in.",
@@ -119,7 +124,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
       .getByRole("button", { name: `Сохранить ответ ${index + 1}` })
       .click();
   }
-  await page.getByRole("button", { name: "Завершить recall" }).click();
+  await page.getByRole("button", { name: "Завершить воспроизведение" }).click();
 
   await startUnit(page);
   await page
@@ -153,7 +158,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   await expect(
     page.getByText("Серверная оценка: 75%. Порог: 75%."),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Завершить квиз" }).click();
+  await page.getByRole("button", { name: "Завершить проверку" }).click();
 
   await startUnit(page);
   await page.getByLabel("Предсказание").fill("Изменятся next и state.");
@@ -164,9 +169,12 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
     .getByLabel("Исправление словами")
     .fill("Скопировать profile отдельно перед изменением name.");
   await page.getByRole("button", { name: "Сохранить разбор" }).click();
-  await page.getByRole("button", { name: "Завершить code reading" }).click();
+  await page.getByRole("button", { name: "Завершить чтение кода" }).click();
 
-  await startUnit(page);
+  // Переход между блоками: Проверка понимания завершена → Практика.
+  await expect(page.getByText("Блок 2 из 3 завершён")).toBeVisible();
+  await expect(page.getByText(/Переходим к блоку «Практика»/u)).toBeVisible();
+  await page.getByRole("button", { name: "Продолжить сейчас" }).click();
   await page.getByRole("button", { name: "Открыть практику" }).click();
   await expect(page).toHaveURL(/\/exercise\?sessionId=/u);
   await page.getByRole("button", { name: "Создать попытку" }).click();
@@ -242,7 +250,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
     page.getByRole("button", { name: "Завершить день" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Завершить день" }).click();
-  await expect(page.getByText("Юнит завершён и сохранён")).toBeVisible();
+  await expect(page.getByText("Шаг завершён и сохранён")).toBeVisible();
 
   await page.getByRole("link", { name: "Карта знаний" }).click();
   await expect(page.getByText("primitive values")).toBeVisible();
@@ -256,11 +264,11 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   ).toBeVisible();
 
   await page.goto("/");
-  const dayTwo = page.getByRole("article", {
-    name: "Scope, функции и замыкания",
-  });
   await expect(
-    dayTwo.getByRole("button", { name: "Начать занятие" }),
+    page.getByText(/День 2 · Scope, функции и замыкания/u),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Начать обучение" }),
   ).toBeVisible();
 });
 
@@ -270,7 +278,7 @@ test("publishes a curriculum graph and keeps an active session on its original r
 }) => {
   test.setTimeout(120_000);
   await page.goto("/settings/curriculum");
-  await page.getByText("Новая отдельная программа").click();
+  await page.getByText("Создать новую редакцию").click();
   await page.getByLabel("ID программы").fill("e2e-curriculum");
   await page.getByLabel("Slug").fill("a-e2e-curriculum");
   await page.getByLabel("Название программы").fill("E2E Curriculum");
@@ -312,8 +320,8 @@ test("publishes a curriculum graph and keeps an active session on its original r
   await expect(
     page.getByRole("heading", { name: "E2E Curriculum", exact: true }),
   ).toBeVisible();
-  const e2eDay = page.getByRole("article", { name: "E2E Day" });
-  await e2eDay.getByRole("button", { name: "Начать занятие" }).click();
+  await expect(page.getByText(/День 1 · E2E Day/u)).toBeVisible();
+  await page.getByRole("button", { name: "Начать обучение" }).click();
   await expect(page).toHaveURL(/\/session\?id=/u);
 
   const currentBefore = await currentLearningSession(request);
@@ -321,14 +329,7 @@ test("publishes a curriculum graph and keeps an active session on its original r
   const capturedVersionId = currentBefore.snapshot.curriculumVersionId;
 
   await page.goto("/settings/curriculum");
-  const publishedRevision = page.getByRole("button", {
-    name: /r1 · E2E Revision/u,
-  });
-  await publishedRevision.click();
-  await publishedRevision
-    .locator("..")
-    .getByRole("button", { name: "Клонировать в черновик" })
-    .click();
+  await page.getByRole("button", { name: "Клонировать в черновик" }).click();
   await expect(
     page.getByRole("heading", {
       name: "E2E Revision — новая редакция",
@@ -383,7 +384,7 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
 });
 
 async function startUnit(page: Page): Promise<void> {
-  const button = page.getByRole("button", { name: "Начать юнит" });
+  const button = page.getByRole("button", { name: "Начать шаг" });
   await expect(button).toBeVisible();
   await button.click();
   await expect(button).toBeHidden();
