@@ -396,7 +396,7 @@ function makeSummaryResponse(
       sessionId: session.id,
       occurredAt: now,
       masteryEvidence: [],
-      strengths: ["Тесты и read-only review пройдены"],
+      strengths: ["Тесты и проверка решения пройдены"],
       gaps: ["Точнее объяснять shallow copy"],
       mistakeCandidates: [
         {
@@ -413,7 +413,7 @@ function makeSummaryResponse(
           sourceFingerprint: "mistake-shallow-copy",
         },
       ],
-      narrative: "День завершён на основе сохранённого evidence.",
+      narrative: "День завершён на основе сохранённых подтверждений навыка.",
       metrics: {
         topicCount: 1,
         evidenceCount: 6,
@@ -997,7 +997,7 @@ describe("guided versioned session", () => {
     const followUp =
       "Потому что оба binding хранят одну и ту же ссылку на объект.";
     fireEvent.change(
-      await screen.findByLabelText("Ответ на уточнение Teacher"),
+      await screen.findByLabelText("Ответ на уточнение преподавателя"),
       { target: { value: followUp } },
     );
     fireEvent.click(
@@ -1236,7 +1236,9 @@ describe("guided versioned session", () => {
       await screen.findByRole("button", { name: "Сформировать итог" }),
     );
     expect(
-      await screen.findByText("День завершён на основе сохранённого evidence."),
+      await screen.findByText(
+        "День завершён на основе сохранённых подтверждений навыка.",
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText("50%")).toBeInTheDocument();
     expect(
@@ -1288,7 +1290,9 @@ describe("guided versioned session", () => {
     const { container } = renderWithQuery(<SessionClient />);
 
     expect(
-      await screen.findByText("День завершён на основе сохранённого evidence."),
+      await screen.findByText(
+        "День завершён на основе сохранённых подтверждений навыка.",
+      ),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Сформировать итог" }),

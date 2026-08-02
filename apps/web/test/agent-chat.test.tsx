@@ -89,7 +89,9 @@ describe("AgentChat", () => {
       "true",
     );
     expect(
-      screen.getByText(/Reviewer работает только с зафиксированным diff/u),
+      screen.getByText(
+        /Проверка решения работает только с зафиксированным diff/u,
+      ),
     ).toBeInTheDocument();
   });
 

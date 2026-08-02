@@ -157,7 +157,7 @@ describe("deriveDaySummary", () => {
 
     expect(summary.masteryEvidence).toEqual([]);
     expect(summary.metrics.evidenceCount).toBe(0);
-    expect(summary.narrative).toContain("пока нет evidence");
+    expect(summary.narrative).toContain("пока нет подтверждений навыка");
   });
 
   it("produces stable IDs, ordering, mistakes, and flashcards", () => {

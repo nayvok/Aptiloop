@@ -233,7 +233,7 @@ const day1Units = [
     stableId: "w1d1-u01-briefing",
     type: "briefing",
     order: 1,
-    title: "Briefing: значения, типы и объекты",
+    title: "Брифинг: значения, типы и объекты",
     description:
       "Уточнить границы дня, критерии успеха и ожидаемую глубину ответа.",
     estimatedMinutes: 8,
@@ -384,9 +384,9 @@ const day1Units = [
     stableId: "w1d1-u06-recall",
     type: "recall",
     order: 6,
-    title: "Recall без подсказок",
+    title: "Воспроизведение по памяти без подсказок",
     description:
-      "Сначала сохранить собственное объяснение; reference и hints до первой попытки закрыты.",
+      "Сначала сохрани собственное объяснение; эталон и подсказки закрыты до первой попытки.",
     estimatedMinutes: 18,
     previousUnitStableId: "w1d1-u05-equality-copy",
     objectives: ["Воспроизвести причинную модель по памяти"],
@@ -398,7 +398,7 @@ const day1Units = [
     criteria: [
       completion(
         "w1d1-u06-c1",
-        "Сохранены ответы минимум на три recall-вопроса до Teacher turn",
+        "Сохранены ответы минимум на три вопроса воспроизведения до хода преподавателя",
         "written-attempt",
         3,
       ),
@@ -408,21 +408,21 @@ const day1Units = [
     stableId: "w1d1-u07-teacher-dialogue",
     type: "teacher-dialogue",
     order: 7,
-    title: "Teacher Dialogue",
+    title: "Разбор с преподавателем",
     description:
-      "Teacher задаёт один уточняющий вопрос за ход; пользователь делает минимум одну revision.",
+      "Преподаватель задаёт один уточняющий вопрос за ход; пользователь делает минимум одну правку.",
     estimatedMinutes: 15,
     previousUnitStableId: "w1d1-u06-recall",
     objectives: ["Уточнить слабое место собственного объяснения"],
     checklist: [
-      "Ответить на один follow-up",
+      "Ответить на одно уточнение",
       "Переписать исходное объяснение точнее",
     ],
-    misconceptions: ["Просить Teacher сразу дать эталон"],
+    misconceptions: ["Просить преподавателя сразу дать эталон"],
     criteria: [
       completion(
         "w1d1-u07-c1",
-        "Сохранена минимум одна самостоятельная revision после follow-up",
+        "Сохранена минимум одна самостоятельная правка после уточнения",
         "dialogue-revision",
         1,
       ),
@@ -432,7 +432,7 @@ const day1Units = [
     stableId: "w1d1-u08-quiz",
     type: "quiz",
     order: 8,
-    title: "Короткий quiz",
+    title: "Короткая проверка",
     description: "Четыре независимые проверки различий и edge cases.",
     estimatedMinutes: 12,
     previousUnitStableId: "w1d1-u07-teacher-dialogue",
@@ -451,7 +451,7 @@ const day1Units = [
     stableId: "w1d1-u09-code-reading",
     type: "code-reading",
     order: 9,
-    title: "Code Reading: общая вложенная ссылка",
+    title: "Чтение кода: общая вложенная ссылка",
     description:
       "До запуска предсказать результат, объяснить механизм и предложить verbal fix.",
     estimatedMinutes: 15,
@@ -538,9 +538,9 @@ const day1Units = [
     stableId: "w1d1-u11-review",
     type: "review",
     order: 11,
-    title: "Read-only Review",
+    title: "Проверка решения",
     description:
-      "Reviewer видит brief, acceptance criteria, настоящий diff и последний test run, но не имеет write/apply tools.",
+      "Проверка решения видит brief, критерии приёмки, настоящий diff и последний test run, но не имеет write/apply tools.",
     estimatedMinutes: 15,
     previousUnitStableId: "w1d1-u10-exercise",
     objectives: [
@@ -548,13 +548,13 @@ const day1Units = [
     ],
     checklist: [
       "Проверить diff",
-      "Получить review",
+      "Получить проверку решения",
       "При changes requested исправить в Zed и перезапустить tests",
     ],
     criteria: [
       completion(
         "w1d1-u11-c1",
-        "Последний review accepted и required tests проходят",
+        "Последняя проверка принята и обязательные тесты проходят",
         "accepted-review",
         1,
       ),
@@ -564,21 +564,21 @@ const day1Units = [
     stableId: "w1d1-u12-summary",
     type: "summary",
     order: 12,
-    title: "Summary и следующий шаг",
+    title: "Итоги дня и следующий шаг",
     description:
-      "Зафиксировать mastery evidence, misconceptions, flashcard candidates и следующий доступный unit.",
+      "Зафиксировать подтверждения навыка, ошибочные представления, кандидатов карточек и следующий доступный шаг.",
     estimatedMinutes: 8,
     previousUnitStableId: "w1d1-u11-review",
     objectives: ["Назвать один сильный навык, один пробел и план повторения"],
     checklist: [
-      "Просмотреть mastery delta",
+      "Просмотреть изменения мастерства",
       "Подтвердить ошибки",
       "Проверить кандидаты карточек",
     ],
     criteria: [
       completion(
         "w1d1-u12-c1",
-        "Summary evidence сохранён одним commit",
+        "Итоги дня сохранены одним commit",
         "summary-commit",
         1,
       ),
@@ -598,7 +598,7 @@ const day1 = {
   estimatedMinutes: 195,
   prerequisites: [],
   expectedOutcomes: [
-    "Объяснить value/binding/object на interview-ready уровне",
+    "Объяснить value/binding/object на уровне для собеседования",
     "Предсказать equality и mutation edge cases",
     "Обновить вложенный объект без мутации",
     "Обосновать shallow/deep copy",
@@ -621,9 +621,9 @@ const day1 = {
     "spread делает deep copy",
   ],
   completionCriteria: [
-    "Все 12 required units завершены по evidence",
-    "Quiz score не ниже 75%",
-    "Tests проходят и review accepted",
+    "Все 12 обязательных шагов завершены с подтверждениями навыка",
+    "Оценка короткой проверки не ниже 75%",
+    "Тесты проходят и проверка решения принята",
   ],
   units: day1Units,
 } as const satisfies VersionedCurriculumDay;
@@ -711,7 +711,7 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
   add("briefing", {
     type: "briefing",
     title: `Briefing: ${input.title}`,
-    description: `${input.goal} Глубина: interview-ready.`,
+    description: `${input.goal} Глубина: для собеседования.`,
     estimatedMinutes: 8,
     objectives: [input.goal],
     checklist: [
@@ -751,9 +751,9 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
 
   add("recall", {
     type: "recall",
-    title: "Recall без источников",
+    title: "Воспроизведение по памяти без источников",
     description:
-      "Сохранить первую самостоятельную попытку до Teacher и любых reference materials.",
+      "Сохрани первую самостоятельную попытку до разбора с преподавателем и любых справочных материалов.",
     estimatedMinutes: 18,
     objectives: ["Воспроизвести ключевые механизмы по памяти"],
     questions: input.recall.map((seed, index) =>
@@ -768,7 +768,7 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
     criteria: [
       completion(
         `${prefix}-recall-c1`,
-        "Сохранены три first-attempt ответа",
+        "Сохранены три первых самостоятельных ответа",
         "written-attempt",
         3,
       ),
@@ -777,16 +777,16 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
 
   add("teacher-dialogue", {
     type: "teacher-dialogue",
-    title: "Teacher Dialogue",
+    title: "Разбор с преподавателем",
     description:
-      "Один follow-up за ход и минимум одна revision собственного ответа.",
+      "Одно уточнение за ход и минимум одна правка собственного ответа.",
     estimatedMinutes: 15,
     objectives: ["Устранить один конкретный пробел в объяснении"],
-    checklist: ["Ответить на follow-up", "Сохранить revision"],
+    checklist: ["Ответить на уточнение", "Сохранить правку"],
     criteria: [
       completion(
         `${prefix}-dialogue-c1`,
-        "Сохранена revision после Teacher follow-up",
+        "Сохранена правка после уточнения преподавателя",
         "dialogue-revision",
         1,
       ),
@@ -795,7 +795,7 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
 
   add("quiz", {
     type: "quiz",
-    title: "Quiz: точность и границы",
+    title: "Проверка: точность и границы",
     description: "Четыре коротких вопроса; каждая попытка и score сохраняются.",
     estimatedMinutes: 12,
     objectives: ["Проверить точность без развёрнутой подсказки"],
@@ -819,7 +819,7 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
 
   add("code-reading", {
     type: "code-reading",
-    title: "Code Reading",
+    title: "Чтение кода",
     description:
       "До запуска сохранить prediction, causal explanation и verbal fix.",
     estimatedMinutes: 15,
@@ -881,20 +881,20 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
 
   add("review", {
     type: "review",
-    title: "Read-only Review и correction cycle",
+    title: "Проверка решения и цикл исправлений",
     description:
-      "Review основан на настоящих diff/tests; исправления пользователь вносит сам.",
+      "Проверка решения основана на настоящих diff/tests; исправления пользователь вносит сам.",
     estimatedMinutes: 15,
     objectives: ["Исправить замечания и подтвердить новым diff/test run"],
     checklist: [
-      "Получить review",
+      "Получить проверку решения",
       "Исправить changes requested",
       "Повторить tests",
     ],
     criteria: [
       completion(
         `${prefix}-review-c1`,
-        "Последний review accepted и tests проходят",
+        "Последняя проверка принята и тесты проходят",
         "accepted-review",
         1,
       ),
@@ -904,16 +904,16 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
   if (input.includeInterview === true) {
     add("checkpoint", {
       type: "checkpoint",
-      title: "Integration checkpoint",
+      title: "Интеграционная контрольная точка",
       description:
-        "Проверить, что mixed recall, quiz, code reading и приложение завершены до интервью.",
+        "Проверить, что воспроизведение, короткая проверка, чтение кода и приложение завершены до интервью.",
       estimatedMinutes: 5,
-      objectives: ["Подтвердить готовность к итоговому interview"],
-      checklist: ["Проверить evidence предыдущих units"],
+      objectives: ["Подтвердить готовность к итоговому интервью"],
+      checklist: ["Проверить подтверждения навыка предыдущих шагов"],
       criteria: [
         completion(
           `${prefix}-checkpoint-c1`,
-          "Checkpoint подтверждён",
+          "Контрольная точка подтверждена",
           "acknowledgement",
         ),
       ],
@@ -922,17 +922,17 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
       type: "interview",
       title: "Техническое интервью недели",
       description:
-        "Отдельный последовательный workflow: один вопрос за раз, reference скрыт.",
+        "Отдельный последовательный процесс: один вопрос за раз, эталон скрыт.",
       estimatedMinutes: 25,
       objectives: ["Связно объяснить смешанные темы недели"],
       checklist: [
         "Ответить минимум на три вопроса",
-        "Завершить validated report",
+        "Завершить подтверждённый отчёт",
       ],
       criteria: [
         completion(
           `${prefix}-interview-c1`,
-          "Interview report сохранён",
+          "Отчёт интервью сохранён",
           "written-attempt",
           3,
         ),
@@ -942,28 +942,28 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
 
   add("summary", {
     type: "summary",
-    title: input.includeInterview === true ? "Weekly Summary" : "Summary",
+    title: input.includeInterview === true ? "Итоги недели" : "Итоги дня",
     description:
-      "Сохранить mastery evidence, ошибки, flashcard candidates и следующий шаг.",
+      "Сохранить подтверждения навыка, ошибки, кандидатов карточек и следующий шаг.",
     estimatedMinutes: 10,
     objectives: ["Зафиксировать результат и план повторения"],
     checklist:
       input.includeInterview === true
         ? [
-            "Проверить mastery update",
+            "Проверить обновление мастерства",
             "Подтвердить mistake journal",
             "Проверить flashcards",
             "Зафиксировать план следующей недели",
           ]
         : [
-            "Проверить mastery delta",
+            "Проверить изменения мастерства",
             "Подтвердить ошибки",
             "Проверить flashcards",
           ],
     criteria: [
       completion(
         `${prefix}-summary-c1`,
-        "Summary evidence сохранён",
+        "Итоги дня сохранены",
         "summary-commit",
         1,
       ),
@@ -990,8 +990,8 @@ const createStandardDay = (input: StandardDayInput): VersionedCurriculumDay => {
     misconceptions: input.misconceptions,
     completionCriteria: [
       "Все required units завершены",
-      "Quiz score не ниже 75%",
-      "Практика имеет passing tests и accepted review",
+      "Оценка короткой проверки не ниже 75%",
+      "Практика имеет проходящие тесты и принятую проверку решения",
     ],
     units,
   };
@@ -1849,17 +1849,17 @@ const day6 = createStandardDay({
 const day7 = createStandardDay({
   dayNumber: 7,
   slug: "integration-checkpoint",
-  title: "Integration checkpoint",
+  title: "Интеграционная контрольная точка",
   description:
     "Связать JS, TypeScript и React в одном самостоятельном объяснении и небольшом приложении.",
-  goal: "Доказать перенос знаний: mixed recall, quiz, code reading, приложение и отдельное техническое интервью.",
+  goal: "Доказать перенос знаний: воспроизведение, короткая проверка, чтение кода, приложение и отдельное техническое интервью.",
   prerequisites: ["w1d6-effects-refs-server-state"],
   outcomes: [
     "Связать runtime JS и static TS",
     "Объяснить React render/effect boundary",
     "Реализовать мини-приложение с unknown boundary",
-    "Пройти последовательное interview",
-    "Зафиксировать mastery/mistakes/cards/next-week plan",
+    "Пройти последовательное интервью",
+    "Зафиксировать мастерство, ошибки, карточки и план следующей недели",
   ],
   outOfScope: [
     "новые framework APIs",
@@ -1867,23 +1867,23 @@ const day7 = createStandardDay({
     "архитектурный deep dive",
   ],
   topics: [
-    "mixed JS recall",
+    "смешанное воспроизведение по памяти на JS",
     "TypeScript boundary",
     "React state/effects",
-    "code reading",
-    "integration app",
-    "technical interview",
-    "weekly evidence",
+    "чтение кода",
+    "интеграционное приложение",
+    "техническое интервью",
+    "еженедельные подтверждения навыка",
   ],
   misconceptions: [
     "знать термин означает уметь применить",
     "passing happy path достаточно",
-    "AI review заменяет собственную проверку",
+    "Автопроверка заменяет собственную проверку",
   ],
   studies: [
     {
       slug: "spaced-review",
-      title: "Spaced review: JS и async",
+      title: "Интервальное повторение: JS и async",
       topics: ["values/closures", "event loop", "ошибки и отмена"],
       source: mdnEventLoop,
     },
@@ -2063,7 +2063,7 @@ export const foundationWeekV2 = {
   order: 1,
   title: "Неделя 1. JavaScript, TypeScript и React: восстановление фундамента",
   description:
-    "Семь дней active recall, guided dialogue, code reading и самостоятельной практики в Zed.",
+    "Семь дней активного воспроизведения, диалогов с преподавателем, чтения кода и самостоятельной практики в Zed.",
   status: "published",
   days: [day1, day2, day3, day4, day5, day6, day7],
 } as const;
@@ -2076,7 +2076,7 @@ export const publishedCurriculumV2 = {
   status: "published",
   title: "JavaScript, TypeScript и React: восстановление фундамента",
   description:
-    "Опубликованный versioned curriculum для восстановления самостоятельного объяснения, code reading и написания кода без AI-генерации решения.",
+    "Пошаговая программа для восстановления самостоятельного объяснения, чтения кода и написания кода без AI-генерации решения.",
   contentHash:
     "718cdc33e674ce54093d5e5d4bc09686141ea41dec5d26e39c5775f2aa0576e6",
   createdAt: "2026-07-31T00:00:00.000Z",

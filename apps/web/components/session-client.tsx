@@ -1548,7 +1548,7 @@ function TeacherDialogueUnit({
     if (!text || streaming) return;
     setProviderError(null);
     setStreaming(true);
-    setStreamStatus("Teacher формулирует уточнение…");
+    setStreamStatus("Преподаватель формулирует уточнение…");
     const controller = new AbortController();
     abortRef.current = controller;
     const userMessage = {
@@ -1588,10 +1588,10 @@ function TeacherDialogueUnit({
           );
         }
         if (event.type === "error")
-          throw new Error(event.message ?? "Teacher не ответил");
+          throw new Error(event.message ?? "Преподаватель не ответил");
       }
       if (!assistantContent.trim())
-        throw new Error("Teacher вернул пустой ответ");
+        throw new Error("Преподаватель вернул пустой ответ");
       const nextPayload = {
         ...payload,
         turnCount: payload.turnCount + 1,
@@ -1605,17 +1605,17 @@ function TeacherDialogueUnit({
       );
       if (updated) await acceptSession(updated);
       setRevision("");
-      setStreamStatus("Ответ Teacher получен");
+      setStreamStatus("Ответ преподавателя получен");
       await queryClient.invalidateQueries({
         queryKey: ["agent-history", "teacher", session.id],
         refetchType: "none",
       });
     } catch (error) {
       if (controller.signal.aborted) {
-        setStreamStatus("Ответ Teacher остановлен");
+        setStreamStatus("Ответ преподавателя остановлен");
       } else {
         setProviderError(errorMessage(error));
-        setStreamStatus("Teacher недоступен");
+        setStreamStatus("Преподаватель недоступен");
       }
     } finally {
       setStreaming(false);
@@ -1625,7 +1625,7 @@ function TeacherDialogueUnit({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1 rounded-md border border-border bg-background p-3 text-sm leading-6">
-        <p className="font-medium">Задача Teacher</p>
+        <p className="font-medium">Задача преподавателя</p>
         <p className="text-muted-foreground">{opening}</p>
       </div>
       {history.isPending && !localMessages ? (
@@ -1638,7 +1638,7 @@ function TeacherDialogueUnit({
       ) : (
         <ol
           data-slot="teacher-transcript"
-          aria-label="История диалога с Teacher"
+          aria-label="История диалога с преподавателем"
           className="flex max-h-96 flex-col gap-2 overflow-y-auto"
         >
           {messages.length ? (
@@ -1648,15 +1648,15 @@ function TeacherDialogueUnit({
                 className={`flex max-w-[90%] flex-col gap-1 rounded-md p-3 text-sm leading-6 ${message.role === "user" ? "self-end bg-primary text-primary-foreground" : "bg-muted"}`}
               >
                 <span className="block text-xs font-medium">
-                  {message.role === "user" ? "Ты" : "Teacher"}
+                  {message.role === "user" ? "Ты" : "Преподаватель"}
                 </span>
                 {message.content || "…"}
               </li>
             ))
           ) : (
             <li className="text-sm text-muted-foreground">
-              История пуста. Отправь уточнённое объяснение — Teacher ответит без
-              раскрытия эталона.
+              История пуста. Отправь уточнённое объяснение — преподаватель
+              ответит без раскрытия эталона.
             </li>
           )}
         </ol>
@@ -1689,7 +1689,7 @@ function TeacherDialogueUnit({
               htmlFor={`teacher-revision-${unit.id}`}
             >
               {answeringFollowUp
-                ? "Ответ на уточнение Teacher"
+                ? "Ответ на уточнение преподавателя"
                 : "Уточнённое объяснение"}
               <textarea
                 id={`teacher-revision-${unit.id}`}
@@ -1699,8 +1699,8 @@ function TeacherDialogueUnit({
                 onChange={(event) => setRevision(event.target.value)}
                 placeholder={
                   answeringFollowUp
-                    ? "Ответь на последний вопрос Teacher своими словами…"
-                    : "Перепиши механизм точнее — Teacher задаст уточняющий вопрос…"
+                    ? "Ответь на последний вопрос преподавателя своими словами…"
+                    : "Перепиши механизм точнее — преподаватель задаст уточняющий вопрос…"
                 }
                 className="min-h-28 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
@@ -1713,7 +1713,7 @@ function TeacherDialogueUnit({
                 onClick={() => abortRef.current?.abort()}
               >
                 <StopIcon aria-hidden />
-                Остановить Teacher
+                Остановить преподавателя
               </Button>
             ) : canComplete ? (
               <Button
@@ -2194,7 +2194,7 @@ function SummaryUnit({
               value={`${Math.round(result.summary.metrics.quizScore * 100)}%`}
             />
             <SummaryMetric
-              label="Evidence"
+              label="Подтверждения навыка"
               value={String(result.summary.metrics.evidenceCount)}
             />
             <SummaryMetric
@@ -2208,7 +2208,7 @@ function SummaryUnit({
               items={
                 result.summary.strengths.length
                   ? result.summary.strengths
-                  : ["Пока недостаточно подтверждённого evidence"]
+                  : ["Пока недостаточно подтверждений навыка"]
               }
             />
             <InfoList
@@ -2258,8 +2258,9 @@ function SummaryUnit({
             {pending ? "Формирую итог…" : "Сформировать итог"}
           </Button>
           <p className="text-xs text-muted-foreground">
-            Итог строится только из сохранённых ответов, тестов и read-only
-            review. Браузер не выставляет mastery и не придумывает evidence.
+            Итог строится только из сохранённых ответов, тестов и проверки
+            решения. Браузер не выставляет оценку мастерства и не придумывает
+            подтверждения навыка.
           </p>
         </div>
       )}
@@ -2317,8 +2318,8 @@ function SpacedReviewUnit({ unit, progress }: UnitBodyProps) {
         <InfoList title="Темы повторения" items={unit.payload.topicIds} />
       ) : null}
       <p className="text-sm text-muted-foreground">
-        Повторение будет доступно в Practice после появления серверного
-        evidence.
+        Повторение будет доступно в Практике после появления серверных
+        подтверждений навыка.
       </p>
       {progress.status === "completed" ? (
         <CompletedNote />

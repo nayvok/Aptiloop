@@ -197,7 +197,7 @@ describe("restart-safe v2 practice", () => {
     apiMock.mockResolvedValue(exerciseState({ testStatus: "failed" }));
     const failed = renderWithQuery(<ExerciseClient />);
     expect(
-      await screen.findByRole("button", { name: "Запросить review" }),
+      await screen.findByRole("button", { name: "Запросить проверку" }),
     ).toBeDisabled();
     expect(screen.getByText("Тесты не прошли")).toBeInTheDocument();
     failed.unmount();
@@ -207,7 +207,7 @@ describe("restart-safe v2 practice", () => {
     );
     renderWithQuery(<ExerciseClient />);
     expect(
-      await screen.findByRole("button", { name: "Запросить review" }),
+      await screen.findByRole("button", { name: "Запросить проверку" }),
     ).toBeDisabled();
     expect(screen.getByText("Код изменён после теста")).toBeInTheDocument();
   });
@@ -257,25 +257,25 @@ describe("restart-safe v2 practice", () => {
     renderWithQuery(<ExerciseClient />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Запросить review" }),
+      await screen.findByRole("button", { name: "Запросить проверку" }),
     );
     expect(await screen.findByText("Исправьте empty case")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Принять review и продолжить" }),
+      screen.queryByRole("button", { name: "Принять проверку и продолжить" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Запросить review" }),
+      screen.getByRole("button", { name: "Запросить проверку" }),
     ).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Запустить тесты" }));
     expect(
       await screen.findByText("+ corrected learner change"),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Запросить review" }));
+    fireEvent.click(screen.getByRole("button", { name: "Запросить проверку" }));
     expect(await screen.findByText("Исправление принято")).toBeInTheDocument();
     expect(reviews).toBe(2);
     expect(
-      screen.getByRole("button", { name: "Принять review и продолжить" }),
+      screen.getByRole("button", { name: "Принять проверку и продолжить" }),
     ).toBeEnabled();
   });
 
@@ -301,7 +301,7 @@ describe("restart-safe v2 practice", () => {
     renderWithQuery(<ExerciseClient />);
     fireEvent.click(
       await screen.findByRole("button", {
-        name: "Принять review и продолжить",
+        name: "Принять проверку и продолжить",
       }),
     );
 

@@ -269,7 +269,7 @@ export function DashboardClient() {
     return (
       <EmptyState
         title="Учебный маршрут ещё не опубликован"
-        description="Опубликуй активную версию curriculum, чтобы начать занятие."
+        description="Опубликуй программу в редакторе, чтобы начать занятие."
       />
     );
   }

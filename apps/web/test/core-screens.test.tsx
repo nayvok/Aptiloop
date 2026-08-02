@@ -183,7 +183,7 @@ describe("core learning screens", () => {
     expect(screen.getByText(/all tests passed/u)).toBeInTheDocument();
     expect(screen.getByText("Проверь пустой массив")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Запросить review" }),
+      screen.getByRole("button", { name: "Запросить проверку" }),
     ).toBeDisabled();
   });
 });

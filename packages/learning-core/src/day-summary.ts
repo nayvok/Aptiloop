@@ -216,11 +216,11 @@ function buildStrengths(
   }
   if (input.exerciseTestsPassed && input.reviewStatus === "passed") {
     strengths.push(
-      "Реализация прошла разрешённые проверки и read-only review.",
+      "Реализация прошла разрешённые проверки и проверку решения.",
     );
   }
   if (input.correctionCycleCount > 0 && input.reviewStatus === "passed") {
-    strengths.push("Замечания review устранены в цикле исправлений.");
+    strengths.push("Замечания проверки решения устранены в цикле исправлений.");
   }
   return strengths;
 }
@@ -231,11 +231,13 @@ function buildGaps(
 ): string[] {
   const gaps: string[] = [];
   if (input.recallAttempted) {
-    gaps.push("Recall выполнен, но его корректность отдельно не подтверждена.");
+    gaps.push(
+      "Воспроизведение по памяти выполнено, но его корректность отдельно не подтверждена.",
+    );
   }
   if (input.teacherRevision) {
     gaps.push(
-      "Объяснение уточнено после Teacher, но остаётся частичным evidence.",
+      "Объяснение уточнено после преподавателя, но остаётся частичным подтверждением навыка.",
     );
   }
   if (quizOutcome !== "correct") {
@@ -247,22 +249,24 @@ function buildGaps(
   }
   if (input.codeReadingAttempted) {
     gaps.push(
-      "Code reading выполнен, но без отдельной проверки корректности засчитан частично.",
+      "Чтение кода выполнено, но без отдельной проверки корректности засчитано частично.",
     );
   }
   if (!input.exerciseTestsPassed || input.reviewStatus !== "passed") {
-    gaps.push("Реализация ещё не подтверждена одновременно тестами и review.");
+    gaps.push(
+      "Реализация ещё не подтверждена одновременно тестами и проверкой решения.",
+    );
   }
   if (input.reviewStatus === "changes_requested") {
     gaps.push(
-      "Review запросил изменения; нужен новый цикл исправления и проверки.",
+      "Проверка решения запросила изменения; нужен новый цикл исправления и проверки.",
     );
   } else if (
     input.reviewStatus === "passed" &&
     input.correctionCycleCount === 0
   ) {
     gaps.push(
-      "Отдельное evidence по debugging пока не подтверждено исправлением.",
+      "Отдельное подтверждение навыка по debugging пока не подтверждено исправлением.",
     );
   }
   return gaps;
@@ -285,7 +289,7 @@ function buildMistakeCandidates(
     ...quizMistakes,
     {
       fingerprint: `mistake-review-${fingerprint(input.sessionId)}`,
-      summary: "Read-only review запросил изменения в реализации.",
+      summary: "Проверка решения запросила изменения в реализации.",
       correction:
         "Исправить замечания во внешнем редакторе, повторить разрешённые тесты и review.",
       sourceId: input.sessionId,
@@ -321,10 +325,10 @@ function buildMetrics(
 
 function buildNarrative(metrics: DaySummaryMetrics): string {
   if (metrics.evidenceCount === 0) {
-    return "По занятию пока нет evidence: темы для оценки не определены.";
+    return "По занятию пока нет подтверждений навыка: темы для оценки не определены.";
   }
   return [
-    `Собрано evidence: ${metrics.evidenceCount}.`,
+    `Собрано подтверждений навыка: ${metrics.evidenceCount}.`,
     `Подтверждено: ${metrics.correctEvidenceCount}.`,
     `Частично: ${metrics.partialEvidenceCount}.`,
     `Требует работы: ${metrics.incorrectEvidenceCount}.`,

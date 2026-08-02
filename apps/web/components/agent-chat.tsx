@@ -296,7 +296,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
                   </p>
                   <p className="mt-2 text-sm leading-6 text-muted-foreground">
                     Агент не будет писать практическое решение вместо тебя.
-                    Reviewer работает только с зафиксированным diff.
+                    Проверка решения работает только с зафиксированным diff.
                   </p>
                 </div>
               ) : (

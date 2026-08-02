@@ -6,7 +6,7 @@ export default function ChatPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Агентная учебная комната"
-        description="Переключай роль осознанно: Teacher проверяет понимание, Reviewer читает diff, Interviewer задаёт вопросы, Curator собирает доказательства прогресса."
+        description="Переключай роль осознанно: Преподаватель проверяет понимание, Проверка решения читает diff, Интервьюер задаёт вопросы, Итоги и повторение собирают подтверждения прогресса."
       />
       <AgentChat />
     </div>

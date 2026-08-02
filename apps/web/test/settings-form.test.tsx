@@ -146,19 +146,19 @@ describe("SettingsForm", () => {
     );
     fireEvent.click(screen.getByText("Расширенные настройки"));
 
-    const reviewer = screen.getByRole("group", { name: "Reviewer" });
+    const reviewer = screen.getByRole("group", { name: "Проверка решения" });
     expect(within(reviewer).getByLabelText("Провайдер")).toHaveValue("codex");
     expect(within(reviewer).getByLabelText("Модель")).toHaveValue(
       "codex-model",
     );
-    const interviewer = screen.getByRole("group", { name: "Interviewer" });
+    const interviewer = screen.getByRole("group", { name: "Интервьюер" });
     expect(within(interviewer).getByLabelText("Провайдер")).toHaveValue(
       "codex",
     );
-    const expert = screen.getByRole("group", { name: "Codex Expert" });
+    const expert = screen.getByRole("group", { name: "Эксперт" });
     expect(within(expert).getByLabelText("Провайдер")).toHaveValue("codex");
     expect(within(expert).getByLabelText("Модель")).toHaveValue("codex-model");
-    const teacher = screen.getByRole("group", { name: "Teacher" });
+    const teacher = screen.getByRole("group", { name: "Преподаватель" });
     expect(within(teacher).getByLabelText("Провайдер")).toHaveValue("opencode");
     expect(within(teacher).getByLabelText("Модель")).toHaveValue("oc-model");
 
@@ -213,12 +213,12 @@ describe("SettingsForm", () => {
     expect(
       await screen.findByText(/Профиль применён частично/u),
     ).toBeInTheDocument();
-    const teacher = screen.getByRole("group", { name: "Teacher" });
+    const teacher = screen.getByRole("group", { name: "Преподаватель" });
     expect(within(teacher).getByLabelText("Провайдер")).toHaveValue("mock");
     expect(within(teacher).getByLabelText("Модель")).toHaveValue(
       "mock-deterministic",
     );
-    const expert = screen.getByRole("group", { name: "Codex Expert" });
+    const expert = screen.getByRole("group", { name: "Эксперт" });
     expect(within(expert).getByLabelText("Провайдер")).toHaveValue("codex");
   });
 });

@@ -396,7 +396,9 @@ export function ExerciseClient() {
         test.status !== "passed" ||
         !test.workspaceCurrent
       ) {
-        throw new Error("Серверные evidence для завершения ещё не готовы");
+        throw new Error(
+          "Серверные подтверждения навыка для завершения ещё не готовы",
+        );
       }
 
       const exerciseStatus = exercise.exerciseUnitProgress?.status;
@@ -521,10 +523,10 @@ export function ExerciseClient() {
           : !latestTest.workspaceCurrent
             ? "Код изменился после теста — запустите тесты повторно."
             : !review
-              ? "Тесты прошли. Теперь запросите read-only review."
+              ? "Тесты прошли. Теперь запросите проверку решения."
               : review.status === "changes_requested"
-                ? "Примените замечания самостоятельно и повторите diff → тесты → review."
-                : "Review принят — сохраните evidence и вернитесь к занятию.";
+                ? "Примените замечания самостоятельно и повторите diff → тесты → проверку решения."
+                : "Проверка решения принята — сохраните подтверждения навыка и вернитесь к занятию.";
   const error =
     attempt.error ??
     loadDiff.error ??
@@ -698,7 +700,9 @@ export function ExerciseClient() {
                 onClick={() => runReview.mutate()}
               >
                 <FlaskIcon aria-hidden />
-                {runReview.isPending ? "Reviewer читает…" : "Запросить review"}
+                {runReview.isPending
+                  ? "Проверка читает…"
+                  : "Запросить проверку"}
               </Button>
             </div>
             <div className="grid min-h-72 gap-px bg-border lg:grid-cols-2">
@@ -751,7 +755,7 @@ export function ExerciseClient() {
           </div>
         </section>
 
-        <aside className="flex flex-col gap-4" aria-label="Review и темы">
+        <aside className="flex flex-col gap-4" aria-label="Проверка и темы">
           <div
             data-slot="exercise-topics"
             className="rounded-xl border border-border bg-card p-6"
@@ -829,8 +833,8 @@ export function ExerciseClient() {
               disabled={acceptReview.isPending}
             >
               {acceptReview.isPending
-                ? "Сохраняю evidence…"
-                : "Принять review и продолжить"}
+                ? "Сохраняю подтверждения навыка…"
+                : "Принять проверку и продолжить"}
             </Button>
           ) : null}
           {review?.status === "changes_requested" ? (

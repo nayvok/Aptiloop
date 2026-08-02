@@ -53,8 +53,8 @@ export function KnowledgeClient() {
       >
         <h3 className="font-semibold">Пока нет подтверждённых знаний</h3>
         <p className="max-w-[70ch] text-sm leading-6 text-muted-foreground">
-          Заверши первое занятие: карта появится после сохранения evidence из
-          нескольких типов заданий.
+          Заверши первое занятие: карта появится после сохранения подтверждений
+          навыка из нескольких типов заданий.
         </p>
       </div>
     );
@@ -78,7 +78,7 @@ export function KnowledgeClient() {
                 {label}
               </th>
             ))}
-            <th className="p-3 font-medium">Evidence</th>
+            <th className="p-3 font-medium">Подтверждения навыка</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">

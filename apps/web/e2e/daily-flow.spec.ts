@@ -139,7 +139,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
     ),
   ).toBeVisible();
   await page
-    .getByLabel("Ответ на уточнение Teacher")
+    .getByLabel("Ответ на уточнение преподавателя")
     .fill(
       "Shallow copy сохраняет общую ссылку на вложенный объект, а deep copy создаёт независимый вложенный объект.",
     );
@@ -214,14 +214,14 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   );
   await page.getByRole("button", { name: "Запустить тесты" }).click();
   await expect(page.getByText("Тесты прошли на текущем diff")).toBeVisible();
-  await page.getByRole("button", { name: "Запросить review" }).click();
+  await page.getByRole("button", { name: "Запросить проверку" }).click();
   await expect(
     page.getByText(
       "Решение близко, но один краевой случай требует ещё одной попытки.",
     ),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Принять review и продолжить" }),
+    page.getByRole("button", { name: "Принять проверку и продолжить" }),
   ).toHaveCount(0);
 
   await writeFile(
@@ -233,14 +233,14 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   await expect(page.getByTestId("exercise-diff")).toContainText(
     "correction cycle",
   );
-  await page.getByRole("button", { name: "Запросить review" }).click();
+  await page.getByRole("button", { name: "Запросить проверку" }).click();
   await expect(
     page.getByText(
       "Цикл исправлений завершён: протестированное изменение теперь соответствует контракту упражнения.",
     ),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Принять review и продолжить" })
+    .getByRole("button", { name: "Принять проверку и продолжить" })
     .click();
   await expect(page).toHaveURL(/\/session\?id=/u);
 

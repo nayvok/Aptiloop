@@ -202,7 +202,7 @@ describe("UI foundation", () => {
 
     renderWithQuery(<SettingsForm />);
 
-    const teacher = await screen.findByRole("group", { name: "Teacher" });
+    const teacher = await screen.findByRole("group", { name: "Преподаватель" });
     fireEvent.change(within(teacher).getByLabelText("Провайдер"), {
       target: { value: "codex" },
     });
@@ -243,7 +243,7 @@ describe("UI foundation", () => {
       await screen.findByRole("button", { name: "Сохранить настройки" }),
     );
 
-    const teacher = screen.getByRole("group", { name: "Teacher" });
+    const teacher = screen.getByRole("group", { name: "Преподаватель" });
     await waitFor(() =>
       expect(within(teacher).getByLabelText("Модель")).toHaveAttribute(
         "aria-invalid",

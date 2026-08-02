@@ -551,7 +551,7 @@ export function InterviewClient() {
         {returnToSession}
         <PageHeader
           title="Техническое интервью"
-          description="Настрой темы и формат. Интервьюер задаёт по одному вопросу; отчёт фиксирует evidence, но не выдумывает техническую оценку."
+          description="Настрой темы и формат. Интервьюер задаёт по одному вопросу; отчёт фиксирует подтверждения навыка, но не выдумывает техническую оценку."
           actions={<Badge variant="outline">Отдельный workflow</Badge>}
         />
         <section
@@ -899,7 +899,7 @@ function InterviewReportView({
         aria-labelledby="evidence-title"
       >
         <h3 id="evidence-title" className="font-semibold">
-          Evidence
+          Подтверждения навыка
         </h3>
         <ol className="mt-4 divide-y divide-border">
           {report.evidence.map((item) => (
