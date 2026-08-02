@@ -15,11 +15,7 @@ import {
   unitTypeLabels,
 } from "@/lib/unit-labels";
 
-function unit(
-  id: string,
-  type: BlockUnit["type"],
-  minutes: number,
-): BlockUnit {
+function unit(id: string, type: BlockUnit["type"], minutes: number): BlockUnit {
   return { id, type, title: `${type}-${id}`, estimatedMinutes: minutes };
 }
 
@@ -28,7 +24,8 @@ function statusMap(
 ) {
   const map = new Map(entries);
   return (candidate: BlockUnit) =>
-    (map.get(candidate.id) ?? "locked") as "completed" | "in_progress" | "ready" | "locked";
+    (map.get(candidate.id) ?? "locked") as
+      "completed" | "in_progress" | "ready" | "locked";
 }
 
 describe("groupDayIntoBlocks", () => {
@@ -44,7 +41,10 @@ describe("groupDayIntoBlocks", () => {
     ];
     const blocks = groupDayIntoBlocks(
       units,
-      statusMap([["b", "completed"], ["s1", "in_progress"]]),
+      statusMap([
+        ["b", "completed"],
+        ["s1", "in_progress"],
+      ]),
     );
     expect(blocks.map((block) => block.id)).toEqual([
       "study",
@@ -53,17 +53,16 @@ describe("groupDayIntoBlocks", () => {
     ]);
     expect(blocks[0]!.units.map((item) => item.id)).toEqual(["b", "s1"]);
     expect(blocks[1]!.units.map((item) => item.id)).toEqual(["r", "q"]);
-    expect(blocks[2]!.units.map((item) => item.id)).toEqual([
-      "e",
-      "rv",
-      "sm",
-    ]);
+    expect(blocks[2]!.units.map((item) => item.id)).toEqual(["e", "rv", "sm"]);
   });
 
   it("считает статус, прогресс и время блока", () => {
     const blocks = groupDayIntoBlocks(
       [unit("b", "briefing", 6), unit("s1", "study", 18)],
-      statusMap([["b", "completed"], ["s1", "ready"]]),
+      statusMap([
+        ["b", "completed"],
+        ["s1", "ready"],
+      ]),
     );
     const study = blocks[0]!;
     expect(study.status).toBe("ready");
@@ -78,7 +77,10 @@ describe("groupDayIntoBlocks", () => {
   it("завершённый блок не имеет текущего шага", () => {
     const blocks = groupDayIntoBlocks(
       [unit("b", "briefing", 6), unit("s1", "study", 18)],
-      statusMap([["b", "completed"], ["s1", "completed"]]),
+      statusMap([
+        ["b", "completed"],
+        ["s1", "completed"],
+      ]),
     );
     expect(blocks[0]!.status).toBe("completed");
     expect(blocks[0]!.currentStepIndex).toBeNull();
@@ -115,12 +117,22 @@ describe("focusedUnit", () => {
       unit("r", "recall", 15),
     ];
     expect(
-      focusedUnit(units, statusMap([["b", "completed"], ["s1", "ready"]])),
+      focusedUnit(
+        units,
+        statusMap([
+          ["b", "completed"],
+          ["s1", "ready"],
+        ]),
+      ),
     ).toEqual(units[1]);
     expect(
       focusedUnit(
         units,
-        statusMap([["b", "completed"], ["s1", "completed"], ["r", "in_progress"]]),
+        statusMap([
+          ["b", "completed"],
+          ["s1", "completed"],
+          ["r", "in_progress"],
+        ]),
       )?.id,
     ).toBe("r");
   });
@@ -141,9 +153,7 @@ describe("learner labels", () => {
   it("использует понятную терминологию", () => {
     expect(unitTypeLabels.study).toBe("Изучение");
     expect(unitTypeLabels.recall).toBe("Воспроизведение по памяти");
-    expect(unitTypeLabels["teacher-dialogue"]).toBe(
-      "Разбор с преподавателем",
-    );
+    expect(unitTypeLabels["teacher-dialogue"]).toBe("Разбор с преподавателем");
     expect(unitTypeLabels.quiz).toBe("Короткая проверка");
     expect(unitTypeLabels.exercise).toBe("Практическое задание");
     expect(unitTypeLabels.review).toBe("Проверка решения");

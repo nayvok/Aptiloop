@@ -30,11 +30,11 @@
 
 Модель unit-ов не меняется. Новый модуль `lib/learning-blocks.ts` группирует units:
 
-| Блок | Units | Цвет |
-| --- | --- | --- |
-| 1. Изучение | briefing, study | violet |
+| Блок                  | Units                                                   | Цвет                                                                                 |
+| --------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 1. Изучение           | briefing, study                                         | violet                                                                               |
 | 2. Проверка понимания | recall, teacher-dialogue, quiz, code-reading, interview | amber (recall), cyan (teacher), blue (quiz), indigo (code-reading), pink (interview) |
-| 3. Практика | exercise, review, summary, checkpoint, spaced-review | emerald (practice), coral (review), green (summary) |
+| 3. Практика           | exercise, review, summary, checkpoint, spaced-review    | emerald (practice), coral (review), green (summary)                                  |
 
 Интерфейс показывает «3 учебных блока · около 2 ч 48 мин», детальные units — только во вторичном плане (drawer/accordion).
 
@@ -87,18 +87,18 @@
 
 ## 8. Learner-терминология
 
-| Внутреннее | Learner UI |
-| --- | --- |
-| interview-ready | Для собеседования |
-| study | Изучение |
-| recall | Воспроизведение по памяти |
-| Teacher Dialogue | Разбор с преподавателем |
-| Quiz | Короткая проверка |
-| Code Reading | Чтение кода |
-| Exercise | Практическое задание |
-| Read-only Review | Проверка решения |
-| Summary | Итоги дня |
-| Evidence | Подтверждения навыка |
+| Внутреннее       | Learner UI                |
+| ---------------- | ------------------------- |
+| interview-ready  | Для собеседования         |
+| study            | Изучение                  |
+| recall           | Воспроизведение по памяти |
+| Teacher Dialogue | Разбор с преподавателем   |
+| Quiz             | Короткая проверка         |
+| Code Reading     | Чтение кода               |
+| Exercise         | Практическое задание      |
+| Read-only Review | Проверка решения          |
+| Summary          | Итоги дня                 |
+| Evidence         | Подтверждения навыка      |
 
 Английские технические термины (Event Loop, Promise, closure, shallow/deep copy, type narrowing) сохраняются. Internal IDs, revision-номера и provider/model не показываются на learner-экранах.
 
