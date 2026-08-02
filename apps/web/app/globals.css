@@ -33,12 +33,24 @@
   --color-sidebar: var(--sidebar);
   --color-activity-theory: var(--activity-theory);
   --color-activity-theory-surface: var(--activity-theory-surface);
+  --color-activity-study: var(--activity-study);
+  --color-activity-study-surface: var(--activity-study-surface);
   --color-activity-practice: var(--activity-practice);
   --color-activity-practice-surface: var(--activity-practice-surface);
   --color-activity-recall: var(--activity-recall);
   --color-activity-recall-surface: var(--activity-recall-surface);
+  --color-activity-teacher: var(--activity-teacher);
+  --color-activity-teacher-surface: var(--activity-teacher-surface);
+  --color-activity-quiz: var(--activity-quiz);
+  --color-activity-quiz-surface: var(--activity-quiz-surface);
+  --color-activity-code-reading: var(--activity-code-reading);
+  --color-activity-code-reading-surface: var(--activity-code-reading-surface);
+  --color-activity-review: var(--activity-review);
+  --color-activity-review-surface: var(--activity-review-surface);
   --color-activity-interview: var(--activity-interview);
   --color-activity-interview-surface: var(--activity-interview-surface);
+  --color-activity-summary: var(--activity-summary);
+  --color-activity-summary-surface: var(--activity-summary-surface);
   --color-activity-ai: var(--activity-ai);
   --color-activity-ai-surface: var(--activity-ai-surface);
 }
@@ -73,12 +85,24 @@
   --sidebar: oklch(0.955 0.012 255);
   --activity-theory: oklch(0.48 0.17 293);
   --activity-theory-surface: oklch(0.94 0.035 293);
-  --activity-practice: oklch(0.47 0.15 250);
-  --activity-practice-surface: oklch(0.94 0.035 250);
+  --activity-study: oklch(0.45 0.17 293);
+  --activity-study-surface: oklch(0.94 0.035 293);
+  --activity-practice: oklch(0.5 0.13 160);
+  --activity-practice-surface: oklch(0.93 0.04 160);
   --activity-recall: oklch(0.43 0.105 76);
   --activity-recall-surface: oklch(0.94 0.055 76);
-  --activity-interview: oklch(0.49 0.16 30);
-  --activity-interview-surface: oklch(0.95 0.045 30);
+  --activity-teacher: oklch(0.5 0.11 225);
+  --activity-teacher-surface: oklch(0.93 0.035 225);
+  --activity-quiz: oklch(0.48 0.15 255);
+  --activity-quiz-surface: oklch(0.93 0.035 255);
+  --activity-code-reading: oklch(0.44 0.15 275);
+  --activity-code-reading-surface: oklch(0.93 0.04 275);
+  --activity-review: oklch(0.55 0.16 30);
+  --activity-review-surface: oklch(0.95 0.045 30);
+  --activity-interview: oklch(0.55 0.16 350);
+  --activity-interview-surface: oklch(0.94 0.04 350);
+  --activity-summary: oklch(0.5 0.13 145);
+  --activity-summary-surface: oklch(0.93 0.04 145);
   --activity-ai: oklch(0.43 0.1 210);
   --activity-ai-surface: oklch(0.94 0.04 210);
 }
@@ -113,12 +137,24 @@
   --sidebar: oklch(0.215 0.02 255);
   --activity-theory: oklch(0.76 0.13 293);
   --activity-theory-surface: oklch(0.31 0.055 293);
-  --activity-practice: oklch(0.76 0.12 250);
-  --activity-practice-surface: oklch(0.31 0.05 250);
+  --activity-study: oklch(0.78 0.12 293);
+  --activity-study-surface: oklch(0.31 0.05 293);
+  --activity-practice: oklch(0.8 0.11 160);
+  --activity-practice-surface: oklch(0.3 0.045 160);
   --activity-recall: oklch(0.82 0.115 76);
   --activity-recall-surface: oklch(0.32 0.055 76);
-  --activity-interview: oklch(0.77 0.13 30);
-  --activity-interview-surface: oklch(0.31 0.055 30);
+  --activity-teacher: oklch(0.8 0.1 225);
+  --activity-teacher-surface: oklch(0.31 0.045 225);
+  --activity-quiz: oklch(0.78 0.12 255);
+  --activity-quiz-surface: oklch(0.31 0.05 255);
+  --activity-code-reading: oklch(0.79 0.11 275);
+  --activity-code-reading-surface: oklch(0.31 0.05 275);
+  --activity-review: oklch(0.82 0.13 30);
+  --activity-review-surface: oklch(0.33 0.055 30);
+  --activity-interview: oklch(0.82 0.12 350);
+  --activity-interview-surface: oklch(0.32 0.05 350);
+  --activity-summary: oklch(0.8 0.11 145);
+  --activity-summary-surface: oklch(0.3 0.045 145);
   --activity-ai: oklch(0.8 0.1 210);
   --activity-ai-surface: oklch(0.31 0.045 210);
 }
@@ -159,5 +195,81 @@ body {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes sheet-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes sheet-out-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes sheet-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes sheet-out-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes popover-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
   }
 }
