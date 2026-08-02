@@ -695,7 +695,6 @@ export function SessionClient() {
       <SessionProgressHeader
         session={session}
         completed={completed}
-        blocks={blocks}
         activeBlock={activeBlock}
         activeBlockIndex={activeBlockIndex}
         onContinueLater={() => router.push("/")}
@@ -796,14 +795,12 @@ export function SessionClient() {
 function SessionProgressHeader({
   session,
   completed,
-  blocks,
   activeBlock,
   activeBlockIndex,
   onContinueLater,
 }: {
   session: LearnerSession;
   completed: number;
-  blocks: LearningBlock[];
   activeBlock: LearningBlock | null;
   activeBlockIndex: number;
   onContinueLater: () => void;

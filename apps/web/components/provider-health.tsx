@@ -39,14 +39,6 @@ const providerLabels: Record<string, string> = {
   codex: "Codex",
 };
 
-const statusLabels: Record<Provider["status"], string> = {
-  connected: "Подключён",
-  unavailable: "Недоступен",
-  misconfigured: "Нужна настройка",
-  starting: "Запускается",
-  error: "Ошибка",
-};
-
 export function ProviderHealth() {
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -58,9 +50,6 @@ export function ProviderHealth() {
   });
   const providers = providersQuery.data?.providers ?? [];
   const settings = settingsQuery.data ?? null;
-  const connected = providers.filter(
-    (provider) => provider.status === "connected",
-  );
   const roles = [
     {
       label: "Преподаватель",
@@ -152,9 +141,11 @@ export function ProviderHealth() {
           <div>
             <p className="text-sm font-semibold">AI для обучения</p>
             <p className="text-xs text-muted-foreground">
-              {roleProviders.filter(
-                (provider) => provider?.status === "connected",
-              ).length}{" "}
+              {
+                roleProviders.filter(
+                  (provider) => provider?.status === "connected",
+                ).length
+              }{" "}
               из {roles.length} ролей готово
             </p>
           </div>

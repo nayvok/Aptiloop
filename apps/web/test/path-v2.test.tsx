@@ -199,7 +199,7 @@ describe("guided learning path", () => {
 
   it("opens the day detail drawer with full unit list", async () => {
     apiMock.mockResolvedValue(pathFixture());
-    const { container } = renderWithQuery(<DashboardClient />);
+    renderWithQuery(<DashboardClient />);
 
     fireEvent.click(
       await screen.findByRole("button", {

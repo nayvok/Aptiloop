@@ -365,7 +365,6 @@ export function DashboardClient() {
                   {selectedDay ? (
                     <DayDetailSheetContent
                       day={selectedDay}
-                      actionable={selectedDay.id === actionableDay.id}
                       isStarting={
                         start.isPending && start.variables === selectedDay.id
                       }
@@ -687,13 +686,11 @@ function DayCard({
 
 function DayDetailSheetContent({
   day,
-  actionable,
   isStarting,
   onOpen,
   onStart,
 }: {
   day: LearningDay;
-  actionable: boolean;
   isStarting: boolean;
   onOpen: (sessionId: string) => void;
   onStart: (dayId: string) => void;

@@ -349,6 +349,11 @@ test("publishes a curriculum graph and keeps an active session on its original r
 
 test("runs and restores the dedicated interview workflow", async ({ page }) => {
   await page.goto("/interview");
+  await expect(
+    page.getByRole("radio", { name: /Только изученные/u }),
+  ).toBeChecked();
+  await expect(page.getByText(/Пока нет изученных тем/u)).toBeVisible();
+  await page.getByRole("radio", { name: /Выбрать вручную/u }).check();
   await page.getByLabel("Темы через запятую").fill("JavaScript, TypeScript");
   await page.getByLabel("Количество вопросов").selectOption("2");
   await page.getByRole("button", { name: "Начать интервью" }).click();
