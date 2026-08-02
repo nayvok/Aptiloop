@@ -12,6 +12,8 @@ export interface BlockUnit {
   type: UnitType;
   title: string;
   estimatedMinutes: number;
+  /** Статус есть в path DTO; в session вычисляется из unitProgress. */
+  status?: UnitStatus;
 }
 
 export type BlockStatus = "completed" | "in_progress" | "ready" | "locked";
@@ -31,7 +33,10 @@ export interface LearningBlock {
   remainingMinutes: number;
 }
 
-const BLOCK_LABELS: Record<LearningBlockId, { label: string; shortLabel: string }> = {
+const BLOCK_LABELS: Record<
+  LearningBlockId,
+  { label: string; shortLabel: string }
+> = {
   study: { label: "Изучение", shortLabel: "Изучение" },
   check: { label: "Проверка понимания", shortLabel: "Проверка" },
   practice: { label: "Практика", shortLabel: "Практика" },
@@ -98,8 +103,8 @@ export function groupDayIntoBlocks(
   statusFor: (unit: BlockUnit) => UnitStatus,
 ): LearningBlock[] {
   return BLOCK_ORDER.map((blockId) => {
-    const blockUnits = units.filter(
-      (unit) => BLOCK_UNIT_TYPES[blockId].has(unit.type),
+    const blockUnits = units.filter((unit) =>
+      BLOCK_UNIT_TYPES[blockId].has(unit.type),
     );
     const { status, completedCount } = blockStatus(blockUnits, statusFor);
     const firstOpenIndex = blockUnits.findIndex((unit) => {
@@ -155,9 +160,7 @@ export function focusedUnit(
   );
 }
 
-export function remainingDayMinutes(
-  blocks: readonly LearningBlock[],
-): number {
+export function remainingDayMinutes(blocks: readonly LearningBlock[]): number {
   return blocks.reduce((sum, block) => sum + block.remainingMinutes, 0);
 }
 

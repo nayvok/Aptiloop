@@ -1,14 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import {
   ArrowRightIcon,
+  BookOpenIcon,
+  BrainIcon,
   CheckCircleIcon,
   CircleIcon,
   ClockIcon,
   LockKeyIcon,
   PlayCircleIcon,
+  TerminalIcon,
 } from "@phosphor-icons/react";
 import { z } from "zod";
 
@@ -17,9 +21,32 @@ import { EmptyState, QueryError } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { unitStatusLabels, unitTypeLabels } from "@/lib/unit-labels";
+import {
+  completedBlockCount,
+  focusedUnit,
+  groupDayIntoBlocks,
+  remainingDayMinutes,
+  type BlockUnit,
+  type LearningBlock,
+  type LearningBlockId,
+} from "@/lib/learning-blocks";
+import { formatDuration, formatMinutesShort } from "@/lib/time";
+import {
+  depthLabel,
+  unitStatusLabels,
+  unitTypeLabels,
+} from "@/lib/unit-labels";
 import { cn } from "@/lib/utils";
 
 const unitTypeSchema = z.enum([
@@ -144,9 +171,45 @@ const dayStatusLabels: Record<LearningDay["status"], string> = {
   locked: "Заблокирован",
 };
 
+const blockStatusLabels: Record<LearningBlock["status"], string> = {
+  completed: "Завершён",
+  in_progress: "Сейчас",
+  ready: "Доступен",
+  locked: "Заблокирован",
+};
+
+const blockIcons: Record<LearningBlockId, typeof BookOpenIcon> = {
+  study: BookOpenIcon,
+  check: BrainIcon,
+  practice: TerminalIcon,
+};
+
+const blockColorClasses: Record<
+  LearningBlockId,
+  { icon: string; surface: string; border: string }
+> = {
+  study: {
+    icon: "text-activity-study",
+    surface: "bg-activity-study-surface",
+    border: "border-activity-study/40",
+  },
+  check: {
+    icon: "text-activity-recall",
+    surface: "bg-activity-recall-surface",
+    border: "border-activity-recall/40",
+  },
+  practice: {
+    icon: "text-activity-practice",
+    surface: "bg-activity-practice-surface",
+    border: "border-activity-practice/40",
+  },
+};
+
 export function DashboardClient() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [detailDayId, setDetailDayId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const query = useQuery({
     queryKey: ["learning-path"],
     queryFn: async () => learningPathSchema.parse(await api("/learning/path")),
@@ -181,9 +244,9 @@ export function DashboardClient() {
         className="flex flex-col gap-6"
       >
         <span className="sr-only">Загружаю учебный маршрут…</span>
-        <Skeleton className="h-20" />
-        <Skeleton className="h-56" />
-        <Skeleton className="h-96" />
+        <Skeleton className="h-24" />
+        <Skeleton className="h-44" />
+        <Skeleton className="h-64" />
       </div>
     );
   }
@@ -215,6 +278,19 @@ export function DashboardClient() {
   const actionableDay =
     days.find((day) => day.status === "in_progress") ??
     days.find((day) => day.status === "available");
+  const selectedDay =
+    days.find((day) => day.id === detailDayId) ?? actionableDay ?? null;
+  const blocks = actionableDay
+    ? groupDayIntoBlocks(actionableDay.units, (unit) => unit.status ?? "locked")
+    : [];
+  const activeBlock = blocks.find(
+    (block) => block.status !== "completed" && block.totalCount > 0,
+  );
+  const dayCompleted = Boolean(actionableDay && !activeBlock);
+  const remaining = remainingDayMinutes(blocks);
+  const nextUnit = actionableDay
+    ? focusedUnit(actionableDay.units, (unit) => unit.status ?? "locked")
+    : null;
   const completedUnits = days.reduce(
     (sum, day) => sum + countCompletedUnits(day.units),
     0,
@@ -225,15 +301,12 @@ export function DashboardClient() {
     : 0;
 
   return (
-    <div data-slot="learning-path" className="flex flex-col gap-8">
+    <div data-slot="learning-path" className="flex flex-col gap-10">
       <PageHeader
         title={curriculum.title}
         description={
           curriculum.description ??
           "Последовательный маршрут: от понимания идеи до самостоятельного объяснения и кода."
-        }
-        actions={
-          <Badge variant="outline">Версия {curriculum.version.revision}</Badge>
         }
       />
 
@@ -250,32 +323,82 @@ export function DashboardClient() {
       ) : null}
 
       {actionableDay ? (
-        <section
-          data-slot="next-learning-step"
-          aria-labelledby="next-learning-step-title"
-          className="flex flex-col gap-5"
-        >
-          <header className="flex flex-col gap-1 border-b border-border pb-4">
-            <h2 id="next-learning-step-title" className="text-xl font-semibold">
-              Следующий шаг
-            </h2>
-            <p className="max-w-[70ch] text-sm leading-6 text-muted-foreground">
-              Продолжи с ближайшего доступного шага. Ниже можно свериться со
-              всем маршрутом, не раскрывая будущие задания раньше времени.
-            </p>
-          </header>
-          <ol data-slot="current-curriculum-day">
-            <DayRail
-              day={actionableDay}
-              isActionable
-              isStarting={
-                start.isPending && start.variables === actionableDay.id
-              }
-              onOpen={(sessionId) => router.push(`/session?id=${sessionId}`)}
-              onStart={(dayId) => start.mutate(dayId)}
-            />
-          </ol>
-        </section>
+        <>
+          <TodayCard
+            day={actionableDay}
+            blocks={blocks}
+            activeBlock={activeBlock ?? null}
+            dayCompleted={dayCompleted}
+            remaining={remaining}
+            nextUnit={nextUnit}
+            isStarting={start.isPending && start.variables === actionableDay.id}
+            onOpen={(sessionId) => router.push(`/session?id=${sessionId}`)}
+            onStart={(dayId) => start.mutate(dayId)}
+          />
+
+          <section
+            data-slot="day-blocks"
+            aria-labelledby="day-blocks-title"
+            className="flex flex-col gap-4"
+          >
+            <header className="flex items-end justify-between gap-4 border-b border-border pb-4">
+              <div className="flex min-w-0 flex-col gap-1">
+                <h2 id="day-blocks-title" className="text-xl font-semibold">
+                  Текущий день
+                </h2>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  {completedBlockCount(blocks)} из 3 учебных блоков ·{" "}
+                  {formatDuration(remaining)} осталось
+                </p>
+              </div>
+              <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
+                <SheetTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    data-slot="day-detail-trigger"
+                  >
+                    Посмотреть подробный план дня
+                  </Button>
+                </SheetTrigger>
+                <SheetContent data-slot="day-detail-sheet">
+                  {selectedDay ? (
+                    <DayDetailSheetContent
+                      day={selectedDay}
+                      actionable={selectedDay.id === actionableDay.id}
+                      isStarting={
+                        start.isPending && start.variables === selectedDay.id
+                      }
+                      onOpen={(sessionId) =>
+                        router.push(`/session?id=${sessionId}`)
+                      }
+                      onStart={(dayId) => {
+                        setDetailOpen(false);
+                        start.mutate(dayId);
+                      }}
+                    />
+                  ) : null}
+                </SheetContent>
+              </Sheet>
+            </header>
+
+            <div
+              data-slot="day-block-grid"
+              className="grid gap-4 lg:grid-cols-3"
+            >
+              {blocks
+                .filter((block) => block.totalCount > 0)
+                .map((block, index) => (
+                  <BlockCard
+                    key={block.id}
+                    block={block}
+                    index={index}
+                    active={block.id === activeBlock?.id}
+                  />
+                ))}
+            </div>
+          </section>
+        </>
       ) : (
         <EmptyState
           title="Опубликованный маршрут завершён"
@@ -284,124 +407,293 @@ export function DashboardClient() {
       )}
 
       <section
-        data-slot="path-progress"
-        aria-labelledby="path-progress-title"
-        className="flex flex-col gap-3 border-y border-border py-6"
+        data-slot="week-path"
+        aria-labelledby="week-path-title"
+        className="flex flex-col gap-4"
       >
-        <div className="flex items-end justify-between gap-4">
+        <header className="flex items-end justify-between gap-4 border-b border-border pb-4">
           <div className="flex min-w-0 flex-col gap-1">
-            <h2 id="path-progress-title" className="text-sm font-medium">
-              Общий прогресс
+            <h2 id="week-path-title" className="text-xl font-semibold">
+              Путь недели
             </h2>
-            <p className="text-xs text-muted-foreground">
-              {completedUnits} из {totalUnits} юнитов завершено
+            <p className="text-sm leading-6 text-muted-foreground">
+              {completedUnits} из {totalUnits} шагов пройдено
             </p>
           </div>
           <span className="shrink-0 font-mono text-sm font-semibold">
             {totalProgress}%
           </span>
-        </div>
-        <Progress aria-label="Общий прогресс маршрута" value={totalProgress} />
-      </section>
+        </header>
 
-      <div data-slot="curriculum-weeks" className="flex flex-col gap-8">
-        {curriculum.weeks.map((week) => (
-          <section
-            key={week.id}
-            data-slot="curriculum-week"
-            aria-labelledby={`week-${week.id}`}
-            className="flex flex-col gap-4"
-          >
-            <header className="flex flex-col gap-1 border-b border-border pb-4">
-              <h2 id={`week-${week.id}`} className="text-lg font-semibold">
+        <div className="flex flex-col gap-6">
+          {curriculum.weeks.map((week) => (
+            <div key={week.id} data-slot="week" className="flex flex-col gap-3">
+              <h3 className="text-sm font-medium text-muted-foreground">
                 {formatWeekTitle(week.order, week.title)}
-              </h2>
-              {week.description ? (
-                <p className="max-w-[70ch] text-sm leading-6 text-muted-foreground">
-                  {week.description}
-                </p>
-              ) : null}
-            </header>
-
-            <ol
-              data-slot="curriculum-days-overview"
-              aria-label={`Обзор дней недели ${week.order}`}
-              className="divide-y divide-border border-y border-border"
-            >
-              {week.days.map((day) => (
-                <DaySummary
-                  key={day.id}
-                  day={day}
-                  current={day.id === actionableDay?.id}
-                />
-              ))}
-            </ol>
-          </section>
-        ))}
-      </div>
+              </h3>
+              <ol
+                data-slot="week-day-list"
+                className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
+              >
+                {week.days.map((day) => (
+                  <DayCard
+                    key={day.id}
+                    day={day}
+                    current={day.id === actionableDay?.id}
+                    onOpen={() => {
+                      setDetailDayId(day.id);
+                      setDetailOpen(true);
+                    }}
+                  />
+                ))}
+              </ol>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
 
-function DaySummary({ day, current }: { day: LearningDay; current: boolean }) {
-  const completed = countCompletedUnits(day.units);
-  const progress = day.units.length
-    ? Math.round((completed / day.units.length) * 100)
-    : 0;
-  const DayStatusIcon = statusIcon(day.status);
-
-  return (
-    <li
-      data-slot="curriculum-day-summary"
-      data-status={day.status}
-      className={cn(
-        "flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:gap-4",
-        current && "bg-accent/35 px-3",
-      )}
-    >
-      <span className="grid size-9 shrink-0 place-items-center rounded-full border border-border font-mono text-sm font-semibold">
-        {String(day.order).padStart(2, "0")}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="font-medium">{day.title}</h3>
-          <Badge variant={dayBadgeVariant(day.status)}>
-            <DayStatusIcon aria-hidden />
-            {dayStatusLabels[day.status]}
-          </Badge>
-        </div>
-        <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
-          {day.description}
-        </p>
-      </div>
-      <div className="flex shrink-0 items-center gap-4 sm:w-48">
-        <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-          <ClockIcon aria-hidden />
-          {day.estimatedMinutes} мин
-        </span>
-        <div className="min-w-20 flex-1">
-          <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-            <span>
-              {completed}/{day.units.length}
-            </span>
-            <span className="font-mono">{progress}%</span>
-          </div>
-          <Progress aria-label={`Прогресс дня ${day.order}`} value={progress} />
-        </div>
-      </div>
-    </li>
-  );
-}
-
-function DayRail({
+function TodayCard({
   day,
-  isActionable,
+  blocks,
+  activeBlock,
+  dayCompleted,
+  remaining,
+  nextUnit,
   isStarting,
   onOpen,
   onStart,
 }: {
   day: LearningDay;
-  isActionable: boolean;
+  blocks: LearningBlock[];
+  activeBlock: LearningBlock | null;
+  dayCompleted: boolean;
+  remaining: number;
+  nextUnit: BlockUnit | null;
+  isStarting: boolean;
+  onOpen: (sessionId: string) => void;
+  onStart: (dayId: string) => void;
+}) {
+  const activeBlockNumber = activeBlock
+    ? blocks.findIndex((block) => block.id === activeBlock.id) + 1
+    : null;
+  return (
+    <section
+      data-slot="today-card"
+      aria-labelledby="today-card-title"
+      className="flex flex-col gap-6 rounded-xl border border-border bg-card p-5 md:p-6"
+    >
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Сегодня
+        </p>
+        <h2 id="today-card-title" className="text-2xl font-semibold">
+          День {day.order} · {day.title}
+        </h2>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          {dayCompleted ? (
+            "День завершён — отличная работа."
+          ) : activeBlock ? (
+            <>
+              Блок {activeBlockNumber} из 3 · {activeBlock.label} · Осталось{" "}
+              {formatDuration(remaining)}
+            </>
+          ) : (
+            formatDuration(day.estimatedMinutes)
+          )}
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+        <div className="flex min-w-0 flex-col gap-2">
+          {nextUnit ? (
+            <div className="flex min-w-0 flex-col gap-1">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Следующий шаг
+              </p>
+              <p className="truncate font-medium">
+                {nextUnit.title}
+                <span className="ml-2 text-sm text-muted-foreground">
+                  · около {formatMinutesShort(nextUnit.estimatedMinutes)}
+                </span>
+              </p>
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <ClockIcon aria-hidden className="size-4" />
+            {formatDuration(day.estimatedMinutes)} на день
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-col gap-2 md:items-end">
+          <Button
+            type="button"
+            size="lg"
+            data-slot="today-cta"
+            disabled={dayCompleted || isStarting}
+            onClick={() =>
+              day.sessionId ? onOpen(day.sessionId) : onStart(day.id)
+            }
+          >
+            {isStarting
+              ? "Создаю занятие…"
+              : dayCompleted
+                ? "День завершён"
+                : day.sessionId
+                  ? "Продолжить обучение"
+                  : "Начать обучение"}
+            {!dayCompleted ? <ArrowRightIcon aria-hidden /> : null}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BlockCard({
+  block,
+  index,
+  active,
+}: {
+  block: LearningBlock;
+  index: number;
+  active: boolean;
+}) {
+  const Icon = blockIcons[block.id];
+  const colors = blockColorClasses[block.id];
+  const timeText =
+    block.status === "completed"
+      ? formatMinutesShort(block.estimatedMinutes)
+      : `Осталось ${formatMinutesShort(block.remainingMinutes)}`;
+  return (
+    <article
+      data-slot="day-block"
+      data-block={block.id}
+      data-status={block.status}
+      aria-current={active ? "step" : undefined}
+      className={cn(
+        "flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-5",
+        active
+          ? cn("border-primary/50 ring-1 ring-primary/20", colors.border)
+          : "border-border",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <span
+          className={cn(
+            "grid size-10 shrink-0 place-items-center rounded-lg",
+            colors.surface,
+            colors.icon,
+          )}
+        >
+          <Icon aria-hidden className="size-5" weight="fill" />
+        </span>
+        <Badge variant={block.status === "completed" ? "success" : "outline"}>
+          {blockStatusLabels[block.status]}
+        </Badge>
+      </div>
+      <div className="flex min-w-0 flex-col gap-1">
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Блок {index + 1} из 3
+        </p>
+        <h3 className="text-base font-semibold">{block.label}</h3>
+        <p className="text-sm text-muted-foreground">
+          {block.status === "completed"
+            ? `${block.totalCount} ${pluralSteps(block.totalCount)} · ${timeText}`
+            : block.currentUnit
+              ? `Шаг ${block.currentStepIndex} из ${block.totalCount} · ${block.currentUnit.title}`
+              : `${block.totalCount} ${pluralSteps(block.totalCount)}`}
+        </p>
+      </div>
+      <div className="mt-auto flex items-center justify-between gap-3 pt-1 text-sm text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <ClockIcon aria-hidden className="size-4" />
+          {timeText}
+        </span>
+      </div>
+    </article>
+  );
+}
+
+function DayCard({
+  day,
+  current,
+  onOpen,
+}: {
+  day: LearningDay;
+  current: boolean;
+  onOpen: () => void;
+}) {
+  const completed = countCompletedUnits(day.units);
+  const progress = day.units.length
+    ? Math.round((completed / day.units.length) * 100)
+    : 0;
+  const DayStatusIcon = statusIcon(day.status);
+  const locked = day.status === "locked";
+  return (
+    <li className="min-w-0">
+      <button
+        type="button"
+        data-slot="week-day-card"
+        data-status={day.status}
+        onClick={onOpen}
+        disabled={locked}
+        aria-disabled={locked || undefined}
+        className={cn(
+          "flex w-full min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 text-left outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring",
+          current
+            ? "border-primary/50 ring-1 ring-primary/20"
+            : "border-border hover:border-primary/40",
+          locked && "cursor-not-allowed opacity-55",
+        )}
+      >
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid size-8 shrink-0 place-items-center rounded-full border border-border font-mono text-xs font-semibold">
+              {String(day.order).padStart(2, "0")}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate font-medium">{day.title}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {day.goal}
+              </p>
+            </div>
+          </div>
+          <Badge variant={dayBadgeVariant(day.status)}>
+            <DayStatusIcon aria-hidden className="size-3" />
+            {dayStatusLabels[day.status]}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            <ClockIcon aria-hidden className="size-3.5" />
+            {formatMinutesShort(day.estimatedMinutes)}
+          </span>
+          <Progress
+            aria-label={`Прогресс дня ${day.order}`}
+            value={progress}
+            className="h-1.5"
+          />
+          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+            {progress}%
+          </span>
+        </div>
+      </button>
+    </li>
+  );
+}
+
+function DayDetailSheetContent({
+  day,
+  actionable,
+  isStarting,
+  onOpen,
+  onStart,
+}: {
+  day: LearningDay;
+  actionable: boolean;
   isStarting: boolean;
   onOpen: (sessionId: string) => void;
   onStart: (dayId: string) => void;
@@ -410,205 +702,157 @@ function DayRail({
   const progress = day.units.length
     ? Math.round((completed / day.units.length) * 100)
     : 0;
-  const currentUnit =
-    day.units.find((unit) => unit.status === "in_progress") ??
-    (isActionable
-      ? day.units.find((unit) => unit.status === "ready")
-      : undefined);
-  const DayStatusIcon = statusIcon(day.status);
-
   return (
-    <li
-      data-slot="curriculum-day"
-      data-status={day.status}
-      aria-disabled={day.status === "locked" || undefined}
-      className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-4"
-    >
-      <div aria-hidden className="flex flex-col items-center gap-2">
-        <span className="flex size-8 items-center justify-center rounded-full border border-border bg-background font-mono text-xs font-semibold">
-          {String(day.order).padStart(2, "0")}
-        </span>
-        <span className="min-h-8 w-px flex-1 bg-border" />
-      </div>
+    <>
+      <SheetHeader>
+        <SheetTitle>
+          День {day.order} · {day.title}
+        </SheetTitle>
+        <SheetDescription>
+          {dayStatusLabels[day.status]} ·{" "}
+          {formatMinutesShort(day.estimatedMinutes)} · Глубина:{" "}
+          {depthLabel(day.depthLevel)}
+        </SheetDescription>
+      </SheetHeader>
 
-      <article
-        aria-labelledby={`day-${day.id}`}
-        className="flex min-w-0 flex-col gap-6 border-b border-border pb-8"
-      >
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex min-w-0 flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={dayBadgeVariant(day.status)}>
-                <DayStatusIcon aria-hidden />
-                {dayStatusLabels[day.status]}
-              </Badge>
-              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                <ClockIcon aria-hidden />
-                {day.estimatedMinutes} мин
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Глубина: {depthLabel(day.depthLevel)}
-              </span>
-            </div>
-            <div className="flex flex-col gap-1">
-              <h3 id={`day-${day.id}`} className="text-lg font-semibold">
-                {day.title}
-              </h3>
-              <p className="max-w-[70ch] text-sm leading-6 text-muted-foreground">
-                {day.description}
-              </p>
-            </div>
+      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              {completed} из {day.units.length} шагов
+            </span>
+            <span className="font-mono">{progress}%</span>
           </div>
-
-          <div className="flex w-full shrink-0 flex-col gap-2 sm:w-40">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">
-                {completed}/{day.units.length}
-              </span>
-              <span className="font-mono">{progress}%</span>
-            </div>
-            <Progress
-              aria-label={`Прогресс дня ${day.order}`}
-              value={progress}
-            />
-          </div>
+          <Progress aria-label={`Прогресс дня ${day.order}`} value={progress} />
         </div>
 
-        {isActionable ? (
-          <div className="flex justify-start">
-            <Button
-              type="button"
-              disabled={isStarting}
-              onClick={() =>
-                day.sessionId ? onOpen(day.sessionId) : onStart(day.id)
-              }
-            >
-              {isStarting
-                ? "Создаю занятие…"
-                : day.sessionId
-                  ? "Продолжить занятие"
-                  : "Начать занятие"}
-              <ArrowRightIcon aria-hidden />
-            </Button>
+        <DetailSection title="Цель">
+          <p className="text-sm leading-6 text-muted-foreground">{day.goal}</p>
+        </DetailSection>
+
+        <DetailSection title="Учебные блоки">
+          <div className="flex flex-col gap-2">
+            {groupDayIntoBlocks(day.units, (unit) => unit.status ?? "locked")
+              .filter((block) => block.totalCount > 0)
+              .map((block, index) => (
+                <div
+                  key={block.id}
+                  className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm"
+                >
+                  <span className="min-w-0 truncate">
+                    Блок {index + 1} · {block.label}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {blockStatusLabels[block.status]} ·{" "}
+                    {formatMinutesShort(block.estimatedMinutes)}
+                  </span>
+                </div>
+              ))}
           </div>
+        </DetailSection>
+
+        <DetailSection title="Шаги">
+          <ol className="flex flex-col gap-1.5">
+            {day.units.map((unit) => (
+              <li
+                key={unit.id}
+                data-slot="detail-unit"
+                data-status={unit.status}
+                className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm"
+              >
+                <span className="min-w-0 truncate">
+                  <span className="font-medium">{unit.title}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {unitTypeLabels[unit.type]} ·{" "}
+                    {formatMinutesShort(unit.estimatedMinutes)}
+                  </span>
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {unitStatusLabels[unit.status]}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </DetailSection>
+
+        {day.expectedOutcomes.length ? (
+          <DetailSection title="После занятия сможешь">
+            <ul className="flex flex-col gap-1.5 text-sm leading-6 text-muted-foreground">
+              {day.expectedOutcomes.map((outcome) => (
+                <li key={outcome} className="flex gap-2">
+                  <span
+                    aria-hidden
+                    className="mt-2 size-1.5 shrink-0 rounded-full bg-primary"
+                  />
+                  {outcome}
+                </li>
+              ))}
+            </ul>
+          </DetailSection>
         ) : null}
 
-        <dl className="grid gap-4 rounded-lg bg-muted/55 p-4 text-sm md:grid-cols-2">
-          <div className="flex flex-col gap-1">
-            <dt className="font-medium">Цель</dt>
-            <dd className="leading-6 text-muted-foreground">{day.goal}</dd>
-          </div>
-          <div className="flex flex-col gap-1">
-            <dt className="font-medium">Результат</dt>
-            <dd className="leading-6 text-muted-foreground">
-              {day.expectedOutcomes.length
-                ? day.expectedOutcomes.join(" · ")
-                : "Будет уточнён в curriculum"}
-            </dd>
-          </div>
-          <div className="flex flex-col gap-1">
-            <dt className="font-medium">Темы</dt>
-            <dd className="flex flex-wrap gap-2">
+        {day.topics.length ? (
+          <DetailSection title="Темы">
+            <div className="flex flex-wrap gap-2">
               {day.topics.map((topic) => (
-                <Badge key={topic} variant="secondary">
+                <Badge key={topic} variant="outline">
                   {topic}
                 </Badge>
               ))}
-            </dd>
-          </div>
-          <div className="flex flex-col gap-1">
-            <dt className="font-medium">Не входит в день</dt>
-            <dd className="leading-6 text-muted-foreground">
-              {day.outOfScope.length ? day.outOfScope.join(" · ") : "—"}
-            </dd>
-          </div>
-        </dl>
-
-        <ol
-          data-slot="curriculum-units"
-          aria-label={`Юниты дня ${day.order}`}
-          className="flex flex-col gap-2"
-        >
-          {day.units.map((unit) => (
-            <UnitRow
-              key={unit.id}
-              unit={unit}
-              expanded={unit.id === currentUnit?.id}
-            />
-          ))}
-        </ol>
-
-        {!isActionable && day.status === "locked" ? (
-          <div className="flex justify-end">
-            <Button type="button" variant="outline" disabled>
-              <LockKeyIcon aria-hidden />
-              Сначала завершите предыдущий день
-            </Button>
-          </div>
+            </div>
+          </DetailSection>
         ) : null}
-      </article>
-    </li>
+
+        {day.outOfScope.length ? (
+          <DetailSection title="Не входит в день">
+            <p className="text-sm leading-6 text-muted-foreground">
+              {day.outOfScope.join(" · ")}
+            </p>
+          </DetailSection>
+        ) : null}
+      </div>
+
+      <SheetFooter>
+        {day.status === "completed" ? (
+          <p className="text-sm text-muted-foreground">День пройден.</p>
+        ) : day.status === "locked" ? (
+          <p className="text-sm text-muted-foreground">
+            <LockKeyIcon aria-hidden className="mr-1 inline size-4" />
+            Сначала заверши предыдущий день.
+          </p>
+        ) : (
+          <Button
+            type="button"
+            disabled={isStarting}
+            onClick={() =>
+              day.sessionId ? onOpen(day.sessionId) : onStart(day.id)
+            }
+          >
+            {isStarting
+              ? "Создаю занятие…"
+              : day.sessionId
+                ? "Продолжить обучение"
+                : "Начать обучение"}
+            <ArrowRightIcon aria-hidden />
+          </Button>
+        )}
+      </SheetFooter>
+    </>
   );
 }
 
-function UnitRow({ unit, expanded }: { unit: LearnerUnit; expanded: boolean }) {
-  const UnitStatusIcon = unitStatusIcon(unit.status);
+function DetailSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <li
-      data-slot="curriculum-unit"
-      data-unit-type={unit.type}
-      data-status={unit.status}
-      aria-current={expanded ? "step" : undefined}
-      className={
-        expanded
-          ? "rounded-lg border border-primary/35 bg-accent/45 p-4"
-          : "border-b border-border px-1 py-3 last:border-b-0"
-      }
-    >
-      <div className="flex min-w-0 items-start gap-3">
-        <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-          <UnitStatusIcon aria-hidden className="size-4" />
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-            <div className="min-w-0">
-              <span className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
-                {String(unit.order).padStart(2, "0")} ·{" "}
-                {unitTypeLabels[unit.type]}
-              </span>
-              <p className="text-sm font-medium">{unit.title}</p>
-            </div>
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {unitStatusLabels[unit.status]} · {unit.estimatedMinutes} мин
-            </span>
-          </div>
-
-          {expanded ? (
-            <div className="flex flex-col gap-3 text-sm">
-              <p className="max-w-[70ch] leading-6 text-muted-foreground">
-                {unit.description}
-              </p>
-              {unit.objectives.length ? (
-                <div className="flex flex-col gap-2">
-                  <p className="font-medium">Что нужно получить</p>
-                  <ul className="flex flex-col gap-1.5 text-muted-foreground">
-                    {unit.objectives.map((objective) => (
-                      <li key={objective} className="flex items-start gap-2">
-                        <CircleIcon
-                          aria-hidden
-                          className="relative top-1 size-3 shrink-0"
-                        />
-                        <span>{objective}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </li>
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">{title}</h3>
+      {children}
+    </section>
   );
 }
 
@@ -624,6 +868,15 @@ function formatWeekTitle(order: number, title: string): string {
     : `Неделя ${order}. ${title}`;
 }
 
+function pluralSteps(count: number): string {
+  const abs = Math.abs(count) % 100;
+  const last = abs % 10;
+  if (abs > 10 && abs < 20) return "шагов";
+  if (last > 1 && last < 5) return "шага";
+  if (last === 1) return "шаг";
+  return "шагов";
+}
+
 function dayBadgeVariant(status: LearningDay["status"]) {
   if (status === "completed") return "success" as const;
   if (status === "in_progress") return "default" as const;
@@ -635,19 +888,6 @@ function statusIcon(status: LearningDay["status"]) {
   if (status === "in_progress") return PlayCircleIcon;
   if (status === "locked") return LockKeyIcon;
   return CircleIcon;
-}
-
-function unitStatusIcon(status: LearnerUnit["status"]) {
-  if (status === "completed" || status === "skipped") return CheckCircleIcon;
-  if (status === "in_progress") return PlayCircleIcon;
-  if (status === "locked") return LockKeyIcon;
-  return CircleIcon;
-}
-
-function depthLabel(depth: LearningDay["depthLevel"]): string {
-  if (depth === "interview-ready") return "interview-ready";
-  if (depth === "deep-dive") return "deep-dive";
-  return "foundation";
 }
 
 function findProtectedField(

@@ -148,57 +148,86 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("versioned learning path", () => {
-  it("keeps the actionable day detailed and renders the remaining path as a compact overview", async () => {
+describe("guided learning path", () => {
+  it("shows today card, three learning blocks and a compact week path without duplicating day detail", async () => {
     apiMock.mockResolvedValue(pathFixture());
     const { container } = renderWithQuery(<DashboardClient />);
 
+    await screen.findByRole("heading", {
+      name: "День 1 · Значения, типы и scope",
+    });
+    const todayCard = container.querySelector(
+      '[data-slot="today-card"]',
+    ) as HTMLElement | null;
+    expect(todayCard).not.toBeNull();
+    expect(todayCard!).toHaveTextContent("День 1 · Значения, типы и scope");
+    expect(todayCard!).toHaveTextContent(/Блок 1 из 3 · Изучение · Осталось/u);
+    expect(todayCard!).toHaveTextContent("Следующий шаг");
+    expect(todayCard!).toHaveTextContent("Юнит 2: study");
+
+    const blocks = container.querySelectorAll('[data-slot="day-block"]');
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0]).toHaveTextContent("Изучение");
+    expect(blocks[0]).toHaveAttribute("data-status", "in_progress");
+    expect(blocks[1]).toHaveTextContent("Проверка понимания");
+    expect(blocks[1]).toHaveAttribute("data-status", "ready");
+    expect(blocks[2]).toHaveTextContent("Практика");
+
+    // Детальные units не дублируются на основном экране.
     expect(
-      await screen.findByRole("heading", {
-        name: "Неделя 1. Фундамент языка",
-      }),
-    ).toBeInTheDocument();
+      container.querySelectorAll('[data-slot="detail-unit"]'),
+    ).toHaveLength(0);
     expect(
       container.querySelectorAll('[data-slot="curriculum-unit"]'),
-    ).toHaveLength(12);
-    expect(
-      container.querySelectorAll('[data-slot="curriculum-day-summary"]'),
-    ).toHaveLength(2);
-    for (const type of unitTypes) {
-      expect(
-        container.querySelector(`[data-unit-type="${type}"]`),
-      ).toBeInTheDocument();
-    }
-    expect(screen.getAllByText(/^Готово ·/u).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/^Сейчас ·/u).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/^Доступно ·/u).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/^Заблокировано ·/u).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Глубина: foundation")).toHaveLength(1);
-    expect(
-      screen.getAllByText("Объяснить механизм своими словами"),
-    ).toHaveLength(1);
-    expect(screen.getAllByText("Оптимизация движка")).toHaveLength(1);
-    expect(screen.getAllByText("JavaScript").length).toBeGreaterThan(0);
-    expect(screen.getByText("1 из 13 юнитов завершено")).toBeInTheDocument();
-    const lockedDay = container.querySelector(
-      '[data-slot="curriculum-day-summary"][data-status="locked"]',
-    );
-    expect(lockedDay).toHaveTextContent("Функции и замыкания");
-    expect(lockedDay).toHaveTextContent("Заблокирован");
+    ).toHaveLength(0);
+    expect(screen.queryByText("Глубина: foundation")).not.toBeInTheDocument();
 
-    const current = container.querySelector('[aria-current="step"]');
-    expect(current).toHaveAttribute("data-status", "in_progress");
-    expect(current).toHaveTextContent("Описание study");
+    // Путь недели — компактные карточки.
+    expect(
+      screen.getByRole("heading", { name: "Неделя 1. Фундамент языка" }),
+    ).toBeInTheDocument();
+    const dayCards = container.querySelectorAll('[data-slot="week-day-card"]');
+    expect(dayCards).toHaveLength(2);
+    expect(dayCards[1]).toHaveTextContent("Функции и замыкания");
+    expect(dayCards[1]).toHaveAttribute("data-status", "locked");
+    expect(dayCards[1]).toBeDisabled();
+    expect(screen.getByText("1 из 13 шагов пройдено")).toBeInTheDocument();
+
     expect(screen.queryByText(/reference answer/iu)).not.toBeInTheDocument();
     expect(screen.queryByText(/evaluation points/iu)).not.toBeInTheDocument();
   });
 
-  it("continues the active session without creating another one", async () => {
+  it("opens the day detail drawer with full unit list", async () => {
+    apiMock.mockResolvedValue(pathFixture());
+    const { container } = renderWithQuery(<DashboardClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Посмотреть подробный план дня",
+      }),
+    );
+
+    await screen.findByRole("dialog");
+    expect(document.querySelectorAll('[data-slot="detail-unit"]')).toHaveLength(
+      12,
+    );
+    expect(screen.getByText(/Глубина: Фундамент/u)).toBeInTheDocument();
+    expect(screen.getByText("Оптимизация движка")).toBeInTheDocument();
+    expect(
+      screen.getByText("Объяснить механизм своими словами"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Блок 1 · Изучение/u).length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: "Продолжить обучение" }),
+    ).toBeInTheDocument();
+  });
+
+  it("continues the active session from the today CTA without creating another one", async () => {
     apiMock.mockResolvedValue(pathFixture());
     renderWithQuery(<DashboardClient />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Продолжить занятие" }),
+      await screen.findByRole("button", { name: "Продолжить обучение" }),
     );
 
     expect(pushMock).toHaveBeenCalledWith("/session?id=session-active");
@@ -227,7 +256,7 @@ describe("versioned learning path", () => {
     const invalidate = vi.spyOn(client, "invalidateQueries");
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Начать занятие" }),
+      await screen.findByRole("button", { name: "Начать обучение" }),
     );
 
     await vi.waitFor(() => {
