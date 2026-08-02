@@ -684,6 +684,7 @@ export function SessionClient() {
   const showBlockTransition =
     Boolean(activeBlock) &&
     previousBlockCompleted &&
+    activeBlock!.currentStepIndex === 1 &&
     focusedProgress.status === "ready" &&
     activeBlock!.currentUnit?.id === focusedUnit.id;
 

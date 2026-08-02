@@ -354,7 +354,9 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
   ).toBeChecked();
   await expect(page.getByText(/Пока нет изученных тем/u)).toBeVisible();
   await page.getByRole("radio", { name: /Выбрать вручную/u }).check();
-  await page.getByLabel("Темы через запятую").fill("JavaScript, TypeScript");
+  await page
+    .getByRole("textbox", { name: "Темы через запятую" })
+    .fill("JavaScript, TypeScript");
   await page.getByLabel("Количество вопросов").selectOption("2");
   await page.getByRole("button", { name: "Начать интервью" }).click();
 
