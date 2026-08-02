@@ -11,9 +11,11 @@
 - base: `background`, `foreground`, `card`, `popover`, `border`, `input`;
 - actions: `primary`, `primary-hover`, `secondary`, `accent`, `destructive`;
 - feedback: `success`, `warning`, `muted`;
-- activity accents: `theory`, `practice`, `recall`, `interview`, `ai` и paired surfaces.
+- activity accents: `study`, `recall`, `teacher`, `quiz`, `code-reading`, `practice`, `review`, `interview`, `summary`, `ai` и paired surfaces.
 
 Primary/ring используют спокойный зелёный, а background/sidebar/border — холодную сине-серую нейтраль. Янтарный не является brand/primary: он остаётся семантическим warning и отдельным accent для recall. Activity colors не заменяют status colors.
+
+Activity tones: Изучение — violet, Воспроизведение по памяти — amber, Разбор с преподавателем — cyan, Короткая проверка — blue, Чтение кода — indigo, Практическое задание — emerald, Проверка решения — coral, Интервью — pink, Итоги дня — green. Цвет никогда не единственный индикатор: каждый activity-блок дополнительно имеет иконку, label, border и status text.
 
 Компоненты используют semantic Tailwind classes (`bg-card`, `text-muted-foreground`, `ring-ring`), а не локальные hex/палитры. Цвет activity дополняет label/icon/status и не остаётся единственным сигналом.
 
@@ -27,7 +29,9 @@ ThemeProvider хранит `system|light|dark` под key `theme`, включа�
 - основной набор: Путь, Занятие, Практика, Карта знаний, Ошибки, Интервью, Карточки;
 - Настройки и developer tools отделены от обучения.
 
-Guided path использует statuses `completed`, `in_progress`, `available`, `locked` и отдельный список units. Cards применяются для самостоятельных смысловых блоков, а не как обёртка каждого текста.
+Guided path использует statuses `completed`, `in_progress`, `available`, `locked` и отдельный список units. День визуально сгруппирован в три учебных блока (Изучение / Проверка понимания / Практика); детальные units открываются в drawer, а не в основном потоке. Верх Path — карточка «Сегодня» с одним главным CTA («Начать обучение» / «Продолжить обучение»).
+
+Daily Session: sticky progress header (день, блок, шаг, остаток времени в блоке, «План дня», «Продолжить позже») + активный шаг по центру; план дня — в drawer по запросу. Между учебными блоками показывается transition screen «Блок завершён» с CTA «Продолжить сейчас» / «Вернуться позже». Provider status в top bar компактный («● AI готов») с popover по ролям; полная диагностика — в «Настройки → Инструменты разработчика».
 
 ## Каталог компонентов
 
@@ -45,13 +49,19 @@ pending-вопрос и typing-indicator используют `role="status"` и
 только для одного элемента за раз. Composer опирается на `Textarea`,
 поддерживает Enter/Shift+Enter и не ломает существующие loading/error states.
 
-### DayPlan
+### DayPlanSheet
 
-`apps/web/components/day-plan.tsx` — составной блок плана дня под шапкой
-сессии. Использует `data-slot` для внутренних секций и уникальные лейблы
-«План дня», «Темы», «Ожидаемые результаты», «Вне дня», «Юниты», чтобы тесты и
-screen reader не путали соседние блоки. Содержимое остаётся семантическим,
-сверху вниз читается как summary → outcomes → topics → units.
+`apps/web/components/day-plan.tsx` — план дня в drawer (Sheet) поверх активной
+сессии: учебные блоки со шагами и статусами, цель, темы, ожидаемые результаты
+и границы дня. Открывается по кнопке «План дня» в progress header, по умолчанию
+закрыт, чтобы активная работа оставалась главным элементом экрана.
+
+### Sheet / Popover
+
+`apps/web/components/ui/sheet.tsx` — drawer на базе radix Dialog (right side,
+overlay, close, focus trap). `apps/web/components/ui/popover.tsx` — popover на
+базе radix Popover для компактного provider status. Оба примитива используют
+semantic tokens и reduced-motion-совместимые анимации (160–180 ms).
 
 ## Компонентные правила
 
