@@ -298,11 +298,12 @@ describe("UI foundation", () => {
     const status = await screen.findByRole("button", {
       name: /Статус AI/u,
     });
-    expect(status).toHaveTextContent("AI недоступен");
-    expect(status).toHaveAttribute("data-state", "problem");
+    expect(status).toHaveTextContent("AI готов");
+    expect(status).toHaveAttribute("data-state", "ready");
 
     fireEvent.click(status);
     expect(await screen.findByText("AI для обучения")).toBeInTheDocument();
+    expect(screen.getByText(/из 5 ролей готово/u)).toBeInTheDocument();
     expect(screen.getByText("Преподаватель")).toBeInTheDocument();
     expect(screen.getByText(/Mock · Deterministic Mock/u)).toBeInTheDocument();
     expect(screen.getByText(/Codex · GPT/u)).toBeInTheDocument();

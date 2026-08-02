@@ -61,10 +61,6 @@ export function ProviderHealth() {
   const connected = providers.filter(
     (provider) => provider.status === "connected",
   );
-  const hasProblem = providers.some((provider) =>
-    ["misconfigured", "error", "unavailable"].includes(provider.status),
-  );
-  const ready = connected.length > 0 && !hasProblem;
   const roles = [
     {
       label: "Преподаватель",
@@ -92,6 +88,23 @@ export function ProviderHealth() {
       model: settings?.codexExpertModel,
     },
   ];
+  const roleProviders = roles.map((role) =>
+    providers.find((candidate) => candidate.id === role.provider),
+  );
+  const hasRoleProviders = roleProviders.length > 0 && roles.length > 0;
+  const ready =
+    hasRoleProviders &&
+    roleProviders.every(
+      (provider) =>
+        provider?.status === "connected" || provider?.status === "starting",
+    );
+  const hasProblem =
+    hasRoleProviders &&
+    roleProviders.some((provider) =>
+      ["misconfigured", "error", "unavailable"].includes(
+        provider?.status ?? "unavailable",
+      ),
+    );
 
   if (providersQuery.isLoading || settingsQuery.isLoading) {
     return (
@@ -139,7 +152,10 @@ export function ProviderHealth() {
           <div>
             <p className="text-sm font-semibold">AI для обучения</p>
             <p className="text-xs text-muted-foreground">
-              {connected.length} из {providers.length} подключений активно
+              {roleProviders.filter(
+                (provider) => provider?.status === "connected",
+              ).length}{" "}
+              из {roles.length} ролей готово
             </p>
           </div>
           <ul className="flex flex-col gap-2">
