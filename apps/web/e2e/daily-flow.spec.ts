@@ -314,7 +314,9 @@ test("publishes a curriculum graph and keeps an active session on its original r
     .getByLabel("Я понимаю, что опубликованную ревизию нельзя редактировать.")
     .check();
   await publish.click();
-  await expect(page.getByText("Опубликована · read-only")).toBeVisible();
+  await expect(
+    page.getByText("Опубликована · read-only").first(),
+  ).toBeVisible();
 
   await page.goto("/");
   await expect(
