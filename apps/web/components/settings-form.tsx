@@ -244,7 +244,8 @@ const profiles: Array<{
     title: "Сбалансированный",
     description:
       "Преподаватель, проверка, интервью и итоги — OpenCode; Эксперт — Codex.",
-    caption: "Сложное review и экспертная помощь — Codex по ручной эскалации.",
+    caption:
+      "Сложная проверка решения и экспертная помощь — Codex по ручной эскалации.",
   },
   {
     id: "accuracy",
@@ -257,7 +258,8 @@ const profiles: Array<{
 
 const fieldClass =
   "h-11 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring";
-const sectionClass = "rounded-xl border border-border bg-card p-5 sm:p-6";
+const sectionClass =
+  "min-w-0 rounded-xl border border-border bg-card p-5 sm:p-6";
 const sectionTitleClass = "font-semibold";
 
 function firstAvailableModel(
@@ -297,7 +299,7 @@ function RoleSelects({
       aria-describedby={helpId}
       className="grid min-w-0 gap-2 sm:grid-cols-[220px_1fr]"
     >
-      <legend className="sr-only">{meta.group}</legend>
+      <legend className="sr-only">{meta.label}</legend>
       <div className="flex flex-col gap-1">
         <p className="text-sm font-medium">{meta.label}</p>
         <p id={helpId} className="text-xs leading-5 text-muted-foreground">
@@ -574,8 +576,8 @@ export function SettingsForm() {
                 Управляются сервером и показаны только для диагностики.
               </p>
             </div>
-            <dl className="grid gap-3 text-sm">
-              <div className="rounded-lg border border-border bg-muted/20 p-3">
+            <dl className="grid min-w-0 gap-3 text-sm">
+              <div className="min-w-0 rounded-lg border border-border bg-muted/20 p-3">
                 <dt className="text-xs text-muted-foreground">
                   Exercise workspace
                 </dt>
@@ -586,7 +588,7 @@ export function SettingsForm() {
                   {query.data.workspaceRoot}
                 </dd>
               </div>
-              <div className="rounded-lg border border-border bg-muted/20 p-3">
+              <div className="min-w-0 rounded-lg border border-border bg-muted/20 p-3">
                 <dt className="text-xs text-muted-foreground">
                   Zed executable
                 </dt>
