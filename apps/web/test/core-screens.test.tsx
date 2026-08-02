@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,19 +43,46 @@ afterEach(cleanup);
 
 describe("core learning screens", () => {
   it("shows the connected provider and active model", async () => {
-    apiMock.mockResolvedValue({
-      providers: [
-        {
-          id: "mock",
-          label: "Mock",
-          status: "connected",
-          model: "Deterministic Mock",
-        },
-      ],
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/providers") {
+        return Promise.resolve({
+          providers: [
+            {
+              id: "mock",
+              label: "Mock",
+              status: "connected",
+              model: "Deterministic Mock",
+            },
+          ],
+        });
+      }
+      if (path === "/settings") {
+        return Promise.resolve({
+          teacherProvider: "mock",
+          teacherModel: "Deterministic Mock",
+          reviewerProvider: "mock",
+          reviewerModel: "Deterministic Mock",
+          interviewerProvider: "mock",
+          interviewerModel: "Deterministic Mock",
+          curatorProvider: "mock",
+          curatorModel: "Deterministic Mock",
+          codexExpertProvider: "mock",
+          codexExpertModel: "Deterministic Mock",
+        });
+      }
+      throw new Error(`Unexpected API path: ${path}`);
     });
 
     renderWithQuery(<ProviderHealth />);
-    expect(await screen.findByText(/Deterministic Mock/u)).toBeInTheDocument();
+    const status = await screen.findByRole("button", {
+      name: /Статус AI/u,
+    });
+    expect(status).toHaveTextContent("AI готов");
+    expect(status).toHaveAttribute("data-state", "ready");
+    fireEvent.click(status);
+    expect(
+      (await screen.findAllByText(/Mock · Deterministic Mock/u)).length,
+    ).toBeGreaterThan(0);
   });
 
   it("renders knowledge dimensions and evidence", async () => {

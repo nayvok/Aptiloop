@@ -260,27 +260,57 @@ describe("UI foundation", () => {
     ).toBe(false);
   });
 
-  it("summarizes every provider instead of choosing the first connection", async () => {
-    apiMock.mockResolvedValue({
-      providers: [
-        { id: "mock", label: "Mock", status: "connected", model: "Mock" },
-        { id: "codex", label: "Codex", status: "connected", model: "GPT" },
-        {
-          id: "opencode",
-          label: "OpenCode",
-          status: "error",
-          message: "sidecar stopped",
-        },
-      ],
+  it("shows a compact AI status and role details in the popover", async () => {
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/providers") {
+        return Promise.resolve({
+          providers: [
+            { id: "mock", label: "Mock", status: "connected", model: "Mock" },
+            { id: "codex", label: "Codex", status: "connected", model: "GPT" },
+            {
+              id: "opencode",
+              label: "OpenCode",
+              status: "error",
+              message: "sidecar stopped",
+            },
+          ],
+        });
+      }
+      if (path === "/settings") {
+        return Promise.resolve({
+          teacherProvider: "mock",
+          teacherModel: "Deterministic Mock",
+          reviewerProvider: "codex",
+          reviewerModel: "GPT",
+          interviewerProvider: "mock",
+          interviewerModel: "Mock",
+          curatorProvider: "mock",
+          curatorModel: "Mock",
+          codexExpertProvider: "mock",
+          codexExpertModel: "Mock",
+        });
+      }
+      throw new Error(`Unexpected API path: ${path}`);
     });
 
     renderWithQuery(<ProviderHealth />);
 
-    const status = await screen.findByRole("status", {
-      name: /Mock: connected.*Codex: connected.*OpenCode: error/u,
+    const status = await screen.findByRole("button", {
+      name: /Статус AI/u,
     });
-    expect(status).toHaveTextContent("2/3 подключено");
-    expect(status).toHaveAttribute("data-variant", "warning");
+    expect(status).toHaveTextContent("AI недоступен");
+    expect(status).toHaveAttribute("data-state", "problem");
+
+    fireEvent.click(status);
+    expect(await screen.findByText("AI для обучения")).toBeInTheDocument();
+    expect(screen.getByText("Преподаватель")).toBeInTheDocument();
+    expect(screen.getByText(/Mock · Deterministic Mock/u)).toBeInTheDocument();
+    expect(screen.getByText(/Codex · GPT/u)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", {
+        name: /Полная диагностика/u,
+      }),
+    ).toHaveAttribute("href", "/settings/developer-tools");
   });
 
   it("gives every knowledge dimension an explicit progress name and scale", async () => {
