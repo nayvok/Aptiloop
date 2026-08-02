@@ -17,8 +17,10 @@ import { InterviewChatView } from "@/components/interview-chat-view";
 import { QueryError } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Markdown } from "@/components/ui/markdown";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { formatMinutesShort } from "@/lib/time";
 
 const protectedFields = new Set([
   "referenceAnswer",
@@ -113,6 +115,69 @@ const pendingAnswerSchema = z
   })
   .strict();
 type StartDraft = z.infer<typeof startDraftSchema>;
+type ScopeMode = "studied" | "current-week" | "manual" | "all";
+
+const learningPathSchema = z.object({
+  curriculum: z
+    .object({
+      weeks: z.array(
+        z.object({
+          order: z.number().int().positive(),
+          days: z.array(
+            z.object({
+              status: z.enum([
+                "completed",
+                "in_progress",
+                "available",
+                "locked",
+              ]),
+              topics: z.array(z.string().trim().min(1)),
+              units: z.array(
+                z.object({
+                  status: z.enum([
+                    "locked",
+                    "ready",
+                    "in_progress",
+                    "completed",
+                    "skipped",
+                  ]),
+                }),
+              ),
+            }),
+          ),
+        }),
+      ),
+    })
+    .nullable(),
+});
+
+const scopeOptions: Array<{
+  value: ScopeMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "studied",
+    label: "Только изученные",
+    description: "Темы дней, где уже есть начатые или завершённые шаги.",
+  },
+  {
+    value: "current-week",
+    label: "Текущая неделя",
+    description:
+      "Темы недели с текущим или ближайшим доступным днём (по умолчанию — неделя 1).",
+  },
+  {
+    value: "manual",
+    label: "Выбрать вручную",
+    description: "Свои темы через запятую.",
+  },
+  {
+    value: "all",
+    label: "Полная диагностика",
+    description: "Все темы всех дней маршрута.",
+  },
+];
 
 const startDraftKey = "dlh-interview-v2-start";
 const pendingAnswerKey = "dlh-interview-v2-pending-answer";
@@ -199,6 +264,15 @@ async function readCurrentInterview(): Promise<Interview | null> {
 const fieldClassName =
   "min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
 
+function questionNoun(count: number): string {
+  const abs = count % 100;
+  const last = abs % 10;
+  if (abs > 10 && abs < 20) return "вопросов";
+  if (last > 1 && last < 5) return "вопроса";
+  if (last === 1) return "вопрос";
+  return "вопросов";
+}
+
 export function InterviewClient() {
   const params = useSearchParams();
   const router = useRouter();
@@ -221,7 +295,14 @@ export function InterviewClient() {
         : readCurrentInterview(),
     retry: false,
   });
+  const pathQuery = useQuery({
+    queryKey: ["learning-path"],
+    queryFn: async () =>
+      learningPathSchema.parse(await api<unknown>("/learning/path")),
+    retry: false,
+  });
   const [topicsInput, setTopicsInput] = useState("JavaScript, TypeScript");
+  const [scopeMode, setScopeMode] = useState<ScopeMode>("studied");
   const [difficulty, setDifficulty] = useState<Difficulty>("interview-ready");
   const [questionCount, setQuestionCount] = useState(3);
   const [answer, setAnswer] = useState("");
@@ -235,6 +316,57 @@ export function InterviewClient() {
     () => readStorage(pendingAnswerKey, pendingAnswerSchema),
     [interview?.id],
   );
+  const topicsByScope = useMemo(() => {
+    const studied = new Set<string>();
+    const currentWeek = new Set<string>();
+    const all = new Set<string>();
+    const curriculum = pathQuery.data?.curriculum;
+    if (curriculum) {
+      for (const week of curriculum.weeks) {
+        for (const day of week.days) {
+          day.topics.forEach((topic) => all.add(topic));
+          const hasProgress = day.units.some(
+            (unit) =>
+              unit.status === "completed" || unit.status === "in_progress",
+          );
+          if (hasProgress) {
+            day.topics.forEach((topic) => studied.add(topic));
+          }
+        }
+      }
+      const actionableWeek =
+        curriculum.weeks.find((week) =>
+          week.days.some(
+            (day) => day.status === "in_progress" || day.status === "available",
+          ),
+        ) ?? curriculum.weeks[0];
+      if (actionableWeek) {
+        for (const day of actionableWeek.days) {
+          day.topics.forEach((topic) => currentWeek.add(topic));
+        }
+      }
+    }
+    return {
+      studied: [...studied],
+      currentWeek: [...currentWeek],
+      all: [...all],
+    };
+  }, [pathQuery.data]);
+  const selectedTopics = useMemo(() => {
+    if (scopeMode === "manual") {
+      return [
+        ...new Set(
+          topicsInput
+            .split(",")
+            .map((topic) => topic.trim())
+            .filter(Boolean),
+        ),
+      ];
+    }
+    return scopeMode === "current-week"
+      ? topicsByScope.currentWeek
+      : topicsByScope[scopeMode];
+  }, [scopeMode, topicsInput, topicsByScope]);
 
   useEffect(() => {
     if (!interview) return;
@@ -252,14 +384,7 @@ export function InterviewClient() {
   }, [interview, persistedAnswer]);
 
   async function startInterview(retryDraft?: StartDraft) {
-    const topics = retryDraft?.topics ?? [
-      ...new Set(
-        topicsInput
-          .split(",")
-          .map((topic) => topic.trim())
-          .filter(Boolean),
-      ),
-    ];
+    const topics = retryDraft?.topics ?? selectedTopics;
     const draft = retryDraft ?? {
       operationId: operationId(),
       topics,
@@ -270,7 +395,9 @@ export function InterviewClient() {
     if (!validation.success) {
       setActionError(
         topics.length === 0
-          ? "Укажите хотя бы одну тему через запятую."
+          ? scopeMode === "manual"
+            ? "Укажите хотя бы одну тему через запятую."
+            : "Для этого режима пока нет тем — выберите «Выбрать вручную»."
           : "Проверьте темы, сложность и количество вопросов.",
       );
       return;
@@ -437,21 +564,119 @@ export function InterviewClient() {
                 Настройка интервью
               </h3>
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                Provider и модель берутся из серверных настроек. Здесь задаётся
-                только учебная рамка.
+                Здесь задаётся только учебная рамка: область тем, сложность и
+                количество вопросов.
               </p>
             </div>
-            <label className="grid gap-2 text-sm font-medium">
-              Темы через запятую
-              <input
-                className={fieldClassName}
-                value={topicsInput}
-                onChange={(event) => setTopicsInput(event.target.value)}
-                placeholder="JavaScript, TypeScript"
-                maxLength={1450}
-                disabled={action !== null}
-              />
-            </label>
+            <fieldset className="grid gap-2" disabled={action !== null}>
+              <legend className="text-sm font-medium">Область тем</legend>
+              <div className="flex flex-col gap-1.5">
+                {scopeOptions.map((option) => (
+                  <label
+                    key={option.value}
+                    className="flex min-h-11 cursor-pointer items-start gap-3 rounded-md border border-border px-3 py-2.5 text-sm"
+                  >
+                    <input
+                      type="radio"
+                      name="interview-scope"
+                      value={option.value}
+                      checked={scopeMode === option.value}
+                      onChange={() => setScopeMode(option.value)}
+                      className="mt-0.5 size-4 accent-primary"
+                    />
+                    <span className="grid gap-0.5">
+                      <span className="font-medium">{option.label}</span>
+                      <span className="text-muted-foreground">
+                        {option.description}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            {scopeMode === "manual" ? (
+              <label className="grid gap-2 text-sm font-medium">
+                Темы через запятую
+                <input
+                  className={fieldClassName}
+                  value={topicsInput}
+                  onChange={(event) => setTopicsInput(event.target.value)}
+                  placeholder="JavaScript, TypeScript"
+                  maxLength={1450}
+                  disabled={action !== null}
+                />
+              </label>
+            ) : (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium">Темы для интервью</p>
+                {selectedTopics.length > 0 ? (
+                  <div
+                    aria-label="Темы выбранного режима"
+                    className="flex flex-wrap gap-2"
+                  >
+                    {selectedTopics.map((topic) => (
+                      <Badge key={topic} variant="secondary">
+                        {topic}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : pathQuery.isLoading ? (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    Загружаю темы учебного маршрута…
+                  </p>
+                ) : pathQuery.isError ? (
+                  <div className="flex flex-col gap-3 rounded-md border border-border bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm leading-6 text-muted-foreground">
+                      Не удалось загрузить темы маршрута. Можно повторить или
+                      выбрать темы вручную.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void pathQuery.refetch()}
+                      >
+                        Повторить
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setScopeMode("manual")}
+                      >
+                        Выбрать вручную
+                      </Button>
+                    </div>
+                  </div>
+                ) : scopeMode === "studied" ? (
+                  <div className="flex flex-col gap-3 rounded-md border border-border bg-muted/40 p-4">
+                    <p className="text-sm leading-6 text-muted-foreground">
+                      Пока нет изученных тем: в маршруте нет дней с начатыми или
+                      завершёнными шагами. Начни занятие на учебном пути или
+                      выбери темы вручную.
+                    </p>
+                    <Button
+                      variant="outline"
+                      className="self-start"
+                      onClick={() => setScopeMode("manual")}
+                    >
+                      Выбрать вручную
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    В маршруте пока нет тем для этого режима.
+                  </p>
+                )}
+              </div>
+            )}
+            <p className="text-sm text-muted-foreground">
+              Оценка длительности: {formatMinutesShort(questionCount * 5)} ·{" "}
+              {questionCount} {questionNoun(questionCount)} × ~5 мин
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Отчёт оценивает структуру и полноту ответа, а не техническую
+              корректность.
+            </p>
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="grid gap-2 text-sm font-medium">
                 Сложность
@@ -566,6 +791,11 @@ export function InterviewClient() {
     );
   }
 
+  const assistantMessages = interview.transcript.filter(
+    (message) => message.role === "assistant",
+  ).length;
+  const currentQuestion = Math.max(1, assistantMessages);
+
   return (
     <div data-slot="interview-session" className="flex flex-col gap-6">
       {returnToSession}
@@ -579,6 +809,18 @@ export function InterviewClient() {
           </Badge>
         }
       />
+      <div
+        data-slot="interview-question-progress"
+        className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2"
+      >
+        <p className="text-sm font-medium">
+          Вопрос {currentQuestion} из {interview.setup.questionCount}
+        </p>
+        <span className="text-xs text-muted-foreground">
+          Отвечено: {interview.progress.questionsAnswered} из{" "}
+          {interview.setup.questionCount}
+        </span>
+      </div>
       <InterviewChatView
         interview={interview}
         action={action}
@@ -610,7 +852,7 @@ function InterviewReportView({
       {returnToSession}
       <PageHeader
         title="Отчёт по интервью"
-        description={report.summary}
+        description="Что получилось и что стоит повторить. Оценка структуры и полноты ответов."
         actions={
           <Badge variant="success">
             <CheckCircleIcon aria-hidden className="size-3.5" />
@@ -618,6 +860,25 @@ function InterviewReportView({
           </Badge>
         }
       />
+      <section
+        data-slot="report-limits"
+        aria-label="Границы оценки"
+        className="rounded-lg border border-primary/30 bg-primary/5 p-4 sm:p-5"
+      >
+        <p className="text-sm font-medium leading-6">
+          Оценена структура и полнота ответа. Техническая корректность не
+          проверялась.
+        </p>
+      </section>
+      <section
+        aria-labelledby="report-summary-title"
+        className="rounded-lg border border-border bg-card p-4 sm:p-6"
+      >
+        <h3 id="report-summary-title" className="font-semibold">
+          Общая оценка
+        </h3>
+        <Markdown className="mt-3">{report.summary}</Markdown>
+      </section>
       <section
         className="grid gap-4 sm:grid-cols-3"
         aria-label="Метрики интервью"
@@ -653,7 +914,7 @@ function InterviewReportView({
               <blockquote className="mt-3 text-sm leading-6 text-muted-foreground">
                 «{item.answerExcerpt}»
               </blockquote>
-              <p className="mt-2 text-sm leading-6">{item.observation}</p>
+              <Markdown className="mt-2">{item.observation}</Markdown>
             </li>
           ))}
         </ol>
@@ -685,7 +946,7 @@ function ReportList({ title, items }: { title: string; items: string[] }) {
               aria-hidden
               className="mt-2 size-1.5 shrink-0 rounded-full bg-primary"
             />
-            {item}
+            <Markdown>{item}</Markdown>
           </li>
         ))}
       </ul>

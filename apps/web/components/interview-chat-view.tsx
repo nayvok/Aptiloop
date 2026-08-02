@@ -10,6 +10,7 @@ import type { Interview } from "@/components/interview-client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Markdown } from "@/components/ui/markdown";
 import {
   Message,
   MessageContent,
@@ -86,7 +87,7 @@ export function InterviewChatView({
                             aria-live={live ? "polite" : undefined}
                             aria-atomic={live ? "true" : undefined}
                           >
-                            {message.content}
+                            <Markdown>{message.content}</Markdown>
                           </BubbleContent>
                         </Bubble>
                       </MessageContent>

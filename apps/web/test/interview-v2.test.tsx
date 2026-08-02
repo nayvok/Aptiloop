@@ -142,6 +142,79 @@ function transcriptComplete() {
   ];
 }
 
+function learningPathFixture() {
+  return {
+    curriculum: {
+      weeks: [
+        {
+          order: 1,
+          days: [
+            {
+              status: "in_progress",
+              topics: ["JavaScript", "Скоуп"],
+              units: [{ status: "completed" }, { status: "in_progress" }],
+            },
+            {
+              status: "available",
+              topics: ["TypeScript", "Narrowing"],
+              units: [{ status: "ready" }],
+            },
+          ],
+        },
+        {
+          order: 2,
+          days: [
+            {
+              status: "locked",
+              topics: ["Promises"],
+              units: [{ status: "locked" }],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+type ApiRoute = unknown | ((init?: RequestInit) => unknown);
+
+function installApi(routes: Record<string, ApiRoute>) {
+  apiMock.mockImplementation((path: string, init?: RequestInit) => {
+    const route = routes[path];
+    if (route === undefined) {
+      return Promise.reject(new Error(`Unexpected api call: ${path}`));
+    }
+    return Promise.resolve(
+      typeof route === "function"
+        ? (route as (init?: RequestInit) => unknown)(init)
+        : route,
+    );
+  });
+}
+
+function interviewRoutes({
+  current = { interview: null },
+  opened,
+  answers,
+  finish,
+  extra = {},
+}: {
+  current?: unknown;
+  opened?: unknown;
+  answers?: ApiRoute;
+  finish?: unknown;
+  extra?: Record<string, ApiRoute>;
+} = {}) {
+  return {
+    "/learning/path": learningPathFixture(),
+    "/interviews/v2/current": current,
+    "/interviews/v2": opened,
+    "/interviews/v2/interview-1/answers": answers,
+    "/interviews/v2/interview-1/finish": finish,
+    ...extra,
+  };
+}
+
 function renderWithQuery(children: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -181,15 +254,26 @@ describe("versioned interview workflow", () => {
       transcript: transcriptComplete(),
       report,
     });
-    apiMock
-      .mockResolvedValueOnce({ interview: null })
-      .mockResolvedValueOnce(opened)
-      .mockResolvedValueOnce(followedUp)
-      .mockResolvedValueOnce(ready)
-      .mockResolvedValueOnce({ interview: completed, report });
+    installApi(
+      interviewRoutes({
+        opened,
+        answers: (init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body)) as { answer: string };
+          return body.answer.includes("Narrowing") ? ready : followedUp;
+        },
+        finish: { interview: completed, report },
+      }),
+    );
 
     renderWithQuery(<InterviewClient />);
 
+    expect(
+      await screen.findByRole("radio", { name: /Только изученные/ }),
+    ).toBeChecked();
+    expect(await screen.findByText("Скоуп")).toBeInTheDocument();
+    expect(screen.queryByText("TypeScript")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: /Выбрать вручную/ }));
     fireEvent.change(await screen.findByLabelText("Темы через запятую"), {
       target: { value: "JavaScript, TypeScript" },
     });
@@ -204,8 +288,7 @@ describe("versioned interview workflow", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Чем lexical scope отличается от dynamic scope?",
     );
-    expect(apiMock).toHaveBeenNthCalledWith(
-      2,
+    expect(apiMock).toHaveBeenCalledWith(
       "/interviews/v2",
       expect.objectContaining({
         method: "POST",
@@ -246,6 +329,11 @@ describe("versioned interview workflow", () => {
 
     expect(await screen.findByText("Отчёт по интервью")).toBeInTheDocument();
     expect(
+      screen.getByText(
+        /Оценена структура и полнота ответа\. Техническая корректность не проверялась\./u,
+      ),
+    ).toBeInTheDocument();
+    expect(
       screen.getByText("Оба ответа содержат рассуждение."),
     ).toBeInTheDocument();
     expect(
@@ -262,47 +350,133 @@ describe("versioned interview workflow", () => {
     );
   });
 
-  it("restores the current interview and its pending question after remount", async () => {
-    apiMock.mockResolvedValueOnce({
-      interview: interviewFixture({ transcript: transcriptWithFirstAnswer() }),
+  it("starts with the topics of studied days in the default scope", async () => {
+    installApi(
+      interviewRoutes({
+        opened: interviewFixture(),
+      }),
+    );
+
+    renderWithQuery(<InterviewClient />);
+
+    expect(
+      await screen.findByRole("radio", { name: /Только изученные/ }),
+    ).toBeChecked();
+    expect(await screen.findByText("JavaScript")).toBeInTheDocument();
+    expect(screen.getByText("Скоуп")).toBeInTheDocument();
+    expect(screen.queryByText("TypeScript")).not.toBeInTheDocument();
+    expect(screen.queryByText("Promises")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Начать интервью" }));
+
+    expect(
+      await screen.findByText(/Чем lexical scope отличается/u),
+    ).toBeInTheDocument();
+    expect(apiMock).toHaveBeenCalledWith(
+      "/interviews/v2",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          operationId: "operation-1",
+          topics: ["JavaScript", "Скоуп"],
+          difficulty: "interview-ready",
+          questionCount: 3,
+        }),
+      }),
+    );
+  });
+
+  it("shows the manual topics field when the manual scope is selected", async () => {
+    installApi(interviewRoutes());
+
+    renderWithQuery(<InterviewClient />);
+
+    expect(
+      screen.queryByLabelText("Темы через запятую"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("radio", { name: /Выбрать вручную/ }),
+    );
+    expect(
+      await screen.findByLabelText("Темы через запятую"),
+    ).toBeInTheDocument();
+  });
+
+  it("explains an empty studied scope and offers manual topics", async () => {
+    const path = learningPathFixture();
+    const firstDay = path.curriculum.weeks[0]?.days[0];
+    if (firstDay) {
+      firstDay.units = [{ status: "ready" }, { status: "ready" }];
+    }
+    installApi({
+      ...interviewRoutes(),
+      "/learning/path": path,
     });
+
+    renderWithQuery(<InterviewClient />);
+
+    expect(
+      await screen.findByText(/Пока нет изученных тем/u),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Выбрать вручную" }));
+    expect(
+      await screen.findByLabelText("Темы через запятую"),
+    ).toBeInTheDocument();
+  });
+
+  it("restores the current interview and its pending question after remount", async () => {
+    installApi(
+      interviewRoutes({
+        current: {
+          interview: interviewFixture({
+            transcript: transcriptWithFirstAnswer(),
+          }),
+        },
+      }),
+    );
 
     renderWithQuery(<InterviewClient />);
 
     expect(
       await screen.findByText(/Как TypeScript narrowing/u),
     ).toBeInTheDocument();
+    expect(screen.getByText("Вопрос 2 из 2")).toBeInTheDocument();
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
     expect(screen.getByLabelText("Сообщение")).toHaveValue("");
     expect(apiMock).toHaveBeenCalledWith("/interviews/v2/current");
   });
 
   it("keeps the answer and operation id available when the provider fails", async () => {
-    apiMock
-      .mockResolvedValueOnce({ interview: interviewFixture() })
-      .mockRejectedValueOnce(
-        new Error(
-          "Interviewer provider failed. Your transcript was preserved.",
-        ),
-      )
-      .mockResolvedValueOnce(
-        interviewFixture({
-          transcript: [
-            {
-              id: "question-1",
-              role: "assistant" as const,
-              content: "Чем lexical scope отличается?",
-              createdAt: now,
-            },
-            {
-              id: "answer-1",
-              role: "user" as const,
-              content: "Ответ, который нельзя потерять.",
-              createdAt: now,
-            },
-          ],
-        }),
-      );
+    let answerAttempts = 0;
+    installApi(
+      interviewRoutes({
+        current: { interview: interviewFixture() },
+        answers: () => {
+          answerAttempts += 1;
+          if (answerAttempts === 1) {
+            throw new Error(
+              "Interviewer provider failed. Your transcript was preserved.",
+            );
+          }
+          return interviewFixture({
+            transcript: [
+              {
+                id: "question-1",
+                role: "assistant" as const,
+                content: "Чем lexical scope отличается?",
+                createdAt: now,
+              },
+              {
+                id: "answer-1",
+                role: "user" as const,
+                content: "Ответ, который нельзя потерять.",
+                createdAt: now,
+              },
+            ],
+          });
+        },
+      }),
+    );
     renderWithQuery(<InterviewClient />);
 
     fireEvent.change(await screen.findByLabelText("Сообщение"), {
@@ -332,7 +506,7 @@ describe("versioned interview workflow", () => {
       nested?: { referenceAnswer: string };
     };
     leaked.nested = { referenceAnswer: "Скрытый эталон" };
-    apiMock.mockResolvedValueOnce({ interview: leaked });
+    installApi(interviewRoutes({ current: { interview: leaked } }));
 
     renderWithQuery(<InterviewClient />);
 
@@ -349,14 +523,18 @@ describe("versioned interview workflow", () => {
         resolveAnswer = resolve;
       },
     );
-    apiMock
-      .mockResolvedValueOnce({ interview: interviewFixture() })
-      .mockReturnValueOnce(nextQuestion);
+    installApi(
+      interviewRoutes({
+        current: { interview: interviewFixture() },
+        answers: () => nextQuestion,
+      }),
+    );
     renderWithQuery(<InterviewClient />);
 
     expect(
       await screen.findByText(/Чем lexical scope отличается/u),
     ).toBeInTheDocument();
+    expect(screen.getByText("Вопрос 1 из 2")).toBeInTheDocument();
     expect(screen.getByText("Интервьюер")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
       "Чем lexical scope отличается от dynamic scope?",
@@ -376,6 +554,7 @@ describe("versioned interview workflow", () => {
     expect(
       await screen.findByText(/Как TypeScript narrowing/u),
     ).toBeInTheDocument();
+    expect(screen.getByText("Вопрос 2 из 2")).toBeInTheDocument();
     expect(screen.getByText("Вы")).toBeInTheDocument();
     expect(screen.queryByText("Интервьюер печатает…")).not.toBeInTheDocument();
     expect(screen.getAllByRole("status")).toHaveLength(1);
@@ -385,7 +564,12 @@ describe("versioned interview workflow", () => {
   });
 
   it("sends with Enter and keeps Shift+Enter as a newline", async () => {
-    apiMock.mockResolvedValueOnce({ interview: interviewFixture() });
+    installApi(
+      interviewRoutes({
+        current: { interview: interviewFixture() },
+        answers: () => interviewFixture(),
+      }),
+    );
     renderWithQuery(<InterviewClient />);
     const composer = await screen.findByLabelText("Сообщение");
     fireEvent.change(composer, { target: { value: "Мой ответ" } });
@@ -402,11 +586,15 @@ describe("versioned interview workflow", () => {
   });
 
   it("shows a retry control when a saved answer awaits the next question", async () => {
-    apiMock.mockResolvedValueOnce({
-      interview: interviewFixture({
-        transcript: transcriptWithFirstAnswer().slice(0, 2),
+    installApi(
+      interviewRoutes({
+        current: {
+          interview: interviewFixture({
+            transcript: transcriptWithFirstAnswer().slice(0, 2),
+          }),
+        },
       }),
-    });
+    );
     window.localStorage.setItem(
       "dlh-interview-v2-pending-answer",
       JSON.stringify({
@@ -442,7 +630,7 @@ describe("versioned interview workflow", () => {
     ],
   ])("returns to the learning session from %s", async (_state, response) => {
     searchState.value = "sessionId=session-1";
-    apiMock.mockResolvedValueOnce(response);
+    installApi(interviewRoutes({ current: response }));
     renderWithQuery(<InterviewClient />);
 
     fireEvent.click(
@@ -454,11 +642,15 @@ describe("versioned interview workflow", () => {
 
   it("loads a requested saved interview and renders its report", async () => {
     searchState.value = "id=interview-9";
-    apiMock.mockResolvedValueOnce(
-      interviewFixture({
-        status: "completed",
-        transcript: transcriptComplete(),
-        report: { ...reportFixture(), interviewId: "interview-9" },
+    installApi(
+      interviewRoutes({
+        extra: {
+          "/interviews/v2/interview-9": interviewFixture({
+            status: "completed",
+            transcript: transcriptComplete(),
+            report: { ...reportFixture(), interviewId: "interview-9" },
+          }),
+        },
       }),
     );
     renderWithQuery(<InterviewClient />);
@@ -469,13 +661,23 @@ describe("versioned interview workflow", () => {
 
   it("shows a retryable error for an invalid requested interview id", async () => {
     searchState.value = "id=missing-interview";
-    apiMock.mockRejectedValue(new Error("Interview not found"));
+    apiMock.mockImplementation((path: string) =>
+      path === "/learning/path"
+        ? Promise.resolve(learningPathFixture())
+        : Promise.reject(new Error("Interview not found")),
+    );
     renderWithQuery(<InterviewClient />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Interview not found",
     );
     fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
-    await vi.waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(
+        apiMock.mock.calls.filter(
+          ([path]) => path === "/interviews/v2/missing-interview",
+        ),
+      ).toHaveLength(2),
+    );
   });
 });
