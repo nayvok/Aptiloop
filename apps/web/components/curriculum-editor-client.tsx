@@ -14,6 +14,14 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState, QueryError } from "@/components/query-state";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   CurriculumSourceSchema,
@@ -114,6 +122,7 @@ const graphSchema = z
   .strict();
 
 type Version = z.infer<typeof versionSchema>;
+type VersionListItem = z.infer<typeof versionListItemSchema>;
 type Graph = z.infer<typeof graphSchema>;
 type Week = z.infer<typeof weekSchema>;
 type Day = z.infer<typeof daySchema>;
@@ -189,6 +198,40 @@ async function checkedApi<T>(
 
 function operationId(): string {
   return crypto.randomUUID();
+}
+
+function formatDate(ms: number): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(ms));
+}
+
+function plural(count: number, one: string, few: string, many: string): string {
+  const remainder = Math.abs(count) % 100;
+  const lastDigit = remainder % 10;
+  if (remainder > 10 && remainder < 20) return many;
+  if (lastDigit > 1 && lastDigit < 5) return few;
+  if (lastDigit === 1) return one;
+  return many;
+}
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+function splitList(value: FormDataEntryValue | null): string[] {
+  return String(value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function usePendingOperations() {
@@ -396,7 +439,7 @@ function CreateDraftPanel({ mutate, busy }: { mutate: Mutate; busy: boolean }) {
   return (
     <details className={panelClass}>
       <summary className="cursor-pointer font-medium">
-        Новая отдельная программа
+        Создать новую редакцию
       </summary>
       <form
         className="mt-5 grid gap-4 md:grid-cols-2"
@@ -1517,12 +1560,417 @@ function UnitEditor({
   );
 }
 
+const versionStatusLabel: Record<string, string> = {
+  draft: "Черновик",
+  published: "Опубликована",
+  archived: "Архив",
+};
+
+function versionBadgeVariant(
+  status: string,
+): "success" | "warning" | "secondary" {
+  return status === "published"
+    ? "success"
+    : status === "draft"
+      ? "warning"
+      : "secondary";
+}
+
+function CurrentProgramCard({
+  version,
+  published,
+  graph,
+  mutate,
+  busy,
+}: {
+  version: VersionListItem;
+  published: VersionListItem | undefined;
+  graph: Graph | undefined;
+  mutate: Mutate;
+  busy: boolean;
+}) {
+  const weeksCount = graph?.weeks.length ?? 0;
+  const daysCount =
+    graph?.weeks.reduce((total, week) => total + week.days.length, 0) ?? 0;
+  const date = version.publishedAt ?? version.createdAt;
+  const isPublished = version.status === "published";
+  const cloneTarget = isPublished ? version : published;
+  return (
+    <section data-slot="current-program" className={panelClass}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">Текущая программа</p>
+          <h2 className="mt-1 text-xl font-semibold">
+            Версия {version.revision} · {version.title}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {isPublished
+              ? `Опубликована ${formatDate(date)}`
+              : `Черновик создан ${formatDate(date)}`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {graph
+              ? `${weeksCount} ${plural(
+                  weeksCount,
+                  "неделя",
+                  "недели",
+                  "недель",
+                )} · ${daysCount} ${plural(daysCount, "день", "дня", "дней")}`
+              : "Недели и дни загружаются…"}
+          </p>
+          {version.description ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              {version.description}
+            </p>
+          ) : null}
+        </div>
+        <Badge
+          variant={
+            isPublished
+              ? "success"
+              : version.status === "draft"
+                ? "warning"
+                : "secondary"
+          }
+        >
+          {isPublished
+            ? "Опубликована · read-only"
+            : versionStatusLabel[version.status]}
+        </Badge>
+      </div>
+      <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+        <CreateDraftPanel mutate={mutate} busy={busy} />
+        {cloneTarget ? (
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              void mutate(
+                `/curriculum-editor/versions/${cloneTarget.id}/clone`,
+                {
+                  method: "POST",
+                  body: JSON.stringify({
+                    operationId: operationId(),
+                    title: `${cloneTarget.title} — новая редакция`,
+                  }),
+                },
+                z.object({ version: versionSchema }).strict(),
+              ).catch(() => undefined);
+            }}
+          >
+            <CopyIcon aria-hidden />
+            Клонировать в черновик
+          </Button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function VersionHistory({
+  versions,
+  onSelect,
+}: {
+  versions: VersionListItem[];
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <details className={panelClass} data-slot="version-history">
+      <summary className="cursor-pointer font-medium">История версий</summary>
+      {versions.length === 0 ? (
+        <p className="mt-4 text-sm text-muted-foreground">Других версий нет.</p>
+      ) : (
+        <ul className="mt-4 grid gap-2">
+          {versions.map((version) => (
+            <li
+              key={version.id}
+              className="rounded-lg border border-border p-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  className="min-w-0 text-left"
+                  onClick={() => onSelect(version.id)}
+                >
+                  <span className="flex flex-wrap items-baseline gap-x-2">
+                    <strong className="text-sm">
+                      Версия {version.revision}
+                    </strong>
+                    <span className="truncate font-mono text-xs text-muted-foreground">
+                      r{version.revision} · {version.title}
+                    </span>
+                  </span>
+                </button>
+                <Badge variant={versionBadgeVariant(version.status)}>
+                  {versionStatusLabel[version.status]}
+                </Badge>
+              </div>
+              <details className="mt-2">
+                <summary className="cursor-pointer text-xs text-muted-foreground">
+                  Даты и описание
+                </summary>
+                <dl className="mt-2 grid gap-1 text-xs leading-5 text-muted-foreground">
+                  <div>Создана: {formatDate(version.createdAt)}</div>
+                  <div>
+                    Опубликована:{" "}
+                    {version.publishedAt
+                      ? formatDate(version.publishedAt)
+                      : "—"}
+                  </div>
+                  {version.description ? (
+                    <div>Описание: {version.description}</div>
+                  ) : null}
+                </dl>
+              </details>
+            </li>
+          ))}
+        </ul>
+      )}
+    </details>
+  );
+}
+
+function AddWeekCard({
+  onOpen,
+  disabled,
+}: {
+  onOpen: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <section
+      data-slot="add-week"
+      className={`${panelClass} flex flex-wrap items-center justify-between gap-4`}
+    >
+      <div className="min-w-0">
+        <h3 className="font-semibold">Добавить следующую неделю</h3>
+        <p className="mt-1 max-w-[60ch] text-sm leading-6 text-muted-foreground">
+          Название, цель, темы и количество дней. Черновик-ревизия, неделя и дни
+          создадутся автоматически.
+        </p>
+      </div>
+      <Button disabled={disabled} onClick={onOpen}>
+        <PlusIcon aria-hidden />
+        Добавить следующую неделю
+      </Button>
+    </section>
+  );
+}
+
+function AddWeekSheet({
+  open,
+  onOpenChange,
+  current,
+  versions,
+  mutate,
+  busy,
+  selectVersion,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  current: VersionListItem;
+  versions: VersionListItem[];
+  mutate: Mutate;
+  busy: boolean;
+  selectVersion: (id: string) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(form: FormData) {
+    setError(null);
+    try {
+      const title = text(form, "title");
+      const goal = text(form, "goal");
+      const topics = splitList(form.get("topics"));
+      const expectedOutcomes = splitList(form.get("expectedOutcomes"));
+      const requestedDays = Number(text(form, "daysCount"));
+      const daysCount = Number.isFinite(requestedDays)
+        ? Math.min(7, Math.max(1, Math.trunc(requestedDays)))
+        : 1;
+
+      let versionId = current.id;
+      if (current.status !== "draft") {
+        const existingDraft = versions.find(
+          (candidate) =>
+            candidate.status === "draft" &&
+            candidate.curriculumId === current.curriculumId,
+        );
+        if (existingDraft) {
+          versionId = existingDraft.id;
+          selectVersion(versionId);
+        } else {
+          const created = (await mutate(
+            "/curriculum-editor/versions",
+            {
+              method: "POST",
+              body: JSON.stringify({
+                operationId: operationId(),
+                curriculum: {
+                  id: current.curriculumId,
+                  slug: current.curriculumSlug,
+                  title: current.title,
+                },
+                title: `${current.title} — новая редакция`,
+                description: null,
+              }),
+            },
+            z.object({ version: versionSchema }).strict(),
+          )) as { version: Version };
+          versionId = created.version.id;
+        }
+      }
+
+      const weekBase = `${slugify(title) || "week"}-${Date.now()}`;
+      const createdWeek = (await mutate(
+        `/curriculum-editor/versions/${versionId}/weeks`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            operationId: operationId(),
+            stableId: weekBase,
+            title,
+            description: goal || null,
+          }),
+        },
+        z
+          .object({ week: weekSchema.omit({ days: true }).passthrough() })
+          .strict(),
+      )) as { week: { id: string } };
+
+      for (let index = 1; index <= daysCount; index += 1) {
+        await mutate(
+          `/curriculum-editor/versions/${versionId}/weeks/${createdWeek.week.id}/days`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              operationId: operationId(),
+              stableId: `${weekBase}-day-${index}`,
+              title: `День ${index}`,
+              description: null,
+              goal,
+              estimatedMinutes: 60,
+              depthLevel: "foundation",
+              prerequisites: [],
+              expectedOutcomes,
+              outOfScope: [],
+              topics,
+            }),
+          },
+          z
+            .object({ day: daySchema.omit({ units: true }).passthrough() })
+            .strict(),
+        );
+      }
+      onOpenChange(false);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent data-slot="add-week-sheet">
+        <SheetHeader>
+          <SheetTitle>Добавить следующую неделю</SheetTitle>
+          <SheetDescription>
+            Черновик-ревизия (при необходимости), неделя и дни создаются
+            автоматически. Правки и публикация — вручную, как обычно.
+          </SheetDescription>
+        </SheetHeader>
+        <form
+          className="flex min-h-0 flex-1 flex-col"
+          aria-label="Добавить следующую неделю"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit(new FormData(event.currentTarget));
+          }}
+        >
+          <div className="grid gap-4 overflow-y-auto px-5 py-4">
+            <label className={labelClass}>
+              Название недели
+              <input
+                className={fieldClass}
+                name="title"
+                required
+                placeholder="Например: Асинхронность в JavaScript"
+              />
+            </label>
+            <label className={labelClass}>
+              Цель недели
+              <textarea
+                className={`${fieldClass} resize-y`}
+                name="goal"
+                rows={3}
+                required
+                placeholder="Чему научится ученик за эту неделю"
+              />
+            </label>
+            <label className={labelClass}>
+              Темы
+              <input
+                className={fieldClass}
+                name="topics"
+                placeholder="Promise, async/await, Event Loop"
+              />
+              <span className="text-xs font-normal text-muted-foreground">
+                Через запятую.
+              </span>
+            </label>
+            <label className={labelClass}>
+              Ожидаемые результаты
+              <input
+                className={fieldClass}
+                name="expectedOutcomes"
+                placeholder="Объяснить Event Loop, применить async/await"
+              />
+              <span className="text-xs font-normal text-muted-foreground">
+                Через запятую.
+              </span>
+            </label>
+            <label className={labelClass}>
+              Количество дней
+              <input
+                className={`${fieldClass} max-w-32`}
+                name="daysCount"
+                type="number"
+                min={1}
+                max={7}
+                required
+                defaultValue={5}
+              />
+            </label>
+            <p className="text-xs leading-5 text-muted-foreground">
+              AI-генерация черновика — вне текущего среза.
+            </p>
+          </div>
+          {error ? (
+            <div className="px-5 pb-2">
+              <SubmitError message={error} />
+            </div>
+          ) : null}
+          <SheetFooter>
+            <Button type="submit" disabled={busy}>
+              {busy ? "Создаю…" : "Создать неделю и дни"}
+            </Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export function CurriculumEditorClient() {
   const queryClient = useQueryClient();
   const pendingOperations = usePendingOperations();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const [addWeekOpen, setAddWeekOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const selectVersion = (id: string | null) => {
+    selectedIdRef.current = id;
+    setSelectedId(id);
+  };
   const versions = useQuery({
     queryKey: ["curriculum-editor", "versions"],
     queryFn: () =>
@@ -1533,7 +1981,7 @@ export function CurriculumEditorClient() {
   });
   useEffect(() => {
     if (!selectedId && versions.data?.versions[0])
-      setSelectedId(versions.data.versions[0].id);
+      selectVersion(versions.data.versions[0].id);
   }, [selectedId, versions.data]);
   const graph = useQuery({
     queryKey: ["curriculum-editor", "version", selectedId],
@@ -1558,8 +2006,8 @@ export function CurriculumEditorClient() {
       });
       pendingOperations.confirmed(operationKey);
       const version = (result as { version?: Version }).version;
-      const nextId = selectId ?? version?.id ?? selectedId;
-      if (nextId) setSelectedId(nextId);
+      const nextId = selectId ?? version?.id ?? selectedIdRef.current;
+      if (nextId) selectVersion(nextId);
       await queryClient.invalidateQueries({ queryKey: ["curriculum-editor"] });
       return result;
     } catch (cause) {
@@ -1583,149 +2031,110 @@ export function CurriculumEditorClient() {
         retry={() => void versions.refetch()}
       />
     );
+  const selectedVersion =
+    versions.data.versions.find((version) => version.id === selectedId) ??
+    versions.data.versions[0]!;
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]">
-      <aside
-        className="grid content-start gap-4"
-        aria-label="Ревизии программы"
-      >
+    <div className="grid gap-6">
+      {actionError ? (
+        <div
+          role="alert"
+          className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
+        >
+          {actionError}
+        </div>
+      ) : null}
+      {versions.data.versions.length === 0 ? (
         <section className={panelClass}>
-          <div className="mb-4">
-            <h2 className="font-medium">Ревизии</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Черновики редактируются, опубликованные доступны только для
-              чтения.
-            </p>
+          <h2 className="text-lg font-semibold">Программа ещё не создана</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Ревизий пока нет.
+          </p>
+          <div className="mt-5">
+            <CreateDraftPanel mutate={mutate} busy={busy} />
           </div>
-          {versions.data.versions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Ревизий пока нет.</p>
-          ) : (
-            <div className="grid gap-2">
-              {versions.data.versions.map((version) => (
-                <div
-                  key={version.id}
-                  className={`rounded-lg border p-3 ${selectedId === version.id ? "border-primary bg-primary/5" : "border-border"}`}
-                >
-                  <button
-                    type="button"
-                    className="w-full text-left"
-                    onClick={() => setSelectedId(version.id)}
-                  >
-                    <span className="flex items-center justify-between gap-2">
-                      <strong className="text-sm">
-                        r{version.revision} · {version.title}
-                      </strong>
-                      <Badge
-                        variant={
-                          version.status === "published"
-                            ? "success"
-                            : version.status === "draft"
-                              ? "warning"
-                              : "secondary"
-                        }
-                      >
-                        {version.status === "published"
-                          ? "Опубликована"
-                          : version.status === "draft"
-                            ? "Черновик"
-                            : "Архив"}
-                      </Badge>
-                    </span>
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      {version.curriculumSlug}
-                    </span>
-                  </button>
-                  {version.status === "published" ? (
-                    <Button
-                      className="mt-3 w-full"
-                      size="sm"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => {
-                        void mutate(
-                          `/curriculum-editor/versions/${version.id}/clone`,
-                          {
-                            method: "POST",
-                            body: JSON.stringify({
-                              operationId: operationId(),
-                              title: `${version.title} — новая редакция`,
-                            }),
-                          },
-                          z.object({ version: versionSchema }).strict(),
-                        ).catch(() => undefined);
-                      }}
-                    >
-                      <CopyIcon aria-hidden />
-                      Клонировать в черновик
-                    </Button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
         </section>
-        <CreateDraftPanel mutate={mutate} busy={busy} />
-      </aside>
-      <section className="min-w-0" aria-label="Граф выбранной ревизии">
-        {actionError ? (
-          <div
-            role="alert"
-            className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
-          >
-            {actionError}
-          </div>
-        ) : null}
-        {!selectedId ? (
-          <EmptyState
-            title="Выберите ревизию"
-            description="Откройте существующую ревизию или создайте новый черновик."
+      ) : (
+        <>
+          <CurrentProgramCard
+            version={selectedVersion}
+            published={versions.data.versions.find(
+              (version) => version.status === "published",
+            )}
+            graph={graph.data?.curriculum}
+            mutate={mutate}
+            busy={busy}
           />
-        ) : graph.isLoading ? (
-          <div role="status" aria-label="Загружаю граф программы">
-            <Skeleton className="h-96" />
-          </div>
-        ) : graph.isError || !graph.data ? (
-          <QueryError
-            message="Граф ревизии недоступен или содержит небезопасные поля."
-            retry={() => void graph.refetch()}
+          <AddWeekCard onOpen={() => setAddWeekOpen(true)} disabled={busy} />
+          <VersionHistory
+            versions={versions.data.versions.filter(
+              (version) => version.id !== selectedVersion.id,
+            )}
+            onSelect={selectVersion}
           />
-        ) : (
-          <div className="grid gap-5">
-            <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-5">
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  Ревизия {graph.data.curriculum.version.revision}
-                </p>
-                <h2 className="mt-1 text-xl font-semibold">
-                  {graph.data.curriculum.version.title}
-                </h2>
-                {graph.data.curriculum.version.description ? (
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {graph.data.curriculum.version.description}
-                  </p>
-                ) : null}
+          <section className="min-w-0" aria-label="Граф выбранной ревизии">
+            {!selectedId ? (
+              <EmptyState
+                title="Выберите ревизию"
+                description="Откройте существующую ревизию или создайте новый черновик."
+              />
+            ) : graph.isLoading ? (
+              <div role="status" aria-label="Загружаю граф программы">
+                <Skeleton className="h-96" />
               </div>
-              <Badge
-                variant={
-                  graph.data.curriculum.version.status === "published"
-                    ? "success"
-                    : "warning"
-                }
-              >
-                {graph.data.curriculum.version.status === "published"
-                  ? "Опубликована · read-only"
-                  : "Черновик"}
-              </Badge>
-            </header>
-            <GraphEditor
-              graph={graph.data.curriculum}
-              mutate={mutate}
-              busy={busy}
-            />
-          </div>
-        )}
-      </section>
+            ) : graph.isError || !graph.data ? (
+              <QueryError
+                message="Граф ревизии недоступен или содержит небезопасные поля."
+                retry={() => void graph.refetch()}
+              />
+            ) : (
+              <div className="grid gap-5">
+                <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-5">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      Ревизия {graph.data.curriculum.version.revision}
+                    </p>
+                    <h2 className="mt-1 text-xl font-semibold">
+                      {graph.data.curriculum.version.title}
+                    </h2>
+                    {graph.data.curriculum.version.description ? (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {graph.data.curriculum.version.description}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Badge
+                    variant={
+                      graph.data.curriculum.version.status === "published"
+                        ? "success"
+                        : "warning"
+                    }
+                  >
+                    {graph.data.curriculum.version.status === "published"
+                      ? "Опубликована · read-only"
+                      : "Черновик"}
+                  </Badge>
+                </header>
+                <GraphEditor
+                  graph={graph.data.curriculum}
+                  mutate={mutate}
+                  busy={busy}
+                />
+              </div>
+            )}
+          </section>
+        </>
+      )}
+      <AddWeekSheet
+        open={addWeekOpen}
+        onOpenChange={setAddWeekOpen}
+        current={selectedVersion}
+        versions={versions.data.versions}
+        mutate={mutate}
+        busy={busy}
+        selectVersion={selectVersion}
+      />
     </div>
   );
 }

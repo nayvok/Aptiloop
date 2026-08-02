@@ -8,7 +8,7 @@ export default function SettingsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Настройки"
-        description="Пути, модели и локальные endpoints. Credentials остаются в provider-owned хранилище или environment и никогда не возвращаются в UI."
+        description="Тема, AI-роли и локальные подключения. Credentials остаются в provider-owned хранилище или environment и никогда не возвращаются в UI."
         actions={
           <Button asChild variant="outline">
             <Link href="/settings/curriculum">Редактор программы</Link>

@@ -234,7 +234,7 @@ describe("CurriculumEditorClient", () => {
 
     renderEditor();
     expect(await screen.findByText("Ревизий пока нет.")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Новая отдельная программа"));
+    fireEvent.click(screen.getByText("Создать новую редакцию"));
     fireEvent.change(screen.getByLabelText("ID программы"), {
       target: { value: "curriculum-js" },
     });
@@ -319,8 +319,8 @@ describe("CurriculumEditorClient", () => {
     );
     fireEvent.click(publish);
     expect(
-      await screen.findByText("Опубликована · read-only"),
-    ).toBeInTheDocument();
+      (await screen.findAllByText("Опубликована · read-only")).length,
+    ).toBeGreaterThan(0);
     expect(apiMock).toHaveBeenCalledWith(
       expect.stringContaining("/publish"),
       expect.objectContaining({ method: "POST" }),
@@ -537,5 +537,205 @@ describe("CurriculumEditorClient", () => {
     expect(
       await screen.findByText("Ревизию уже клонировали в другом окне"),
     ).toBeInTheDocument();
+  });
+
+  it("creates a draft revision, week and days from the add-week scenario", async () => {
+    const published = version("published-add-week", 1, "published");
+    const graphs = new Map<
+      string,
+      {
+        version: ReturnType<typeof version>;
+        weeks: ReturnType<typeof week>[];
+      }
+    >();
+    graphs.set(published.id, { version: published, weeks: [] });
+    const versions = [listItem(published)];
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) return { versions };
+      if (path === `/curriculum-editor/versions/${published.id}` && !init)
+        return { curriculum: structuredClone(graphs.get(published.id)!) };
+      if (path === "/curriculum-editor/versions/draft-add-week" && !init)
+        return {
+          curriculum: structuredClone(graphs.get("draft-add-week")!),
+        };
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (path === "/curriculum-editor/versions" && init?.method === "POST") {
+        const draft = version("draft-add-week", 2, "draft", published.id);
+        versions.unshift(listItem(draft));
+        graphs.set(draft.id, { version: draft, weeks: [] });
+        return { version: draft };
+      }
+      const weekMatch = path.match(
+        /^\/curriculum-editor\/versions\/([^/]+)\/weeks$/u,
+      );
+      if (weekMatch && init?.method === "POST") {
+        const draft = graphs.get("draft-add-week")!;
+        const created = week(
+          "week-add-week",
+          "draft-add-week",
+          String(body.title),
+        );
+        draft.weeks.push(created);
+        return { week: created };
+      }
+      const dayMatch = path.match(
+        /^\/curriculum-editor\/versions\/([^/]+)\/weeks\/([^/]+)\/days$/u,
+      );
+      if (dayMatch && init?.method === "POST") {
+        const draft = graphs.get("draft-add-week")!;
+        const created = day("day-add-week", "draft-add-week", "week-add-week");
+        created.title = String(body.title);
+        created.goal = String(body.goal);
+        Object.assign(created, {
+          topics: body.topics,
+          expectedOutcomes: body.expectedOutcomes,
+        });
+        draft.weeks[0]!.days.push(created);
+        return { day: created };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Добавить следующую неделю" }),
+    );
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByLabelText("Название недели"), {
+      target: { value: "Асинхронность" },
+    });
+    fireEvent.change(screen.getByLabelText("Цель недели"), {
+      target: { value: "Понять event loop" },
+    });
+    fireEvent.change(screen.getByLabelText(/Темы/u), {
+      target: { value: "Promise, async/await" },
+    });
+    fireEvent.change(screen.getByLabelText(/Ожидаемые результаты/u), {
+      target: { value: "Объяснить Event Loop" },
+    });
+    fireEvent.change(screen.getByLabelText("Количество дней"), {
+      target: { value: "2" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Создать неделю и дни" }),
+    );
+
+    await waitFor(() => {
+      const create = apiMock.mock.calls.find(
+        ([path, init]) =>
+          path === "/curriculum-editor/versions" && init?.method === "POST",
+      );
+      expect(create).toBeDefined();
+      const body = JSON.parse(String(create?.[1]?.body)) as Record<
+        string,
+        unknown
+      >;
+      expect(body.curriculum).toMatchObject({
+        id: "curriculum-js",
+        slug: "javascript-foundation",
+      });
+    });
+    await waitFor(() =>
+      expect(graphs.get("draft-add-week")!.weeks[0]!.days).toHaveLength(2),
+    );
+    const dayPosts = apiMock.mock.calls.filter(
+      ([path, init]) =>
+        String(path).endsWith("/days") && init?.method === "POST",
+    );
+    expect(dayPosts).toHaveLength(2);
+    const firstDay = JSON.parse(String(dayPosts[0]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(firstDay).toMatchObject({
+      title: "День 1",
+      goal: "Понять event loop",
+      topics: ["Promise", "async/await"],
+      expectedOutcomes: ["Объяснить Event Loop"],
+      estimatedMinutes: 60,
+      depthLevel: "foundation",
+    });
+    const secondDay = JSON.parse(String(dayPosts[1]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(secondDay).toMatchObject({ title: "День 2" });
+    expect(await screen.findByText("Асинхронность")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("reuses an existing draft instead of creating another revision", async () => {
+    const published = version("published-reuse", 1, "published");
+    const draft = version("draft-reuse", 2, "draft", published.id);
+    const graphs = new Map<
+      string,
+      {
+        version: ReturnType<typeof version>;
+        weeks: ReturnType<typeof week>[];
+      }
+    >();
+    graphs.set(published.id, { version: published, weeks: [] });
+    graphs.set(draft.id, { version: draft, weeks: [] });
+    const versions = [listItem(draft), listItem(published)];
+    const versionPosts: string[] = [];
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) return { versions };
+      if (path === "/curriculum-editor/versions/draft-reuse" && !init)
+        return { curriculum: structuredClone(graphs.get(draft.id)!) };
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (path === "/curriculum-editor/versions" && init?.method === "POST") {
+        versionPosts.push("unexpected");
+        return { version: version("unexpected", 3, "draft") };
+      }
+      const weekMatch = path.match(
+        /^\/curriculum-editor\/versions\/([^/]+)\/weeks$/u,
+      );
+      if (weekMatch && init?.method === "POST") {
+        const target = graphs.get(weekMatch[1]!)!;
+        const created = week("week-reuse", weekMatch[1]!, String(body.title));
+        target.weeks.push(created);
+        return { week: created };
+      }
+      const dayMatch = path.match(
+        /^\/curriculum-editor\/versions\/([^/]+)\/weeks\/([^/]+)\/days$/u,
+      );
+      if (dayMatch && init?.method === "POST") {
+        const created = day("day-reuse", dayMatch[1]!, dayMatch[2]!);
+        created.title = String(body.title);
+        graphs.get(dayMatch[1]!)!.weeks[0]!.days.push(created);
+        return { day: created };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Добавить следующую неделю" }),
+    );
+    await screen.findByRole("dialog");
+    fireEvent.change(screen.getByLabelText("Название недели"), {
+      target: { value: "Новая неделя" },
+    });
+    fireEvent.change(screen.getByLabelText("Цель недели"), {
+      target: { value: "Цель" },
+    });
+    fireEvent.change(screen.getByLabelText("Количество дней"), {
+      target: { value: "1" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Создать неделю и дни" }),
+    );
+
+    await waitFor(() =>
+      expect(graphs.get("draft-reuse")!.weeks[0]!.days).toHaveLength(1),
+    );
+    expect(versionPosts).toHaveLength(0);
+    const weekPosts = apiMock.mock.calls.filter(
+      ([path, init]) =>
+        String(path).endsWith("/weeks") && init?.method === "POST",
+    );
+    expect(weekPosts).toHaveLength(1);
+    expect(String(weekPosts[0]?.[0])).toContain("/draft-reuse/weeks");
+    expect(await screen.findByText("Новая неделя")).toBeInTheDocument();
   });
 });
