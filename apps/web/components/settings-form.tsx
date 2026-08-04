@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import { useTheme } from "next-themes";
 import { z } from "zod";
@@ -437,9 +437,6 @@ export function SettingsForm() {
     values,
     mode: "onChange",
   });
-  useEffect(() => {
-    if (query.data?.theme) setTheme(query.data.theme);
-  }, [query.data?.theme, setTheme]);
 
   function applyProfile(profileId: ProfileId) {
     const skipped: string[] = [];

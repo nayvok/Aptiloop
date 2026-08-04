@@ -138,6 +138,18 @@ describe("SettingsForm", () => {
     expect(screen.getByText("Health check")).toBeInTheDocument();
   });
 
+  it("does not apply the stored theme on load and applies it on user change", async () => {
+    renderForm();
+
+    await screen.findByRole("heading", { name: "Основные" });
+    expect(setThemeMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Тема"), {
+      target: { value: "dark" },
+    });
+    expect(setThemeMock).toHaveBeenCalledWith("dark");
+  });
+
   it("applies the accuracy profile to reviewer, interviewer, curator and expert", async () => {
     renderForm();
 
