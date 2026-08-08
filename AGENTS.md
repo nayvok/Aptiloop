@@ -1,53 +1,131 @@
-# AGENTS.md
+# Repository Agent Rules
 
-## Назначение проекта
+## Authority and status
 
-Dev Learning Harness — локальная npm-only платформа обучения JavaScript/TypeScript. Пользователь пишет код во внешнем Zed; приложение организует занятие, хранит evidence, запускает только заранее разрешённые проверки и даёт read-only review.
+These rules apply to every repository task. Read `README.md` and `PRODUCT.md` before changing behavior. The current application is the Dev Learning Harness baseline; Aptiloop Core Alpha specifications describe target behavior unless a section is explicitly labeled **Implemented baseline**.
 
-## Обязательные границы
+Use these status labels exactly:
 
-- Не добавлять встроенный IDE, редактор кода, terminal UI или произвольный shell endpoint.
-- Не добавлять Pi, AnkiConnect, cloud auth/sync или multi-user scope в MVP.
-- Не давать Reviewer write/edit/apply tools. Review должен оставаться советом, который пользователь применяет сам.
-- Не передавать в browser secrets, filesystem handles, raw provider RPC или командные строки.
-- Не ослаблять canonical path checks, loopback defaults, Origin checks и process allowlist.
-- Не считать allowlist sandbox: разрешены только доверенные упражнения из репозитория.
-- Использовать npm workspaces и `package-lock.json`; не использовать pnpm/yarn и `workspace:*`.
+- **Implemented baseline**
+- **Approved Core Alpha target**
+- **Proposed pending owner approval**
+- **Future**
 
-## Структура
+Never claim a target is implemented without direct runtime evidence.
 
-- `apps/web` — Next.js presentation и browser state.
-- `apps/orchestrator` — Hono HTTP/SSE, SQLite, процессы, Git/Zed и provider lifecycle.
-- `packages/shared` — Zod contracts и DTO.
-- `packages/learning-core` — чистые правила mastery/hints/review.
-- `packages/agent-core` — provider contract, mock и event normalization.
-- `packages/codex-provider` — узкий Codex app-server stdio adapter.
-- `packages/opencode-provider` — OpenCode SDK/sidecar adapter.
-- `packages/exercise-core` — paths, Git baseline/diff, allowlisted runner и Zed.
-- `packages/curriculum` — versioned curriculum content.
-- `packages/database` — `node:sqlite`, Drizzle schema, migrations, repositories и seed.
+## OMP-native workflow
 
-## Правила реализации
+- Use the Oh My Pi (OMP) harness and its repository tools.
+- Do not use, recommend, invoke, or recreate Superpowers, Caveman, or their planning/development methodologies.
+- Treat committed `.superpowers` and `docs/superpowers` material as historical, non-authoritative artifacts.
+- Reuse current repository conventions; do not introduce a second architecture beside an existing seam.
+- Prefer incremental migration with explicit compatibility and rollback over a big-bang rewrite.
+- Do not overwrite unrelated work or delete historical data to simplify a migration.
+- Keep documentation in English unless editing an explicitly localized Course resource.
 
-- TypeScript strict; валидировать внешние данные Zod на границе.
-- Business rules держать детерминированными и тестируемыми вне LLM.
-- Browser mutation отправляет operation ID и entity ID, не executable/args/cwd.
-- Все дочерние процессы запускать с `shell: false`, timeout, output cap и cleanup.
-- Provider events нормализовать; raw events не отдавать напрямую UI.
-- Codex Reviewer: `sandbox=read-only`, `approvalPolicy=never`.
-- OpenCode Reviewer: явные deny rules для patch/write/edit/mutation tools.
-- Секреты брать только из environment и редактировать в logs/errors.
-- Сохранять first-attempt-before-hint и не показывать reference answer заранее.
-- UI: semantic tokens, keyboard/focus, reduced motion, light/dark, честные loading/empty/error states.
+## Product boundaries
 
-## Команды проверки
+**Approved Core Alpha target**
 
-Запускать из корня:
+- Core Alpha is local-first and single-user.
+- `Course` is the top-level entity; published Course Revisions are immutable.
+- Learner changes belong to a personal Adaptation Branch.
+- Learning uses a finite Activity Graph.
+- The deterministic Learning Kernel owns progression, evidence reduction, mastery, review scheduling, and next-action selection.
+- Course Packs are declarative and validated. They contain no commands, scripts, secrets, executable plugins, provider credentials, or absolute local paths.
+- No production Course ships until content, provenance, safety, and licensing gates are approved.
+- UI locale (`en-US` or `ru-RU`) is independent from one primary Course locale.
+- Private data stays local unless the user explicitly exports or shares a named payload to a named destination.
+
+Do not add cloud sync, authentication, collaboration, organizations, marketplace behavior, an embedded IDE/terminal, arbitrary command execution, or multi-user state to Core Alpha.
+
+## Repository seams to preserve
+
+- `apps/web` — Next.js presentation and browser state.
+- `apps/orchestrator` — Hono HTTP/SSE composition and app-owned runtime policies.
+- `packages/shared` — boundary schemas and DTO contracts.
+- `packages/learning-core` — deterministic learning rules.
+- `packages/agent-core` — current provider contract and normalized events.
+- `packages/codex-provider` and `packages/opencode-provider` — current legacy provider adapters, not the approved Pi boundary.
+- `packages/exercise-core` — canonical paths, isolated attempts, Git evidence, allowlisted runner, and editor launch.
+- `packages/curriculum` — current versioned development curriculum.
+- `packages/database` — SQLite schema, migrations, repositories, seed, and backup.
+
+Migrate through these seams. Do not move database, provider, filesystem, Git, or process authority into the browser.
+
+## Security invariants
+
+- Validate all external data at the boundary with strict schemas.
+- Browser mutations send operation and entity IDs, never executable names, argument vectors, working directories, filesystem handles, provider RPC, or credentials.
+- Keep canonical path containment and Windows reparse/symlink escape checks.
+- Launch child processes with `shell: false`, a fixed app-owned plan, timeout, output cap, minimal environment, cancellation, and process-tree cleanup.
+- An allowlist prevents command injection; it is not a sandbox. Execute only trusted, installed environment definitions and checks.
+- Preserve isolated learner attempts and immutable trusted templates.
+- Preserve server-owned Git baseline identity, complete non-truncated diff evidence, and SHA-256 test/review freshness. Never replace this with timestamps.
+- Reviewer is read-only. It receives bounded evidence, has no write/edit/apply tools, and cannot return or apply a patch through an execution route.
+- AI roles receive only Aptiloop-owned typed tools. Never expose arbitrary filesystem, shell, network, credential, or general edit tools.
+- Pi is a model/runtime dependency behind app-owned policy. Pi has no built-in permission system; Aptiloop must enforce the boundary.
+- Do not design against unimplemented AgentHarness v2 hooks, durable driving, or restore semantics.
+- Do not treat `@earendil-works/pi-session-backend-sqlite-node` as transparently interchangeable with coding-agent `AgentSession`; integration and migration are application-owned.
+- Do not expose `@earendil-works/pi-coding-agent` general read/bash/edit/write tools through Aptiloop.
+- Normalize provider events and redact secrets before persistence, logs, errors, and UI delivery. Do not expose raw provider events to the browser.
+- Provider/model resolution is server-owned and explicit. A failed or unavailable real provider never silently falls back to Mock.
+- Mock is limited to tests, CI, and development.
+- Keep credentials in approved local credential stores or environment configuration, never Course Packs, learner records, logs, or browser payloads.
+- Do not upload or share Course data, sources, capsules, learner evidence, transcripts, workspaces, or profiles without explicit user action.
+- Do not weaken loopback defaults, exact Origin checks, local-client checks, JSON content checks, rate/size limits, or trust-proxy safety.
+- Preserve protected-answer redaction and first-attempt-before-hint behavior.
+
+The current non-review Codex/OpenCode authority and provider override paths are audit findings. Do not describe them as compliant and do not extend them.
+
+## Learning and authoring invariants
+
+- Stable IDs identify meaning and are never silently reused.
+- Published revisions and session snapshots are immutable.
+- Keep authored truth, learner-visible content, protected evaluation material, learner evidence, and model output separate.
+- Deterministic state must be replayable from complete persisted facts. LLM output never directly sets mastery or progression.
+- A Course Pack imports as untrusted data: enforce schema version, size/count/depth limits, reference integrity, graph finiteness, cycle policy, locale declarations, content hashes, and provenance.
+- Unknown activity, evidence, environment, or check types fail closed.
+- Environment contracts may declare Node or Python requirements; Course Packs reference trusted environment/check IDs and never embed commands.
+- Manual authoring must remain complete without AI.
+- AI authoring uses typed proposals against a draft. Applying a proposal and publishing are separate explicit actions. AI cannot publish.
+- Preserve source attribution and immutable Source Snapshots/Knowledge Capsules. Never treat a live URL or model answer as silently mutable course truth.
+- Keep fixtures and development curriculum distinct from production Course content.
+
+## Data discipline
+
+- SQLite is the Core Alpha store. Keep repository/service boundaries compatible with a later PostgreSQL implementation; do not write SQLite quirks into domain contracts.
+- Use additive, forward-only migrations with provenance and quarantine for unmatched legacy rows.
+- Inventory candidate databases and make a verified, non-overwriting backup before migrating valuable local data.
+- Never edit an applied migration. Never reset, delete, or overwrite user data as a migration strategy.
+- Preserve legacy rows until migration reconciliation and rollback evidence are approved.
+- Seed operations must be idempotent and must not mutate published content in place.
+
+## UI and language
+
+- Target primary navigation is Home, Courses, Review, Skills, Settings.
+- Preserve accessible semantic HTML, keyboard operation, visible focus, WCAG 2.2 AA contrast, reduced motion, and light/dark themes.
+- Provide honest loading, empty, offline, no-AI, missing-Core, validation, and error states.
+- Do not encode state by color alone.
+- UI strings belong in `en-US` and `ru-RU` catalogs. Do not use a Course locale as the UI locale.
+- Identifiers, schema keys, activity/evidence types, code, commands, API names, hashes, and check IDs are not localized.
+- Current Russian hardcoded UI is an audit finding, not evidence that localization is complete.
+
+## Package and implementation rules
+
+- Use npm workspaces and the single `package-lock.json`; do not use pnpm, Yarn, or `workspace:*` ranges.
+- Keep TypeScript strict.
+- Keep business rules deterministic, pure where practical, and outside model prompts.
+- Avoid unnecessary allocations, copies, and abstraction layers.
+- Update every caller during a contract change; do not leave silent aliases or fallback paths unless an approved migration requires them.
+- Do not add production dependencies without checking security, license, runtime support, and lockfile impact.
+- The repository currently has no granted project license. Do not add license text or infer redistribution rights without an approved legal decision.
+
+## Verification discipline
+
+Run from the repository root and select the smallest command set that proves the change, then run the applicable full gate:
 
 ```text
-npm install
-npm run db:migrate
-npm run db:seed
 npm run format:check
 npm run lint
 npm run typecheck
@@ -56,23 +134,27 @@ npm run test:e2e
 npm run build
 ```
 
-Для точечной проверки используйте npm workspace, например:
+`npm run verify` runs format check, lint, typecheck, fast tests, and build. It does **not** run E2E. `npm test` runs fast tests followed by E2E.
 
-```text
-npm run test --workspace=@dlh/database
-npm run typecheck --workspace=@dlh/orchestrator
-```
+For a database change, also use a disposable database to prove migration, repeated seed idempotency, constraints, and rollback/recovery procedure. Back up valuable data before migration.
 
-Не объявлять external provider smoke успешным без локальной установки, аутентификации и фактически выполненного запроса.
+For a security boundary, test the permitted path and rejection paths: malformed input, unauthorized IDs, traversal/reparse escapes, stale or truncated diff, denied tools, secret redaction, provider unavailability, and cancellation/cleanup as applicable.
 
-## Curriculum
+For an external provider smoke, require the exact local installation, authentication, selected provider/model, and an observed request. Never infer success from health metadata. Failure must remain explicit; do not switch to Mock.
 
-Использовать стабильные string IDs. Seed обязан быть идемпотентным. Каждый день содержит цели, темы с источниками, вопросы с reference/evaluation points, упражнение и common mistakes. Reference answer не должен попадать в question-generation/interview context до ответа пользователя.
+Do not call E2E green until `npm run test:e2e` passes. At the M0 audit baseline it was red: 1 passed and 3 failed. Do not treat `npm run verify` as evidence for E2E.
 
-## Работа с Git и файлами пользователя
+Do not claim CI enforcement: no workflow is currently committed. Record dependency audit findings and obtain an approved exception with owner and expiry for any unresolved production high/critical advisory.
 
-Не перезаписывать несвязанные изменения. Для упражнения сохранять baseline до редактирования, показывать diff, затем просить пользователя исправить код в Zed. Paths всегда разрешать относительно allowlisted workspace root с `realpath`/reparse checks.
+## Documentation map
 
-## Документация
+Product specifications:
 
-При изменении команд, env, provider protocol, security boundary или curriculum schema обновить соответствующий файл в `docs/` и `.env.example`. README должен описывать только реально существующие scripts и endpoints.
+- `PRODUCT.md`
+- `docs/product/core-alpha-scope.md`
+- `docs/product/user-journeys.md`
+- `docs/product/terminology.md`
+- `docs/product/language-policy.md`
+- `docs/product/course-authoring.md`
+
+When behavior changes, update the relevant current product, architecture, security, runtime, data, authoring, or roadmap specification. Preserve historical documents as history; do not cite them as current approval evidence.

@@ -1,37 +1,156 @@
-# Product
+# Aptiloop Product Contract
 
-## Register
+## Document status
 
-product
+This is the product-level contract for the Core Alpha audit. It distinguishes the runnable Dev Learning Harness from the Aptiloop target and does not assert that migration has happened.
 
-## Users
+- **Implemented baseline** — observed current behavior.
+- **Approved Core Alpha target** — binding target for later implementation.
+- **Proposed pending owner approval** — unresolved recommendation.
+- **Future** — explicitly deferred.
 
-Один локальный пользователь — frontend/fullstack JavaScript-разработчик с коммерческим опытом React, Next.js и TypeScript. Он занимается около трёх часов в день, читает материалы в браузере, пишет код во внешнем Zed и использует платформу как учебный ритуал, а не как IDE.
+## Positioning
 
-## Product Purpose
+**Approved Core Alpha target**
 
-Dev Learning Harness помогает восстановить самостоятельное воспроизведение синтаксиса, точные устные объяснения и уверенность на техническом собеседовании. Успех — пользователь регулярно отвечает до подсказки, пишет решение вне платформы, получает ограниченное ревью, исправляет ошибки сам и видит подтверждённую несколькими типами заданий динамику навыка.
+Aptiloop is a local-first learning workbench for people who want durable technical skill rather than passive content completion. It turns an authored Course into a finite sequence and graph of evidence-producing activities: recall, explanation, prediction, implementation, trusted checks, read-only review, correction, and spaced review.
 
-## Brand Personality
+Aptiloop is not an IDE, chat wrapper, course marketplace, autonomous coding agent, or learning-management system. AI may assist within explicit typed roles, but the deterministic Learning Kernel—not a model—owns learning state and mastery.
 
-Спокойная, точная, взрослая. Интерфейс должен ощущаться как надёжный рабочий инструмент наставника: требовательный без наказания, информативный без перегруза и технологичный без «AI-театра».
+## Audience
 
-## Anti-references
+**Approved Core Alpha target**
 
-- Детская геймификация, streak-pressure, конфетти и визуальный язык Duolingo.
-- Неоновый AI-cockpit, фиолетовые glow-градиенты, glassmorphism и декоративные агенты.
-- Встроенный IDE/терминал или попытка заменить Zed.
-- Плиточный dashboard из одинаковых карточек без информационной иерархии.
-- Интерфейс, который скрывает провайдера, модель, ограничения или факт использования подсказки.
+Core Alpha serves one local learner who:
 
-## Design Principles
+- is building or refreshing practical software-development skill;
+- prefers deliberate practice and verifiable evidence over gamification;
+- may learn without an external AI provider;
+- writes code in a chosen external editor or workspace rather than an embedded IDE;
+- authors a personal Course, installs a trusted Course Pack, or adapts one locally;
+- expects private learning history and course material to remain on the device by default.
 
-1. **Сначала попытка пользователя.** Эталон, сильная подсказка и полное решение появляются только после зафиксированного самостоятельного усилия.
-2. **Прогресс подтверждается разными действиями.** Один правильный ответ не превращает тему в «изученную».
-3. **Показывать следующий осмысленный шаг.** Daily Session ведёт по одному этапу и не превращает экран в бесконечный учебник.
-4. **Прозрачность вместо магии.** Провайдер, модель, состояние подключения, tool events и ограничения всегда видимы.
-5. **Знакомые паттерны экономят внимание.** Стандартные navigation, forms, states и keyboard interactions важнее декоративной новизны.
+Core Alpha does not encode a named person, employer, geography, schedule, experience level, or proprietary curriculum as the product persona.
 
-## Accessibility & Inclusion
+## Product promise
 
-Цель — WCAG 2.2 AA: полная клавиатурная навигация, заметный focus, контрастный текст и controls, семантическая разметка, подписи у полей, состояние не кодируется только цветом, поддерживаются reduced motion и светлая/тёмная темы. Русский — язык интерфейса по умолчанию; код, API-термины и названия технологий сохраняются без искусственного перевода.
+**Approved Core Alpha target**
+
+Aptiloop always makes four things clear:
+
+1. what the learner should do next;
+2. what evidence has actually been recorded;
+3. which conclusions are deterministic and which came from optional AI;
+4. what remains local and what would leave the device after an explicit action.
+
+The product must never represent answer length, completion, provider output, or a single successful attempt as verified mastery.
+
+## Product model
+
+**Approved Core Alpha target**
+
+- `Course` is the top-level entity.
+- A Course has immutable published `Course Revision` objects.
+- A learner changes a published Course through a personal `Adaptation Branch`; source revisions remain unchanged.
+- A revision contains a finite `Activity Graph`. The graph has explicit entry nodes, prerequisites, completion conditions, and terminal outcomes.
+- The deterministic `Learning Kernel` owns activity state, evidence reduction, mastery, review scheduling, and next-action selection.
+- `Source Snapshots` preserve acquired source material; `Knowledge Capsules` are bounded, attributable learning material derived for a Course Revision.
+- A declarative, validated `Course Pack` transports course structure and content. It contains no commands, scripts, secrets, executable plugins, or provider credentials.
+- The application owns typed tools, roles, policies, data, and permissions. Pi is only a model/runtime dependency behind that boundary.
+
+## Core Alpha experience
+
+**Approved Core Alpha target**
+
+Primary navigation is:
+
+- **Home** — current Course, next action, recent evidence, and recovery states;
+- **Courses** — installed Courses, revisions, personal adaptations, import, and authoring entry points;
+- **Review** — due review work, mistakes, flashcards, and interview practice;
+- **Skills** — mastery dimensions and evidence history;
+- **Settings** — language, appearance, runtime, providers, privacy, and diagnostics.
+
+The complete learner journey is defined in [User journeys](docs/product/user-journeys.md). Core Alpha scope is defined in [Core Alpha scope](docs/product/core-alpha-scope.md).
+
+## Course creation and acquisition
+
+**Approved Core Alpha target**
+
+Two paths are required and produce the same validated Course model:
+
+1. **Embedded authoring:** create a local Draft manually or through the optional restart-safe guided Course Designer, edit in Adaptive Studio, validate, Preview, complete Change review, and explicitly Publish an immutable revision. Guided confirmation or proposal Apply never publishes.
+2. **External authoring:** use the version-matched Authoring Kit with any text editor or external AI generator to produce one declarative Course Pack JSON document, validate/canonicalize it locally, then import it into Aptiloop for the same schema/safety validation, learner Preview, and explicit immutable installation or local Draft creation.
+
+Manual authoring must be complete without AI. An AI proposal can change only a draft and can never publish, install, run checks, or grant permissions. No production course ships as part of Core Alpha; repository fixtures remain development evidence only.
+
+See [Course authoring](docs/product/course-authoring.md).
+
+## Privacy
+
+**Approved Core Alpha target**
+
+- Local storage is the default for Course material, source snapshots, knowledge capsules, learner state, evidence, mistakes, mastery, transcripts, workspaces, and credentials.
+- Private data is never uploaded, synchronized, published, or shared without an explicit user action that identifies the destination and payload.
+- External-provider use is opt-in and shows what context is sent. Failure is explicit; a real provider never silently falls back to Mock.
+- Mock is for tests, CI, and development only. It is not a production learning provider or a substitute for a failed configured provider.
+- Course Packs exclude credentials, private learner state, provider sessions, absolute local paths, and arbitrary runtime authority.
+
+## Language and locale
+
+**Approved Core Alpha target**
+
+The interface supports `en-US` and `ru-RU`. UI locale is independent from a Course's one required primary locale. Optional Course translations are explicit resources; they do not change identifiers, graph semantics, evidence types, code, or trusted check IDs. Current Russian documentation and hardcoded UI are migration findings, not proof of locale compliance.
+
+See [Language policy](docs/product/language-policy.md) and [Terminology](docs/product/terminology.md).
+
+## Non-goals
+
+**Approved Core Alpha target**
+
+- cloud accounts, collaboration, classrooms, organizations, permissions, sync, or multi-user state;
+- a marketplace, public publishing service, or production course catalog;
+- an embedded IDE, terminal, general shell, or arbitrary command runner;
+- autonomous edits or Reviewer-applied patches;
+- arbitrary AI filesystem, shell, network, credential, or plugin access;
+- open-ended agent autonomy or model-owned learning decisions;
+- silent provider substitution;
+- mobile-native applications;
+- PostgreSQL deployment in Core Alpha, while preserving PostgreSQL-compatible boundaries;
+- arbitrary executable Course Pack hooks, scripts, or plugins;
+- claims of technical correctness without an approved evidence path.
+
+## Future
+
+- multi-user and synchronized deployments;
+- a public Course Pack ecosystem or marketplace;
+- organization administration and instructor analytics;
+- additional UI locales beyond `en-US` and `ru-RU`;
+- hosted provider brokerage;
+- PostgreSQL operation after the persistence boundary is proven;
+- mobile-native clients;
+- production course distribution after content, provenance, safety, and licensing gates are approved.
+
+## Implemented baseline
+
+The runnable repository remains Dev Learning Harness. It already provides useful seams: local SQLite, a versioned curriculum, immutable session snapshots, deterministic progression/summary/mastery functions, typed evidence for several activities, isolated exercise attempts, trusted test execution, read-only review, draft curriculum editing, and optional provider adapters.
+
+It does not yet implement the Course top-level model, Course Packs, personal adaptation branches, Source Snapshots/Knowledge Capsules, the complete locale policy, the target navigation, the Pi runtime boundary, generic Execution Fabric, Node/Python environment contracts, or Adaptive Studio. Current provider permissions and raw-response handling have unresolved security findings. Current E2E is red.
+
+## Approval gates
+
+Core Alpha cannot be called approved or implemented until all applicable gates are closed with evidence:
+
+1. product terms, scope, journeys, and language policy;
+2. domain and persistence contracts, additive migration, rollback, and representative-data rehearsal;
+3. Course Pack schema, validation, provenance, and hostile-input handling;
+4. Learning Kernel ownership and deterministic replay;
+5. execution environments and trusted check contracts;
+6. Pi/provider capability, credential, typed-tool, and no-fallback boundaries;
+7. privacy and security threat controls;
+8. manual-first Adaptive Studio and publish gates;
+9. responsive, accessible `en-US`/`ru-RU` experience;
+10. clean dependency audit or documented approved exceptions;
+11. project/content/third-party licensing and legal review;
+12. passing fast verification, E2E, migration rehearsal, and required runtime smokes.
+
+**Proposed pending owner approval:** use the Calm Workshop visual direction while retaining Geist Sans/Mono and the current semantic OKLCH foundation. Licensing recommendations remain pending legal review; no license is granted by this document.

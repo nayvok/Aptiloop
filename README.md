@@ -1,92 +1,138 @@
-# Dev Learning Harness
+# Aptiloop
 
-Локальная single-user платформа для самостоятельного обучения JavaScript/TypeScript. Пользователь изучает короткие units, сначала отвечает и пишет код сам в Zed, затем получает Teacher-вопрос, запускает разрешённые тесты и запрашивает read-only review. Приложение хранит evidence и продолжает незавершённое занятие после перезапуска; встроенного редактора, терминала и автоматического применения исправлений нет.
+Aptiloop is being specified as a local-first, single-user learning system for building durable technical skill through authored courses, deliberate practice, deterministic evidence, and optional AI assistance.
 
-## Реализованный MVP
+This branch is a documentation and audit milestone. The runnable application is still the **Dev Learning Harness**: its package names, routes, hardcoded Russian interface, bundled curriculum, and provider adapters have not been migrated to the Aptiloop Core Alpha architecture. The bundled curriculum is development content, not a production course.
 
-- versioned учебный путь: published revision → неделя → день → короткие units;
-- полностью наполненная первая неделя и рабочий вертикальный срез Дня 1;
-- briefing, study checklist, recall, Teacher dialogue, quiz, code reading, practice, review и итог дня;
-- immutable snapshot программы в каждой сессии и перезапуск с сохранённого unit;
-- отдельная папка каждой практической попытки, Git baseline/diff и настоящий `npm test`;
-- correction cycle: тест → read-only review → самостоятельная правка → новый тест/review;
-- серверный deterministic summary, mastery evidence, журнал ошибок и кандидаты в карточки;
-- отдельный workflow интервью с setup, вопросами по одному, transcript и restart-safe отчётом;
-- draft Curriculum Editor: создание/клонирование ревизии, порядок week/day/unit и необратимая публикация;
-- Mock provider без сети и опциональные Codex app-server/OpenCode sidecar;
-- светлая, тёмная и системная темы, keyboard/focus и reduced-motion states.
+## Status vocabulary
 
-Важно: отчёт интервью в текущем MVP фиксирует полноту и форму ответов, но **не подтверждает их техническую корректность и не меняет mastery**. Подробнее — в [методике](docs/learning-methodology.md).
+Every current specification uses one of four labels:
 
-## Требования
+- **Implemented baseline** — behavior observed in the current Dev Learning Harness.
+- **Approved Core Alpha target** — a binding product contract for later implementation.
+- **Proposed pending owner approval** — a recommendation that must not be implemented as settled scope yet.
+- **Future** — intentionally outside Core Alpha.
 
-- Node.js 24+;
-- npm 11+;
-- Git;
-- Zed — опционально, для кнопки открытия из практики;
-- Codex CLI или OpenCode CLI — только для соответствующего внешнего провайдера;
-- Docker/Compose — опционально для Mock-oriented запуска.
+Do not infer implementation from a target specification.
 
-Проект npm-only: один `package-lock.json`, без pnpm/yarn и `workspace:*`.
+## Runnable baseline
 
-## Первый запуск
+**Implemented baseline**
 
-Из корня репозитория:
+The current repository is an npm/Turborepo monorepo with:
 
-```powershell
+- a Next.js web application and Hono orchestrator;
+- local SQLite persistence;
+- a versioned learning path with immutable session snapshots;
+- briefing, study, recall, Teacher dialogue, quiz, code-reading, exercise, review, interview, and summary flows;
+- deterministic unit progression, summary derivation, and mastery rules;
+- isolated exercise attempts, a Git baseline and diff, an allowlisted test command, and read-only review;
+- a draft curriculum editor with clone, validation, ordering, and immutable publish behavior;
+- Mock, Codex app-server, and OpenCode provider adapters.
+
+The current interview report records completion and answer form. It does **not** establish technical correctness or change mastery. The current provider boundary is not the approved Pi/tool boundary, current course import/export does not exist, and the current editor is not yet Adaptive Studio.
+
+## Core Alpha direction
+
+**Approved Core Alpha target**
+
+Core Alpha is local-first and single-user. `Course` is the top-level entity. Published course revisions are immutable; each learner has a personal adaptation branch; learning is a finite activity graph; and the deterministic Learning Kernel owns progression, evidence interpretation, review scheduling, and mastery. Course content is carried by declarative, validated Course Packs. Packs contain no commands, scripts, secrets, or plugins.
+
+Pi is the model/runtime layer behind Aptiloop-owned typed tools. It is not the product domain, permission system, or a general coding-agent surface. AI roles receive no arbitrary filesystem, shell, network, or edit tools. Reviewer is read-only and cannot apply patches. Real-provider failure is explicit; there is no silent fallback to Mock. Private learner data stays local unless the user explicitly exports or shares it.
+
+The runtime research is pinned to official `@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`, and `@earendil-works/pi-coding-agent` v0.84.1 at [Pi commit `9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328). Pi is MIT-licensed but [does not provide a built-in permission system](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/README.md#L35-L41). Its documented AgentHarness v2 is not a durable app runtime today: [restore and major operations remain unimplemented](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/agent/src/harness/agent-harness.ts#L342-L357). Aptiloop must not design Core Alpha against those unimplemented hooks or treat the separate SQLite session backend as a transparent coding-agent session replacement.
+
+See:
+
+- [Product contract](PRODUCT.md)
+- [Core Alpha scope](docs/product/core-alpha-scope.md)
+- [User journeys](docs/product/user-journeys.md)
+- [Terminology](docs/product/terminology.md)
+- [Language policy](docs/product/language-policy.md)
+- [Course authoring](docs/product/course-authoring.md)
+
+## Requirements
+
+- Node.js 24 or newer (the package manifest declares `>=24.0.0`)
+- npm 11 (the repository pins `npm@11.12.1`)
+- Git
+- Zed, optional for opening an exercise workspace
+- Codex CLI or OpenCode CLI, optional and only for its corresponding current provider adapter
+- Docker with Compose, optional for the Mock-oriented container setup
+
+This is an npm-only workspace with one `package-lock.json`. Do not use pnpm, Yarn, or `workspace:*` dependency ranges.
+
+## Run locally
+
+From the repository root:
+
+```sh
 npm install
 npm run db:migrate
 npm run db:seed
 npm run dev
 ```
 
-Откройте <http://127.0.0.1:3000>. Orchestrator слушает <http://127.0.0.1:8787>, readiness — <http://127.0.0.1:8787/health/ready>. Web проксирует `/api/*` через server-side rewrite.
+Open <http://127.0.0.1:3000>. The orchestrator defaults to <http://127.0.0.1:8787>; readiness is exposed at <http://127.0.0.1:8787/health/ready>. The web server rewrites `/api/*` to the orchestrator.
 
-`npm start` запускает тот же локальный stack через `scripts/dev-local.mjs` и пытается поднять OpenCode sidecar. Для обучения без внешних CLI достаточно Mock. Корневой `.env` не обязателен; при необходимости скопируйте `.env.example`.
+`npm start` invokes `scripts/dev-local.mjs`, attempts to start the current OpenCode sidecar, and then launches the local development stack. A root `.env` is optional; copy `.env.example` only when local overrides are needed.
 
-Перед миграцией существующей базы рекомендуется сделать проверенную копию:
+Back up a valuable existing database before migration:
 
-```powershell
+```sh
 npm run db:backup
 npm run db:migrate
 npm run db:seed
 ```
 
-CLI базы разрешает относительные пути от корня проекта, даже когда npm запускает workspace-script. Backup использует `VACUUM INTO`, проверяет `integrity_check` и foreign keys у источника и копии и не перезаписывает существующий файл. Подробности — в [разработке](docs/development.md).
+The current backup command uses SQLite `VACUUM INTO`, verifies integrity and foreign keys for source and copy, and does not overwrite an existing backup.
 
-## Основные команды
+## Root commands
 
-```powershell
-npm run dev          # Next.js + Hono
-npm start            # локальный launcher, включая OpenCode sidecar при возможности
-npm run db:backup    # проверенная timestamped-копия SQLite
-npm run db:migrate   # ordered migrations и repeatable legacy repair
-npm run db:seed      # идемпотентный versioned curriculum seed
-npm run format:check
+These commands exactly match the root `package.json` scripts:
+
+```sh
+npm run build         # turbo run build
+npm run dev           # development tasks in parallel
+npm start             # local launcher script
+npm run format        # write formatting changes
+npm run format:check  # check formatting
 npm run lint
 npm run typecheck
-npm run test:fast    # unit/integration/component tests, всегда без Turbo cache
-npm run test:e2e     # Playwright; wrapper восстанавливает next-env.d.ts
-npm run build
-npm run verify       # format + lint + types + fast tests + build (без E2E)
+npm test              # fast tests, then E2E
+npm run test:fast     # Turbo unit/integration/component tests
+npm run test:e2e      # isolated Playwright wrapper
+npm run db:generate
+npm run db:backup
+npm run db:migrate
+npm run db:seed
+npm run verify        # format check, lint, typecheck, fast tests, build; excludes E2E
 ```
 
-`npm test` запускает `test:fast`, затем E2E. Playwright намеренно использует порты `3100/8887`, отдельный `.next-e2e`, in-memory SQLite, отдельный root попыток, `retries: 0` и не переиспользует чужие dev-серверы. Корневой E2E wrapper восстанавливает tracked `apps/web/next-env.d.ts` и после успешного прогона, и после ошибки.
+The Playwright wrapper uses the web workspace configuration, isolated ports and data, zero retries, and restores `apps/web/next-env.d.ts` after either success or failure.
 
-## Docker Compose
+## M0 audit evidence
 
-```powershell
-docker compose up --build
-docker compose logs -f orchestrator web
-docker compose down
-```
+**Implemented baseline**, observed for this audit on `docs/core-alpha-audit`:
 
-Compose ориентирован на Mock. SQLite хранится в `harness-data`, а изолированные рабочие папки попыток — в отдельном named volume `harness-attempts`, смонтированном в `/app/.data`. Codex CLI и Zed находятся на host, а OpenCode adapter принимает только loopback endpoint, поэтому внешний provider/Zed flow удобнее проверять локальным npm-запуском.
+- clean local `old` and `main` both preserved commit `053dcd0`;
+- `npm install` succeeded and left Git clean;
+- a disposable SQLite database migrated successfully and seeded twice, yielding 7 days and 14 topics;
+- `npm run verify` passed formatting, 12/12 lint tasks, 12/12 typecheck tasks, 21/21 fast-test tasks totaling 352 tests, and 12/12 build tasks; the web build produced 12 static Next routes;
+- `npm run test:e2e` was **red**: 1 test passed and 3 failed. Day 1 could not find `Plan day`; Curriculum Editor timed out waiting for create revision amid repeated navigation; Interview could not find the default studied-scope radio;
+- a disposable 1440×900 browser smoke loaded Home, started a session, opened the plan drawer, and showed no observed console errors;
+- at 390×844 there was no horizontal overflow, but Home was a dense 3534 px page and the mobile navigation was overfull;
+- `npm audit` reported 6 vulnerabilities: 4 high, 1 moderate, and 1 low. Relevant locked versions include Hono 4.12.33, Next 16.2.12, nested PostCSS 8.4.31, sharp 0.34.5, nanoid 3.3.16, and tsup esbuild 0.27.7;
+- the GitHub API showed zero issues and zero pull requests; no CI workflow is committed.
 
-## Границы доверия
+E2E is not green, dependency approval is not complete, and this M0 documentation set is not a release approval.
 
-Browser отправляет operation/entity IDs и учебные данные, но не executable, args, cwd, filesystem handles или provider RPC. Все mutations проверяют Origin, JSON content type и локальный client header. Пути canonicalized; процессы запускаются с `shell: false`, timeout и output cap.
+## Privacy and trust boundary
 
-Allowlist — защита от command injection, **не sandbox JavaScript**. Запускайте только доверенные упражнения из репозитория. Reviewer получает diff/context и deny-write policy; route применения патча отсутствует.
+The current application is intended for trusted local use. Browser requests must never supply executables, argument vectors, working directories, filesystem handles, credentials, or raw provider RPC. Paths remain canonical and contained. Child processes remain allowlisted, `shell: false`, bounded by time/output limits, and cleaned up. An allowlist prevents command injection; it does not sandbox trusted JavaScript fixtures.
 
-Документы: [архитектура](docs/architecture.md), [безопасность](docs/security.md), [провайдеры](docs/providers.md), [авторинг](docs/curriculum-authoring.md), [acceptance-аудит](docs/acceptance-audit.md), [troubleshooting](docs/troubleshooting.md).
+**Approved Core Alpha target:** Course Packs and activities are data, never executable authority. Environment execution uses app-owned contracts and trusted check IDs. Provider credentials stay outside packs and learner records. No private course, source, workspace, evidence, transcript, or profile data is uploaded or shared without an explicit user action.
+
+## Approval state
+
+Core Alpha remains behind product, architecture, security, data-migration, runtime/provider, design, dependency, licensing, and E2E gates. Recommended visual direction **A. Calm Workshop** is **Proposed pending owner approval**. The licensing recommendation is also **Proposed pending owner approval** and requires legal review; this repository currently has no project license grant. Do not add or infer a license until that gate is resolved.
