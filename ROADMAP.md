@@ -25,7 +25,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M0 — Repository audit and owner approval gate
 
-**Status:** Implemented baseline for the audit artifacts; approval remains proposed pending owner approval.
+**Status:** Implemented baseline — audit artifacts and owner decisions were recorded on 2026-08-08.
 
 - **Objective:** Establish one evidence-based baseline, one coherent Core Alpha contract, and explicit owner decisions before product migration, redesign, or licensing changes.
 - **Scope:** Central 17-part audit; target specifications; ADRs; M0–M12 roadmap; exact verification record; design alternatives; migration, security, runtime, and licensing plans.
@@ -40,7 +40,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M1 — Safety, provenance, and repeatable quality gate
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** Approved Core Alpha target; M1 implementation authorized by the owner on 2026-08-08.
 
 - **Objective:** Make the existing vertical slice safe enough to serve as the migration base and make verification repeatable before adding capability.
 - **Scope:** Deny general provider filesystem/shell/network/edit tools for every learning role; minimize child environments; stop raw tool input/output persistence; inventory existing `agent_messages.tool_events_json`, SQLite WAL, application-managed backups, restores, exports, SSE, and logs; record an owner-approved preserve/redact/delete/quarantine disposition for sensitive legacy rows and copies; validate loopback-only bind; inventory current v1 callers and freeze externally reachable deterministic-integrity bypass writes without deleting history; fix or explicitly approve dependency advisories; add committed CI for install, audit policy, format, lint, typecheck, fast tests, E2E, and build; generate a private-data inventory and candidate-DB report.

@@ -2,8 +2,8 @@
 
 **Date:** 2026-08-08
 **Branch:** `docs/core-alpha-audit`
-**Status:** Proposed pending owner approval
-**Scope:** Documentation and specification only; no target behavior is claimed as implemented
+**Status:** Approved Core Alpha target; M0 decisions recorded and M1 authorized on 2026-08-08
+**Scope:** M0 audit/specification evidence and recorded owner decisions; target behavior is not claimed as implemented
 
 Status language in this audit is normative:
 
@@ -68,17 +68,17 @@ The migration rule is therefore incremental preservation, not a rewrite: retain 
 
 **Implemented baseline evidence.** The following results are the approval baseline; older green claims do not replace them.
 
-| Check | Exact result |
-| --- | --- |
-| Repository state | Clean local `old` and `main` both preserve commit `053dcd0`; work is on `docs/core-alpha-audit`. |
-| Install | `npm install` succeeded and left Git clean. |
-| Disposable SQLite | Migrate plus seed twice succeeded; resulting seed reported 7 days and 14 topics. |
-| `npm run verify` | Passed format; 12/12 lint tasks; 12/12 typecheck tasks; 21/21 fast-test tasks totaling 352 tests; 12/12 build tasks; 12 static Next routes. |
-| `npm run test:e2e` | **Failed: 1 passed, 3 failed.** Day 1 could not find `Plan day`; Curriculum Editor timed out waiting for create revision amid repeated navigation; Interview could not find the default studied-scope radio. E2E is not green. |
-| Desktop browser smoke | At 1440×900, Home loaded, a session started, and the plan drawer opened; no console errors were observed. |
-| Mobile browser smoke | At 390×844, no horizontal overflow was observed, but Home was 3534 px tall and the mobile navigation was overfull/dense. |
-| Dependency audit | `npm audit` reported **6 vulnerabilities: 4 high, 1 moderate, 1 low**. Relevant locked versions: Hono 4.12.33, Next 16.2.12, nested PostCSS 8.4.31, sharp 0.34.5, nanoid 3.3.16, and tsup esbuild 0.27.7. |
-| Collaboration/automation | GitHub API reported zero issues and zero pull requests. No CI workflow is committed. |
+| Check                    | Exact result                                                                                                                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Repository state         | Clean local `old` and `main` both preserve commit `053dcd0`; work is on `docs/core-alpha-audit`.                                                                                                                               |
+| Install                  | `npm install` succeeded and left Git clean.                                                                                                                                                                                    |
+| Disposable SQLite        | Migrate plus seed twice succeeded; resulting seed reported 7 days and 14 topics.                                                                                                                                               |
+| `npm run verify`         | Passed format; 12/12 lint tasks; 12/12 typecheck tasks; 21/21 fast-test tasks totaling 352 tests; 12/12 build tasks; 12 static Next routes.                                                                                    |
+| `npm run test:e2e`       | **Failed: 1 passed, 3 failed.** Day 1 could not find `Plan day`; Curriculum Editor timed out waiting for create revision amid repeated navigation; Interview could not find the default studied-scope radio. E2E is not green. |
+| Desktop browser smoke    | At 1440×900, Home loaded, a session started, and the plan drawer opened; no console errors were observed.                                                                                                                      |
+| Mobile browser smoke     | At 390×844, no horizontal overflow was observed, but Home was 3534 px tall and the mobile navigation was overfull/dense.                                                                                                       |
+| Dependency audit         | `npm audit` reported **6 vulnerabilities: 4 high, 1 moderate, 1 low**. Relevant locked versions: Hono 4.12.33, Next 16.2.12, nested PostCSS 8.4.31, sharp 0.34.5, nanoid 3.3.16, and tsup esbuild 0.27.7.                      |
+| Collaboration/automation | GitHub API reported zero issues and zero pull requests. No CI workflow is committed.                                                                                                                                           |
 
 Consequences:
 
@@ -108,21 +108,21 @@ Preservation does not mean freezing current names or shapes. `curricula` can bec
 
 **Implemented baseline findings to migrate or retire later.**
 
-| Mechanism | Finding | Disposition |
-| --- | --- | --- |
-| Dev Learning Harness / `@dlh/*` naming | Product identity and package scope predate Aptiloop. | Rename in staged, separately verified slices; do not couple every rename to domain migration. |
-| Russian UI and docs | `<html lang="ru">`, hard-coded labels, `ru-RU` formatting, and Russian docs are current baseline, not bilingual compliance. | Extract UI catalogs for en-US/ru-RU; classify old docs as historical or migrate them after approval. |
-| Primary navigation | Path, Session, Practice, Knowledge, Mistakes, Interview, and Cards expose subsystems; mobile nav is overfull. | Migrate to Home / Courses / Review / Skills / Settings with compatibility routes. |
-| v1 learning endpoints | Caller-supplied fixed mastery, canned mistakes/cards, and completion bypass v2 evidence rules. | Stop new callers, migrate evidence, freeze writes, then remove after parity. |
-| Lossy mastery reconstruction | Successful UTC days and repeated-error counts are not persisted/replayed completely. | Add replay-complete evidence; never infer missing facts. |
-| Hints | Six-level rules exist, but persistence is orphaned from HTTP/UI; older 0–3 path remains. | Generalize typed evidence or explicitly defer; retire old path only after data migration. |
-| Teacher linkage | Generic conversation counts act as authority and canonical `conversationId` can remain null. | Replace with typed turn/evidence linkage. |
-| Interview report | Completion/form observations can be mislabeled as skill evidence. | Keep honest limitation; no technical mastery until a deterministic approved evaluator exists. |
-| Generic provider stream | Browser provider/model override bypasses central settings/policy. | Resolve through one server-owned Provider Hub. |
-| Curriculum Editor | Raw JSON-centric and lacks pack, locales, preview, provenance, and typed proposals. | Evolve into manual-first Adaptive Studio; preserve draft/publish invariants. |
-| `.superpowers` and `docs/superpowers` | Committed instructions require Superpowers workflows, conflicting with the OMP-native repository workflow. | Treat as historical audit material; migrate/archive instructions after approval. Do not recommend Superpowers/Caveman. |
-| Historical docs | r3/r4 mismatch, pre-v2 product spec, conflicting plan statuses, old mtime limitation, and dated acceptance claims. | Status-label and archive/migrate later; do not treat as current approval evidence. |
-| Mock in product health | Mock can appear as “AI ready.” | Restrict to test/CI/dev and distinguish AI Off, unavailable, failed, and real configured provider. |
+| Mechanism                              | Finding                                                                                                                     | Disposition                                                                                                            |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Dev Learning Harness / `@dlh/*` naming | Product identity and package scope predate Aptiloop.                                                                        | Rename in staged, separately verified slices; do not couple every rename to domain migration.                          |
+| Russian UI and docs                    | `<html lang="ru">`, hard-coded labels, `ru-RU` formatting, and Russian docs are current baseline, not bilingual compliance. | Extract UI catalogs for en-US/ru-RU; classify old docs as historical or migrate them after approval.                   |
+| Primary navigation                     | Path, Session, Practice, Knowledge, Mistakes, Interview, and Cards expose subsystems; mobile nav is overfull.               | Migrate to Home / Courses / Review / Skills / Settings with compatibility routes.                                      |
+| v1 learning endpoints                  | Caller-supplied fixed mastery, canned mistakes/cards, and completion bypass v2 evidence rules.                              | Stop new callers, migrate evidence, freeze writes, then remove after parity.                                           |
+| Lossy mastery reconstruction           | Successful UTC days and repeated-error counts are not persisted/replayed completely.                                        | Add replay-complete evidence; never infer missing facts.                                                               |
+| Hints                                  | Six-level rules exist, but persistence is orphaned from HTTP/UI; older 0–3 path remains.                                    | Generalize typed evidence or explicitly defer; retire old path only after data migration.                              |
+| Teacher linkage                        | Generic conversation counts act as authority and canonical `conversationId` can remain null.                                | Replace with typed turn/evidence linkage.                                                                              |
+| Interview report                       | Completion/form observations can be mislabeled as skill evidence.                                                           | Keep honest limitation; no technical mastery until a deterministic approved evaluator exists.                          |
+| Generic provider stream                | Browser provider/model override bypasses central settings/policy.                                                           | Resolve through one server-owned Provider Hub.                                                                         |
+| Curriculum Editor                      | Raw JSON-centric and lacks pack, locales, preview, provenance, and typed proposals.                                         | Evolve into manual-first Adaptive Studio; preserve draft/publish invariants.                                           |
+| `.superpowers` and `docs/superpowers`  | Committed instructions require Superpowers workflows, conflicting with the OMP-native repository workflow.                  | Treat as historical audit material; migrate/archive instructions after approval. Do not recommend Superpowers/Caveman. |
+| Historical docs                        | r3/r4 mismatch, pre-v2 product spec, conflicting plan statuses, old mtime limitation, and dated acceptance claims.          | Status-label and archive/migrate later; do not treat as current approval evidence.                                     |
+| Mock in product health                 | Mock can appear as “AI ready.”                                                                                              | Restrict to test/CI/dev and distinguish AI Off, unavailable, failed, and real configured provider.                     |
 
 ## 6. Security findings and required boundaries
 
@@ -288,21 +288,21 @@ Historical lowercase `docs/architecture.md`, `docs/security.md`, the 2026-08-02 
 
 **Proposed pending owner approval.** The detailed [M0–M12 roadmap](../../ROADMAP.md) is ordered to retain runnable vertical slices:
 
-| Milestone | Outcome |
-| --- | --- |
-| M0 | Audit/specification approval only. |
-| M1 | Security containment, data inventory, dependency/CI gate; existing product slice remains intact. |
-| M2 | Additive Course/revision/activity/evidence foundations with provenance and compatibility reads. |
-| M3 | Safe single-file JSON Course Pack lifecycle plus version-matched Authoring Kit; no content execution and no production courses. |
-| M4 | Replay-complete deterministic Learning Kernel. |
-| M5 | Generic trusted-ID Execution Fabric plus Node/Python environment contracts. |
-| M6 | Provider Hub and constrained Pi runtime behind typed Aptiloop tools. |
-| M7 | Aptiloop identity, en-US/ru-RU, and Home/Courses/Review/Skills/Settings IA. |
-| M8 | Activity Frame and one-by-one renderer migration. |
-| M9 | Complete manual 70% editorial Adaptive Studio with Authoring Kit schema/validator parity. |
-| M10 | Optional 30% guided Course Designer and typed AI proposal instrument. |
-| M11 | Course/session caller cutover and separately gated legacy retirement. |
-| M12 | Release candidate, self-hosting, notices/SBOM, and approved licensing cutover. |
+| Milestone | Outcome                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| M0        | Audit/specification approval only.                                                                                              |
+| M1        | Security containment, data inventory, dependency/CI gate; existing product slice remains intact.                                |
+| M2        | Additive Course/revision/activity/evidence foundations with provenance and compatibility reads.                                 |
+| M3        | Safe single-file JSON Course Pack lifecycle plus version-matched Authoring Kit; no content execution and no production courses. |
+| M4        | Replay-complete deterministic Learning Kernel.                                                                                  |
+| M5        | Generic trusted-ID Execution Fabric plus Node/Python environment contracts.                                                     |
+| M6        | Provider Hub and constrained Pi runtime behind typed Aptiloop tools.                                                            |
+| M7        | Aptiloop identity, en-US/ru-RU, and Home/Courses/Review/Skills/Settings IA.                                                     |
+| M8        | Activity Frame and one-by-one renderer migration.                                                                               |
+| M9        | Complete manual 70% editorial Adaptive Studio with Authoring Kit schema/validator parity.                                       |
+| M10       | Optional 30% guided Course Designer and typed AI proposal instrument.                                                           |
+| M11       | Course/session caller cutover and separately gated legacy retirement.                                                           |
+| M12       | Release candidate, self-hosting, notices/SBOM, and approved licensing cutover.                                                  |
 
 Evidence for this order is concrete: present provider authority and secrets risks must precede Pi/AI expansion; data ambiguity must precede pack import and course selection; manual Studio must be complete before AI authoring; the monolithic renderer can be wrapped and migrated type-by-type; v1 retirement must follow, not precede, backfill and parity; and M12 licensing cannot proceed before ownership, variant, boundaries, and legal review.
 
@@ -328,7 +328,7 @@ The target composition is approximately 70% calm editorial workflow and 30% deve
 
 ## 13. Three visual directions
 
-All three are **Proposed pending owner approval**.
+The owner selected **A. Calm Workshop** on 2026-08-08. B and C remain decision evidence and unselected **Future** alternatives.
 
 ### A. Calm Workshop
 
@@ -342,11 +342,11 @@ Warm paper/editorial surfaces, ruled separators, margin evidence, serif learning
 
 Slate/navy technical workbench, cobalt selection, amber validation, explicit graph/evidence rails, and a dense Studio-first grid. It expresses finite dependencies and validation well, especially in dark mode, but risks becoming an IDE/control plane and exposing implementation structure to learners.
 
-These are product-system directions, not cosmetic themes. The owner must choose one before redesign begins.
+These are product-system directions, not cosmetic themes. A is the approved target direction; B and C are not authorized redesign targets.
 
 ## 14. Recommendation
 
-**Proposed pending owner approval:** choose **A. Calm Workshop**.
+**Approved Core Alpha target:** the owner selected **A. Calm Workshop** on 2026-08-08.
 
 Reasons:
 
@@ -356,9 +356,9 @@ Reasons:
 - one visual language can support a calm 720–800 px lesson surface and a dense outline/editor/inspector Studio without making the learner UI resemble an IDE;
 - it best supports the required incremental Activity Frame and renderer migration.
 
-Approval should cover the direction, not lock every token. Detailed design remains validated against the accessibility, language, activity, and Studio contracts.
+Approval covers the direction, not every token. Detailed design remains subject to the accessibility, language, activity, Studio, and milestone acceptance contracts.
 
-The licensing recommendation is separately **Proposed pending owner approval and legal review**: use **AGPL-3.0-only** for the existing integrated application/server surface; use **Apache-2.0 only for newly separated reusable Course Pack/activity/environment SDK packages** after their technical boundaries, ownership, and notices are verified. Keep fixture/content terms separate, publish third-party notices/SBOM, and adopt a trademark policy. Do not add license texts at M0.
+The owner deferred every licensing/distribution artifact and channel pending professional legal review. No license text, new source/npm/standalone/desktop/container/hosted distribution artifact, future Apache SDK, redistributable production/sample Course, contribution policy, or trademark policy is authorized. The repository remains under no license grant; the earlier AGPL/Apache direction remains an unapproved engineering recommendation only.
 
 ## 15. Licensing inventory and owner questions
 
@@ -366,7 +366,7 @@ The licensing recommendation is separately **Proposed pending owner approval and
 
 The repository mixes own code, curriculum prose and code examples, exercise templates/tests, Russian translations, docs, screenshots, Geist fonts, provider/trademark names, and local learner/runtime artifacts. Package directories alone do not prove legal separability because the orchestrator imports nearly every internal package. `.data` databases, backups, attempts, and local captures must never enter a release by accident.
 
-The following owner/business decisions require a recorded disposition before implementation begins. An explicit deferral is valid only when it keeps the affected artifact, content, mark, contribution model, or release channel out of scope until owner and professional counsel approve it:
+The following owner/business decisions remain unresolved under the owner-approved 2026-08-08 deferral. The deferral keeps every affected artifact, content set, mark, contribution model, and distribution channel out of scope until the owner and professional counsel approve it:
 
 1. **Ownership and contributors:** identify the person/legal entity controlling each code, curriculum, translation, fixture/test, document, screenshot, font/asset, and contribution; record assignment/DCO/CLA/employment/contractor evidence and the policy for AI-assisted provenance.
 2. **Code license and boundary:** choose the exact AGPL variant and path matrix for the integrated surface; identify any future Apache SDK candidates and required separation; decide whether dual licensing is intended and whether authority exists.
@@ -377,29 +377,22 @@ The following owner/business decisions require a recorded disposition before imp
 
 Professional counsel must determine verified rights, license compatibility, combined-work/separability, exact obligations, content/asset terms, and trademark/contribution consequences. Engineering must supply the path/dependency/provenance inventory, SBOM/notices, artifact scan, and private-data exclusion evidence. No document here substitutes one class of decision for another or applies a license.
 
-## 16. Blocking approval choices
+## 16. Recorded owner decisions
 
-No ordinary technical uncertainty is elevated to a blocking question. The audits provide a default design and migration path for security controls, schema constraints, pack validation, runtime adapters, replay rules, tests, and rollback.
+On 2026-08-08, the repository owner explicitly:
 
-Before implementation begins, the repository owner must explicitly choose:
+1. approved the Core Alpha product and architecture contract, including the fixed 50-item release matrix;
+2. approved the M0–M12 order and incremental/no-big-bang migration rule;
+3. selected **A. Calm Workshop**;
+4. deferred every licensing and distribution decision in Section 15, keeping all affected artifacts and channels out of scope pending professional legal review; and
+5. authorized implementation of M1.
 
-1. approve, amend, or reject the Core Alpha product and architecture contract in this specification set, including the fixed 50-item release matrix;
-2. approve, amend, or reject the M0–M12 ordering and its incremental/no-big-bang migration rule;
-3. approve one visual direction, with **A. Calm Workshop** recommended;
-4. record a disposition for every owner/business licensing decision in Section 15, with professional counsel determining legal conclusions; any deferral keeps the affected artifact/channel out of scope;
-5. approve whether the repository should proceed from documentation-only M0 into M1 implementation.
+The failed E2E scenarios, six baseline dependency vulnerabilities, five present high-severity security findings, missing CI, data ambiguities, and incomplete mechanisms are M1 work with acceptance tests in the roadmap. They are not owner design decisions.
 
-The failed E2E scenarios, six dependency vulnerabilities, five present high-severity security findings, missing CI, data ambiguities, and incomplete mechanisms are known work with acceptance tests in the roadmap. They are not requests for the owner to design technical fixes.
+## 17. Approval gate result
 
-## 17. Explicit approval gate
+**Implemented baseline:** the M0 approval gate was satisfied on 2026-08-08. The approved documents authorize milestone execution in the recorded order; they do not claim that target behavior exists.
 
-**Proposed pending owner approval.** This document, the roadmap, ADRs, and linked specifications are an approval package—not implementation authorization by their mere existence.
+M1 may implement only safety, provenance, and repeatable-quality scope. Product redesign, Pi integration, Course Pack rollout, production Course work, public/new artifact distribution, and every license or trademark/contribution change remain outside M1. Later milestones begin only after the preceding milestone's acceptance evidence is recorded.
 
-> **No product migration, UI redesign, data/schema cutover, Pi/provider expansion, Course Pack rollout, production course work, public release, or license change may begin before the repository owner explicitly approves the Core Alpha target and 50 release gates, roadmap/order, visual direction, migration approach, and complete licensing decision register subject to professional legal review.**
-
-Until that approval is recorded:
-
-- the implemented baseline remains Dev Learning Harness and must not be described as Core Alpha-complete;
-- E2E remains red at 1/4 passed, and `npm audit` remains red with 6 vulnerabilities;
-- no new target behavior, design direction, licensing model, or historical-doc migration is considered adopted;
-- documentation work must stop at specification and audit boundaries.
+The implemented application remains Dev Learning Harness until each approved migration slice is delivered and verified. E2E and dependency findings remain red until M1 runtime evidence proves otherwise.

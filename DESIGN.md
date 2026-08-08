@@ -71,11 +71,11 @@ Recorded verification is mixed and must remain described accurately: `npm run ve
 
 ## Design directions
 
-The three directions below are alternatives. None is approved by this document.
+The three directions below were evaluated at the M0 gate. The owner approved **A Calm Workshop** on 2026-08-08; B and C remain unselected alternatives, not implementation targets.
 
 ### A Calm Workshop
 
-**Proposed pending owner approval — recommended**
+**Approved Core Alpha target — owner-selected direction**
 
 A cold-neutral and eucalyptus workshop: open editorial learner surfaces, thin separators, restrained elevation, and contextual technical panels. The learner sees a calm reading and practice space; Studio increases information density without becoming an IDE.
 
@@ -90,7 +90,7 @@ Tradeoffs: this is the lowest-risk incremental migration and the strongest share
 
 ### B Learning Ledger
 
-**Proposed pending owner approval**
+**Future — unselected alternative**
 
 A warm editorial study ledger: paper-tinted fields, ruled separators, strong long-form rhythm, and margin evidence. Authored material feels durable and deliberate.
 
@@ -102,7 +102,7 @@ Tradeoffs: strongest identity for reading and reflective work, but weaker for de
 
 ### C Graph Blueprint
 
-**Proposed pending owner approval**
+**Future — unselected alternative**
 
 A slate and navy technical workbench: explicit dependency lines, graph/list switching, cobalt selection, amber validation, and dense inspectors without glow or glass.
 
@@ -114,35 +114,34 @@ Tradeoffs: best for finite-graph inspection and dark Studio density, but most li
 
 ### Comparable direction matrix
 
-**Proposed pending owner approval.** These references keep all three alternatives at the same decision level; they are not production tokens or implementation authorization.
+**Approved Core Alpha target.** The matrix preserves the decision evidence and tradeoffs; only A Calm Workshop is the selected direction, and none of the reference values is implementation evidence.
 
-| Dimension | A Calm Workshop | B Learning Ledger | C Graph Blueprint |
-| --- | --- | --- | --- |
-| Light/dark semantic palette | Cool-neutral surfaces; eucalyptus action; independent activity/status colors; three dark luminance levels. | Warm paper/ink/forest/rust in light; charcoal parchment in dark; independent evidence/status inks. | Slate/near-white light and navy/slate dark; cobalt selection, amber validation; independent semantic statuses; no neon. |
-| Type and licensing impact | Existing local Geist Sans/Mono; lowest packaging and Cyrillic risk. | Source Serif 4 + IBM Plex Sans/Mono; strongest editorial voice, but new font provenance, payload, Cyrillic, and hinting review. | IBM Plex Sans/Mono; technical density, with new font provenance/payload and less long-form warmth. |
-| Density, spacing, radius, elevation | 4px system; 8/12px radii; open learner spacing; dense three-region Studio; thin borders; overlay-only shadow. | 4px system with larger 16/24px prose rhythm; 4/8px radii; ruled document fields; almost no elevation. | 4px system; 6/8px radii; compact rows and inspectors; border/selection markers; elevation only for overlays/drag. |
-| Home | Lead next action, open phase rows, compact readiness/evidence rail. | Dated learning brief, manuscript-like next action, evidence margin. | Dependency-oriented next action, compact readiness and graph-position rail. |
-| Lesson | 720–800px calm ActivityFrame plus optional context rail. | 68–74ch reading sheet with margin sources/evidence and restrained task footer. | Compact ActivityFrame with collapsible dependency/evidence rail; learner material still visually primary. |
-| Adaptive Studio | 264px outline / fluid editorial field / 320px inspector; 70/30 editorial-instrument balance. | Document index / manuscript editor / evidence margin; graph and validation use dedicated modes. | Tree or graph/list / compact editor-preview / inspector-validation rail; strict guard against full-IDE drift. |
-| Mobile | One pane, five-item bottom nav, full-height context sheets; Studio Outline/Edit/Preview modes. | One reading sheet, section index sheet, evidence/source sheet; same workflow limits. | One list/editor/preview mode at a time; graph becomes accessible outline; inspectors become sheets. |
-| Accessibility/localization risk | Lowest: existing type/tokens; must prove new compositions and all semantic pairs. | Highest font/reflow risk and paper metaphor loss in dark/forced-colors; 30% label expansion still required. | Highest density/cognitive-load risk; dependency meaning needs list/text equivalents; Russian expansion can stress compact controls. |
-| Migration cost | Lowest, but must materially replace shell/card hierarchy to avoid a rename-only result. | Highest: typography, composition, dark mode, localization, and artifact licensing changes. | Medium-high: dense components, graph/list parity, mobile reduction, and learner/author separation. |
+| Dimension                           | A Calm Workshop                                                                                               | B Learning Ledger                                                                                                               | C Graph Blueprint                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Light/dark semantic palette         | Cool-neutral surfaces; eucalyptus action; independent activity/status colors; three dark luminance levels.    | Warm paper/ink/forest/rust in light; charcoal parchment in dark; independent evidence/status inks.                              | Slate/near-white light and navy/slate dark; cobalt selection, amber validation; independent semantic statuses; no neon.             |
+| Type and licensing impact           | Existing local Geist Sans/Mono; lowest packaging and Cyrillic risk.                                           | Source Serif 4 + IBM Plex Sans/Mono; strongest editorial voice, but new font provenance, payload, Cyrillic, and hinting review. | IBM Plex Sans/Mono; technical density, with new font provenance/payload and less long-form warmth.                                  |
+| Density, spacing, radius, elevation | 4px system; 8/12px radii; open learner spacing; dense three-region Studio; thin borders; overlay-only shadow. | 4px system with larger 16/24px prose rhythm; 4/8px radii; ruled document fields; almost no elevation.                           | 4px system; 6/8px radii; compact rows and inspectors; border/selection markers; elevation only for overlays/drag.                   |
+| Home                                | Lead next action, open phase rows, compact readiness/evidence rail.                                           | Dated learning brief, manuscript-like next action, evidence margin.                                                             | Dependency-oriented next action, compact readiness and graph-position rail.                                                         |
+| Lesson                              | 720–800px calm ActivityFrame plus optional context rail.                                                      | 68–74ch reading sheet with margin sources/evidence and restrained task footer.                                                  | Compact ActivityFrame with collapsible dependency/evidence rail; learner material still visually primary.                           |
+| Adaptive Studio                     | 264px outline / fluid editorial field / 320px inspector; 70/30 editorial-instrument balance.                  | Document index / manuscript editor / evidence margin; graph and validation use dedicated modes.                                 | Tree or graph/list / compact editor-preview / inspector-validation rail; strict guard against full-IDE drift.                       |
+| Mobile                              | One pane, five-item bottom nav, full-height context sheets; Studio Outline/Edit/Preview modes.                | One reading sheet, section index sheet, evidence/source sheet; same workflow limits.                                            | One list/editor/preview mode at a time; graph becomes accessible outline; inspectors become sheets.                                 |
+| Accessibility/localization risk     | Lowest: existing type/tokens; must prove new compositions and all semantic pairs.                             | Highest font/reflow risk and paper metaphor loss in dark/forced-colors; 30% label expansion still required.                     | Highest density/cognitive-load risk; dependency meaning needs list/text equivalents; Russian expansion can stress compact controls. |
+| Migration cost                      | Lowest, but must materially replace shell/card hierarchy to avoid a rename-only result.                       | Highest: typography, composition, dark mode, localization, and artifact licensing changes.                                      | Medium-high: dense components, graph/list parity, mobile reduction, and learner/author separation.                                  |
 
 All directions use the same five-destination IA, ActivityFrame, no-generic-dashboard rule, responsive state contract, WCAG 2.2 AA target, and manual/no-AI completeness. Direction choice changes composition and visual language, not product authority or security boundaries.
 
-
 ## Recommendation and approval gate
 
-**Proposed pending owner approval**
+**Approved Core Alpha target — owner selected A Calm Workshop on 2026-08-08**
 
-Recommend **A Calm Workshop** because it preserves the strongest implemented seams—Geist, OKLCH, restrained motion, session progression, and source/review evidence—while materially changing composition and information architecture. It supports a calm lesson surface and a capable three-region Studio without a big-bang rewrite.
+A Calm Workshop is selected because it preserves the strongest implemented seams—Geist, OKLCH, restrained motion, session progression, and source/review evidence—while materially changing composition and information architecture. It supports a calm lesson surface and a capable three-region Studio without a big-bang rewrite.
 
-Owner approval of a direction is an explicit gate. Before approval:
+The approval covers the direction, not every token or a claim of implementation:
 
-- no direction-specific visual implementation is authorized;
-- the token values below are reference values, not accepted production tokens;
+- direction-specific work follows the approved roadmap and milestone gates;
+- the token values below remain design inputs until verified in rendered UI;
 - wireframes define behavior and hierarchy, not pixel-perfect implementation;
-- documentation may be refined without claiming UI delivery.
+- every implemented slice must prove accessibility, responsive behavior, localization, and product acceptance.
 
 After approval, implementation must still pass the independent accessibility, responsive, localization, and product acceptance gates. Approval of an AI-generated draft is never approval to publish a Course Revision.
 
@@ -156,37 +155,37 @@ The existing semantic names in `apps/web/app/globals.css:5-160` are the migratio
 
 **Proposed pending owner approval** Calm Workshop identity values:
 
-| Role | Light | Dark |
-| --- | --- | --- |
-| background | `oklch(0.975 0.006 250)` | `oklch(0.185 0.018 255)` |
-| surface | `oklch(0.995 0.002 250)` | `oklch(0.225 0.022 255)` |
-| raised | `oklch(0.985 0.004 250)` | `oklch(0.255 0.024 255)` |
-| foreground | `oklch(0.25 0.025 255)` | `oklch(0.965 0.006 255)` |
-| muted foreground | `oklch(0.48 0.025 255)` | `oklch(0.72 0.018 255)` |
-| border | `oklch(0.875 0.015 255)` | `oklch(0.34 0.025 255)` |
-| primary | `oklch(0.50 0.13 153)` | `oklch(0.78 0.13 153)` |
-| focus ring | `oklch(0.55 0.15 153)` | `oklch(0.82 0.12 153)` |
+| Role             | Light                    | Dark                     |
+| ---------------- | ------------------------ | ------------------------ |
+| background       | `oklch(0.975 0.006 250)` | `oklch(0.185 0.018 255)` |
+| surface          | `oklch(0.995 0.002 250)` | `oklch(0.225 0.022 255)` |
+| raised           | `oklch(0.985 0.004 250)` | `oklch(0.255 0.024 255)` |
+| foreground       | `oklch(0.25 0.025 255)`  | `oklch(0.965 0.006 255)` |
+| muted foreground | `oklch(0.48 0.025 255)`  | `oklch(0.72 0.018 255)`  |
+| border           | `oklch(0.875 0.015 255)` | `oklch(0.34 0.025 255)`  |
+| primary          | `oklch(0.50 0.13 153)`   | `oklch(0.78 0.13 153)`   |
+| focus ring       | `oklch(0.55 0.15 153)`   | `oklch(0.82 0.12 153)`   |
 
 Activity families use explicit foreground/quiet-surface pairs. The reference values below must still be measured in rendered controls, text, borders, diffs, charts, overlays, and forced-color fallbacks before adoption.
 
-| Activity family | Light foreground | Light quiet surface | Dark foreground | Dark quiet surface |
-| --- | --- | --- | --- | --- |
-| study | `oklch(0.40 0.14 300)` | `oklch(0.95 0.03 300)` | `oklch(0.84 0.10 300)` | `oklch(0.29 0.05 300)` |
-| recall | `oklch(0.39 0.10 75)` | `oklch(0.96 0.04 80)` | `oklch(0.87 0.11 80)` | `oklch(0.29 0.06 75)` |
-| explain | `oklch(0.37 0.10 215)` | `oklch(0.95 0.035 215)` | `oklch(0.84 0.09 215)` | `oklch(0.28 0.05 215)` |
-| assess | `oklch(0.39 0.13 255)` | `oklch(0.95 0.03 255)` | `oklch(0.84 0.10 255)` | `oklch(0.29 0.05 255)` |
-| practice | `oklch(0.37 0.11 155)` | `oklch(0.95 0.035 155)` | `oklch(0.84 0.10 155)` | `oklch(0.28 0.05 155)` |
-| review | `oklch(0.43 0.14 25)` | `oklch(0.96 0.035 25)` | `oklch(0.86 0.10 25)` | `oklch(0.29 0.05 25)` |
+| Activity family | Light foreground       | Light quiet surface     | Dark foreground        | Dark quiet surface     |
+| --------------- | ---------------------- | ----------------------- | ---------------------- | ---------------------- |
+| study           | `oklch(0.40 0.14 300)` | `oklch(0.95 0.03 300)`  | `oklch(0.84 0.10 300)` | `oklch(0.29 0.05 300)` |
+| recall          | `oklch(0.39 0.10 75)`  | `oklch(0.96 0.04 80)`   | `oklch(0.87 0.11 80)`  | `oklch(0.29 0.06 75)`  |
+| explain         | `oklch(0.37 0.10 215)` | `oklch(0.95 0.035 215)` | `oklch(0.84 0.09 215)` | `oklch(0.28 0.05 215)` |
+| assess          | `oklch(0.39 0.13 255)` | `oklch(0.95 0.03 255)`  | `oklch(0.84 0.10 255)` | `oklch(0.29 0.05 255)` |
+| practice        | `oklch(0.37 0.11 155)` | `oklch(0.95 0.035 155)` | `oklch(0.84 0.10 155)` | `oklch(0.28 0.05 155)` |
+| review          | `oklch(0.43 0.14 25)`  | `oklch(0.96 0.035 25)`  | `oklch(0.86 0.10 25)`  | `oklch(0.29 0.05 25)`  |
 
 Status semantics have separate foreground/quiet-surface pairs and always include text/icon/state:
 
-| Status | Light foreground | Light quiet surface | Dark foreground | Dark quiet surface |
-| --- | --- | --- | --- | --- |
-| success | `oklch(0.36 0.11 150)` | `oklch(0.95 0.035 150)` | `oklch(0.84 0.10 150)` | `oklch(0.28 0.05 150)` |
-| warning | `oklch(0.39 0.10 75)` | `oklch(0.96 0.04 80)` | `oklch(0.87 0.11 80)` | `oklch(0.29 0.06 75)` |
-| error | `oklch(0.43 0.15 25)` | `oklch(0.96 0.035 25)` | `oklch(0.86 0.11 25)` | `oklch(0.29 0.055 25)` |
-| info | `oklch(0.39 0.12 250)` | `oklch(0.95 0.03 250)` | `oklch(0.84 0.10 250)` | `oklch(0.29 0.05 250)` |
-| offline | `oklch(0.40 0.035 255)` | `oklch(0.94 0.015 255)` | `oklch(0.80 0.025 255)` | `oklch(0.28 0.025 255)` |
+| Status           | Light foreground        | Light quiet surface     | Dark foreground         | Dark quiet surface      |
+| ---------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- |
+| success          | `oklch(0.36 0.11 150)`  | `oklch(0.95 0.035 150)` | `oklch(0.84 0.10 150)`  | `oklch(0.28 0.05 150)`  |
+| warning          | `oklch(0.39 0.10 75)`   | `oklch(0.96 0.04 80)`   | `oklch(0.87 0.11 80)`   | `oklch(0.29 0.06 75)`   |
+| error            | `oklch(0.43 0.15 25)`   | `oklch(0.96 0.035 25)`  | `oklch(0.86 0.11 25)`   | `oklch(0.29 0.055 25)`  |
+| info             | `oklch(0.39 0.12 250)`  | `oklch(0.95 0.03 250)`  | `oklch(0.84 0.10 250)`  | `oklch(0.29 0.05 250)`  |
+| offline          | `oklch(0.40 0.035 255)` | `oklch(0.94 0.015 255)` | `oklch(0.80 0.025 255)` | `oklch(0.28 0.025 255)` |
 | disabled control | `oklch(0.58 0.018 255)` | `oklch(0.94 0.008 255)` | `oklch(0.58 0.018 255)` | `oklch(0.25 0.015 255)` |
 
 Interaction references: hover uses `oklch(0.50 0.03 255 / 0.08)` light and `oklch(0.90 0.02 255 / 0.08)` dark; pressed doubles that alpha; selected uses the primary quiet surface plus a leading marker; focus uses the existing focus-ring role with a 2px ring and 2px offset; disabled controls remove interaction but essential explanatory copy uses normal muted foreground, not the disabled token. Expected checks: at least 4.5:1 for normal text, 3:1 for large text and graphical/control boundaries, 3:1 focus contrast against adjacent colors, discernible hover/selected/pressed without color alone, and no information conveyed solely by disabled opacity.

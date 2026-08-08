@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed pending owner approval
+Approved Core Alpha target
 
 ## Date
 
@@ -10,13 +10,13 @@ Proposed pending owner approval
 
 ## Context
 
-Course authoring must make pedagogy, finite graph structure, locales, provenance, validation, and immutable publication understandable without becoming an IDE. The current Curriculum Editor proves draft/clone/publish seams but exposes nested forms and raw JSON, has no Course Pack workflow or locale system, and is not yet Adaptive Studio. The recommended visual direction is Calm Workshop, but it has not been approved or implemented.
+Course authoring must make pedagogy, finite graph structure, locales, provenance, validation, and immutable publication understandable without becoming an IDE. The current Curriculum Editor proves draft/clone/publish seams but exposes nested forms and raw JSON, has no Course Pack workflow or locale system, and is not yet Adaptive Studio. The owner approved Calm Workshop as the target direction on 2026-08-08; it is not yet implemented.
 
 Related specifications: [Adaptive Studio](../design/adaptive-studio.md), [Course authoring](../product/course-authoring.md), [Language policy](../product/language-policy.md), [Information architecture](../design/information-architecture.md), [Activity renderers](../design/activity-renderers.md), [Accessibility](../design/accessibility.md), [Course Pack](../architecture/course-pack.md), and [Design system](../../DESIGN.md).
 
 ## Decision
 
-If approved, Adaptive Studio will be a 70% editorial workspace and 30% developer instrument.
+Adaptive Studio will be a 70% editorial workspace and 30% developer instrument.
 
 - Editorial work leads: course intent, outline, activity content, sources/capsules, skills, locales, Preview, validation, and revision history. Technical IDs, schemas, graph diagnostics, and environment/check references remain contextual instruments rather than the default canvas. An Advanced JSON editor is **Future** and is not part of Core Alpha.
 - Manual authoring must work without AI. AI produces typed, scoped proposals showing target IDs, before/after values, provenance, and validation results. Apply changes only a draft; Reject is lossless; AI can never publish.
@@ -44,8 +44,8 @@ If approved, Adaptive Studio will be a 70% editorial workspace and 30% developer
 
 **Implemented baseline:** the current editor supports strict draft CRUD, clone, delete confirmation, publish confirmation, and immutable published rows. The application has Geist fonts, semantic OKLCH light/dark tokens, and strong lesson activity bodies. Primary navigation, UI copy, pack flows, locale separation, proposal review, and Studio composition do not meet this proposal.
 
-**Proposed pending owner approval:** Adaptive Studio, the 70/30 balance, Calm Workshop, and the navigation redesign are proposals, not implemented behavior.
+**Approved Core Alpha target:** Adaptive Studio, the 70/30 balance, Calm Workshop, and the navigation redesign were approved by the owner on 2026-08-08. Approval is not implementation evidence; delivery follows the roadmap gates.
 
 **Future:** collaboration, multi-author review, remote catalogs, and autonomous course generation.
 
-No major implementation is authorized until the owner approves this ADR and the complete Core Alpha audit/specification gate.
+The M0 owner gate is satisfied. Major implementation remains limited by the approved milestone order and each milestone's acceptance criteria.
