@@ -2,7 +2,7 @@
 
 Aptiloop is being specified as a local-first, single-user learning system for building durable technical skill through authored courses, deliberate practice, deterministic evidence, and optional AI assistance.
 
-The runnable application remains the **Dev Learning Harness** in package and UI identity. M1 safety containment and M2 Course foundations remain enforced; M3 provides the declarative Course Pack lifecycle, M4 the replay-complete deterministic Learning Kernel, and M5 trusted app-owned Node/Python execution. The M6 **Implemented baseline** now routes active learning chat, interview, and evidence-only review through the pinned constrained Pi adapter and exact Provider Hub contracts, with finite typed role tools, immutable one-time disclosure decisions, cumulative budgets, explicit failure states, and provider-turn provenance. M6 acceptance is blocked only by the required authenticated external provider/model smoke; no such request is claimed without local credentials.
+The runnable application remains the **Dev Learning Harness** in package and UI identity. M1 safety containment and M2 Course foundations remain enforced; M3 provides the declarative Course Pack lifecycle, M4 the replay-complete deterministic Learning Kernel, and M5 trusted app-owned Node/Python execution. The accepted M6 **Implemented baseline** routes active learning chat, interview, and evidence-only review through pinned constrained Pi adapters and exact Provider Hub contracts, with finite typed role tools, immutable one-time disclosure decisions, cumulative budgets, explicit failure states, and provider-turn provenance. An authenticated OpenCode Zen `deepseek-v4-flash-free` smoke completed through Pi with exact disclosure, persisted minimal provenance, and observed cancellation; no general provider-readiness claim follows from that synthetic smoke.
 
 ## Status vocabulary
 
@@ -88,6 +88,16 @@ On a genuinely fresh installation where no active database exists, `npm run dev`
 
 `npm start` invokes `scripts/dev-local.mjs` and attempts to launch only the local Aptiloop stack. It does not start Codex, OpenCode, or any external sidecar. A root `.env` is optional; copy `.env.example` only when local overrides are needed.
 
+### Optional OpenCode Zen provider smoke
+
+The Provider Hub registers OpenCode Zen through the constrained pinned Pi adapter. It does not use the legacy OpenCode sidecar or expose coding-agent tools. Set `OPENCODE_API_KEY` only in the local process environment or untracked root `.env`, then run:
+
+```sh
+npm run smoke:provider:opencode
+```
+
+The smoke uses the exact `deepseek-v4-flash-free` model and synthetic text in a disposable database. It requires and consumes an explicit disclosure, observes one authenticated completion, verifies minimal persisted provider-turn provenance, starts a second authenticated turn, and verifies cancellation. It prints no prompt, response, credential, learner content, path, or provider metadata.
+
 Before a writable SQLite PRAGMA, startup rechecks the selected exact contract, file identity, logical contents, integrity, foreign keys, complete M2–M5 schema, reconciled migration provenance, zero target orphans, immutable snapshots/Pack/kernel/execution history, environment/check ownership, and active-session accounting. A current session must have exact target Course context; an older missing context is tolerated only with the complete matching M2 quarantine provenance. Unknown or unaccounted identities fail closed.
 
 Inventory the explicit active database before any future data migration. The authorized additive migration command uses `--authorize-current`; the historical `--authorize-m2` alias remains accepted for recorded M2 procedures. Every write requires a newly named, non-overwriting, active-source-only approved backup plus the exact backup SHA-256:
@@ -112,6 +122,7 @@ npm run audit:policy    # full + production classification; shipped installed-tr
 npm run format          # write formatting changes
 npm run format:check    # check formatting
 npm run sbom            # CycloneDX npm SBOM
+npm run smoke:provider:opencode # authenticated OpenCode Zen/Pi smoke; requires OPENCODE_API_KEY
 npm run lint
 npm run typecheck
 npm test                # fast tests, then E2E
@@ -189,6 +200,6 @@ The current application is intended for trusted local use. Browser requests must
 
 ## Approval state
 
-M1 containment through M5 trusted local execution are accepted **Implemented baseline** as of 2026-08-10. The M6 implementation cutover is complete and evidenced locally: active role callers use Provider Hub, browser disclosure approval is exact and one-time, flattened role settings and the legacy provider status route are retired, cumulative budgets fail closed, and sentinel/adversarial matrices cover the constrained boundary. M6 is not accepted because this workstation has no configured OpenAI credential, so the required exact authenticated provider/model request, cancellation, and persisted provenance smoke has not been observed. M7 remains gated on M6 acceptance; later Core Alpha milestones also retain their own content, licensing, and release gates.
+M1 containment through M6 Provider Hub and constrained Pi runtime are accepted **Implemented baseline** as of 2026-08-10. Active role callers use Provider Hub, browser disclosure approval is exact and one-time, flattened role settings and the legacy provider status route are retired, cumulative budgets fail closed, and sentinel/adversarial matrices cover the constrained boundary. The exact OpenCode Zen `deepseek-v4-flash-free` authenticated smoke completed through Pi using synthetic text and a disposable database; it consumed explicit disclosure, persisted minimal provider/model provenance, and observed cancellation. The credential and provider payload were not printed or persisted. M7 is now unblocked; later Core Alpha milestones retain their own content, licensing, and release gates.
 
 The valuable active database was inventoried before M6, backed up without overwrite to `.data/approved-backups/2026-08-10T08-55-12Z-pre-m6-provider-hub.sqlite` (whole-file SHA-256 `8e459eea9576b688498b6d275f6e4cbeda13b77e030dbd2b7049196229028f07`), migrated additively through `0014_provider_hub`, and replayed as a verified no-op. The post-migration inventory observed schema SHA-256 `dce93b3d8714eac8ab01bce0d98f136e6cb5bc4205674d4cea618a7ccfb24409`, `integrity_check=ok`, zero foreign-key violations, coherent legacy/session accounting, unchanged immutable snapshot inventories, and zero logical raw/tool provider payload rows.

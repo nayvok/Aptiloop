@@ -18,6 +18,7 @@
     "audit:policy": "node scripts/npm-audit-policy.mjs",
     "ci:provenance": "node scripts/github-actions-policy.mjs",
     "format": "prettier --write .",
+    "smoke:provider:opencode": "tsx scripts/opencode-zen-smoke.ts",
     "sbom": "node scripts/generate-sbom.mjs",
     "format:check": "prettier --check .",
     "lint": "turbo run lint",

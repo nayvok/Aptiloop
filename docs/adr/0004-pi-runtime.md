@@ -43,10 +43,8 @@ Pi is the model/runtime seam behind Aptiloop-owned orchestration and policy.
 
 ## Implementation status
 
-**Implemented baseline:** Aptiloop pins `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` `0.84.1`, implements a constrained Pi adapter, a strict default-deny Aptiloop tool host, exact Provider Hub resolution, immutable disclosure decisions, minimized turn provenance, and cumulative role budgets. Active learning chat, interview, and evidence-only review resolve through Provider Hub; browser disclosure preview/approval is exact and one-time. Aptiloop does not install `pi-coding-agent` or Pi session persistence.
+**Implemented baseline:** Aptiloop pins `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` `0.84.1`, implements reviewed constrained OpenAI and OpenCode Zen Pi adapters, a strict default-deny Aptiloop tool host, exact Provider Hub resolution, immutable disclosure decisions, minimized turn provenance, and cumulative role budgets. Active learning chat, interview, and evidence-only review resolve through Provider Hub; browser disclosure preview/approval is exact and one-time. Aptiloop does not install `pi-coding-agent` or Pi session persistence.
 
-**Approved Core Alpha target:** M6 acceptance still requires the exact authenticated external provider/model smoke with cancellation and persistence evidence. This workstation has no configured OpenAI credential, so no production real-provider readiness is claimed.
+**Implemented baseline:** M6 acceptance is evidenced by an authenticated OpenCode Zen `deepseek-v4-flash-free` completion through constrained Pi, exact disclosure consumption, persisted minimal provenance, and observed cancellation with synthetic text in a disposable database. This evidence does not claim general production provider readiness.
 
-**Future:** additional providers, durable agent lanes, and remote model gateways, each behind the same app-owned policy.
-
-M6 acceptance remains governed by the authenticated external smoke gate above.
+**Future:** additional reviewed providers beyond OpenAI and OpenCode Zen, durable agent lanes, and remote model gateways, each behind the same app-owned policy.

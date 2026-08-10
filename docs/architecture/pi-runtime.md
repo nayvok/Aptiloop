@@ -1,13 +1,13 @@
 # Pi runtime boundary
 
-**Document status:** Approved Core Alpha target with an evidenced **Implemented baseline**; authenticated external smoke remains an acceptance blocker.
+**Document status:** Approved Core Alpha target with an accepted evidenced **Implemented baseline**.
 **Evidence pins:** published v0.84.1 tag commit [`53fa77ccd8a279eb87e92294ef3687b03ff80112`](https://github.com/earendil-works/pi/tree/53fa77ccd8a279eb87e92294ef3687b03ff80112), plus separately inspected post-release upstream source commit [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328), researched 2026-08-08.
 
 ## Implemented baseline
 
-**Implemented baseline.** `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` are direct exact-version `0.84.1` production dependencies of `@dlh/agent-core`; `@earendil-works/pi-coding-agent` and Pi's SQLite session backend are not dependencies. `PiAgentProvider` registers only the reviewed OpenAI provider factory, maps Pi streaming/cancellation into Aptiloop normalized events, blocks every tool name not installed by the app, and reports `degraded` until an authenticated request has actually succeeded. The finite Course Designer/Tutor/Evaluator/Reviewer tool policies and strict app-side tool argument/result host are implemented separately from Pi.
+**Implemented baseline.** `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` are direct exact-version `0.84.1` production dependencies of `@dlh/agent-core`; `@earendil-works/pi-coding-agent` and Pi's SQLite session backend are not dependencies. `PiAgentProvider` registers only the two reviewed provider factories: OpenAI under adapter ID `pi`, and OpenCode Zen under adapter ID `opencode`. Both map Pi streaming/cancellation into Aptiloop normalized events, block every tool name not installed by the app, and report `degraded` until an authenticated request has actually succeeded. The finite Course Designer/Tutor/Evaluator/Reviewer tool policies and strict app-side tool argument/result host are implemented separately from Pi.
 
-**Implemented baseline limitation.** Active learning chat, interview, and evidence-only review now use Provider Hub and the constrained Pi adapter, with exact one-time disclosure UI, cumulative turn budgets, private-context/environment sentinels, and finite per-role adversarial matrices. No authenticated external request has been observed because this workstation has no configured OpenAI credential; production provider readiness is therefore not claimed. Aptiloop does not use AgentHarness v2, Pi session persistence, or coding-agent general tools.
+**Implemented baseline limitation.** Active learning chat, interview, and evidence-only review use Provider Hub and constrained Pi adapters, with exact one-time disclosure UI, cumulative turn budgets, private-context/environment sentinels, and finite per-role adversarial matrices. An authenticated OpenCode Zen `deepseek-v4-flash-free` smoke completed with synthetic text in a disposable database, exact disclosure consumption, persisted minimal provenance, and observed cancellation. This proves that reviewed adapter path, not general production provider readiness. Aptiloop does not use AgentHarness v2, Pi session persistence, or coding-agent general tools.
 
 ## Exact upstream packages
 
