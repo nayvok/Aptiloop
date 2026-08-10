@@ -551,6 +551,23 @@ describe("practice execution and reviewer boundaries", () => {
         kind: "apt.review-evidence.v1",
       },
     });
+    const trustedCheck = (
+      capsule.evidence as {
+        evidence: {
+          trustedCheck: { stdout: string; stderr: string; result: unknown };
+        };
+      }
+    ).evidence.trustedCheck;
+    expect(trustedCheck.stdout).toContain("<workspace>");
+    for (const pathVariant of new Set([
+      workspacePath,
+      workspacePath.replaceAll("\\", "/"),
+      workspacePath.replaceAll("/", "\\"),
+    ])) {
+      expect(trustedCheck.stdout).not.toContain(pathVariant);
+      expect(trustedCheck.stderr).not.toContain(pathVariant);
+      expect(JSON.stringify(trustedCheck.result)).not.toContain(pathVariant);
+    }
     expect(JSON.stringify(capsule)).not.toContain(workspacePath);
     const retriedReview = await request(
       current.app,

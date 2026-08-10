@@ -2436,6 +2436,30 @@ function publicExecutionResult(result: ExecutionResult) {
     ),
   };
 }
+function redactAttemptWorkspacePath<T>(value: T, workspacePath: string): T {
+  const pathVariants = new Set([
+    workspacePath,
+    workspacePath.replaceAll("\\", "/"),
+    workspacePath.replaceAll("/", "\\"),
+  ]);
+  const visit = (current: unknown): unknown => {
+    if (typeof current === "string") {
+      let redacted = current;
+      for (const pathVariant of pathVariants) {
+        redacted = redacted.replaceAll(pathVariant, "<workspace>");
+      }
+      return redacted;
+    }
+    if (Array.isArray(current)) return current.map(visit);
+    if (current !== null && typeof current === "object") {
+      return Object.fromEntries(
+        Object.entries(current).map(([key, nested]) => [key, visit(nested)]),
+      );
+    }
+    return current;
+  };
+  return visit(value) as T;
+}
 
 function readMistakes(connection: DatabaseConnection, limit: number) {
   return connection.sqlite
@@ -2556,13 +2580,22 @@ async function requestExerciseReview(
         inputSnapshotHash: input.testRun.inputSnapshotHash,
         status: input.testRun.status,
         exitCode: input.testRun.exitCode,
-        stdout: input.testRun.stdout,
-        stderr: input.testRun.stderr,
+        stdout: redactAttemptWorkspacePath(
+          input.testRun.stdout,
+          input.attempt.workspacePath,
+        ),
+        stderr: redactAttemptWorkspacePath(
+          input.testRun.stderr,
+          input.attempt.workspacePath,
+        ),
         durationMs: input.testRun.durationMs,
         result:
           input.testRun.resultJson === null
             ? null
-            : JSON.parse(input.testRun.resultJson),
+            : redactAttemptWorkspacePath(
+                JSON.parse(input.testRun.resultJson),
+                input.attempt.workspacePath,
+              ),
       },
     },
   });
