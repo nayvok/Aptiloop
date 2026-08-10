@@ -218,6 +218,8 @@ The order reduces the highest observed risks before expanding capability: provid
 
 **Status:** Approved Core Alpha target. Professional legal review and the recorded M0 licensing deferrals remain release-blocking.
 
+**Implemented baseline (2026-08-10 technical preflight):** clean local install, full fast verification, 4/4 E2E, direct and loopback-Compose launch, active-volume persistence, non-overwriting backup/restore/rollback, real disposable Python execution, SBOM generation, dependency policy, candidate-content inspection, locale/theme/mobile browser QA, and the operator runbook passed locally. The [row-level evidence attachment](docs/product/core-alpha-scope.md#current-gate-evidence) records the exact disposition. M12 is not accepted and no release candidate was published: hosted CI, authenticated real-provider smoke, professional legal review, approved license/notices/content/trademark artifacts, distribution authorization, and owner sign-off remain release-blocking.
+
 - **Objective:** Produce a releasable loopback-only local Core Alpha candidate with verified docs, notices, recovery, and end-to-end behavior.
 - **Scope:** The defined [50-item Core Alpha release matrix](docs/product/core-alpha-scope.md#core-alpha-release-matrix); supported local-process and loopback-Compose packaging; backups/restore; SBOM and third-party notices; fixture/content terms; trademark policy; owner-approved license application; accessibility/responsive verification; clean install/upgrade; no production courses; known limitations.
 - **Non-goals:** Authenticated/public/LAN self-hosting, cloud service, remote operation, multi-user, sync, marketplace, mobile native app, PostgreSQL runtime, or production course certification.

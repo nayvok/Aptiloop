@@ -32,7 +32,7 @@ Default process-mode locations are:
 
 Compose stores the database in `harness-data` and attempt workspaces in `harness-attempts`. These volumes are private runtime data and are not source fixtures. They can contain answers, transcripts, mastery, mistakes, diffs, test output, provider/model metadata, and local paths.
 
-Private data is never uploaded or shared without an explicit user action naming destination and scope. Course Packs, exports, logs, process environments, and model prompts must not carry credentials. Mock is the only M1 learning provider and only in explicit development/test mode; every other runtime reports no-AI. Codex/OpenCode settings and adapters remain readable legacy boundaries, but readiness and learning routes do not activate them, `npm start` starts no external sidecar, and failure never silently substitutes Mock.
+Private data is never uploaded or shared without an explicit user action naming destination and scope. Course Packs, exports, logs, process environments, and model prompts must not carry credentials. External providers are optional and resolved only by the server-owned Provider Hub; an unavailable provider remains an explicit failure and never becomes Mock. Mock is limited to tests, CI, and development. Any Course, source, learner evidence, transcript, workspace, or profile disclosure to a provider requires the recorded destination-specific decision defined by the M6 policy.
 
 ## Backup before migration or upgrade
 
@@ -58,6 +58,26 @@ Choose a new destination filename for every backup. The inventory fingerprints m
 The approved backup command repeats the preflight, uses the Node `node:sqlite` online `backup()` API, includes committed WAL state in the logical backup, rejects every other source and destinations outside `.data/approved-backups/`, refuses overwrite, binds the produced logical digest to the approved source snapshot, and health-checks the source and copy. Existing `.data/backups/` files are not approved restore points.
 
 A failed in-flight future migration is transaction-rolled back. After a migration commits, Aptiloop has no supported down migration: restore the whole database from the explicitly approved pre-migration backup while writers are stopped, preserve the failed database separately, and repeat integrity, foreign-key, migration-marker, and private-payload checks. The restore loses writes after the maintenance cutoff.
+
+### Loopback Compose backup and restore
+
+Compose recovery is a cold, paired snapshot of `harness-data` and `harness-attempts`. Stop both services before copying either volume. Never copy a live SQLite main file without its WAL family, never overwrite a prior backup, and never restore into the active volume. The default Docker volume names are `dev-learning-harness_harness-data` and `dev-learning-harness_harness-attempts`.
+
+1. Run `docker compose stop` and confirm `docker compose ps --status running` returns no services.
+2. Create a new timestamped directory under `.data/approved-backups/compose/`. Mount that absolute host directory into a one-shot local helper container.
+3. Copy `/data/dev-learning-harness.sqlite` from the read-only data volume with exclusive-create semantics. The stopped volume must contain only the main database, not `-wal` or `-shm` sidecars.
+4. Archive the read-only attempts volume in the same timestamped directory. Treat the database file and attempts archive as one recovery point.
+5. Run `npm run db:inventory -- --db <absolute-database-backup-path>`, require integrity `ok`, zero foreign-key violations, and the exact current migration ledger, then record SHA-256 digests for both files. Restart with `docker compose start` only after verification.
+
+Restore is rehearsed without replacing the active volumes:
+
+1. Keep the original volumes unchanged. Create new uniquely named data and attempts volumes.
+2. Copy the chosen verified database into the empty data volume as `/data/dev-learning-harness.sqlite`; extract only its paired attempts archive into the empty attempts volume.
+3. Launch the candidate with `APTILOOP_DATA_VOLUME=<new-data-volume>` and `APTILOOP_ATTEMPTS_VOLUME=<new-attempts-volume>` set for `docker compose up`. Compose defaults to the original volume names when those variables are absent.
+4. Require both health checks, repeat the database inventory, and exercise the named learner state before accepting the restored pair.
+5. To roll back the drill, stop the candidate and relaunch without the two overrides. Do not delete either volume until the owner approves retention and reconciliation.
+
+The 2026-08-10 M12 rehearsal followed this non-overwriting path on disposable volumes: the quiesced source and copied database were byte-identical, `PRAGMA integrity_check` returned `ok`, `PRAGMA foreign_key_check` returned zero rows, all 19 migrations were present, and the restored copy had the same SHA-256 digest. This proves the database-volume procedure used in that rehearsal; it does not approve public/LAN deployment or replace a restore drill on each release candidate and operator platform.
 
 See [Core Alpha Migration Strategy](docs/migration/core-alpha-migration-strategy.md) for candidate inventory, dual-read/write, quarantine, and removal gates.
 

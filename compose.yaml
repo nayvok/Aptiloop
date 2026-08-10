@@ -64,4 +64,6 @@ services:
 
 volumes:
   harness-data:
+    name: ${APTILOOP_DATA_VOLUME:-dev-learning-harness_harness-data}
   harness-attempts:
+    name: ${APTILOOP_ATTEMPTS_VOLUME:-dev-learning-harness_harness-attempts}

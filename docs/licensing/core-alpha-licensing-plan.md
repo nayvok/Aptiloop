@@ -33,19 +33,19 @@ Core Alpha has no production courses. Fixture/content distribution terms must be
 - **Orchestrator:** internal `@dlh/*`, Hono and `@hono/node-server`, Zod.
 - **Web:** Next/React, Radix/shadcn components, Phosphor icons, TanStack Query, React Hook Form, React Markdown/remark-gfm, Geist, Sonner, Tailwind utilities, Playwright and Testing Library tooling.
 - **Packages:** Zod, OpenCode SDK, Drizzle ORM/Kit, tsup and normal test/build tooling.
-- **Planned Pi runtime:** official `@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`, and possibly the separately evaluated session backend; researched v0.84.1 is MIT. `pi-coding-agent` tools are not part of the approved Aptiloop boundary.
+- **Pi runtime:** pinned `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` v0.84.1 are present behind the constrained app-owned adapter; their lockfile metadata is MIT. `pi-coding-agent` general filesystem, shell, edit, and write tools are not exposed through Aptiloop.
 
 ### License families visible in lockfile metadata
 
 This metadata is an inventory lead, not final verification:
 
-- the lockfile contains 652 `node_modules` records with metadata led by MIT (545), Apache-2.0 (38), MPL-2.0 (24), ISC (11), LGPL-3.0-or-later (10), BSD families, MIT-0, 0BSD, CC0-1.0, CC-BY-4.0, BlueOak-1.0.0, and four composite Apache/LGPL(/MIT) records;
-- direct and common examples include MIT metadata for Hono, OpenCode SDK, React/ReactDOM, React Hook Form, React Markdown/remark-gfm, Next, Radix/shadcn, TanStack Query, and Zod; Apache-2.0 for Drizzle ORM, TypeScript, Playwright Test, and class-variance-authority; and SIL Open Font License metadata for Geist;
+- the lockfile contains 741 package records with license metadata, led by MIT (571), Apache-2.0 (87), MPL-2.0 (24), BSD-3-Clause (16), ISC (13), LGPL-3.0-or-later (10), BSD-2-Clause (8), composite Apache/LGPL(/MIT) records (4), and smaller MIT-0, BlueOak, CC-BY-4.0, SIL Open Font License, CC0-1.0, and 0BSD groups;
+- direct and common examples include MIT metadata for Hono, OpenCode SDK, React/ReactDOM, React Hook Form, React Markdown/remark-gfm, Next, Radix/shadcn, TanStack Query, Zod, and the pinned Pi packages; Apache-2.0 for Drizzle ORM, TypeScript, Playwright Test, and class-variance-authority; and SIL Open Font License metadata for Geist;
 - artifact-sensitive transitive leads include MPL-2.0 `lightningcss` platform packages, LGPL/composite `sharp`/`sharp-libvips` variants, CC-BY-4.0 `caniuse-lite`, and optional platform packages. Presence in lock metadata does not prove that every record ships in every artifact.
 
 Before any distribution, verify exact package/version, upstream source, full license text, copyright holder, notice file, bundled asset, modification status, optional-platform package, and whether it ships in source, standalone output, browser bundle, or container. The orchestrator image copies the complete installed dependency tree from its dependency stage, so dev/test dependency notices may be relevant to the shipped image; this requires artifact-level verification.
 
-The observed security audit separately reported 6 vulnerabilities (4 high, 1 moderate, 1 low) involving relevant locked versions including Hono 4.12.33, Next 16.2.12, nested PostCSS 8.4.31, sharp 0.34.5, nanoid 3.3.16, and tsup's esbuild 0.27.7. Security disposition and license compliance are separate gates; neither substitutes for the other.
+The 2026-08-10 security preflight reported zero production vulnerabilities and one full-tree graph-development-only low-severity `esbuild` advisory (`GHSA-G7R4-M6W7-QQQR`) through `tsup`; the repository policy reported it without an exception and found no High or Critical advisory. Security disposition and license compliance are separate gates; neither substitutes for the other.
 
 ## 4. Content, fixture, and trademark risks
 
@@ -97,7 +97,7 @@ Consider Apache-2.0 for a broader owner-approved scope, or an explicit dual gran
 8. **Apply in a separate change:** add license texts, SPDX/package metadata, contribution policy, third-party notices/SBOM, content terms, and trademark policy together with an artifact verification record.
 9. **Release gate:** build artifacts match the approved matrix and contain required notices while excluding private/runtime data.
 
-This documentation-only change intentionally stops before step 8.
+Implementation remains stopped before step 8. The M12 technical preflight generated a local CycloneDX SBOM and inspected candidate container contents, but it did not add a license grant, third-party notice bundle, content/fixture terms, or trademark policy.
 
 ## 7. Questions requiring explicit answers
 

@@ -172,9 +172,15 @@ export async function withAsyncTransaction<T>(
   }
 }
 
-const migrationsDirectory = fileURLToPath(
+const sourceMigrationsDirectory = fileURLToPath(
   new URL("../migrations", import.meta.url),
 );
+const bundledWorkspaceMigrationsDirectory = fileURLToPath(
+  new URL("../../../packages/database/migrations", import.meta.url),
+);
+const migrationsDirectory = existsSync(sourceMigrationsDirectory)
+  ? sourceMigrationsDirectory
+  : bundledWorkspaceMigrationsDirectory;
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
