@@ -21,14 +21,15 @@ This is **local packaging, not authenticated public self-hosting**. Do not chang
 
 Default process-mode locations are:
 
-| Data                              | Default                             |
-| --------------------------------- | ----------------------------------- |
-| Active SQLite database            | `.data/dev-learning-harness.sqlite` |
-| New approved backup directory     | `.data/approved-backups`            |
-| Quarantined historical backups    | `.data/backups`                     |
-| Trusted exercise templates        | `workspaces/exercises`              |
-| Learner attempt workspaces        | `.data/exercise-attempts`           |
-| External provider learning access | Blocked in M1                       |
+| Data                              | Default                                                  |
+| --------------------------------- | -------------------------------------------------------- |
+| Active SQLite database            | `.data/dev-learning-harness.sqlite`                      |
+| New approved backup directory     | `.data/approved-backups`                                 |
+| Quarantined historical backups    | `.data/backups`                                          |
+| Provider credential file          | `.data/provider-credentials.json`                        |
+| Trusted exercise templates        | `workspaces/exercises`                                   |
+| Learner attempt workspaces        | `.data/exercise-attempts`                                |
+| External provider learning access | Explicit Provider Hub connection and per-turn disclosure |
 
 Compose stores the database in `harness-data` and attempt workspaces in `harness-attempts`. These volumes are private runtime data and are not source fixtures. They can contain answers, transcripts, mastery, mistakes, diffs, test output, provider/model metadata, and local paths.
 

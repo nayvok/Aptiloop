@@ -52,37 +52,43 @@ Compatibility does not promote quarantined data. A migrated session without a ta
 
 Final post-review evidence on 2026-08-09: `npm run verify` passed formatting, 12/12 lint tasks, 12/12 typecheck tasks, 21/21 fast-test tasks with 614 tests passed and 3 skipped, and 12/12 builds; `npm run test:e2e` passed 4/4. Independent correctness and security/data-migration re-reviews returned PASS with no remaining M2 blocker. A final explicit active/backup inventory reconfirmed stable identities, the exact active `0000`–`0010` schema, `integrity_check=ok`, zero foreign-key violations, zero unaccounted active sessions, zero target orphans/private-payload bytes, and the exact pre-`0010` backup binding. No hosted GitHub Actions result or external-provider smoke is claimed.
 
+## M6 Provider Hub status
+
+**Implemented baseline:** Active AI roles resolve through the server-owned Provider Hub and constrained pinned Pi adapters. Settings exposes only reviewed connection factories; exact role/model profiles, capability observations, default-deny typed tools, one-time disclosure operations, cumulative turn budgets, cancellation, and secret-free terminal provenance are app-owned. API keys and subscription tokens are scoped to connection IDs in `.data/provider-credentials.json`; settings responses and SQLite hold no credential value. Built-in providers own their endpoints; local compatible endpoints are loopback-only; custom compatible endpoints require an explicit public HTTPS hostname on the default TLS port and a path ending in `/v1`.
+
+Only the authenticated OpenCode Zen `deepseek-v4-flash-free` disposable smoke is recorded as observed real-provider evidence. Catalog presence, stored credentials, or health metadata are not evidence that another provider/model completed a request. Every external private-data turn remains disclosure-gated; no failure silently selects another provider, model, or Mock.
+
 ## Current risk summary
 
 The complete records, including attack path, impact, existing mitigation, source fix, and required test, are in [docs/security/threat-model.md](docs/security/threat-model.md).
 
-| ID                | Rank   | State                        | Summary                                                                                                |
-| ----------------- | ------ | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
-| SEC-AI-001        | High   | Implemented baseline         | External Codex/OpenCode learning roles are policy-blocked; Mock alone is permitted.                    |
-| SEC-REVIEW-001    | High   | Implemented baseline         | External Reviewer is blocked; no legacy provider read/tool authority is reachable by learning routes.  |
-| SEC-CRED-001      | High   | Implemented baseline         | Codex child environment is explicitly allowlisted; unrelated secret classes are excluded.              |
-| SEC-AI-002        | High   | Implemented baseline         | Provider tool input/output is discarded and the repository stores only `[]`/`NULL`.                    |
-| SEC-NET-001       | High   | Implemented baseline         | Direct mode is loopback-only; explicit Compose internal wildcard keeps loopback host publication.      |
-| SEC-INTEGRITY-001 | High   | Implemented baseline         | Legacy learning mutations return 410 before parsing/write; historical reads and v2 remain.             |
-| SEC-PROVIDER-001  | High   | Implemented baseline         | Learning provider/model policy is server-owned and browser override fields are rejected.               |
-| SEC-EVIDENCE-001  | High   | Implemented baseline finding | Mock/model review verdicts can satisfy completion and influence mastery evidence.                      |
-| SEC-RELATION-001  | High   | Implemented baseline finding | Caller-controlled Teacher/Interview relationships can create false progression or mastery evidence.    |
-| SEC-DIFF-001      | High   | Implemented baseline finding | Git-ignored workspace state is absent from test/review freshness fingerprints.                         |
-| SEC-MIGRATION-001 | High   | Implemented baseline         | M2 is explicit, backup-bound, byte-preserving, quarantined, transactionally verified, and replay-safe. |
-| SEC-AI-003        | Medium | Implemented baseline finding | AI output and tool-event accumulation lacks a cumulative budget.                                       |
-| SEC-CANCEL-001    | Medium | Implemented baseline finding | Codex lacks a complete-turn deadline and local terminal cleanup when interruption is ignored.          |
-| SEC-SUPPLY-001    | Medium | Implemented baseline         | Shipped installed-tree High/Critical: zero; one low graph-dev-only esbuild advisory remains.           |
-| SEC-WEB-001       | Low    | Implemented baseline finding | Untrusted Markdown can cause an external browser fetch.                                                |
-| SEC-HTTP-001      | Low    | Implemented baseline finding | Body/rate limits, production client-header rejection, and strict chat/settings schemas are incomplete. |
-| SEC-DATA-001      | Low    | Implemented baseline finding | Private SQLite data/backups are plaintext and lack a complete lifecycle contract.                      |
-| SEC-PACK-001      | High   | Approved Core Alpha target   | An untrusted Course Pack must never enter the trusted native-execution path.                           |
-| SEC-EXEC-001      | High   | Future boundary              | Executable activities require real isolation before untrusted content can run.                         |
+| ID                | Rank   | State                        | Summary                                                                                                                                       |
+| ----------------- | ------ | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| SEC-AI-001        | High   | Implemented baseline         | Active AI roles use exact server-owned Provider Hub profiles; legacy Codex/OpenCode learning authority remains blocked.                       |
+| SEC-REVIEW-001    | High   | Implemented baseline         | Reviewer receives only a bounded evidence capsule and has no write, patch, filesystem, process, or network tool.                              |
+| SEC-CRED-001      | High   | Implemented baseline         | Connection-scoped credentials stay in the app-owned local store and never enter SQLite, browser payloads, prompts, packs, or logs.            |
+| SEC-AI-002        | High   | Implemented baseline         | Finite app-owned typed tool policies default-deny provider/general tools and persist no raw tool/provider payload.                            |
+| SEC-NET-001       | High   | Implemented baseline         | The app API is loopback-only; local model endpoints are loopback-only and custom model endpoints require explicit public HTTPS configuration. |
+| SEC-INTEGRITY-001 | High   | Implemented baseline         | Provider output cannot directly mutate deterministic mastery/progression; accepted facts remain app/kernel owned.                             |
+| SEC-PROVIDER-001  | High   | Implemented baseline         | Exact connection/model resolution, capability checks, disclosure, and failure behavior are server-owned with no fallback.                     |
+| SEC-EVIDENCE-001  | High   | Implemented baseline finding | Mock/model review verdicts can satisfy completion and influence mastery evidence.                                                             |
+| SEC-RELATION-001  | High   | Implemented baseline finding | Caller-controlled Teacher/Interview relationships can create false progression or mastery evidence.                                           |
+| SEC-DIFF-001      | High   | Implemented baseline finding | Git-ignored workspace state is absent from test/review freshness fingerprints.                                                                |
+| SEC-MIGRATION-001 | High   | Implemented baseline         | M2 is explicit, backup-bound, byte-preserving, quarantined, transactionally verified, and replay-safe.                                        |
+| SEC-AI-003        | Medium | Implemented baseline         | Provider turns enforce cumulative input/output/event/tool-call/deadline budgets across reused sessions.                                       |
+| SEC-CANCEL-001    | Medium | Implemented baseline         | Cancellation propagates through the common provider runner, evicts the session, and cannot commit success.                                    |
+| SEC-SUPPLY-001    | Medium | Implemented baseline         | Shipped installed-tree High/Critical: zero; one low graph-dev-only esbuild advisory remains.                                                  |
+| SEC-WEB-001       | Low    | Implemented baseline finding | Untrusted Markdown can cause an external browser fetch.                                                                                       |
+| SEC-HTTP-001      | Low    | Implemented baseline finding | Body/rate limits, production client-header rejection, and strict chat/settings schemas are incomplete.                                        |
+| SEC-DATA-001      | Low    | Implemented baseline finding | Private SQLite data/backups are plaintext and lack a complete lifecycle contract.                                                             |
+| SEC-PACK-001      | High   | Approved Core Alpha target   | An untrusted Course Pack must never enter the trusted native-execution path.                                                                  |
+| SEC-EXEC-001      | High   | Future boundary              | Executable activities require real isolation before untrusted content can run.                                                                |
 
 ## Positive controls to preserve
 
-**Implemented baseline:** strict mutation schemas; direct loopback bind enforcement; explicit internal-only Compose wildcard mode with loopback host publication; exact Origin/client/JSON checks; API-wide `no-store`; learner DTO protected-answer redaction; Mock-only learning-provider policy; legacy external adapter blocking; allowlisted Codex child environment; OpenCode provider-payload discard; browser event allowlisting and opaque app turn IDs; persistence literals for empty/no raw events; v1 mutation freeze; canonical and reparse-safe paths; isolated attempts; server-owned `shell: false` exercise plans; exercise timeout/output limits and sanitized child environments; SHA-256 freshness over the Git-visible patch; foreign keys/WAL; and verified non-overwriting backups.
+**Implemented baseline:** strict mutation schemas; direct loopback bind enforcement; explicit internal-only Compose wildcard mode with loopback host publication; exact Origin/client/JSON checks; API-wide `no-store`; protected-answer redaction; server-owned Provider Hub profiles; connection-scoped local credentials; constrained pinned Pi adapters; default-deny finite typed role tools; evidence-only Reviewer; exact one-time external disclosure; cumulative turn budgets and cancellation; browser event allowlisting and opaque app turn IDs; minimized provider-turn provenance; immutable Course/session/kernel facts; declarative Course Pack validation; and trusted app-owned execution plans.
 
-These controls reduce specific risks. They do not authenticate a remote client, sandbox native execution, include Git-ignored workspace state in freshness, encrypt SQLite, prove deleted bytes absent from WAL/free pages, complete retention/export/deletion, or implement the target Pi boundary. External adapters are blocked rather than promoted as compliant. Mock preserves the development/test learning vertical and is not production model evidence.
+These controls reduce specific risks. They do not authenticate a remote client, sandbox native execution, encrypt SQLite or the local credential file, prove deleted bytes absent from WAL/free pages, guarantee any provider's price/retention/availability, or establish authenticated smoke evidence for every catalog entry. The authenticated OpenCode Zen smoke proves only that exact reviewed path. Custom external endpoints remain an advanced user-directed disclosure destination, not a general model network proxy. Mock remains test/CI/development infrastructure and is not production model evidence.
 
 ## Core Alpha security rules
 

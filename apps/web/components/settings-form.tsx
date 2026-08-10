@@ -22,6 +22,11 @@ import {
 } from "@/components/ui/field";
 import { QueryError } from "@/components/query-state";
 import {
+  ProviderConnectionManager,
+  type ProviderConnectionSummary,
+  type ProviderManagementSettings,
+} from "@/components/provider-connection-manager";
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -54,21 +59,10 @@ type RoleProfile = {
     deadlineMs: number;
   };
 };
-type Connection = {
-  connectionId: string;
+type Connection = ProviderConnectionSummary & {
   adapterId: string;
   providerType: string;
-  displayName: string;
-  enabled: boolean;
-  external: boolean;
-  state: string;
   lastCheckedAt: string | null;
-  observedCapabilities: {
-    models: Array<{
-      modelId: string;
-      available: boolean;
-    }>;
-  } | null;
 };
 type SettingsQuery = Omit<SettingsMutation, "uiLocale"> & {
   uiLocale: UiLocale | null;
@@ -78,6 +72,7 @@ type SettingsQuery = Omit<SettingsMutation, "uiLocale"> & {
   ai: {
     connections: Connection[];
     roleProfiles: RoleProfile[];
+    management: ProviderManagementSettings;
   };
 };
 
@@ -104,16 +99,6 @@ const roleMeta: ReadonlyArray<{
   },
 ];
 
-const statusLabels: Readonly<Record<string, MessageKey>> = {
-  disabled: "settings.status.off",
-  starting: "settings.status.starting",
-  connected: "settings.status.connected",
-  degraded: "settings.status.degraded",
-  "authentication-required": "settings.status.authentication",
-  unavailable: "settings.status.unavailable",
-  misconfigured: "settings.status.misconfigured",
-  error: "settings.status.error",
-};
 const sectionClass =
   "min-w-0 rounded-xl border border-border bg-card p-5 sm:p-6";
 
@@ -419,53 +404,10 @@ export function SettingsForm() {
         aria-labelledby="settings-connections-title"
         className={sectionClass}
       >
-        <div className="mb-5">
-          <h3 id="settings-connections-title" className="font-semibold">
-            {t("settings.section.connections")}
-          </h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {t("settings.section.connectionsDescription")}
-          </p>
-        </div>
-        <ul className="grid gap-3 md:grid-cols-2">
-          {query.data.ai.connections.map((connection) => (
-            <li
-              key={connection.connectionId}
-              className="rounded-lg border border-border bg-background p-4"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-medium">{connection.displayName}</p>
-                <Badge
-                  variant={
-                    connection.state === "connected"
-                      ? "success"
-                      : connection.state === "error"
-                        ? "error"
-                        : "outline"
-                  }
-                >
-                  {statusLabels[connection.state]
-                    ? t(statusLabels[connection.state]!)
-                    : connection.state}
-                </Badge>
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {t(
-                  connection.external
-                    ? "settings.external"
-                    : "settings.localDevelopment",
-                )}{" "}
-                ·{" "}
-                {t("settings.models", {
-                  count: connection.observedCapabilities?.models.length ?? 0,
-                })}
-              </p>
-              <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                {connection.connectionId}
-              </p>
-            </li>
-          ))}
-        </ul>
+        <ProviderConnectionManager
+          connections={query.data.ai.connections}
+          management={query.data.ai.management}
+        />
         <div className="mt-5 flex justify-end">
           <Button asChild variant="outline">
             <Link href="/settings/developer-tools">

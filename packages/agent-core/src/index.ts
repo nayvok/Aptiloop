@@ -3,6 +3,7 @@ export * from "./event-normalizer.js";
 export * from "./mock-agent-provider.js";
 export * from "./provider.js";
 export * from "./pi-agent-provider.js";
+export * from "./pi-provider-catalog.js";
 export * from "./provider-hub.js";
 export * from "./roles.js";
 export * from "./structured-output.js";

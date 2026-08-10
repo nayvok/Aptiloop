@@ -22,6 +22,7 @@ import {
   type JsonValue,
   type ProviderHubFailureCode,
   type ProviderId,
+  type ProviderConnection,
   type RoleBudgets,
   type RoleProfile,
 } from "@dlh/shared";
@@ -70,6 +71,8 @@ const TOOL_POLICY_BY_ROLE: Readonly<Record<AptiloopAiRole, string>> = {
 export interface ProviderRuntimeOptions {
   readonly connection: DatabaseConnection;
   readonly providers: Record<ProviderId, AgentProvider>;
+  readonly connectionProviders?: ReadonlyMap<string, AgentProvider>;
+  readonly ensureProviders?: () => Promise<void>;
   readonly developmentMode: boolean;
   readonly now?: () => Date;
 }
@@ -105,15 +108,28 @@ export interface ProviderRuntimeSettings {
   readonly roleProfiles: ReturnType<ProviderHub["listRoleProfiles"]>;
 }
 
+interface ProviderSessionBudgetUsage {
+  inputBytes: number;
+  outputBytes: number;
+  events: number;
+  toolCalls: number;
+}
+
 export class ProviderRuntime {
   readonly #repository: ProviderHubRepository;
   readonly #providers: Record<ProviderId, AgentProvider>;
+  readonly #connectionProviders: ReadonlyMap<string, AgentProvider>;
+  readonly #ensureProviders: () => Promise<void>;
   readonly #developmentMode: boolean;
   readonly #now: () => Date;
+  readonly #sessionBudgetUsage = new Map<string, ProviderSessionBudgetUsage>();
 
   constructor(options: ProviderRuntimeOptions) {
     this.#repository = new ProviderHubRepository(options.connection);
     this.#providers = options.providers;
+    this.#connectionProviders = options.connectionProviders ?? new Map();
+    this.#ensureProviders =
+      options.ensureProviders ?? (() => Promise.resolve());
     this.#developmentMode =
       options.developmentMode ||
       process.env.NODE_ENV === "development" ||
@@ -346,6 +362,10 @@ export class ProviderRuntime {
     );
   }
 
+  releaseSession(providerSessionId: string): void {
+    this.#sessionBudgetUsage.delete(providerSessionId);
+  }
+
   async *stream(
     dispatch: ProviderDispatch,
     providerSessionId: string,
@@ -356,9 +376,15 @@ export class ProviderRuntime {
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), budgets.deadlineMs);
     const combined = AbortSignal.any([signal, deadline.signal]);
-    let eventCount = 0;
-    let toolCalls = 0;
-    let outputBytes = 0;
+    const usage = this.#sessionBudgetUsage.get(providerSessionId) ?? {
+      inputBytes: 0,
+      outputBytes: 0,
+      events: 0,
+      toolCalls: 0,
+    };
+    let eventCount = usage.events;
+    let toolCalls = usage.toolCalls;
+    let outputBytes = usage.outputBytes;
     let expectedSequence = 0;
     let completedContent: string | null = null;
     let terminal = false;
@@ -376,6 +402,15 @@ export class ProviderRuntime {
     };
     combined.addEventListener("abort", onAbort, { once: true });
     try {
+      const inputBytes = Buffer.byteLength(dispatch.payload, "utf8");
+      if (usage.inputBytes + inputBytes > budgets.maxInputBytes) {
+        throw new ProviderHubError(
+          "budget_exceeded",
+          "Provider session exceeded its cumulative input budget",
+        );
+      }
+      usage.inputBytes += inputBytes;
+      this.#sessionBudgetUsage.set(providerSessionId, usage);
       for await (const yielded of dispatch.provider.streamMessage({
         sessionId: providerSessionId,
         message: dispatch.payload,
@@ -390,6 +425,7 @@ export class ProviderRuntime {
           );
         }
         eventCount += 1;
+        usage.events = eventCount;
         if (eventCount > budgets.maxEvents) {
           throw new ProviderHubError(
             "budget_exceeded",
@@ -410,6 +446,7 @@ export class ProviderRuntime {
         expectedSequence += 1;
         if (event.type === "tool.started") {
           toolCalls += 1;
+          usage.toolCalls = toolCalls;
           if (toolCalls > budgets.maxToolCalls) {
             throw new ProviderHubError(
               "budget_exceeded",
@@ -433,6 +470,7 @@ export class ProviderRuntime {
             );
           }
           outputBytes += Buffer.byteLength(event.delta, "utf8");
+          usage.outputBytes = outputBytes;
         } else if (event.type === "message.completed") {
           if (completedContent !== null) {
             throw new ProviderHubError(
@@ -442,6 +480,7 @@ export class ProviderRuntime {
           }
           completedContent = event.content;
           outputBytes += Buffer.byteLength(event.content, "utf8");
+          usage.outputBytes = outputBytes;
         } else if (event.type === "session.completed") {
           terminal = true;
           terminalReason = event.reason;
@@ -468,6 +507,7 @@ export class ProviderRuntime {
       }
       completedNormally = true;
     } catch (error) {
+      this.#sessionBudgetUsage.delete(providerSessionId);
       await cancel();
       if (error instanceof ProviderHubError) throw error;
       if (combined.aborted) {
@@ -493,6 +533,8 @@ export class ProviderRuntime {
   #hub(): ProviderHub {
     return new ProviderHub({
       providers: this.#providers,
+      providerForConnection: (connection) =>
+        this.#providerForConnection(connection),
       connections: this.#repository.listConnections(),
       roleProfiles: this.#repository.listRoleProfiles(),
       toolPolicies: this.#repository.listToolPolicies(),
@@ -584,8 +626,18 @@ export class ProviderRuntime {
   }
 
   async #refreshConnections(): Promise<void> {
+    await this.#ensureProviders();
     for (const connection of this.#repository.listConnections()) {
-      const provider = this.#providers[connection.adapterId];
+      if (!connection.enabled) {
+        this.#repository.saveConnection({
+          ...connection,
+          state: "disabled",
+          observedCapabilities: null,
+          lastCheckedAt: this.#now().toISOString(),
+        });
+        continue;
+      }
+      const provider = this.#providerForConnection(connection);
       if (!provider) continue;
       if (connection.adapterId === "mock" && !this.#developmentMode) {
         this.#repository.saveConnection({
@@ -640,6 +692,15 @@ export class ProviderRuntime {
         });
       }
     }
+  }
+
+  #providerForConnection(
+    connection: ProviderConnection,
+  ): AgentProvider | undefined {
+    return (
+      this.#connectionProviders.get(connection.connectionId) ??
+      this.#providers[connection.adapterId]
+    );
   }
 }
 

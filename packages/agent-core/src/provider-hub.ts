@@ -67,6 +67,9 @@ export class ProviderHubError extends Error {
 
 export interface ProviderHubOptions {
   readonly providers: Partial<Record<ProviderId, AgentProvider>>;
+  readonly providerForConnection?: (
+    connection: ProviderConnection,
+  ) => AgentProvider | undefined;
   readonly connections: readonly ProviderConnection[];
   readonly roleProfiles: readonly RoleProfile[];
   readonly toolPolicies: readonly ToolPolicy[];
@@ -95,6 +98,8 @@ export interface ResolveProviderTurnInput {
 
 export class ProviderHub {
   readonly #providers: Partial<Record<ProviderId, AgentProvider>>;
+  readonly #providerForConnection:
+    ((connection: ProviderConnection) => AgentProvider | undefined) | undefined;
   readonly #connections: ReadonlyMap<string, ProviderConnection>;
   readonly #roleProfiles: ReadonlyMap<AptiloopAiRole, RoleProfile>;
   readonly #toolPolicies: ReadonlyMap<string, ToolPolicy>;
@@ -103,6 +108,7 @@ export class ProviderHub {
 
   constructor(options: ProviderHubOptions) {
     this.#providers = { ...options.providers };
+    this.#providerForConnection = options.providerForConnection;
     this.#connections = uniqueMap(
       options.connections.map((input) => {
         const connection = ProviderConnectionSchema.parse(input);
@@ -188,7 +194,9 @@ export class ProviderHub {
         "Mock is restricted to tests, CI, and explicit development mode",
       );
     }
-    const provider = this.#providers[connection.adapterId];
+    const provider =
+      this.#providerForConnection?.(connection) ??
+      this.#providers[connection.adapterId];
     if (!provider || provider.id !== connection.adapterId) {
       throw new ProviderHubError(
         "provider_unavailable",
@@ -258,7 +266,7 @@ export class ProviderHub {
     const model = models.find(
       (candidate) =>
         candidate.id === modelId &&
-        candidate.providerId === connection.adapterId &&
+        candidate.providerId === provider.id &&
         candidate.available,
     );
     if (!model) {

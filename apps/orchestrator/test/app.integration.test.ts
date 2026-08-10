@@ -329,6 +329,171 @@ describe("orchestrator vertical flow", () => {
     }
   });
 
+  it("manages built-in, custom HTTPS, and loopback connections without exposing secrets", async () => {
+    const { app } = runtime();
+
+    const initial = await request(app, "/api/settings");
+    expect(initial.status).toBe(200);
+    const initialBody = (await initial.json()) as {
+      ai: { management: { catalog: unknown[] } };
+    };
+    expect(initialBody.ai.management.catalog).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "openai-api",
+          authKind: "api-key",
+        }),
+        expect.objectContaining({ id: "ollama-local", authKind: "local" }),
+        expect.objectContaining({
+          id: "custom-openai-compatible",
+          authKind: "api-key",
+          endpointKind: "external",
+        }),
+      ]),
+    );
+
+    const rejected = await request(app, "/api/settings/ai/connections", {
+      method: "POST",
+      body: JSON.stringify({
+        catalogId: "ollama-local",
+        displayName: "Forged remote Ollama",
+        baseUrl: "https://example.com/v1",
+        modelIds: ["qwen2.5-coder"],
+      }),
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({
+      error: expect.stringContaining("loopback HTTP URLs"),
+    });
+
+    for (const baseUrl of [
+      "http://inference.example.com/v1",
+      "https://127.0.0.1/v1",
+      "https://gateway.local/v1",
+      "https://user:secret@inference.example.com/v1",
+    ]) {
+      const customRejected = await request(
+        app,
+        "/api/settings/ai/connections",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            catalogId: "custom-openai-compatible",
+            displayName: "Unsafe custom endpoint",
+            apiKey: "custom-test-secret",
+            baseUrl,
+            modelIds: ["reviewed-model"],
+          }),
+        },
+      );
+      expect(customRejected.status).toBe(400);
+      expect(await customRejected.json()).toMatchObject({
+        error: expect.stringContaining("public HTTPS hostnames"),
+      });
+    }
+
+    const customCreated = await request(app, "/api/settings/ai/connections", {
+      method: "POST",
+      body: JSON.stringify({
+        catalogId: "custom-openai-compatible",
+        displayName: "Reviewed inference gateway",
+        apiKey: "custom-test-secret",
+        baseUrl: "https://inference.example.com/openai/v1",
+        modelIds: ["reviewed-model"],
+      }),
+    });
+    expect(customCreated.status).toBe(201);
+    const customBody = await customCreated.json();
+    expect(JSON.stringify(customBody)).not.toContain("custom-test-secret");
+    const customConnectionId = z
+      .object({ connection: z.object({ connectionId: z.string() }) })
+      .parse(customBody).connection.connectionId;
+
+    const localCreated = await request(app, "/api/settings/ai/connections", {
+      method: "POST",
+      body: JSON.stringify({
+        catalogId: "ollama-local",
+        displayName: "Local Ollama",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        modelIds: ["qwen2.5-coder"],
+      }),
+    });
+    expect(localCreated.status).toBe(201);
+    const local = z
+      .object({ connection: z.object({ connectionId: z.string() }) })
+      .parse(await localCreated.json()).connection;
+
+    const apiCreated = await request(app, "/api/settings/ai/connections", {
+      method: "POST",
+      body: JSON.stringify({
+        catalogId: "openai-api",
+        displayName: "Personal OpenAI",
+        apiKey: "sk-test-secret-value",
+      }),
+    });
+    expect(apiCreated.status).toBe(201);
+    const apiBody = await apiCreated.json();
+    expect(JSON.stringify(apiBody)).not.toContain("sk-test-secret-value");
+    const apiConnectionId = z
+      .object({ connection: z.object({ connectionId: z.string() }) })
+      .parse(apiBody).connection.connectionId;
+
+    const configured = await request(app, "/api/settings");
+    const configuredText = await configured.text();
+    expect(configuredText).not.toContain("sk-test-secret-value");
+    expect(configuredText).not.toContain("custom-test-secret");
+    expect(JSON.parse(configuredText)).toMatchObject({
+      ai: {
+        management: {
+          connections: expect.arrayContaining([
+            expect.objectContaining({
+              connectionId: local.connectionId,
+              authKind: "local",
+            }),
+            expect.objectContaining({
+              connectionId: apiConnectionId,
+              authKind: "api-key",
+              credentialConfigured: true,
+            }),
+            expect.objectContaining({
+              connectionId: customConnectionId,
+              authKind: "api-key",
+              credentialConfigured: true,
+              baseUrl: "https://inference.example.com/openai/v1",
+              modelIds: ["reviewed-model"],
+            }),
+          ]),
+        },
+      },
+    });
+
+    const disabled = await request(
+      app,
+      `/api/settings/ai/connections/${encodeURIComponent(local.connectionId)}/disable`,
+      { method: "POST", body: "{}" },
+    );
+    expect(disabled.status).toBe(200);
+    const disabledSettings = await request(app, "/api/settings");
+    expect(await disabledSettings.json()).toMatchObject({
+      ai: {
+        connections: expect.arrayContaining([
+          expect.objectContaining({
+            connectionId: local.connectionId,
+            enabled: false,
+            state: "disabled",
+            observedCapabilities: null,
+          }),
+        ]),
+      },
+    });
+    const enabled = await request(
+      app,
+      `/api/settings/ai/connections/${encodeURIComponent(local.connectionId)}/enable`,
+      { method: "POST", body: "{}" },
+    );
+    expect(enabled.status).toBe(200);
+  });
+
   it("rejects a forged OpenCode endpoint without sending environment credentials", async () => {
     const capturedRequests: Array<{
       authorization: string | undefined;

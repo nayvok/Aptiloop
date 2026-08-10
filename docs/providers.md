@@ -1,32 +1,76 @@
-# AI Providers
+# AI providers
 
-**Document status:** **Implemented baseline** M1 containment. Pi integration and external learning-provider enablement remain an **Approved Core Alpha target**.
+**Document status:** Accepted evidenced **Implemented baseline** for the Core Alpha M6 Provider Hub and settings workflow.
 
-## M1 learning policy
+## Operating policy
 
-The orchestrator owns provider/model resolution. Teacher, Reviewer, Interviewer, Curator, and Codex Expert are fixed to the deterministic Mock profile for tests, CI, and explicit development. Browser request bodies cannot choose or override provider/model. An unavailable or denied external provider remains an explicit failure and never silently substitutes Mock.
+The orchestrator owns every connection, credential reference, exact model selection, role profile, capability check, disclosure decision, and provider turn. Browser learning requests contain role and entity intent only; they cannot override a provider, model, endpoint, credential, or tool policy. A failed or unavailable real provider remains an explicit error and never becomes Mock. Mock is limited to tests, CI, and explicit development composition.
 
-Mock preserves the runnable v2 learning vertical. It exercises product flow and boundary contracts, not external model quality or production evidence.
+## Supported connections
 
-## Legacy Codex and OpenCode adapters
+The Settings → Connections catalog exposes only reviewed Pi-backed adapters:
 
-Codex app-server and OpenCode adapters remain in the repository as legacy migration boundaries. They may report diagnostics, but M1 policy blocks them from every learning role. Do not interpret an installed CLI, reachable sidecar, discovered model, or `connected` health result as permission to run a learning turn.
+| Connection                     | Authentication                               | Notes                                                                                                                     |
+| ------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI API                     | API key                                      | Built-in endpoint and model catalog.                                                                                      |
+| OpenAI Codex subscription      | Provider-owned subscription sign-in          | Recommended overall for strong general quality without separate API billing.                                              |
+| Anthropic API                  | API key                                      | Built-in endpoint and model catalog.                                                                                      |
+| Claude subscription            | Provider-owned subscription sign-in          | Uses the reviewed Anthropic auth flow.                                                                                    |
+| NVIDIA NIM                     | `NVIDIA_API_KEY`                             | Built-in NVIDIA model catalog; account limits and pricing remain provider-owned.                                          |
+| OpenCode Zen                   | `OPENCODE_API_KEY`                           | Recommended free starting point because the reviewed catalog includes free model IDs; availability and limits may change. |
+| Google Gemini                  | `GEMINI_API_KEY`                             | Built-in endpoint and model catalog.                                                                                      |
+| OpenRouter                     | `OPENROUTER_API_KEY`                         | Built-in endpoint and model catalog.                                                                                      |
+| DeepSeek                       | `DEEPSEEK_API_KEY`                           | Built-in endpoint and model catalog.                                                                                      |
+| Mistral                        | `MISTRAL_API_KEY`                            | Built-in endpoint and model catalog.                                                                                      |
+| Groq                           | `GROQ_API_KEY`                               | Built-in endpoint and model catalog.                                                                                      |
+| GitHub Copilot subscription    | Provider-owned subscription sign-in          | Uses the reviewed Copilot auth flow.                                                                                      |
+| Custom OpenAI-compatible HTTPS | API key, exact base URL, exact model IDs     | Explicitly configured public HTTPS endpoint only; see the restrictions below.                                             |
+| Ollama                         | No credential, loopback URL, exact model IDs | Recommended for privacy because model traffic stays on this computer.                                                     |
+| LM Studio                      | No credential, loopback URL, exact model IDs | Local OpenAI-compatible server.                                                                                           |
 
-`npm start` launches Aptiloop only. It does not start OpenCode, Codex, or any other external sidecar. If an operator starts a sidecar separately for adapter diagnostics, it must remain on loopback and is still unusable by learning roles.
+“Free” describes a provider/model offer, not an Aptiloop guarantee. Providers control account eligibility, quotas, retention, regional availability, pricing, and model removal. Aptiloop performs no cost-based routing and never silently changes a selected model.
 
-Defense in depth remains at the blocked adapters:
+## Connect and assign a model
 
-- Codex children receive only essential OS/path values, `CODEX_HOME`, and required OpenAI credential variables; unrelated database, OpenCode, and GitHub secret classes are excluded;
-- OpenCode normalized tool events discard provider input/output and retain only bounded lifecycle identity;
-- provider RPC/session IDs and raw events are never browser contracts;
-- server-initiated general tools/approval requests are not Aptiloop learning capabilities.
+1. Open **Settings → Connections → Add connection**.
+2. Choose one server-owned catalog entry and give the connection a local display name.
+3. For an API-key provider, enter the key. For a subscription provider, create the connection and complete the provider-owned sign-in prompts. For Ollama or LM Studio, enter the loopback URL and the exact installed model IDs.
+4. Verify the connection state and observed models. `connected` means an authenticated request was observed; configured credentials alone remain `degraded` until that observation.
+5. In **AI role profiles**, select the connection and one exact available model independently for Course Designer, Tutor, Evaluator, and Reviewer, then save all four profiles.
 
-## Persistence and browser events
+A connection can serve several roles. Disabling a connection preserves history but makes dependent roles explicitly unavailable. Switching a role creates a new server-owned profile decision; it never rewrites prior turn provenance.
 
-Browser-facing events are an allowlist correlated by an app-owned opaque turn UUID. Provider session/protocol IDs and raw tool arguments/results are not exposed. New messages always persist `tool_events_json='[]'` and `raw_event_json=NULL`; new reviews persist no raw response.
+## Custom OpenAI-compatible HTTPS boundary
 
-The [M1 inventory](audits/2026-08-08-m1-safety-boundary-inventory.md) observed zero logical non-empty raw/tool rows. This does not prove historical byte absence from SQLite free pages, WAL/SHM, snapshots, or external copies.
+The custom adapter is an explicit advanced connection, not automatic provider discovery. It accepts:
 
-## External-provider promotion gate
+- an `https:` URL with a public DNS hostname;
+- the default TLS port only;
+- no URL username, password, query, or fragment;
+- a path ending in `/v1`;
+- one or more exact model IDs supplied by the user.
 
-A real provider/role remains blocked until the target Provider Hub supplies server-owned profile/capability resolution, typed Aptiloop tools, scoped disclosure consent, bounded context/output, evidence-only Reviewer behavior, cancellation/cleanup, persistence minimization, and a real authenticated smoke with exact runtime/provider/model and terminal result. Mock tests cannot substitute for that smoke.
+Literal IP addresses, single-label names, loopback/private-style host suffixes, non-HTTPS URLs, and embedded URL credentials are rejected. Course Packs and learning routes cannot provide or change this endpoint. The endpoint is still external: every private Course/learner/source disclosure requires the same exact destination-, role-, model-, scope-, payload-hash-, and expiry-bound user approval as a built-in external provider.
+
+Use Ollama or LM Studio for loopback endpoints. Do not expose a local model server on the network merely to make it look like a custom external provider.
+
+## Credentials and privacy
+
+API keys and subscription tokens are stored in the app-owned local `.data/provider-credentials.json` credential file, scoped by connection ID, written atomically, and requested with owner-only POSIX file permissions where the platform supports them. They are never stored in SQLite, returned by settings APIs, included in Course Packs, prompts, role profiles, logs, model output, or browser-readable payloads. Replacing or signing out a credential is an explicit settings mutation.
+
+External provider turns remain blocked until the UI shows the exact destination and data categories and the user approves that one disclosure. The Provider Hub persists only bounded final content when product behavior requires it plus secret-free terminal provenance. General provider tool arguments/results and raw provider events are not persistence or browser contracts.
+
+## Failure and recovery
+
+- `authentication-required`: set/replace the API key or complete subscription sign-in.
+- `model-unavailable`: choose an exact currently observed model; Aptiloop does not choose another one.
+- `connection-disabled` or `provider-unavailable`: enable or repair the named connection.
+- `capability-missing`: choose a model that satisfies the role's observed requirements.
+- `disclosure-required` or `disclosure-mismatch`: inspect and approve the exact new disclosure; prior approval is not broadened or reused.
+- timeout, cancellation, budget, invalid-output, and provider errors terminate the turn without a successful deterministic learning fact.
+
+## Legacy adapters
+
+The Codex app-server and old OpenCode sidecar adapters remain historical migration boundaries and are blocked from learning roles. `npm start` launches Aptiloop only. Installed CLIs, sidecar health, or ambient credentials do not authorize a learning turn. The active OpenCode Zen connection uses the constrained pinned Pi adapter, not the legacy sidecar.
+
+For the authenticated disposable OpenCode smoke contract, see the root README and run `npm run smoke:provider:opencode` with `OPENCODE_API_KEY` configured outside the repository.

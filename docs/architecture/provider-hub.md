@@ -11,6 +11,8 @@
 
 **Implemented baseline.** Active learning chat, interview, and evidence-only review resolve through persisted `RoleProfile` records and `ProviderHub`; flattened browser role selections and the legacy provider-status route are retired. The UI previews exact external disclosure scope and consumes an immutable approval once. The common runner enforces cumulative input/output/event/tool/deadline budgets, explicit cancellation, minimized persistence, and structured failures without fallback. Private environment/context sentinels and all four finite role matrices are covered. The exact authenticated OpenCode Zen `deepseek-v4-flash-free` smoke completed through constrained Pi with synthetic text in a disposable database, exact disclosure consumption, persisted minimal provenance, and observed cancellation. This closes M6 acceptance without asserting general production provider readiness.
 
+**Implemented baseline.** Settings exposes a server-owned connection-management API and localized UI for the reviewed catalog. API-key and subscription credentials are connection-scoped in `.data/provider-credentials.json` and never returned to the browser or stored in SQLite. Built-in providers own endpoint/model discovery; Ollama and LM Studio accept only loopback `/v1` URLs plus exact model IDs; the advanced custom compatible adapter accepts only explicit public HTTPS `/v1` endpoints plus exact model IDs. Connection disable/enable, key replacement, subscription sign-in/sign-out, observed model status, and exact per-role model switching are explicit mutations.
+
 ## Separate concepts
 
 **Approved Core Alpha target.** A provider connection is never a role.

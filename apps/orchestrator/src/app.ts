@@ -87,6 +87,12 @@ import {
   providerFailurePayload,
   type ProviderDispatch,
 } from "./provider-runtime.js";
+import {
+  CreateProviderConnectionSchema,
+  ProviderLoginAnswerSchema,
+  ProviderManagementService,
+  SetProviderApiKeySchema,
+} from "./provider-management.js";
 
 const sourceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const defaultOpenCodeEndpoint = "http://127.0.0.1:4096";
@@ -210,6 +216,7 @@ interface AppState {
   developmentMode: boolean;
   providers: Record<ProviderId, AgentProvider>;
   providerRuntime: ProviderRuntime;
+  providerManagement: ProviderManagementService;
   providerSessions: Map<string, ProviderSessionRecord>;
   activeProviderTurns: Map<
     string,
@@ -397,9 +404,20 @@ export function createApp(options: AppOptions = {}) {
     pi: createOpenAiPiAgentProvider({ toolsForRole: courseDesignerTools }),
   };
   const providers = { ...defaultProviders, ...options.providers };
+  const connectionProviders = new Map<string, AgentProvider>();
+  const providerManagement = new ProviderManagementService({
+    connection,
+    repository,
+    projectRoot:
+      databaseMode === "disposable" ? path.dirname(databasePath) : projectRoot,
+    connectionProviders,
+    toolsForRole: courseDesignerTools,
+  });
   const providerRuntime = new ProviderRuntime({
     connection,
     providers,
+    connectionProviders,
+    ensureProviders: () => providerManagement.ensureLoaded(),
     developmentMode: options.developmentMode === true,
   });
   const npmTest = npmTestCommand();
@@ -430,6 +448,7 @@ export function createApp(options: AppOptions = {}) {
     developmentMode: options.developmentMode === true,
     providers,
     providerRuntime,
+    providerManagement,
     providerSessions: new Map(),
     activeProviderTurns: new Map(),
     activeProviderTurnReservations: new Map(),
@@ -1829,8 +1848,11 @@ export function createApp(options: AppOptions = {}) {
 
   app.get("/api/settings", async (context) => {
     const settings = await readSettings(state);
-    const ai = await state.providerRuntime.settings();
-    return context.json({ ...settings, ai });
+    const [ai, management] = await Promise.all([
+      state.providerRuntime.settings(),
+      state.providerManagement.describe(),
+    ]);
+    return context.json({ ...settings, ai: { ...ai, management } });
   });
 
   app.put("/api/settings", async (context) => {
@@ -1849,6 +1871,111 @@ export function createApp(options: AppOptions = {}) {
       settings.roleProfiles,
     );
     return context.json({ saved: true, roleProfiles });
+  });
+  app.post("/api/settings/ai/connections", async (context) => {
+    try {
+      const input = CreateProviderConnectionSchema.parse(
+        await context.req.json(),
+      );
+      const connection = await state.providerManagement.create(input);
+      return context.json({ created: true, connection }, 201);
+    } catch (error) {
+      return context.json({ error: safeProviderManagementMessage(error) }, 400);
+    }
+  });
+  app.put(
+    "/api/settings/ai/connections/:connectionId/credential",
+    async (context) => {
+      try {
+        const { apiKey } = SetProviderApiKeySchema.parse(
+          await context.req.json(),
+        );
+        await state.providerManagement.setApiKey(
+          context.req.param("connectionId"),
+          apiKey,
+        );
+        return context.json({ saved: true });
+      } catch (error) {
+        return context.json(
+          { error: safeProviderManagementMessage(error) },
+          400,
+        );
+      }
+    },
+  );
+  app.post(
+    "/api/settings/ai/connections/:connectionId/disable",
+    async (context) => {
+      try {
+        await state.providerManagement.disable(
+          context.req.param("connectionId"),
+        );
+        return context.json({ disabled: true });
+      } catch (error) {
+        return context.json(
+          { error: safeProviderManagementMessage(error) },
+          400,
+        );
+      }
+    },
+  );
+  app.post(
+    "/api/settings/ai/connections/:connectionId/enable",
+    async (context) => {
+      try {
+        await state.providerManagement.enableLocal(
+          context.req.param("connectionId"),
+        );
+        return context.json({ enabled: true });
+      } catch (error) {
+        return context.json(
+          { error: safeProviderManagementMessage(error) },
+          400,
+        );
+      }
+    },
+  );
+  app.post(
+    "/api/settings/ai/connections/:connectionId/login",
+    async (context) => {
+      try {
+        const operationId = await state.providerManagement.startLogin(
+          context.req.param("connectionId"),
+        );
+        return context.json({ started: true, operationId }, 202);
+      } catch (error) {
+        return context.json(
+          { error: safeProviderManagementMessage(error) },
+          400,
+        );
+      }
+    },
+  );
+  app.get("/api/settings/ai/login/:operationId", (context) => {
+    try {
+      return context.json(
+        state.providerManagement.loginStatus(context.req.param("operationId")),
+      );
+    } catch (error) {
+      return context.json({ error: safeProviderManagementMessage(error) }, 404);
+    }
+  });
+  app.post("/api/settings/ai/login/:operationId/answer", async (context) => {
+    try {
+      const answer = ProviderLoginAnswerSchema.parse(await context.req.json());
+      state.providerManagement.answerLogin(
+        context.req.param("operationId"),
+        answer.promptId,
+        answer.answer,
+      );
+      return context.json({ accepted: true });
+    } catch (error) {
+      return context.json({ error: safeProviderManagementMessage(error) }, 400);
+    }
+  });
+  app.post("/api/settings/ai/login/:operationId/cancel", (context) => {
+    state.providerManagement.cancelLogin(context.req.param("operationId"));
+    return context.json({ cancelled: true });
   });
 
   return {
@@ -1950,6 +2077,7 @@ function evictProviderSession(
 ): void {
   if (state.providerSessions.get(key) === session) {
     state.providerSessions.delete(key);
+    state.providerRuntime.releaseSession(session.providerSessionId);
   }
   for (const [turnId, activeTurn] of state.activeProviderTurns) {
     if (activeTurn.session === session) {
@@ -2810,4 +2938,13 @@ function loadTrustedExerciseTemplate(
   throw new Error(
     `No trusted exercise template is registered for ${snapshotExerciseId}`,
   );
+}
+
+function safeProviderManagementMessage(error: unknown): string {
+  if (error instanceof z.ZodError) {
+    return error.issues[0]?.message ?? "Provider configuration is invalid";
+  }
+  return error instanceof Error && error.message.trim()
+    ? error.message.slice(0, 500)
+    : "Provider configuration failed";
 }

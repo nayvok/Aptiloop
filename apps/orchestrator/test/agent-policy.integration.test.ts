@@ -184,6 +184,25 @@ async function* authoritativeReplacementScript(
   };
 }
 
+async function* cumulativeSessionOutputScript(
+  sessionId: string,
+): AsyncIterable<AgentEvent> {
+  yield {
+    type: "message.completed",
+    sessionId,
+    sequence: 0,
+    timestamp,
+    content: "c".repeat(140_000),
+  };
+  yield {
+    type: "session.completed",
+    sessionId,
+    sequence: 1,
+    timestamp,
+    reason: "completed",
+  };
+}
+
 async function* toolScript(sessionId: string): AsyncIterable<AgentEvent> {
   yield {
     type: "tool.started",
@@ -1508,6 +1527,36 @@ describe("M1 agent policy boundary", () => {
         )
         .get(),
     ).toEqual({ content: safeFailure, status: "failed" });
+  });
+
+  it("enforces cumulative output budgets across sequential turns in one provider session", async () => {
+    const mock = new ScriptedProvider({
+      script: cumulativeSessionOutputScript,
+    });
+    const { app, state } = runtime({ providers: { mock } });
+
+    const first = await request(app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({ role: "teacher", message: "First bounded turn" }),
+    });
+    expect(first.status).toBe(200);
+    expect(await first.text()).toContain("c".repeat(1_000));
+
+    const second = await request(app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({ role: "teacher", message: "Second bounded turn" }),
+    });
+    expect(second.status).toBe(200);
+    expect(await second.text()).toContain(safeFailure);
+    expect(mock.createInputs).toHaveLength(1);
+    expect(mock.cancelCalls).toEqual([providerHandle]);
+    expect(
+      state.connection.sqlite
+        .prepare(
+          "SELECT status FROM agent_messages WHERE role = 'assistant' ORDER BY rowid",
+        )
+        .all(),
+    ).toEqual([{ status: "completed" }, { status: "failed" }]);
   });
 
   it("rejects a concurrent turn without disturbing sequential session reuse", async () => {

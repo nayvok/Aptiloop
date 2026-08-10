@@ -58,6 +58,7 @@ See:
 - [Architecture](ARCHITECTURE.md)
 - [Design and visual alternatives](DESIGN.md)
 - [Security policy](SECURITY.md)
+- [AI provider connections and model switching](docs/providers.md)
 - [Migration strategy](docs/migration/core-alpha-migration-strategy.md)
 - [M2–M5 data model](docs/data-model.md)
 - [M2 migration and recovery runbook](docs/migration/m2-course-foundations-runbook.md)
@@ -89,6 +90,10 @@ The current binary admits only the exact `0000`–`0013` schema contract, SHA-25
 On a genuinely fresh installation where no active database exists, `npm run dev` may reserve and bootstrap a new active database. If startup passes the gate, open <http://127.0.0.1:3000>. The orchestrator defaults to <http://127.0.0.1:8787>; readiness is exposed at <http://127.0.0.1:8787/health/ready>. The web server rewrites `/api/*` to the orchestrator.
 
 `npm start` invokes `scripts/dev-local.mjs` and attempts to launch only the local Aptiloop stack. It does not start Codex, OpenCode, or any external sidecar. A root `.env` is optional; copy `.env.example` only when local overrides are needed.
+
+### Provider connections and model switching
+
+Open **Settings → Connections** to add a reviewed API-key, subscription, NVIDIA NIM, OpenCode Zen, loopback Ollama/LM Studio, or constrained custom OpenAI-compatible HTTPS connection. Credentials are stored only in the app-owned local credential file and are never returned to the browser. Assign one exact observed model per AI role; external role turns still require an exact one-time disclosure approval. See the [provider guide](docs/providers.md) for the complete catalog, recommendations, endpoint restrictions, failure states, and recovery steps.
 
 ### Optional OpenCode Zen provider smoke
 

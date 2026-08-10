@@ -93,6 +93,38 @@ const settingsResponse = {
         budgets,
       })),
     ],
+    management: {
+      catalog: [
+        {
+          id: "openai-api",
+          providerType: "openai",
+          displayName: "OpenAI API",
+          authKind: "api-key",
+          external: true,
+          credentialLabel: "OpenAI API key",
+        },
+        {
+          id: "custom-openai-compatible",
+          providerType: "openai-compatible",
+          displayName: "Custom OpenAI-compatible HTTPS",
+          authKind: "api-key",
+          external: true,
+          credentialLabel: "Provider API key",
+          endpointKind: "external",
+        },
+        {
+          id: "ollama-local",
+          providerType: "ollama",
+          displayName: "Ollama",
+          authKind: "local",
+          external: false,
+          defaultBaseUrl: "http://127.0.0.1:11434/v1",
+          endpointKind: "loopback",
+          recommendation: "private",
+        },
+      ],
+      connections: [],
+    },
   },
 };
 
@@ -201,6 +233,93 @@ describe("SettingsForm", () => {
         mode: "connection",
         connectionId: "conn:pi:openai",
         modelId: "pi-exact",
+      });
+    });
+  });
+
+  it("creates a local connection from server-owned catalog fields", async () => {
+    apiMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === "/settings/ai/connections" && init?.method === "POST") {
+        return Promise.resolve({ created: true });
+      }
+      if (path === "/settings") return Promise.resolve(settingsResponse);
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+    renderForm();
+    await screen.findByRole("heading", { name: "Connections" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
+    fireEvent.change(screen.getByLabelText("Provider"), {
+      target: { value: "ollama-local" },
+    });
+    expect(
+      screen.getByText(
+        "Recommended for privacy: Ollama keeps model traffic on this computer.",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "Local Ollama" },
+    });
+    fireEvent.change(screen.getByLabelText("Exact model IDs"), {
+      target: { value: "qwen2.5-coder, llama3.2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
+
+    await waitFor(() => {
+      const mutation = apiMock.mock.calls.find(
+        ([path, init]) =>
+          path === "/settings/ai/connections" && init?.method === "POST",
+      );
+      expect(JSON.parse(String(mutation?.[1]?.body))).toEqual({
+        catalogId: "ollama-local",
+        displayName: "Local Ollama",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        modelIds: ["qwen2.5-coder", "llama3.2"],
+      });
+    });
+  });
+
+  it("submits a custom external endpoint with explicit models and credentials", async () => {
+    apiMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === "/settings/ai/connections" && init?.method === "POST") {
+        return Promise.resolve({ created: true });
+      }
+      if (path === "/settings") return Promise.resolve(settingsResponse);
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+    renderForm();
+    await screen.findByRole("heading", { name: "Connections" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
+    fireEvent.change(screen.getByLabelText("Provider"), {
+      target: { value: "custom-openai-compatible" },
+    });
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "Reviewed gateway" },
+    });
+    fireEvent.change(screen.getByLabelText(/Provider API key/u), {
+      target: { value: "secret-api-key" },
+    });
+    fireEvent.change(
+      screen.getByLabelText(/External OpenAI-compatible HTTPS URL/u),
+      { target: { value: "https://inference.example.com/openai/v1" } },
+    );
+    fireEvent.change(screen.getByLabelText("Exact model IDs"), {
+      target: { value: "reviewed-model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
+
+    await waitFor(() => {
+      const mutation = apiMock.mock.calls.find(
+        ([path, init]) =>
+          path === "/settings/ai/connections" && init?.method === "POST",
+      );
+      expect(JSON.parse(String(mutation?.[1]?.body))).toEqual({
+        catalogId: "custom-openai-compatible",
+        displayName: "Reviewed gateway",
+        apiKey: "secret-api-key",
+        baseUrl: "https://inference.example.com/openai/v1",
+        modelIds: ["reviewed-model"],
       });
     });
   });

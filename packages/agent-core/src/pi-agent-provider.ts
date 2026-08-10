@@ -8,6 +8,9 @@ import {
 import {
   createModels,
   type AssistantMessage,
+  type AuthInteraction,
+  type AuthType,
+  type Credential,
   type Models,
 } from "@earendil-works/pi-ai";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
@@ -64,6 +67,32 @@ export class PiAgentProvider implements AgentProvider {
     this.adapterVersion = options.adapterVersion ?? "0.84.1";
     this.#now = options.now ?? (() => new Date());
     this.#toolsForRole = options.toolsForRole;
+  }
+  supportsAuthType(type: AuthType): boolean {
+    const auth = this.#models.getProvider(this.providerType)?.auth;
+    return type === "api_key"
+      ? auth?.apiKey !== undefined
+      : auth?.oauth !== undefined;
+  }
+
+  async login(
+    type: AuthType,
+    interaction: AuthInteraction,
+  ): Promise<Credential> {
+    if (!this.supportsAuthType(type)) {
+      throw new AgentProviderError(
+        "invalid_input",
+        `Pi provider ${this.providerType} does not support ${type} authentication`,
+      );
+    }
+    return this.#models.login(this.providerType, type, interaction);
+  }
+
+  async logout(signal?: AbortSignal): Promise<void> {
+    await this.#models.logout(
+      this.providerType,
+      signal ? { signal } : undefined,
+    );
   }
 
   async getStatus(signal?: AbortSignal): Promise<ProviderStatus> {

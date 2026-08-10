@@ -1,15 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
   type AssistantMessage,
+  type AuthInteraction,
   type Model,
   type Models,
+  type CredentialStore,
 } from "@earendil-works/pi-ai";
 
 import {
   createOpenCodeZenPiAgentProvider,
   PiAgentProvider,
 } from "../src/pi-agent-provider.js";
+import { createCatalogPiAgentProvider } from "../src/pi-provider-catalog.js";
 
 const model: Model<"openai-responses"> = {
   id: "gpt-test",
@@ -161,6 +164,90 @@ describe("PiAgentProvider", () => {
       state: "connected",
       message: expect.stringContaining("Last authenticated request succeeded"),
     });
+  });
+
+  it("delegates subscription login and logout through the scoped Pi model store", async () => {
+    const models = fakeModels() as unknown as Omit<
+      Models,
+      "getProvider" | "login" | "logout"
+    > & {
+      getProvider: () => {
+        id: string;
+        auth: { oauth: { name: string } };
+      };
+      login: ReturnType<typeof vi.fn>;
+      logout: ReturnType<typeof vi.fn>;
+    };
+    models.getProvider = () => ({
+      id: "openai-codex",
+      auth: { oauth: { name: "OpenAI subscription" } },
+    });
+    models.login = vi.fn(async () => ({
+      type: "oauth" as const,
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.now() + 60_000,
+    }));
+    models.logout = vi.fn(async () => undefined);
+    const provider = new PiAgentProvider({
+      models: models as unknown as Models,
+      providerType: "openai-codex",
+    });
+    const interaction = {
+      onEvent: vi.fn(),
+      prompt: vi.fn(),
+    } as unknown as AuthInteraction;
+
+    await expect(provider.login("oauth", interaction)).resolves.toMatchObject({
+      type: "oauth",
+      access: "access-token",
+    });
+    expect(models.login).toHaveBeenCalledWith(
+      "openai-codex",
+      "oauth",
+      interaction,
+    );
+    await provider.logout();
+    expect(models.logout).toHaveBeenCalledWith("openai-codex", undefined);
+  });
+
+  it("builds a scoped custom HTTPS provider with exact configured models", async () => {
+    const readCredential = vi.fn(async () => ({
+      type: "api_key" as const,
+      key: "custom-provider-secret",
+    }));
+    const credentials: CredentialStore = {
+      read: readCredential,
+      list: async () => [{ providerId: "custom", type: "api_key" }],
+      modify: async (_providerId, operation) =>
+        operation(await readCredential()),
+      delete: async () => undefined,
+    };
+    const provider = createCatalogPiAgentProvider({
+      catalogId: "custom-openai-compatible",
+      connectionId: "conn:custom:reviewed",
+      credentials,
+      baseUrl: "https://inference.example.com/openai/v1",
+      modelIds: ["reviewed-model"],
+    });
+
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      state: "degraded",
+      capabilities: expect.arrayContaining(["streaming", "models"]),
+    });
+    await expect(provider.listModels()).resolves.toEqual([
+      expect.objectContaining({
+        id: "reviewed-model",
+        available: true,
+      }),
+    ]);
+    expect(readCredential).toHaveBeenCalled();
+    expect(
+      JSON.stringify({
+        status: await provider.getStatus(),
+        models: await provider.listModels(),
+      }),
+    ).not.toContain("custom-provider-secret");
   });
 
   it("rejects provider tools outside the Aptiloop role policy", async () => {
