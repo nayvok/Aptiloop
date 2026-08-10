@@ -1,6 +1,6 @@
-# M2–M5 Core Alpha Data Model
+# M2–M11 Core Alpha Data Model
 
-**Document status:** Course foundations, the Course Pack lifecycle, replay-complete Learning Kernel persistence, and trusted Execution Fabric identity added through migrations `0006`–`0013` are an **Implemented baseline**. Later legacy cutover/removal and PostgreSQL operation remain **Approved Core Alpha target**.
+**Document status:** Course foundations, Course Pack lifecycle, replay-complete Learning Kernel persistence, trusted Execution Fabric identity, Provider Hub, Adaptive Studio, Course Designer, and per-Course learner state added through migrations `0006`–`0017` are an **Implemented baseline**. Destructive compatibility-table removal and PostgreSQL operation remain **Approved Core Alpha target**.
 
 ## Authority and boundaries
 
@@ -133,14 +133,14 @@ There are zero invalid statuses and zero target orphans. Reconciliation complete
 
 ## Exact admitted schemas
 
-Ordinary startup and writable CLIs admit only the exact current `0000`–`0013` contract:
+Ordinary startup and writable CLIs admit only the exact current `0000`–`0018` contract:
 
-- current fresh/migrated: `1e32db9cc459f342b32808f3594f79b785f89de8872cc9438e9d890711104da7`.
+- current fresh/migrated: `d517a45b89090fba10a6c8db268edf1cef08eb3ad5f67e09f89b00a20be86c40`.
 
-The explicitly authorized, backup-bound migration CLI alone may admit exact predecessor stages from `0000`–`0005` through `0000`–`0012` long enough to apply every missing forward migration. Every path requires `integrity_check=ok`, zero foreign-key violations, the exact expected schema/triggers for its ledger, coherent legacy sessions, and complete private-payload inspection. The current contract additionally requires reconciled M2 provenance, zero target orphans, immutable Course Pack/kernel/execution history, and valid environment/check/artifact relationships.
+The explicitly authorized, backup-bound migration CLI alone may admit exact predecessor stages from `0000`–`0005` through `0000`–`0017` long enough to apply every missing forward migration. Every path requires `integrity_check=ok`, zero foreign-key violations, the exact expected schema/triggers for its ledger, and complete private-payload inspection. The current contract additionally requires reconciled M2 provenance, zero target orphans, immutable Course Pack/kernel/execution/provider/authoring history, and coherent `learner_course_states`: at most one selected Course, a published active revision owned by that Course, and an optional current session whose active status and immutable Course context match exactly. Context insertion advances learner state only for an active session on a published target revision; completed and compatibility-only contexts do not mutate that state.
 
 ## Current cutover and limitations
 
-Course-scoped discovery/path/start/resume reads target Course ownership. M3 Course Pack install/export, M4 accepted facts/projections, and M5 environment/check/artifact records use the target repositories. The default `/api/learning/path`, global `learner_state.default`, and fixed `commandId: "test"` remain explicit compatibility adapters; the test operation resolves only to the app-owned compatibility check. Legacy storage tables and synthetic day bridge remain, and no destructive removal is authorized.
+Course-scoped discovery/path/start/resume reads target Course ownership. `learner_course_states` supplies the selected Course plus per-Course active revision/current session, so simultaneous active sessions in different Courses do not abandon one another. M3 Course Pack install/export, M4 accepted facts/projections, M5 environment/check/artifact records, M9 personal adaptation, and M10 Course Designer state use target repositories. Legacy v1 mutations and the hardcoded dashboard return 410. Exact historical session reads, compatibility storage, the synthetic day bridge, immutable snapshots, and quarantine remain locally retained; destructive removal is not authorized.
 
 The only implemented store is SQLite. Domain contracts remain repository-oriented so a later PostgreSQL implementation does not change Course semantics.

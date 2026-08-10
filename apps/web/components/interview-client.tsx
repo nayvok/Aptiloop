@@ -438,6 +438,7 @@ export function InterviewClient() {
         method: "POST",
         body: JSON.stringify({
           ...draft,
+          ...(sessionId ? { learningSessionId: sessionId } : {}),
           ...(disclosureOperationId ? { disclosureOperationId } : {}),
         }),
       });

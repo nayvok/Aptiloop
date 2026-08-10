@@ -424,6 +424,9 @@ const executionFabricMigrationId = "0013_execution_fabric";
 const providerHubMigrationId = "0014_provider_hub";
 const adaptiveStudioMigrationId = "0015_adaptive_studio";
 const courseDesignerWorkflowMigrationId = "0016_course_designer_workflow";
+const learnerCourseStateMigrationId = "0017_learner_course_state";
+const learnerCourseStateTriggerGuardMigrationId =
+  "0018_learner_course_state_trigger_guard";
 const legacyCompatibleMigrationIds = [
   "0000_initial",
   "0001_versioned_curriculum",
@@ -535,6 +538,24 @@ export const courseDesignerWorkflowMigrationContract: CurrentDatabaseMigrationCo
     schemaSha256:
       "f23afd4470b6f221273fb15a0f783f08104650cf0fdda728b4f44409e73585aa",
   };
+export const learnerCourseStateMigrationContract: CurrentDatabaseMigrationContract =
+  {
+    migrationIds: [
+      ...courseDesignerWorkflowMigrationContract.migrationIds,
+      learnerCourseStateMigrationId,
+    ],
+    schemaSha256:
+      "645c60da903dc657446c2587767035f567ce1925b500010e6f35489857a5ffa9",
+  };
+export const learnerCourseStateTriggerGuardMigrationContract: CurrentDatabaseMigrationContract =
+  {
+    migrationIds: [
+      ...learnerCourseStateMigrationContract.migrationIds,
+      learnerCourseStateTriggerGuardMigrationId,
+    ],
+    schemaSha256:
+      "d517a45b89090fba10a6c8db268edf1cef08eb3ad5f67e09f89b00a20be86c40",
+  };
 const approvedM2SourceMigrationContracts = [
   legacyCompatibleMigrationContract,
   courseFoundationsBaseMigrationContract,
@@ -547,6 +568,8 @@ const approvedM2SourceMigrationContracts = [
   executionFabricMigrationContract,
   providerHubMigrationContract,
   adaptiveStudioMigrationContract,
+  courseDesignerWorkflowMigrationContract,
+  learnerCourseStateMigrationContract,
 ] as const;
 const approvedM2StageContracts: Readonly<
   Record<string, CurrentDatabaseMigrationContract>
@@ -566,6 +589,9 @@ const approvedM2StageContracts: Readonly<
   [providerHubMigrationId]: providerHubMigrationContract,
   [adaptiveStudioMigrationId]: adaptiveStudioMigrationContract,
   [courseDesignerWorkflowMigrationId]: courseDesignerWorkflowMigrationContract,
+  [learnerCourseStateMigrationId]: learnerCourseStateMigrationContract,
+  [learnerCourseStateTriggerGuardMigrationId]:
+    learnerCourseStateTriggerGuardMigrationContract,
 };
 
 const courseFoundationsBackfillMarker = "-- dlh-course-foundations-backfill";

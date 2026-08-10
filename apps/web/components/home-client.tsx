@@ -39,8 +39,10 @@ const phaseStatusLabels: Readonly<Record<LearningBlock["status"], MessageKey>> =
 
 export function HomeClient({
   pathEndpoint = "/learning/path",
+  selectionTarget,
 }: {
   pathEndpoint?: string;
+  selectionTarget?: { courseId: string; revisionId: string };
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -66,6 +68,25 @@ export function HomeClient({
         }),
       ]);
       router.push(`/session?id=${encodeURIComponent(session.id)}`);
+    },
+  });
+  const selectCourse = useMutation({
+    mutationFn: async () => {
+      if (!selectionTarget)
+        throw new Error("Course selection target is missing");
+      return api(
+        `/learning/courses/${encodeURIComponent(selectionTarget.courseId)}/select`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            revisionId: selectionTarget.revisionId,
+            operationId: globalThis.crypto.randomUUID(),
+          }),
+        },
+      );
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["learning-path"] });
     },
   });
 
@@ -135,6 +156,32 @@ export function HomeClient({
         title={course.title}
         description={course.description ?? t("home.defaultCourseDescription")}
       />
+      {selectionTarget && !query.data.courseContext?.selected ? (
+        <section className="flex flex-col gap-4 rounded-xl border border-primary/30 bg-primary/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="font-semibold">{t("home.selectCourse.title")}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t("home.selectCourse.description")}
+            </p>
+          </div>
+          <Button
+            type="button"
+            disabled={selectCourse.isPending}
+            onClick={() => selectCourse.mutate()}
+          >
+            {selectCourse.isPending
+              ? t("home.selectCourse.selecting")
+              : t("home.selectCourse.action")}
+          </Button>
+        </section>
+      ) : null}
+      {selectCourse.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {selectCourse.error instanceof Error
+            ? selectCourse.error.message
+            : t("home.selectCourse.error")}
+        </p>
+      ) : null}
       {start.isError ? (
         <p
           role="alert"
@@ -172,7 +219,11 @@ export function HomeClient({
           </div>
           <Button
             size="lg"
-            disabled={start.isPending}
+            disabled={
+              start.isPending ||
+              (selectionTarget !== undefined &&
+                !query.data.courseContext?.selected)
+            }
             onClick={() =>
               currentDay.sessionId
                 ? router.push(

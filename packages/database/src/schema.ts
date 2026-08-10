@@ -1346,6 +1346,34 @@ export const sessionCourseContexts = sqliteTable(
   ],
 );
 
+export const learnerCourseStates = sqliteTable(
+  "learner_course_states",
+  {
+    courseId: text("course_id")
+      .primaryKey()
+      .references(() => courses.id, { onDelete: "restrict" }),
+    activeRevisionId: text("active_revision_id")
+      .notNull()
+      .references(() => courseRevisions.id, { onDelete: "restrict" }),
+    currentLearningSessionId: text("current_learning_session_id").references(
+      () => learningSessions.id,
+      { onDelete: "set null" },
+    ),
+    isSelected: integer("is_selected", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("learner_course_states_selected_idx")
+      .on(table.isSelected)
+      .where(sql`${table.isSelected} = 1`),
+    index("learner_course_states_current_session_idx")
+      .on(table.currentLearningSessionId)
+      .where(sql`${table.currentLearningSessionId} is not null`),
+  ],
+);
+
 export const evidenceFacts = sqliteTable(
   "evidence_facts",
   {
@@ -1995,6 +2023,7 @@ export const schema = {
   knowledgeCapsuleSources,
   adaptationBranches,
   sessionCourseContexts,
+  learnerCourseStates,
   evidenceFacts,
   reviewItems,
   coursePackManifests,
@@ -2053,6 +2082,7 @@ export type StoredKnowledgeCapsule = typeof knowledgeCapsules.$inferSelect;
 export type StoredAdaptationBranch = typeof adaptationBranches.$inferSelect;
 export type StoredSessionCourseContext =
   typeof sessionCourseContexts.$inferSelect;
+export type StoredLearnerCourseState = typeof learnerCourseStates.$inferSelect;
 export type StoredEvidenceFact = typeof evidenceFacts.$inferSelect;
 export type StoredReviewItem = typeof reviewItems.$inferSelect;
 export type StoredCoursePackManifest = typeof coursePackManifests.$inferSelect;

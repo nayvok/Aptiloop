@@ -472,7 +472,9 @@ describe("Course foundation backfill graph admission", () => {
       const migrations = connection.sqlite
         .prepare("SELECT id FROM __dlh_migrations ORDER BY id")
         .all() as Array<{ id: string }>;
-      expect(migrations.at(-1)?.id).toBe("0016_course_designer_workflow");
+      expect(migrations.at(-1)?.id).toBe(
+        "0018_learner_course_state_trigger_guard",
+      );
 
       expect(
         connection.sqlite

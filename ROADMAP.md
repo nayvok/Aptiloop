@@ -201,18 +201,18 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M11 — Course/session cutover and legacy retirement
 
-**Status:** Approved Core Alpha target. The M10 gate is satisfied; M11 implementation has not started.
+**Status:** Implemented baseline. Accepted locally on 2026-08-10 after additive migration, exact per-Course state admission, target caller cutover, legacy write/dashboard retirement, focused parity tests, and a disposable backup-restore rehearsal.
 
 - **Objective:** Move all product callers to the target Course/session/evidence model and retire obsolete runtime paths only after parity and recovery evidence.
 - **Scope:** Explicit course selection; per-course active revision/session; Personal Adaptation Branch; target evidence/review reads and writes; removal of v1 caller-supplied mastery/fixed completion; removal of global `learner_state='default'` and `LIMIT 1` selection assumptions; historical data retention/export.
 - **Non-goals:** Deleting history, merging candidate databases automatically, multi-user, PostgreSQL deployment, or rewriting immutable snapshots.
-- **Migrations:** Dual-write/read parity, final deterministic backfill, quarantine resolution report, verified backup, target read cutover, legacy write freeze, retention window, then a separately approved append-only rebuild for compatibility column/table retirement.
-- **Tests:** Real persisted fixtures; simultaneous courses/sessions; old deep links; dual-write idempotency; parity fingerprints; rollback restore; legacy read-only retention; no v1 bypass; no orphan/untyped evidence; seed and migration re-run.
-- **Docs:** Migration runbook, operator decision points, rollback limits, compatibility window, data export, and final architecture status.
-- **Demo:** Resume a pre-cutover session, start a different course without abandoning it globally, complete a target activity, inspect adaptation/evidence, switch back, and restore a pre-cutover backup in a disposable environment.
-- **Acceptance:** Every production caller uses target repositories/contracts; no caller can supply mastery or bypass Kernel evidence; all legacy rows are mapped, quarantined, or retained with reason; restore is proven before retirement.
-- **Known limitations:** SQLite remains single-user/local. Some irreducibly ambiguous historical records may remain quarantined and visible only in diagnostics/export.
-- **Rollback/compatibility:** Before legacy retirement, switch reads back to compatibility projections. After committed destructive rebuild, only verified backup restore is rollback; therefore retirement requires a distinct owner-approved gate.
+- **Migrations:** Additive `0017_learner_course_state` deterministically backfills one row per active published Course, selects exactly one Course, binds only provably matching active sessions, and leaves legacy rows/snapshots/quarantine untouched. Additive `0018_learner_course_state_trigger_guard` preserves the same invariant for later context inserts by excluding completed and compatibility-only sessions. The active database was inventoried and backed up without overwrite before each migration boundary, migrated, re-inventoried, and replayed as an exact no-op.
+- **Tests:** Database, orchestrator, and web coverage exercises simultaneous per-Course sessions, explicit Course selection, old session deep links, idempotent backfill/seed, target context enforcement, rejected cross-Course side effects, no global-active fallback, and frozen v1 mutations/dashboard.
+- **Docs:** The current data model, architecture status, migration strategy, operator decision points, whole-file rollback limits, compatibility window, and retained export/read surfaces are recorded in the current specification set.
+- **Demo:** The browser flow selects and starts a Course through target APIs; focused runtime tests prove a second Course can remain active independently and each Course resumes its own exact session. A pre-cutover whole-file backup restored into a disposable project root, upgraded successfully, and replayed as already current.
+- **Acceptance:** Production learning callers use explicit Course/session contracts; model/browser inputs cannot set mastery or bypass Kernel evidence; legacy mutations and the hardcoded dashboard return 410; every retained legacy row remains mapped, quarantined, intentionally unmapped, or readable as preserved history.
+- **Known limitations:** SQLite remains single-user/local. The 526 irreducibly ambiguous historical rows remain quarantined and visible only through local diagnostics/export; compatibility tables and the synthetic legacy day bridge remain read-only migration history.
+- **Rollback/compatibility:** The named pre-M11 whole-file backup is the rollback boundary and discards later writes if restored. Destructive compatibility-table removal is not part of M11 and still requires a separate owner-approved gate after the observation window.
 
 ## M12 — Core Alpha release candidate and licensing cutover
 

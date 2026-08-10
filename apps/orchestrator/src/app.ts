@@ -12,7 +12,6 @@ import {
   type AgentProvider,
 } from "@dlh/agent-core";
 import { CodexProvider } from "@dlh/codex-provider";
-import { weekOneCurriculum } from "@dlh/curriculum";
 import {
   assertM1E2EDatabaseTarget,
   assertM1WritableDatabaseTarget,
@@ -537,76 +536,12 @@ export function createApp(options: AppOptions = {}) {
     return context.json({ disclosure });
   });
 
-  app.get("/api/dashboard", async (context) => {
-    const dashboard = await state.repository.getDashboard();
-    const completed = new Set(
-      dashboard.days
-        .filter((day) => day.sessionStatus === "completed")
-        .map((day) => day.dayNumber),
-    );
-    const activeDay = dashboard.activeSession
-      ? dashboard.days.find((day) => day.id === dashboard.activeSession?.dayId)
-      : undefined;
-    const todayNumber =
-      activeDay?.dayNumber ??
-      dashboard.days.find((day) => !completed.has(day.dayNumber))?.dayNumber ??
-      7;
-    const authoredDay = weekOneCurriculum.days.find(
-      (day) => day.dayNumber === todayNumber,
-    )!;
-    const knowledge = await state.repository.getKnowledgeMap();
-    const allScores = knowledge.flatMap((topic) => topic.mastery);
-    const mastery = allScores.length
-      ? allScores.reduce((sum, score) => sum + score.score / 100, 0) /
-        allScores.length
-      : 0;
-    const recentMistakes = readMistakes(state.connection, 3);
-    return context.json({
-      week: {
-        number: weekOneCurriculum.weekNumber,
-        title: weekOneCurriculum.title,
-        days: dashboard.days.map((day) => ({
-          dayNumber: day.dayNumber,
-          title: day.title,
-          status: completed.has(day.dayNumber)
-            ? "completed"
-            : day.dayNumber === todayNumber
-              ? "today"
-              : "upcoming",
-        })),
-      },
-      today: {
-        dayNumber: authoredDay.dayNumber,
-        title: authoredDay.title,
-        description: authoredDay.summary,
-        topics: authoredDay.topics.map((topic) => topic.title),
-        estimatedMinutes: authoredDay.estimatedMinutes,
-        progress: dashboard.activeSession ? 20 : 0,
-        ...(dashboard.activeSession
-          ? { sessionId: dashboard.activeSession.id }
-          : {}),
-      },
-      stats: {
-        mastery,
-        unfinishedExercises: dashboard.activeSession ? 1 : 0,
-        cardsDue: dashboard.dueFlashcards,
-      },
-      reviewTopics: knowledge.slice(0, 3).map((topic) => ({
-        id: topic.topic.id,
-        title: topic.topic.title,
-        reason:
-          topic.openMistakes > 0
-            ? "Есть незакрытая ошибка"
-            : "Нужна первая проверка активным воспроизведением",
-      })),
-      recentMistakes: recentMistakes.map((mistake) => ({
-        id: mistake.id,
-        title: mistake.topic,
-        detail: mistake.summary,
-        createdAt: new Date(mistake.lastSeenAt).toISOString(),
-      })),
-    });
-  });
+  app.get("/api/dashboard", (context) =>
+    context.json(
+      { error: "Legacy dashboard retired; use /api/home and /api/courses" },
+      410,
+    ),
+  );
 
   registerVersionedLearningRoutes(app, state);
   registerCoursePackRoutes(app, createCoursePackRepository(connection));
@@ -1203,17 +1138,11 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.get("/api/exercises/current", async (context) => {
-    let sessionId = context.req.query("sessionId");
-    if (!sessionId) {
-      const currentVersioned =
-        await state.repository.getCurrentVersionedSession();
-      sessionId = currentVersioned?.session.id;
-    }
-    if (!sessionId) {
-      const dashboard = await state.repository.getDashboard();
-      sessionId = dashboard.activeSession?.id;
-    }
-    if (!sessionId) throw new Error("No active learning session");
+    const sessionId = z
+      .string()
+      .trim()
+      .min(1)
+      .parse(context.req.query("sessionId"));
     const resolved = await resolveExerciseContext(state, sessionId);
     const { exercise } = resolved;
     const versioned = await readVersionedExerciseProgress(state, sessionId);
@@ -1989,14 +1918,7 @@ async function agentLearningSessionRejection(
       error: "Agent turns require an active versioned learning session",
     };
   }
-  const current = await state.repository.getCurrentVersionedSession();
-  if (current?.session.id !== requested.session.id) {
-    return {
-      status: 409,
-      error:
-        "Agent turns require the current active versioned learning session",
-    };
-  }
+  // The explicit session owns its Course scope; another Course may remain active.
   try {
     assertCourseScopedSessionSideEffectAllowed(
       state.connection,

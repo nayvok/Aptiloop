@@ -46,6 +46,13 @@ const learnerUnitSchema = z
 
 export const learningPathSchema = z
   .object({
+    courseContext: z
+      .object({
+        courseId: z.string().min(1),
+        revisionId: z.string().min(1),
+        selected: z.boolean(),
+      })
+      .nullable(),
     curriculum: z
       .object({
         id: z.string().min(1),

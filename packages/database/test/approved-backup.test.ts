@@ -221,9 +221,9 @@ describe("approved M1 backup", () => {
     try {
       sqlite
         .prepare(
-          `UPDATE learner_state
-           SET current_learning_session_id = NULL, updated_at = 3_000
-           WHERE id = 'default'`,
+          `UPDATE learner_course_states
+           SET current_learning_session_id = NULL
+           WHERE is_selected = 1`,
         )
         .run();
     } finally {
@@ -241,10 +241,11 @@ describe("approved M1 backup", () => {
     expect(candidate.health.foreignKeyViolationCount).toBe(0);
     expect(candidate.health.migrations.ids).toEqual(contract.migrationIds);
     expect(candidate.health.schemaSha256).toBe(contract.schemaSha256);
-    expect(candidate.health.legacyCompatibility).toMatchObject({
-      coherent: false,
-      activeSessionCount: 1,
-      nonLegacyActiveSessionCount: 1,
+    expect(candidate.health.learnerCourseState).toMatchObject({
+      tablePresent: true,
+      schemaCompatible: true,
+      invalidSessionRows: 0,
+      untrackedActiveSessionRows: 1,
     });
 
     await expect(

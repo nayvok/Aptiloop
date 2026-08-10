@@ -35,7 +35,7 @@ export function KnowledgeClient() {
   const { t } = useI18n();
   const query = useQuery({
     queryKey: ["knowledge"],
-    queryFn: () => api<{ topics: Topic[] }>("/knowledge"),
+    queryFn: () => api<{ topics: Topic[] }>("/learning/skills"),
   });
   if (query.isLoading) {
     return (

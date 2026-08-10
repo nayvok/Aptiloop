@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  ArrowCounterClockwiseIcon,
-  CalendarBlankIcon,
-} from "@phosphor-icons/react";
+import { CalendarBlankIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 
 import { EmptyState, QueryError } from "@/components/query-state";
@@ -15,18 +12,16 @@ import { useI18n } from "@/lib/i18n";
 type Mistake = {
   id: string;
   topic: string;
-  thought: string;
-  correction: string;
-  cause: string;
-  repeated: boolean;
+  errorFamily: string;
+  occurrenceCount: number;
   reviewAt: string;
 };
 
 export function MistakesClient() {
   const { formatDate, t } = useI18n();
   const query = useQuery({
-    queryKey: ["mistakes"],
-    queryFn: () => api<{ mistakes: Mistake[] }>("/mistakes"),
+    queryKey: ["learning-mistakes"],
+    queryFn: () => api<{ mistakes: Mistake[] }>("/learning/mistakes"),
   });
   if (query.isLoading) {
     return (
@@ -59,13 +54,10 @@ export function MistakesClient() {
           key={mistake.id}
           className="grid gap-4 py-5 lg:grid-cols-[180px_1fr_1fr]"
         >
-          <div className="flex flex-col items-start gap-2">
-            <Badge variant="outline">{mistake.topic}</Badge>
-            {mistake.repeated ? (
-              <Badge variant="warning">
-                <ArrowCounterClockwiseIcon aria-hidden />
-                {t("mistakes.repeated")}
-              </Badge>
+          <div className="space-y-2">
+            <p className="text-sm font-medium">{mistake.topic}</p>
+            {mistake.occurrenceCount > 1 ? (
+              <Badge variant="error">{t("mistakes.repeated")}</Badge>
             ) : null}
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <CalendarBlankIcon aria-hidden />
@@ -76,16 +68,20 @@ export function MistakesClient() {
             <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t("mistakes.previous")}
             </h3>
-            <p className="mt-2 text-sm leading-6">{mistake.thought}</p>
+            <p className="mt-2 text-sm leading-6">{mistake.errorFamily}</p>
             <p className="mt-3 text-xs leading-5 text-muted-foreground">
-              {t("mistakes.cause", { cause: mistake.cause })}
+              {t("mistakes.occurrences", {
+                count: mistake.occurrenceCount,
+              })}
             </p>
           </div>
           <div>
             <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t("mistakes.correction")}
             </h3>
-            <p className="mt-2 text-sm leading-6">{mistake.correction}</p>
+            <p className="mt-2 text-sm leading-6">
+              {t("mistakes.correctThroughReview")}
+            </p>
           </div>
         </article>
       ))}

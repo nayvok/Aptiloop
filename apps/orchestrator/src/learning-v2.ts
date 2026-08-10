@@ -28,6 +28,8 @@ import {
   type DaySummary,
   type EvidenceType,
   type HintLevel,
+  type LearningKernelProjection,
+  type LearningKernelReviewItem,
   type MasteryDimension,
   type MasteryProfile,
   type UnitDefinition,
@@ -76,6 +78,12 @@ const updateUnitSchema = z
   .strict();
 
 const operationIdSchema = z.string().trim().min(1).max(100);
+const selectCourseSchema = z
+  .object({
+    revisionId: CourseEntityIdSchema,
+    operationId: operationIdSchema.optional(),
+  })
+  .strict();
 
 const recallAttemptSchema = z
   .object({
@@ -139,6 +147,11 @@ const kernelReviewDismissSchema = z
   .object({ operationId: operationIdSchema })
   .strict();
 
+const kernelFactActivitySchema = z
+  .object({
+    body: z.object({ activityId: CourseEntityIdSchema }).passthrough(),
+  })
+  .passthrough();
 const summaryMasteryEvidenceSchema = z
   .object({
     id: z.string().min(1),
@@ -231,6 +244,24 @@ export function registerVersionedLearningRoutes(
     await next();
   });
 
+  app.get("/api/learning/skills", async (context) =>
+    context.json({
+      topics: await readKernelSkills(state, kernelRepository),
+    }),
+  );
+
+  app.get("/api/learning/mistakes", async (context) =>
+    context.json({
+      mistakes: await readKernelMistakes(state, kernelRepository),
+    }),
+  );
+
+  app.get("/api/learning/reviews", async (context) =>
+    context.json({
+      reviews: await readKernelReviews(state, kernelRepository),
+    }),
+  );
+
   app.get("/api/learning/courses", async (context) => {
     return context.json({ courses: await readCourseCollection(state) });
   });
@@ -248,6 +279,21 @@ export function registerVersionedLearningRoutes(
     },
   );
 
+  app.post("/api/learning/courses/:courseId/select", async (context) => {
+    const courseId = CourseEntityIdSchema.parse(context.req.param("courseId"));
+    const body = selectCourseSchema.parse(await context.req.json());
+    await requireOwnedCourseRevision(state, courseId, body.revisionId, true);
+    await state.repository.selectCourse({
+      courseId,
+      revisionId: body.revisionId,
+    });
+    return context.json({
+      selected: true,
+      courseId,
+      revisionId: body.revisionId,
+    });
+  });
+
   app.get("/api/learning/path", async (context) => {
     const target = await readCompatibilityCourseTarget(state);
     return context.json(
@@ -258,7 +304,10 @@ export function registerVersionedLearningRoutes(
   });
 
   app.get("/api/learning/sessions/current", async (context) => {
-    const current = await state.repository.getCurrentVersionedSession();
+    const courseId = context.req.query("courseId");
+    const current = await state.repository.getCurrentVersionedSession(
+      courseId === undefined ? undefined : CourseEntityIdSchema.parse(courseId),
+    );
     return context.json({
       session: current ? await toLearnerSession(state, current) : null,
     });
@@ -266,16 +315,6 @@ export function registerVersionedLearningRoutes(
 
   app.post("/api/learning/sessions/v2", async (context) => {
     const body = startSessionSchema.parse(await context.req.json());
-    const current = await state.repository.getCurrentVersionedSession();
-    if (current) {
-      await requireSessionCourseContext(state, current);
-      if (current.snapshot.day.id === body.dayId) {
-        return context.json(
-          { session: await toLearnerSession(state, current) },
-          201,
-        );
-      }
-    }
     const target = await requireCourseTargetForLesson(state, body.dayId);
     assertLearningRevisionMutationAllowed(target.revisionId);
     await assertDayCanStart(state, target);
@@ -891,32 +930,301 @@ interface PathCourseTarget {
 
 async function readCourseCollection(state: VersionedLearningState) {
   const courses = await state.courseFoundationRepository.listCourses();
-  return courses
-    .map((course) => ({
-      id: course.id,
-      stableId: course.stableId,
-      title: course.title,
-      description: course.description,
-      primaryLocale: course.primaryLocale,
-      revisions: [...course.revisions]
-        .sort(
-          (left, right) =>
-            left.revisionNumber - right.revisionNumber ||
-            (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+  const states = new Map(
+    (
+      state.connection.sqlite
+        .prepare(
+          `SELECT course_id, active_revision_id, current_learning_session_id,
+                  is_selected
+           FROM learner_course_states`,
         )
-        .map((revision) => ({
-          id: revision.id,
-          revisionNumber: revision.revisionNumber,
-          status: revision.status,
-          branchKind: revision.branchKind,
-          contentHash: revision.contentHash,
-        })),
-    }))
+        .all() as Array<{
+        course_id: string;
+        active_revision_id: string;
+        current_learning_session_id: string | null;
+        is_selected: number;
+      }>
+    ).map((entry) => [entry.course_id, entry]),
+  );
+  return courses
+    .map((course) => {
+      const learnerState = states.get(course.id);
+      return {
+        id: course.id,
+        stableId: course.stableId,
+        title: course.title,
+        description: course.description,
+        primaryLocale: course.primaryLocale,
+        selected: learnerState?.is_selected === 1,
+        activeRevisionId: learnerState?.active_revision_id ?? null,
+        currentSessionId: learnerState?.current_learning_session_id ?? null,
+        revisions: [...course.revisions]
+          .sort(
+            (left, right) =>
+              left.revisionNumber - right.revisionNumber ||
+              (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+          )
+          .map((revision) => ({
+            id: revision.id,
+            revisionNumber: revision.revisionNumber,
+            status: revision.status,
+            branchKind: revision.branchKind,
+            contentHash: revision.contentHash,
+          })),
+      };
+    })
     .sort((left, right) =>
       left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
     );
 }
 
+interface KernelProjectionRecord {
+  readonly scope: LearningKernelScope;
+  readonly projection: LearningKernelProjection;
+}
+
+const masteryDimensions = [
+  "understanding",
+  "explanation",
+  "codeReading",
+  "implementation",
+  "debugging",
+  "interview",
+] as const satisfies readonly MasteryDimension[];
+
+async function readSelectedKernelProjections(
+  state: VersionedLearningState,
+  kernelRepository: LearningKernelRepository,
+): Promise<KernelProjectionRecord[]> {
+  const target = await state.repository.getSelectedCourseTarget();
+  if (!target) return [];
+  const rows = state.connection.sqlite
+    .prepare(
+      `SELECT session_id, course_id, revision_id, branch_id
+       FROM learning_kernel_projections
+       WHERE course_id = ? AND revision_id = ?
+       ORDER BY observed_at, session_id`,
+    )
+    .all(target.courseId, target.revisionId) as Array<{
+    session_id: string;
+    course_id: string;
+    revision_id: string;
+    branch_id: string;
+  }>;
+  return rows.flatMap((row) => {
+    const scope = {
+      sessionId: row.session_id,
+      courseId: row.course_id,
+      revisionId: row.revision_id,
+      branchId: row.branch_id,
+    } satisfies LearningKernelScope;
+    const projection = kernelRepository.readProjection(scope);
+    return projection ? [{ scope, projection }] : [];
+  });
+}
+
+function readKnowledgeNode(
+  state: VersionedLearningState,
+  revisionId: string,
+  knowledgeNodeId: string,
+): { title: string; group: string } {
+  const node = state.connection.sqlite
+    .prepare(
+      `SELECT title, description
+       FROM course_pack_knowledge_nodes
+       WHERE revision_id = ? AND knowledge_node_id = ?`,
+    )
+    .get(revisionId, knowledgeNodeId) as
+    { title: string; description: string } | undefined;
+  return {
+    title: node?.title ?? knowledgeNodeId,
+    group: node?.description ?? "Course knowledge node",
+  };
+}
+
+async function readKernelSkills(
+  state: VersionedLearningState,
+  kernelRepository: LearningKernelRepository,
+) {
+  const records = await readSelectedKernelProjections(state, kernelRepository);
+  const target = await state.repository.getSelectedCourseTarget();
+  if (!target) return [];
+  const topics = new Map<
+    string,
+    {
+      scores: Record<MasteryDimension, number>;
+      latestAt: Record<MasteryDimension, string>;
+      evidence: Set<string>;
+      reviewDue: boolean;
+    }
+  >();
+  const getTopic = (knowledgeNodeId: string) => {
+    let topic = topics.get(knowledgeNodeId);
+    if (!topic) {
+      topic = {
+        scores: Object.fromEntries(
+          masteryDimensions.map((dimension) => [dimension, 0]),
+        ) as Record<MasteryDimension, number>,
+        latestAt: Object.fromEntries(
+          masteryDimensions.map((dimension) => [dimension, ""]),
+        ) as Record<MasteryDimension, string>,
+        evidence: new Set<string>(),
+        reviewDue: false,
+      };
+      topics.set(knowledgeNodeId, topic);
+    }
+    return topic;
+  };
+  const now = Date.now();
+  for (const { projection } of records) {
+    for (const [knowledgeNodeId, mastery] of Object.entries(
+      projection.masteryByKnowledgeNode,
+    )) {
+      const topic = getTopic(knowledgeNodeId);
+      for (const dimension of masteryDimensions) {
+        const candidate = mastery[dimension];
+        candidate.sourceFactIds.forEach((id) => topic.evidence.add(id));
+        const latestAt =
+          candidate.state.lastEvidenceAt ?? projection.observedAt;
+        if (latestAt >= topic.latestAt[dimension]) {
+          topic.latestAt[dimension] = latestAt;
+          topic.scores[dimension] = candidate.state.score;
+        }
+      }
+    }
+    for (const review of projection.reviewItems) {
+      if (review.state === "pending" && Date.parse(review.dueAt) <= now) {
+        getTopic(review.knowledgeNodeId).reviewDue = true;
+      }
+    }
+  }
+  return [...topics.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, topic]) => ({
+      id,
+      ...readKnowledgeNode(state, target.revisionId, id),
+      scores: topic.scores,
+      evidenceCount: topic.evidence.size,
+      reviewDue: topic.reviewDue,
+    }));
+}
+
+async function readKernelMistakes(
+  state: VersionedLearningState,
+  kernelRepository: LearningKernelRepository,
+) {
+  const records = await readSelectedKernelProjections(state, kernelRepository);
+  const target = await state.repository.getSelectedCourseTarget();
+  if (!target) return [];
+  const mistakes = new Map<
+    string,
+    LearningKernelProjection["mistakes"][number]
+  >();
+  const reviews: LearningKernelReviewItem[] = [];
+  for (const { projection } of records) {
+    for (const mistake of projection.mistakes) {
+      const current = mistakes.get(mistake.fingerprint);
+      if (!current || current.latestOccurrenceAt < mistake.latestOccurrenceAt) {
+        mistakes.set(mistake.fingerprint, mistake);
+      }
+    }
+    reviews.push(...projection.reviewItems);
+  }
+  return [...mistakes.values()]
+    .filter((mistake) => mistake.status === "open")
+    .sort((left, right) =>
+      right.latestOccurrenceAt.localeCompare(left.latestOccurrenceAt),
+    )
+    .map((mistake) => {
+      const reviewAt = reviews
+        .filter(
+          (review) =>
+            review.knowledgeNodeId === mistake.knowledgeNodeId &&
+            review.reasonCode === "mistake" &&
+            review.state === "pending",
+        )
+        .map((review) => review.dueAt)
+        .sort()[0];
+      return {
+        id: mistake.fingerprint,
+        topic: readKnowledgeNode(
+          state,
+          target.revisionId,
+          mistake.knowledgeNodeId,
+        ).title,
+        errorFamily: mistake.errorFamily,
+        occurrenceCount: mistake.occurrenceFactIds.length,
+        reviewAt: reviewAt ?? mistake.latestOccurrenceAt,
+      };
+    });
+}
+
+async function readKernelReviews(
+  state: VersionedLearningState,
+  kernelRepository: LearningKernelRepository,
+) {
+  const records = await readSelectedKernelProjections(state, kernelRepository);
+  const target = await state.repository.getSelectedCourseTarget();
+  if (!target) return [];
+  const latest = new Map<
+    string,
+    { review: LearningKernelReviewItem; sessionId: string; observedAt: string }
+  >();
+  for (const { scope, projection } of records) {
+    for (const review of projection.reviewItems) {
+      const current = latest.get(review.id);
+      if (!current || current.observedAt <= projection.observedAt) {
+        latest.set(review.id, {
+          review,
+          sessionId: scope.sessionId,
+          observedAt: projection.observedAt,
+        });
+      }
+    }
+  }
+  return [...latest.values()]
+    .sort(
+      (left, right) =>
+        left.review.dueAt.localeCompare(right.review.dueAt) ||
+        left.review.id.localeCompare(right.review.id),
+    )
+    .map(({ review, sessionId }) => {
+      let activityId: string | null = null;
+      for (const sourceFactId of review.sourceFactIds) {
+        const row = state.connection.sqlite
+          .prepare(
+            `SELECT canonical_json FROM learning_kernel_facts
+             WHERE id = ? AND session_id = ?`,
+          )
+          .get(sourceFactId, sessionId) as
+          { canonical_json: string } | undefined;
+        if (!row) continue;
+        const parsed = kernelFactActivitySchema.safeParse(
+          JSON.parse(row.canonical_json),
+        );
+        if (parsed.success) {
+          activityId = parsed.data.body.activityId;
+          break;
+        }
+      }
+      return {
+        id: review.id,
+        topic: readKnowledgeNode(
+          state,
+          target.revisionId,
+          review.knowledgeNodeId,
+        ).title,
+        knowledgeNodeId: review.knowledgeNodeId,
+        dimension: review.dimension,
+        activityKind: review.activityKind,
+        reasonCode: review.reasonCode,
+        dueAt: review.dueAt,
+        state: review.state,
+        sessionId,
+        activityId,
+      };
+    });
+}
 async function requireOwnedCourseRevision(
   state: VersionedLearningState,
   courseId: string,
@@ -1076,9 +1384,7 @@ async function requireCourseTargetForLesson(
       `SELECT lesson.version_id, revision.curriculum_id
        FROM curriculum_days_v2 lesson
        JOIN curriculum_versions revision ON revision.id = lesson.version_id
-       JOIN curricula course ON course.id = revision.curriculum_id
-       WHERE lesson.id = ? AND revision.status = 'published'
-         AND course.active_version_id = revision.id`,
+       WHERE lesson.id = ? AND revision.status = 'published'`,
     )
     .get(lessonId) as { version_id: string; curriculum_id: string } | undefined;
   if (!source) throw new Error(`Unknown Course lesson: ${lessonId}`);
@@ -1114,44 +1420,45 @@ async function requireCourseTargetForLesson(
 async function readCompatibilityCourseTarget(
   state: VersionedLearningState,
 ): Promise<PathCourseTarget | null> {
-  const current = await state.repository.getCurrentVersionedSession();
+  const selected = await state.repository.getSelectedCourseTarget();
+  if (!selected) return null;
+
+  const current = await state.repository.getCurrentVersionedSession(
+    selected.courseId,
+  );
   if (current) {
     const context = await requireSessionCourseContext(state, current);
-    return { courseId: context.courseId, revisionId: context.revisionId };
+    if (
+      context.courseId !== selected.courseId ||
+      context.revisionId !== selected.revisionId
+    ) {
+      throw new Error(
+        "Selected Course state conflicts with its active session",
+      );
+    }
+    return selected;
   }
 
-  const mappings = state.connection.sqlite
-    .prepare(
-      `SELECT course.id AS course_id, course.active_version_id AS revision_id
-       FROM curricula course
-       JOIN curriculum_versions revision
-         ON revision.id = course.active_version_id
-       WHERE revision.status = 'published'
-       ORDER BY course.updated_at DESC, course.id, revision.revision, revision.id`,
-    )
-    .all() as Array<{ course_id: string; revision_id: string }>;
-  const mapping = mappings[0];
-  if (!mapping) return null;
   const target = await state.courseFoundationRepository.getCourseRevision(
-    mapping.revision_id,
+    selected.revisionId,
   );
   if (target !== null) {
     await requireOwnedCourseRevision(
       state,
-      mapping.course_id,
-      mapping.revision_id,
+      selected.courseId,
+      selected.revisionId,
       true,
     );
   } else if (
     !hasQuarantinedRevisionCompatibility(
       state,
-      mapping.course_id,
-      mapping.revision_id,
+      selected.courseId,
+      selected.revisionId,
     )
   ) {
-    throw new Error(`Unknown Course revision: ${mapping.revision_id}`);
+    throw new Error(`Unknown Course revision: ${selected.revisionId}`);
   }
-  return { courseId: mapping.course_id, revisionId: mapping.revision_id };
+  return selected;
 }
 
 async function readLearnerPath(
@@ -1159,7 +1466,9 @@ async function readLearnerPath(
   courseId: string,
   revisionId: string,
 ) {
-  const currentDetail = await state.repository.getCurrentVersionedSession();
+  const selected = await state.repository.getSelectedCourseTarget();
+  const currentDetail =
+    await state.repository.getCurrentVersionedSession(courseId);
   const currentContext = currentDetail
     ? await requireSessionCourseContext(state, currentDetail)
     : null;
@@ -1252,7 +1561,12 @@ async function readLearnerPath(
   const current = pinnedToCurrentSession ? currentDetail : null;
 
   return {
-    courseContext: { courseId, revisionId },
+    courseContext: {
+      courseId,
+      revisionId,
+      selected:
+        selected?.courseId === courseId && selected.revisionId === revisionId,
+    },
     curriculum: {
       id: sourceCourse.id,
       slug: sourceCourse.slug,
@@ -2347,13 +2661,6 @@ function persistTransition(
       if (result.changes !== 1) {
         throw new Error("Only an active versioned session can be completed");
       }
-      connection.sqlite
-        .prepare(
-          `UPDATE learner_state
-           SET current_learning_session_id = NULL, updated_at = ?
-           WHERE id = 'default' AND current_learning_session_id = ?`,
-        )
-        .run(now, detail.session.id);
     }
   });
 }

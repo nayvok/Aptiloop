@@ -13,6 +13,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   assertExactDatabaseMigrationContract,
   adaptiveStudioMigrationContract,
+  courseDesignerWorkflowMigrationContract,
   courseFoundationsBaseMigrationContract,
   courseFoundationsMigrationContract,
   coursePackMigrationContract,
@@ -22,6 +23,7 @@ import {
   courseFoundationsPostHardeningMigrationContract,
   getCurrentDatabaseMigrationContract,
   learningKernelMigrationContract,
+  learnerCourseStateMigrationContract,
   providerHubMigrationContract,
   legacyCompatibleMigrationContract,
   openDatabaseWithWritableTargetGuard,
@@ -535,12 +537,60 @@ export function assertM1DatabaseMigrationAdmission(
   if (
     matchesMigrationIds(candidate.health.migrations.ids, currentContract) &&
     candidate.health.schemaSha256 === currentContract.schemaSha256 &&
-    hasCurrentDatabaseHealth(candidate.health)
+    hasCurrentDatabaseHealth(candidate.health, false)
   ) {
     return {
       kind: "current",
       contract: currentContract,
       logicalSha256: candidate.health.logicalSha256,
+    };
+  }
+
+  if (
+    allowLegacyCompatibility &&
+    candidate.health.legacyCompatibility.coherent &&
+    matchesMigrationIds(
+      candidate.health.migrations.ids,
+      learnerCourseStateMigrationContract,
+    ) &&
+    candidate.health.schemaSha256 ===
+      learnerCourseStateMigrationContract.schemaSha256 &&
+    hasCurrentDatabaseHealth(candidate.health)
+  ) {
+    const migrationCapability: DatabaseMigrationAdmissionCapability = {
+      kind: "legacy-compatible-noop",
+      contract: learnerCourseStateMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+    };
+    return {
+      kind: "legacy-compatible",
+      contract: learnerCourseStateMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+      migrationCapability,
+    };
+  }
+
+  if (
+    allowLegacyCompatibility &&
+    candidate.health.legacyCompatibility.coherent &&
+    matchesMigrationIds(
+      candidate.health.migrations.ids,
+      courseDesignerWorkflowMigrationContract,
+    ) &&
+    candidate.health.schemaSha256 ===
+      courseDesignerWorkflowMigrationContract.schemaSha256 &&
+    hasCurrentDatabaseHealth(candidate.health)
+  ) {
+    const migrationCapability: DatabaseMigrationAdmissionCapability = {
+      kind: "legacy-compatible-noop",
+      contract: courseDesignerWorkflowMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+    };
+    return {
+      kind: "legacy-compatible",
+      contract: courseDesignerWorkflowMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+      migrationCapability,
     };
   }
 
@@ -878,7 +928,10 @@ function hasExactCourseFoundationsHealth(m2: M2FoundationInventory): boolean {
   );
 }
 
-function hasCurrentDatabaseHealth(health: DatabaseInventoryHealth): boolean {
+function hasCurrentDatabaseHealth(
+  health: DatabaseInventoryHealth,
+  requireLegacyCoherence = true,
+): boolean {
   const m2 = health.m2;
   const runs = m2.runs;
   const bootstrapLineage =
@@ -922,7 +975,8 @@ function hasCurrentDatabaseHealth(health: DatabaseInventoryHealth): boolean {
   return (
     health.integrityOk &&
     health.foreignKeyViolationCount === 0 &&
-    health.legacyCompatibility.coherent &&
+    (!requireLegacyCoherence || health.legacyCompatibility.coherent) &&
+    (requireLegacyCoherence || hasHealthyLearnerCourseState(health)) &&
     health.agentMessages.tablePresent &&
     health.agentMessages.schemaCompatible &&
     health.agentMessages.nonEmptyToolEventRows === 0 &&
@@ -971,6 +1025,20 @@ function hasCurrentDatabaseHealth(health: DatabaseInventoryHealth): boolean {
     m2.sourceSnapshots.retentionMismatchRows === 0 &&
     m2.sourceSnapshots.contentHashInventorySha256 !== null &&
     m2.privatePayloads.inspected
+  );
+}
+function hasHealthyLearnerCourseState(
+  health: DatabaseInventoryHealth,
+): boolean {
+  const state = health.learnerCourseState;
+  return (
+    state.tablePresent &&
+    state.schemaCompatible &&
+    state.selectedRows <= 1 &&
+    (state.rows === 0 || state.selectedRows === 1) &&
+    state.invalidRevisionRows === 0 &&
+    state.invalidSessionRows === 0 &&
+    state.untrackedActiveSessionRows === 0
   );
 }
 
@@ -1026,7 +1094,7 @@ function assertOpenedDatabaseMatchesAdmission(
     const health = inspectOpenedDatabaseHealth(sqlite);
     if (
       admission.kind === "current"
-        ? !hasCurrentDatabaseHealth(health)
+        ? !hasCurrentDatabaseHealth(health, false)
         : !health.legacyCompatibility.coherent
     ) {
       throw new Error("Opened database health invariants changed");

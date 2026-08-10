@@ -67,7 +67,7 @@ test("hydrates stored light and dark themes without an icon mismatch", async ({
   expect(hydrationErrors).toEqual([]);
 });
 
-test("completes restart-safe Day 1 through correction, summary, mastery and cards", async ({
+test("completes restart-safe Day 1 through correction, summary, mastery and review", async ({
   page,
   request,
 }) => {
@@ -281,13 +281,20 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   ).toBeVisible();
   await page.getByRole("link", { name: "Повторение" }).click();
   await page.getByRole("link", { name: "Исправления" }).click();
-  await expect(
-    page.getByText("В квизе выбран неверный или неполный ответ."),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Карточки" }).click();
-  await expect(
-    page.getByText("Восстановите правило, проверенное вопросом квиза."),
-  ).toBeVisible();
+  const primitiveCorrection = page
+    .getByRole("article")
+    .filter({ hasText: "primitive values" });
+  await expect(primitiveCorrection).toContainText("legacy-quiz-answer");
+  await expect(primitiveCorrection).toContainText(
+    "Выполните назначенную активность исправления",
+  );
+  await page.getByRole("link", { name: "Очередь повторения" }).click();
+  const primitiveReview = page
+    .getByRole("article")
+    .filter({ hasText: "primitive values" })
+    .first();
+  await expect(primitiveReview).toContainText("understanding");
+  await expect(primitiveReview).toContainText(/low_mastery|mistake/u);
 
   await page.goto("/");
   await expect(
@@ -376,6 +383,10 @@ test("publishes a curriculum graph and keeps an active session on its original r
     page.getByRole("heading", { name: "E2E Curriculum", exact: true }),
   ).toBeVisible();
   await expect(page.getByText(/Урок 1 · E2E Day/u)).toBeVisible();
+  await page.getByRole("button", { name: "Выбрать курс" }).click();
+  await expect(
+    page.getByRole("button", { name: "Начать занятие" }),
+  ).toBeEnabled();
   await page.getByRole("button", { name: "Начать занятие" }).click();
   await expect(page).toHaveURL(/\/session\?id=/u);
 

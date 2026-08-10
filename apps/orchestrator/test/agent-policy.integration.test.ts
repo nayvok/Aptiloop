@@ -624,7 +624,7 @@ describe("M1 agent policy boundary", () => {
     expect(noncurrentResponse.status).toBe(409);
     expect(await noncurrentResponse.json()).toEqual({
       error:
-        "Agent turns require the current active versioned learning session",
+        "Course-scoped side effects require the Course's current active session",
     });
 
     for (const provider of [

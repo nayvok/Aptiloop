@@ -42,10 +42,12 @@ import {
 } from "./backup.js";
 import {
   adaptiveStudioMigrationContract,
+  courseDesignerWorkflowMigrationContract,
   executionFabricMigrationContract,
   getCurrentDatabaseMigrationContract,
   openDatabase,
   learningKernelMigrationContract,
+  learnerCourseStateMigrationContract,
   providerHubMigrationContract,
   type CurrentDatabaseMigrationContract,
 } from "./database.js";
@@ -555,6 +557,8 @@ export function verifyApprovedM2MigrationBackup(
       executionFabricMigrationContract,
       providerHubMigrationContract,
       adaptiveStudioMigrationContract,
+      courseDesignerWorkflowMigrationContract,
+      learnerCourseStateMigrationContract,
     ].some((contract) => sameMigrationContract(sourceContract, contract));
   const correctionPending =
     sourceAdmission.kind === "legacy-compatible" &&
@@ -632,6 +636,8 @@ export function verifyApprovedM2MigrationBackup(
                 postMigrationContract,
                 providerHubMigrationContract,
                 adaptiveStudioMigrationContract,
+                courseDesignerWorkflowMigrationContract,
+                learnerCourseStateMigrationContract,
               ]
             : [preMigrationContract];
   const inspectedBackup = inspectApprovedCandidateForContracts(
@@ -1581,7 +1587,9 @@ function assertApprovedCandidate(
     candidate.health.migrations.ids.join(",") !==
       contract.migrationIds.join(",") ||
     candidate.health.schemaSha256 !== contract.schemaSha256 ||
-    !candidate.health.legacyCompatibility.coherent ||
+    (contract.migrationIds.includes("0017_learner_course_state")
+      ? !hasHealthyLearnerCourseState(candidate.health)
+      : !candidate.health.legacyCompatibility.coherent) ||
     !candidate.health.agentMessages.tablePresent ||
     !candidate.health.agentMessages.schemaCompatible ||
     candidate.health.agentMessages.nonEmptyToolEventRows !== 0 ||
@@ -1607,6 +1615,21 @@ function assertApprovedCandidate(
       `${label} failed the read-only health and private-payload preflight`,
     );
   }
+}
+
+function hasHealthyLearnerCourseState(
+  health: DatabaseInventoryHealth,
+): boolean {
+  const state = health.learnerCourseState;
+  return (
+    state.tablePresent &&
+    state.schemaCompatible &&
+    state.selectedRows <= 1 &&
+    (state.rows === 0 || state.selectedRows === 1) &&
+    state.invalidRevisionRows === 0 &&
+    state.invalidSessionRows === 0 &&
+    state.untrackedActiveSessionRows === 0
+  );
 }
 
 function hasApprovedM2Health(m2: M2FoundationInventory): boolean {

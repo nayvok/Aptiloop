@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckIcon, DownloadSimpleIcon, XIcon } from "@phosphor-icons/react";
+import { CalendarBlankIcon, XIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { EmptyState, QueryError } from "@/components/query-state";
@@ -10,28 +10,41 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { type MessageKey, useI18n } from "@/lib/i18n";
 
-type Flashcard = {
+type ReviewItem = {
   id: string;
   topic: string;
-  question: string;
-  answer: string;
-  status: "candidate" | "approved" | "rejected";
+  knowledgeNodeId: string;
+  dimension: string;
+  activityKind: string;
+  reasonCode: string;
+  dueAt: string;
+  state: "pending" | "completed" | "dismissed" | "superseded";
+  sessionId: string;
+  activityId: string | null;
 };
 
 export function FlashcardsClient() {
   const client = useQueryClient();
-  const { t } = useI18n();
+  const { formatDate, t } = useI18n();
   const query = useQuery({
-    queryKey: ["flashcards"],
-    queryFn: () => api<{ flashcards: Flashcard[] }>("/flashcards"),
+    queryKey: ["learning-reviews"],
+    queryFn: () => api<{ reviews: ReviewItem[] }>("/learning/reviews"),
   });
-  const update = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: Flashcard["status"] }) =>
-      api(`/flashcards/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status }),
-      }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["flashcards"] }),
+  const dismiss = useMutation({
+    mutationFn: (review: ReviewItem) => {
+      if (!review.activityId) {
+        throw new Error("Review item has no source activity.");
+      }
+      return api(
+        `/learning/sessions/v2/${review.sessionId}/kernel/activities/${review.activityId}/reviews/${review.id}/dismiss`,
+        {
+          method: "POST",
+          body: JSON.stringify({ operationId: crypto.randomUUID() }),
+        },
+      );
+    },
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: ["learning-reviews"] }),
   });
   if (query.isLoading) {
     return (
@@ -49,7 +62,7 @@ export function FlashcardsClient() {
       />
     );
   }
-  if (!query.data.flashcards.length) {
+  if (query.data.reviews.length === 0) {
     return (
       <EmptyState
         title={t("cards.empty.title")}
@@ -57,89 +70,84 @@ export function FlashcardsClient() {
       />
     );
   }
+  const counts = query.data.reviews.reduce(
+    (result, review) => ({
+      ...result,
+      [review.state]: (result[review.state] ?? 0) + 1,
+    }),
+    {} as Partial<Record<ReviewItem["state"], number>>,
+  );
   return (
-    <div className="flex flex-col gap-4">
-      {update.isError ? (
-        <p
-          role="alert"
-          className="rounded-md border border-destructive/35 bg-destructive/10 p-4 text-sm text-destructive"
-        >
-          {update.error instanceof Error
-            ? update.error.message
-            : t("cards.saveError")}
-        </p>
-      ) : null}
-      <div className="flex flex-wrap justify-end gap-2">
-        {(["markdown", "csv", "tsv"] as const).map((format) => (
-          <Button key={format} asChild variant="outline" size="sm">
-            <a href={`/api/flashcards/export?format=${format}`} download>
-              <DownloadSimpleIcon aria-hidden />
-              {format.toUpperCase()}
-            </a>
-          </Button>
+    <div className="space-y-5">
+      <div className="grid gap-3 sm:grid-cols-3">
+        {(["pending", "completed", "dismissed"] as const).map((status) => (
+          <div key={status} className="rounded-xl bg-muted/60 p-3 text-sm">
+            <span className="text-muted-foreground">
+              {t(`cards.status.${status}` as MessageKey)}
+            </span>
+            <strong className="ml-2">{counts[status] ?? 0}</strong>
+          </div>
         ))}
       </div>
-      <div className="divide-y divide-border border-y border-border">
-        {query.data.flashcards.map((card) => (
-          <article
-            key={card.id}
-            className="grid gap-4 py-5 lg:grid-cols-[160px_1fr_1fr_auto]"
-          >
-            <div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {query.data.reviews.map((review) => (
+          <article key={review.id} className="rounded-2xl border p-5">
+            <div className="flex items-center justify-between gap-3">
               <Badge
-                variant={
-                  card.status === "approved"
-                    ? "success"
-                    : card.status === "rejected"
-                      ? "error"
-                      : "warning"
-                }
+                variant={review.state === "pending" ? "warning" : "secondary"}
               >
-                {t(`cards.status.${card.status}` as MessageKey)}
+                {t(`cards.status.${review.state}` as MessageKey)}
               </Badge>
-              <p className="mt-2 text-xs text-muted-foreground">{card.topic}</p>
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <CalendarBlankIcon aria-hidden />
+                {formatDate(review.dueAt)}
+              </span>
             </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {t("cards.question")}
-              </p>
-              <p className="mt-2 text-sm leading-6">{card.question}</p>
+            <div className="mt-4 space-y-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t("cards.topic")}
+                </p>
+                <p className="mt-1 text-sm font-medium">{review.topic}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t("cards.reviewReason")}
+                </p>
+                <p className="mt-1 text-sm">
+                  {t("cards.reviewDetail", {
+                    dimension: review.dimension,
+                    reason: review.reasonCode,
+                  })}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {t("cards.answer")}
-              </p>
-              <p className="mt-2 text-sm leading-6">{card.answer}</p>
-            </div>
-            <div className="flex gap-1">
-              <Button
-                aria-label={t("cards.approve")}
-                aria-busy={update.isPending && update.variables?.id === card.id}
-                size="icon"
-                variant="outline"
-                disabled={update.isPending && update.variables?.id === card.id}
-                onClick={() =>
-                  update.mutate({ id: card.id, status: "approved" })
-                }
-              >
-                <CheckIcon aria-hidden />
-              </Button>
-              <Button
-                aria-label={t("cards.reject")}
-                aria-busy={update.isPending && update.variables?.id === card.id}
-                size="icon"
-                variant="ghost"
-                disabled={update.isPending && update.variables?.id === card.id}
-                onClick={() =>
-                  update.mutate({ id: card.id, status: "rejected" })
-                }
-              >
-                <XIcon aria-hidden />
-              </Button>
-            </div>
+            {review.state === "pending" && review.activityId ? (
+              <div className="mt-4 flex justify-end">
+                <Button
+                  aria-label={t("cards.dismiss")}
+                  aria-busy={
+                    dismiss.isPending && dismiss.variables?.id === review.id
+                  }
+                  size="icon"
+                  variant="ghost"
+                  disabled={
+                    dismiss.isPending && dismiss.variables?.id === review.id
+                  }
+                  onClick={() => dismiss.mutate(review)}
+                >
+                  <XIcon aria-hidden />
+                </Button>
+              </div>
+            ) : null}
           </article>
         ))}
       </div>
+      {dismiss.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {t("cards.saveError")}
+        </p>
+      ) : null}
     </div>
   );
 }

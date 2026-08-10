@@ -300,6 +300,16 @@ export interface LegacyCompatibilityHealth {
   readonly nonLegacyActiveSessionCount: number;
 }
 
+export interface LearnerCourseStateInventory {
+  readonly tablePresent: boolean;
+  readonly schemaCompatible: boolean;
+  readonly rows: number;
+  readonly selectedRows: number;
+  readonly invalidRevisionRows: number;
+  readonly invalidSessionRows: number;
+  readonly untrackedActiveSessionRows: number;
+}
+
 export interface DatabaseInventoryHealth {
   opened: true;
   journalMode: string;
@@ -312,6 +322,7 @@ export interface DatabaseInventoryHealth {
   migrations: MigrationLedgerInventory;
   agentMessages: LogicalAgentMessageCounts;
   legacyCompatibility: LegacyCompatibilityHealth;
+  learnerCourseState: LearnerCourseStateInventory;
   reviews: LogicalReviewCounts;
   sessionSnapshots: LogicalSessionSnapshotInventory;
   m2: M2FoundationInventory;
@@ -395,6 +406,14 @@ const expectedSessionSnapshotColumns = [
   "created_at",
 ] as const;
 const expectedMigrationColumns = ["id", "applied_at"] as const;
+const expectedLearnerCourseStateColumns = [
+  "course_id",
+  "active_revision_id",
+  "current_learning_session_id",
+  "is_selected",
+  "created_at",
+  "updated_at",
+] as const;
 const m2ExpectedTableColumns = {
   courses: [
     "id",
@@ -637,11 +656,13 @@ const inspectableInventoryTables: Readonly<Record<string, true>> = {
   agent_messages: true,
   reviews: true,
   session_snapshots: true,
+  learner_course_states: true,
 };
 const countableInventoryTables: Readonly<Record<string, true>> = {
   agent_messages: true,
   reviews: true,
   session_snapshots: true,
+  learner_course_states: true,
 };
 
 export function inventoryPrivateData(
@@ -699,6 +720,15 @@ export function inventoryHasBlockingHealth(
         !candidate.health.opened ||
         !candidate.health.integrityOk ||
         candidate.health.foreignKeyViolationCount > 0 ||
+        (candidate.health.learnerCourseState.tablePresent &&
+          (!candidate.health.learnerCourseState.schemaCompatible ||
+            candidate.health.learnerCourseState.selectedRows > 1 ||
+            (candidate.health.learnerCourseState.rows > 0 &&
+              candidate.health.learnerCourseState.selectedRows !== 1) ||
+            candidate.health.learnerCourseState.invalidRevisionRows !== 0 ||
+            candidate.health.learnerCourseState.invalidSessionRows !== 0 ||
+            candidate.health.learnerCourseState.untrackedActiveSessionRows !==
+              0)) ||
         (candidate.health.m2.present &&
           (!candidate.health.m2.complete ||
             !candidate.health.m2.runs.reconciled ||
@@ -978,6 +1008,7 @@ export function inspectOpenedDatabaseHealth(
     foreignKeyViolationCount,
     migrations: inspectMigrations(sqlite),
     legacyCompatibility: inspectLegacyCompatibilityHealth(sqlite),
+    learnerCourseState: inspectLearnerCourseState(sqlite),
     agentMessages: inspectAgentMessages(sqlite),
     reviews: inspectReviews(sqlite),
     sessionSnapshots: inspectSessionSnapshots(sqlite),
@@ -1072,6 +1103,89 @@ export function inspectLegacyCompatibilityHealth(
       nonLegacyActiveSessionCount: 0,
     };
   }
+}
+
+function inspectLearnerCourseState(
+  sqlite: DatabaseSync,
+): LearnerCourseStateInventory {
+  if (!tableExists(sqlite, "learner_course_states")) {
+    return {
+      tablePresent: false,
+      schemaCompatible: false,
+      rows: 0,
+      selectedRows: 0,
+      invalidRevisionRows: 0,
+      invalidSessionRows: 0,
+      untrackedActiveSessionRows: 0,
+    };
+  }
+  const rows = countRows(sqlite, "learner_course_states");
+  const schemaCompatible = expectedLearnerCourseStateColumns.every((column) =>
+    tableColumns(sqlite, "learner_course_states").has(column),
+  );
+  if (!schemaCompatible) {
+    return {
+      tablePresent: true,
+      schemaCompatible: false,
+      rows,
+      selectedRows: 0,
+      invalidRevisionRows: rows,
+      invalidSessionRows: rows,
+      untrackedActiveSessionRows: 0,
+    };
+  }
+  const counts = sqlite
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM learner_course_states
+          WHERE is_selected = 1) AS selected_rows,
+         (SELECT COUNT(*)
+          FROM learner_course_states state
+          WHERE NOT EXISTS (
+            SELECT 1 FROM course_revisions revision
+            WHERE revision.course_id = state.course_id
+              AND revision.id = state.active_revision_id
+              AND revision.status = 'published'
+          )) AS invalid_revision_rows,
+         (SELECT COUNT(*)
+          FROM learner_course_states state
+          WHERE state.current_learning_session_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM learning_sessions session
+              JOIN session_course_contexts context
+                ON context.session_id = session.id
+              WHERE session.id = state.current_learning_session_id
+                AND session.status = 'active'
+                AND context.course_id = state.course_id
+                AND context.revision_id = state.active_revision_id
+            )) AS invalid_session_rows,
+         (SELECT COUNT(*)
+          FROM learning_sessions session
+          JOIN session_course_contexts context ON context.session_id = session.id
+          WHERE session.status = 'active'
+            AND NOT EXISTS (
+              SELECT 1 FROM learner_course_states state
+              WHERE state.course_id = context.course_id
+                AND state.active_revision_id = context.revision_id
+                AND state.current_learning_session_id = session.id
+            )) AS untracked_active_session_rows`,
+    )
+    .get() as {
+    selected_rows: number;
+    invalid_revision_rows: number;
+    invalid_session_rows: number;
+    untracked_active_session_rows: number;
+  };
+  return {
+    tablePresent: true,
+    schemaCompatible: true,
+    rows,
+    selectedRows: counts.selected_rows,
+    invalidRevisionRows: counts.invalid_revision_rows,
+    invalidSessionRows: counts.invalid_session_rows,
+    untrackedActiveSessionRows: counts.untracked_active_session_rows,
+  };
 }
 
 function inspectMigrations(sqlite: DatabaseSync): MigrationLedgerInventory {

@@ -1,6 +1,6 @@
 # Core Alpha Migration Strategy
 
-Status: M2 additive Course foundations, M3 Course Pack lifecycle, M4 deterministic Learning Kernel persistence, and M5 Execution Fabric identity are an **Implemented baseline**. Legacy removal and PostgreSQL stages remain **Approved Core Alpha target**.
+Status: M2 additive Course foundations through M11 per-Course learner-state/session cutover are an **Implemented baseline**. Destructive compatibility-table removal and PostgreSQL stages remain **Approved Core Alpha target**.
 
 ## Objective
 
@@ -22,7 +22,7 @@ The migration must preserve every old row and stored snapshot, record how each t
 
 The valuable active database was selected only at `.data/dev-learning-harness.sqlite`, inventoried read-only, and rehearsed on disposable copies before every active write. Four distinct active-source-only rollback artifacts were approved: pre-M2 `.data/approved-backups/2026-08-09T15-00-16Z-pre-m2-active.sqlite` (`501338c295589d8367a31a1082ef7469ca0e22bb91e6a3123abdb94b70220f1b`), pre-`0008` `.data/approved-backups/2026-08-09T16-19-35Z-pre-m2-correction-active.sqlite` (`a09332dde7732b43b2ca6b9734bd5201fc6d71449c7c3d7303824d845418af09`), pre-`0009` `.data/approved-backups/2026-08-09T22-54-00Z-pre-m2-hardening-active.sqlite` (`9dc4b6af0c5e5a9b73cfa3e4f38240703d023f37ada6c3e0fa297dbe4aa22da2`), and pre-`0010` `.data/approved-backups/2026-08-09T23-34-00Z-pre-m2-quarantine-immutability-active.sqlite` (`bc325e8314117a3eb073ae015a5daf72ec3b4ea3f7f74aadfbfbe34a25c57f4d`). Each backup is standalone, healthy, immutable at its cutoff, and logically bound to its migration run.
 
-The active reconciliation is complete as accounting, not as content promotion: 572 source rows equal 2 mapped + 526 quarantined + 44 intentionally unmapped. There are zero invalid provenance statuses and zero target orphans. Existing snapshots and hashes were unchanged. Quarantined records remain source history and cannot become target truth without a later explicit reconciliation. Target read cutover is limited to Course discovery/path and exact session Course context; the default global-current and legacy persistence bridge remain bounded compatibility seams.
+The active reconciliation is complete as accounting, not as content promotion: 572 source rows equal 2 mapped + 526 quarantined + 44 intentionally unmapped. There are zero invalid provenance statuses and zero target orphans. Existing snapshots and hashes were unchanged. Quarantined records remain source history and cannot become target truth without a later explicit reconciliation. M11 target reads use explicit selected Course and per-Course session state; the legacy persistence bridge remains bounded, frozen compatibility storage.
 
 There is no down migration. Whole-file recovery from one of the four named approved backups returns exactly to that artifact's cutoff and discards every later write. The operational sequence and observed identities are in [the M2 runbook](m2-course-foundations-runbook.md).
 
@@ -34,7 +34,15 @@ There is no down migration. Whole-file recovery from one of the four named appro
 
 `0013_execution_fabric` adds immutable Environment Pack and trusted-check descriptors, exact environment/check IDs on attempts and test runs, snapshot-bound structured artifacts, immutable review evidence bundles, and execution migration quarantine. Existing `commandId: "test"` maps to the finite app-owned compatibility contract; no attempt or source row is rewritten or deleted.
 
-These migrations use the same explicit inventory, approved non-overwriting backup, exact-ledger admission, transaction rollback, and whole-file recovery discipline established for M2. The current exact schema is `0000`–`0013`; ordinary startup rejects predecessor ledgers, while only the backup-bound migration CLI may advance an admitted exact predecessor.
+These migrations use the same explicit inventory, approved non-overwriting backup, exact-ledger admission, transaction rollback, and whole-file recovery discipline established for M2. M11 extends the exact schema through `0018_learner_course_state_trigger_guard`; ordinary startup rejects predecessor ledgers, while only the backup-bound migration CLI may advance an admitted exact predecessor.
+
+## M11 Course/session cutover record
+
+**Implemented baseline (2026-08-10):** `0017_learner_course_state` adds one explicit learner-state row per active published Course. The deterministic backfill selects one Course by the former provable current-session pointer or stable Course order, binds a current session only when its active status and immutable `session_course_contexts` ownership match exactly, and does not rewrite legacy sessions, snapshots, evidence, or quarantine. Repository start/resume/complete operations maintain the per-Course pointer transactionally. Target path/current reads use the selected Course; simultaneous sessions in different Courses remain active and independently resumable. Legacy v1 mutations and the hardcoded dashboard return 410, while exact historical session reads and Course Pack export remain available. Verification exposed that the original context trigger also attempted to update learner state for completed and compatibility-only sessions; additive `0018_learner_course_state_trigger_guard` replaces that trigger and admits only active sessions on published target revisions.
+
+The valuable active database was inventoried and copied without overwrite before `0017` to `.data/approved-backups/2026-08-10T14-56-15Z-pre-m11-course-cutover.sqlite` (whole-file SHA-256 `f76b8ad816094df0b7843864cd48e9e2f955b904753df494e0ef8170536ac710`). Before the corrective `0018`, the exact `0017` database was re-inventoried and copied to `.data/approved-backups/2026-08-10T15-22-43Z-pre-m11-trigger-guard.sqlite` (whole-file SHA-256 `0604a330404f94f45e0f6e0faeb62aeb3f0c5b906752825690849b91bdb05f88`). The current schema SHA-256 is `d517a45b89090fba10a6c8db268edf1cef08eb3ad5f67e09f89b00a20be86c40`; postflight observed `integrity_check=ok`, zero foreign-key violations, 19 exact migration markers, one selected Course among two state rows, zero invalid revision/session pointers, zero untracked active sessions, zero target orphans, and 526 retained quarantine rows. Exact replay reported already current.
+
+Operator decision points remain fail-closed: stop writers before whole-file restore; preserve a failed migrated database and sidecars under a new incident path; never overwrite the approved backup; accept loss of post-cutoff writes or reconcile them only under a separate explicit recovery plan. The observation window retains compatibility tables, the synthetic legacy day bridge, immutable historical reads, local inventory/diagnostic export, and 526 quarantine rows. Any destructive rebuild requires a separate owner-approved gate and a new verified backup.
 
 ## Implemented baseline and known hazards
 
@@ -52,7 +60,7 @@ The current SQLite database contains two overlapping models.
 - `session_snapshots` stores one creation-time hashed captured graph per versioned session; M2 immutability guards prevent later repair/rewrite of stored snapshot JSON or hashes;
 - `unit_progress`, `hint_usages_v2`, and `versioned_unit_evidence` remain readable legacy projections, while new versioned operations also emit kernel facts through the M4 adapter;
 - `learning_sessions` still requires a legacy day and optionally references a versioned day;
-- global active-session and `learner_state(id='default')` assumptions remain single-course compatibility constraints.
+- `learner_course_states` replaces global active-session and `learner_state(id='default')` assumptions for target callers; the global row remains inert compatibility history.
 
 Migration `0001` historically preserved a legacy revision and snapshots while abandoning all but the newest globally active session. The M2 guards now prohibit snapshot rewrites and the M4 reconciliation refuses to invent missing fact meaning; compatibility rows remain readable but no longer establish target kernel authority.
 

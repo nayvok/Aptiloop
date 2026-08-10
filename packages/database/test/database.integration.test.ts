@@ -64,6 +64,8 @@ describe("SQLite database", () => {
       "0014_provider_hub",
       "0015_adaptive_studio",
       "0016_course_designer_workflow",
+      "0017_learner_course_state",
+      "0018_learner_course_state_trigger_guard",
     ]);
     expect(() =>
       connection.sqlite
@@ -183,7 +185,6 @@ describe("SQLite database", () => {
     expect(
       knowledge.find((item) => item.topic.id === topicId)?.mastery[0]?.score,
     ).toBe(1);
-    expect((await repository.getDashboard()).completedDays).toBe(1);
   });
 
   it("persists card, configuration, settings and conversation data", async () => {

@@ -18,7 +18,6 @@ import {
 import {
   and,
   asc,
-  desc,
   eq,
   inArray,
   isNull,
@@ -75,22 +74,6 @@ export type Clock = () => number;
 export interface RepositoryOptions {
   now?: Clock;
   id?: IdFactory;
-}
-
-export interface DashboardData {
-  days: Array<{
-    id: string;
-    slug: string;
-    dayNumber: number;
-    title: string;
-    estimatedMinutes: number;
-    sessionStatus: string | null;
-  }>;
-  activeSession: LearningSession | null;
-  dueFlashcards: number;
-  openMistakes: number;
-  completedDays: number;
-  totalDays: number;
 }
 
 export interface SessionQuestion {
@@ -246,62 +229,6 @@ export class LearningRepository {
     this.#connection = connection;
     this.#now = options.now ?? Date.now;
     this.#id = options.id ?? randomUUID;
-  }
-
-  async getDashboard(): Promise<DashboardData> {
-    const now = this.#now();
-    const days = await this.#connection.db
-      .select({
-        id: curriculumDays.id,
-        slug: curriculumDays.slug,
-        dayNumber: curriculumDays.dayNumber,
-        title: curriculumDays.title,
-        estimatedMinutes: curriculumDays.estimatedMinutes,
-        sessionStatus: learningSessions.status,
-      })
-      .from(curriculumDays)
-      .leftJoin(
-        learningSessions,
-        sql`${learningSessions.id} = (
-          SELECT ls.id FROM learning_sessions ls
-          WHERE ls.day_id = ${curriculumDays.id}
-          ORDER BY ls.started_at DESC LIMIT 1
-        )`,
-      )
-      .orderBy(asc(curriculumDays.weekNumber), asc(curriculumDays.dayNumber));
-
-    const [activeSession] = await this.#connection.db
-      .select()
-      .from(learningSessions)
-      .where(eq(learningSessions.status, "active"))
-      .orderBy(desc(learningSessions.updatedAt))
-      .limit(1);
-    const [due] = await this.#connection.db
-      .select({ count: sql<number>`count(*)` })
-      .from(flashcards)
-      .where(
-        and(
-          eq(flashcards.status, "approved"),
-          or(isNull(flashcards.dueAt), lte(flashcards.dueAt, now)),
-        ),
-      );
-    const [openMistakeCount] = await this.#connection.db
-      .select({ count: sql<number>`count(*)` })
-      .from(mistakes)
-      .where(isNull(mistakes.resolvedAt));
-    const [completed] = await this.#connection.db
-      .select({ count: sql<number>`count(distinct ${learningSessions.dayId})` })
-      .from(learningSessions)
-      .where(eq(learningSessions.status, "completed"));
-
-    return {
-      days,
-      activeSession: activeSession ?? null,
-      dueFlashcards: due?.count ?? 0,
-      openMistakes: openMistakeCount?.count ?? 0,
-      completedDays: completed?.count ?? 0,
-      totalDays: days.length,
-    };
   }
 
   async startSession(input: {
@@ -464,16 +391,6 @@ export class LearningRepository {
     dayId: string;
     idempotencyKey?: string;
   }): Promise<VersionedSessionDetail> {
-    const current = await this.getCurrentVersionedSession();
-    if (current) {
-      if (current.snapshot.day.id !== input.dayId) {
-        throw new Error(
-          `Another learning session is already active: ${current.session.id}`,
-        );
-      }
-      return current;
-    }
-
     if (input.idempotencyKey) {
       const existing = this.#connection.sqlite
         .prepare(
@@ -497,11 +414,13 @@ export class LearningRepository {
                 w.order_index AS week_order_index,
                 v.curriculum_id, v.revision, v.status AS version_status,
                 v.content_hash AS version_content_hash, c.title AS curriculum_title,
-                c.active_version_id
+                c.active_version_id,
+                learner.active_revision_id AS learner_active_revision_id
          FROM curriculum_days_v2 d
          JOIN curriculum_weeks w ON w.id = d.week_id
          JOIN curriculum_versions v ON v.id = d.version_id
          JOIN curricula c ON c.id = v.curriculum_id
+         LEFT JOIN learner_course_states learner ON learner.course_id = v.curriculum_id
          WHERE d.id = ?`,
       )
       .get(input.dayId) as
@@ -528,16 +447,26 @@ export class LearningRepository {
           version_content_hash: string;
           curriculum_title: string;
           active_version_id: string | null;
+          learner_active_revision_id: string | null;
         })
       | undefined;
     if (!dayRow)
       throw new Error(`Unknown versioned curriculum day: ${input.dayId}`);
+    const current = await this.getCurrentVersionedSession(dayRow.curriculum_id);
+    if (current) {
+      if (current.snapshot.day.id !== input.dayId) {
+        throw new Error(
+          `Another learning session is already active for this Course: ${current.session.id}`,
+        );
+      }
+      return current;
+    }
     if (
       dayRow.version_status !== "published" ||
-      dayRow.active_version_id !== dayRow.version_id
+      dayRow.learner_active_revision_id !== dayRow.version_id
     ) {
       throw new Error(
-        "A learning session can only start from the active published version",
+        "Select this published Course revision before starting a learning session",
       );
     }
 
@@ -612,17 +541,17 @@ export class LearningRepository {
         .prepare(
           `SELECT session.id, session.curriculum_day_v2_id
            FROM learning_sessions session
-           LEFT JOIN session_snapshots snapshot ON snapshot.session_id = session.id
+           JOIN session_course_contexts context ON context.session_id = session.id
+           JOIN session_snapshots snapshot ON snapshot.session_id = session.id
            WHERE session.status = 'active'
              AND session.curriculum_day_v2_id IS NOT NULL
-             AND (
-               snapshot.curriculum_version_id IS NULL OR
-               snapshot.curriculum_version_id != 'legacy-v1'
-             )
+             AND context.course_id = ?
+             AND snapshot.curriculum_version_id != 'legacy-v1'
            ORDER BY session.updated_at DESC, session.id DESC
            LIMIT 1`,
         )
-        .get() as { id: string; curriculum_day_v2_id: string } | undefined;
+        .get(dayRow.curriculum_id) as
+        { id: string; curriculum_day_v2_id: string } | undefined;
       if (concurrentCurrent) {
         if (concurrentCurrent.curriculum_day_v2_id !== input.dayId) {
           throw new Error(
@@ -753,31 +682,108 @@ export class LearningRepository {
           capturedAt,
         );
       }
-      this.#connection.sqlite
-        .prepare(
-          `INSERT INTO learner_state (id, current_learning_session_id, updated_at)
-           VALUES ('default', ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             current_learning_session_id = excluded.current_learning_session_id,
-             updated_at = excluded.updated_at`,
-        )
-        .run(sessionId, capturedAt);
+      // session_course_contexts_learner_state_insert owns the per-Course cursor.
       return sessionId;
     });
     return this.getVersionedSession(resolvedSessionId);
   }
 
-  async getCurrentVersionedSession(): Promise<VersionedSessionDetail | null> {
+  async getSelectedCourseTarget(): Promise<{
+    courseId: string;
+    revisionId: string;
+  } | null> {
+    const selected = this.#connection.sqlite
+      .prepare(
+        `SELECT course_id, active_revision_id
+         FROM learner_course_states
+         WHERE is_selected = 1`,
+      )
+      .get() as { course_id: string; active_revision_id: string } | undefined;
+    return selected
+      ? {
+          courseId: selected.course_id,
+          revisionId: selected.active_revision_id,
+        }
+      : null;
+  }
+
+  async selectCourse(input: {
+    courseId: string;
+    revisionId: string;
+  }): Promise<void> {
+    const target = this.#connection.sqlite
+      .prepare(
+        `SELECT revision.id
+         FROM course_revisions revision
+         JOIN curriculum_versions source
+           ON source.id = revision.id
+          AND source.curriculum_id = revision.course_id
+         WHERE revision.course_id = ? AND revision.id = ?
+           AND revision.status = 'published' AND source.status = 'published'`,
+      )
+      .get(input.courseId, input.revisionId) as { id: string } | undefined;
+    if (!target)
+      throw new Error("Course selection requires a published revision");
+
+    const active = this.#connection.sqlite
+      .prepare(
+        `SELECT context.revision_id
+         FROM learner_course_states state
+         JOIN learning_sessions session
+           ON session.id = state.current_learning_session_id
+          AND session.status = 'active'
+         JOIN session_course_contexts context ON context.session_id = session.id
+         WHERE state.course_id = ?`,
+      )
+      .get(input.courseId) as { revision_id: string } | undefined;
+    if (active && active.revision_id !== input.revisionId) {
+      throw new Error(
+        "Complete the active Course session before selecting another revision",
+      );
+    }
+
+    const now = this.#now();
+    withTransaction(this.#connection, () => {
+      this.#connection.sqlite
+        .prepare(
+          "UPDATE learner_course_states SET is_selected = 0 WHERE is_selected = 1",
+        )
+        .run();
+      this.#connection.sqlite
+        .prepare(
+          `INSERT INTO learner_course_states (
+             course_id, active_revision_id, current_learning_session_id,
+             is_selected, created_at, updated_at
+           ) VALUES (?, ?, NULL, 1, ?, ?)
+           ON CONFLICT(course_id) DO UPDATE SET
+             active_revision_id = excluded.active_revision_id,
+             is_selected = 1,
+             updated_at = MAX(learner_course_states.created_at, excluded.updated_at)`,
+        )
+        .run(input.courseId, input.revisionId, now, now);
+    });
+  }
+
+  async getCurrentVersionedSession(
+    courseId?: string,
+  ): Promise<VersionedSessionDetail | null> {
     const current = this.#connection.sqlite
       .prepare(
-        `SELECT s.id FROM learner_state l
-         JOIN learning_sessions s ON s.id = l.current_learning_session_id
-         JOIN session_snapshots snapshot ON snapshot.session_id = s.id
-         WHERE l.id = 'default' AND s.status = 'active'
+        `SELECT session.id
+         FROM learner_course_states state
+         JOIN learning_sessions session
+           ON session.id = state.current_learning_session_id
+         JOIN session_snapshots snapshot ON snapshot.session_id = session.id
+         WHERE session.status = 'active'
            AND snapshot.schema_version >= 2
-           AND snapshot.curriculum_version_id != 'legacy-v1'`,
+           AND snapshot.curriculum_version_id != 'legacy-v1'
+           AND snapshot.curriculum_id = state.course_id
+           AND snapshot.curriculum_version_id = state.active_revision_id
+           AND (? IS NOT NULL AND state.course_id = ?
+             OR ? IS NULL AND state.is_selected = 1)`,
       )
-      .get() as { id: string } | undefined;
+      .get(courseId ?? null, courseId ?? null, courseId ?? null) as
+      { id: string } | undefined;
     return current ? this.getVersionedSession(current.id) : null;
   }
 

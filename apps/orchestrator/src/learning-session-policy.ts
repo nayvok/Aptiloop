@@ -86,6 +86,11 @@ export function assertCourseScopedSessionSideEffectAllowed(
       "Course-scoped side effects require a mapped Course session context",
     );
   }
+  if (!isCurrentCourseSession(connection, row, sessionId)) {
+    throw new CourseSessionContextError(
+      "Course-scoped side effects require the Course's current active session",
+    );
+  }
 }
 
 function readSessionMutationAuthority(
@@ -232,6 +237,29 @@ function hasVerifiedMappedCourseContext(
   } catch {
     return false;
   }
+}
+
+function isCurrentCourseSession(
+  connection: DatabaseConnection,
+  row: SessionMutationAuthority,
+  sessionId: string,
+): boolean {
+  if (
+    typeof row.contextCourseId !== "string" ||
+    typeof row.contextRevisionId !== "string"
+  ) {
+    return false;
+  }
+  return Boolean(
+    connection.sqlite
+      .prepare(
+        `SELECT 1
+         FROM learner_course_states
+         WHERE course_id = ? AND active_revision_id = ?
+           AND current_learning_session_id = ?`,
+      )
+      .get(row.contextCourseId, row.contextRevisionId, sessionId),
+  );
 }
 
 function assertVersionedSession(row: SessionMutationAuthority): void {

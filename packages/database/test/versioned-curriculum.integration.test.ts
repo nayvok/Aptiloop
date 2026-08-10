@@ -333,6 +333,10 @@ describe("snapshot sessions", () => {
       id: () => `session-${++id}`,
       now: () => 200,
     });
+    await learning.selectCourse({
+      courseId: draft.curriculumId,
+      revisionId: published.id,
+    });
     const started = await learning.startOrResumeVersionedSession({
       dayId: day.id,
       idempotencyKey: "start-d1",
@@ -379,6 +383,82 @@ describe("snapshot sessions", () => {
       status: "in_progress",
       payload: { type: "briefing", acknowledged: true },
     });
+  });
+
+  it("keeps one resumable active session per Course across explicit selection", async () => {
+    const { connection } = tempConnection();
+    migrateDatabase(connection);
+    let id = 0;
+    const authoring = createCurriculumAuthoringRepository(connection, {
+      id: () => `multi-${++id}`,
+      now: () => 1_000,
+    });
+    const createCourse = async (courseId: string) => {
+      const draft = await authoring.createDraft({
+        curriculum: { id: courseId, slug: courseId, title: courseId },
+        title: `${courseId} revision`,
+      });
+      const week = await authoring.addWeek({
+        versionId: draft.id,
+        stableId: "week",
+        title: "Week",
+      });
+      const day = await authoring.addDay({
+        versionId: draft.id,
+        weekId: week.id,
+        stableId: "lesson",
+        title: "Lesson",
+        goal: "Learn",
+        estimatedMinutes: 15,
+        depthLevel: "foundation",
+      });
+      await authoring.addUnit({
+        versionId: draft.id,
+        dayId: day.id,
+        stableId: "briefing",
+        type: "briefing",
+        title: "Briefing",
+        description: "Read",
+        completionCriteria: [{ type: "acknowledgement" }],
+        depthLevel: "foundation",
+        payload: { type: "briefing", scope: [] },
+      });
+      const revision = await authoring.publishVersion(draft.id);
+      return {
+        courseId: draft.curriculumId,
+        revisionId: revision.id,
+        dayId: day.id,
+      };
+    };
+    const first = await createCourse("course-one");
+    const second = await createCourse("course-two");
+    const learning = createLearningRepository(connection, {
+      id: () => `multi-session-${++id}`,
+      now: () => 2_000,
+    });
+
+    await learning.selectCourse(first);
+    const firstSession = await learning.startOrResumeVersionedSession({
+      dayId: first.dayId,
+    });
+    await learning.selectCourse(second);
+    const secondSession = await learning.startOrResumeVersionedSession({
+      dayId: second.dayId,
+    });
+
+    expect(
+      (await learning.getCurrentVersionedSession(first.courseId))?.session.id,
+    ).toBe(firstSession.session.id);
+    expect(
+      (await learning.getCurrentVersionedSession(second.courseId))?.session.id,
+    ).toBe(secondSession.session.id);
+    expect((await learning.getCurrentVersionedSession())?.session.id).toBe(
+      secondSession.session.id,
+    );
+    await learning.selectCourse(first);
+    expect((await learning.getCurrentVersionedSession())?.session.id).toBe(
+      firstSession.session.id,
+    );
   });
 
   it("serializes concurrent starts when only the compatibility schema is available", async () => {
@@ -539,6 +619,10 @@ describe("versioned curriculum seed", () => {
     });
     const r2Path = await authoring.getActivePath("curriculum-foundation");
     const r2Day = r2Path?.weeks[0]?.days[0];
+    await learning.selectCourse({
+      courseId: publishedCurriculumRevision2.curriculumId,
+      revisionId: publishedCurriculumRevision2.id,
+    });
     if (!r2Day) throw new Error("Seeded r2 Day 1 is missing");
     const r2Session = await learning.startOrResumeVersionedSession({
       dayId: r2Day.id,

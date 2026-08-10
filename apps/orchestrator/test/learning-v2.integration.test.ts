@@ -568,6 +568,129 @@ describe("versioned learning API", () => {
     expect(factCount.count).toBe(1);
   });
 
+  it("reads Skills, Corrections, and Review from the selected Course kernel", async () => {
+    const runtime = createRuntime();
+    const pathBody = (await (
+      await request(runtime.app, "/api/learning/path")
+    ).json()) as {
+      curriculum: { weeks: Array<{ days: Array<{ id: string }> }> };
+    };
+    const dayId = pathBody.curriculum.weeks[0]?.days[0]?.id;
+    if (!dayId) throw new Error("Seeded learning day is unavailable");
+    const started = await request(runtime.app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId,
+        operationId: "kernel-views-session",
+      }),
+    });
+    const session = ((await started.json()) as { session: LearnerSession })
+      .session;
+    const kernel = createLearningKernelRepository(runtime.state.connection);
+    const scope = kernel.resolveSessionScope(session.id);
+    const activity = kernel.listActivities(scope)[0];
+    if (!activity) throw new Error("Seeded kernel activity is unavailable");
+    const knowledgeNodeId = activity.knowledgeNodeIds[0];
+    if (!knowledgeNodeId) {
+      throw new Error("Seeded kernel activity has no knowledge node");
+    }
+    const attemptFactId = "kernel-views-attempt-fact";
+    kernel.accept(scope, {
+      operationId: "kernel-views-attempt",
+      factId: attemptFactId,
+      observedAt: "2026-08-10T10:00:00.000Z",
+      provenance: {
+        kind: "learner_submission",
+        sourceId: "kernel-views-attempt",
+        sourceHash: learningKernelSha256({ sourceId: "kernel-views-attempt" }),
+      },
+      body: {
+        type: "evidence",
+        activityId: activity.id,
+        knowledgeNodeIds: [knowledgeNodeId],
+        dimension: "understanding",
+        evidenceType: "recall",
+        outcome: "unverified",
+        hintLevel: 0,
+        basisFactIds: [],
+      },
+    });
+    kernel.accept(scope, {
+      operationId: "kernel-views-evaluation",
+      factId: "kernel-views-evaluation-fact",
+      observedAt: "2026-08-10T10:00:01.000Z",
+      provenance: {
+        kind: "deterministic_evaluator",
+        sourceId: "kernel-views-evaluation",
+        sourceHash: learningKernelSha256({
+          sourceId: "kernel-views-evaluation",
+        }),
+        evaluatorVersion: "kernel-views-test-v1",
+      },
+      body: {
+        type: "evidence",
+        activityId: activity.id,
+        knowledgeNodeIds: [knowledgeNodeId],
+        dimension: "understanding",
+        evidenceType: "recall",
+        outcome: "incorrect",
+        hintLevel: 0,
+        basisFactIds: [attemptFactId],
+        errorFamily: "kernel-views-error",
+      },
+    });
+
+    const skills = (await (
+      await request(runtime.app, "/api/learning/skills")
+    ).json()) as {
+      topics: Array<{
+        id: string;
+        evidenceCount: number;
+        scores: { understanding: number };
+      }>;
+    };
+    expect(skills.topics).toContainEqual(
+      expect.objectContaining({
+        id: knowledgeNodeId,
+        scores: expect.objectContaining({ understanding: 0 }),
+        evidenceCount: 1,
+      }),
+    );
+    const mistakes = (await (
+      await request(runtime.app, "/api/learning/mistakes")
+    ).json()) as {
+      mistakes: Array<{
+        id: string;
+        errorFamily: string;
+        occurrenceCount: number;
+      }>;
+    };
+    expect(mistakes.mistakes).toContainEqual(
+      expect.objectContaining({
+        errorFamily: "kernel-views-error",
+        occurrenceCount: 1,
+      }),
+    );
+    const reviews = (await (
+      await request(runtime.app, "/api/learning/reviews")
+    ).json()) as {
+      reviews: Array<{
+        reasonCode: string;
+        sessionId: string;
+        activityId: string | null;
+        state: string;
+      }>;
+    };
+    expect(reviews.reviews).toContainEqual(
+      expect.objectContaining({
+        reasonCode: "mistake",
+        sessionId: session.id,
+        activityId: activity.id,
+        state: "pending",
+      }),
+    );
+  });
+
   it("completes the interview unit only with three persisted answers and a report", async () => {
     const runtime = createRuntime();
     const { session, interviewUnit } = await startDaySevenAtInterview(runtime);
@@ -904,6 +1027,9 @@ describe("versioned learning API", () => {
         title: string;
         description: string | null;
         primaryLocale: string;
+        selected: boolean;
+        activeRevisionId: string | null;
+        currentSessionId: string | null;
         revisions: Array<{
           id: string;
           revisionNumber: number;
@@ -947,16 +1073,38 @@ describe("versioned learning API", () => {
     );
     expect(explicitPathResponse.status).toBe(200);
     const explicitPath = (await explicitPathResponse.json()) as {
-      courseContext: { courseId: string; revisionId: string };
+      courseContext: {
+        courseId: string;
+        revisionId: string;
+        selected: boolean;
+      };
       curriculum: { id: string; version: { id: string } };
     };
     expect(explicitPath.courseContext).toEqual({
       courseId: foundation.id,
       revisionId: publishedRevision.id,
+      selected: true,
     });
     expect(explicitPath.curriculum).toMatchObject({
       id: foundation.id,
       version: { id: publishedRevision.id },
+    });
+    const selected = await request(
+      app,
+      `/api/learning/courses/${foundation.id}/select`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          revisionId: publishedRevision.id,
+          operationId: "select-foundation",
+        }),
+      },
+    );
+    expect(selected.status).toBe(200);
+    expect(await selected.json()).toEqual({
+      selected: true,
+      courseId: foundation.id,
+      revisionId: publishedRevision.id,
     });
 
     const compatibilityPathResponse = await request(app, "/api/learning/path");
@@ -1514,6 +1662,7 @@ describe("versioned learning API", () => {
     expect(resumedPath.courseContext).toEqual({
       courseId: startedSession.courseContext.courseId,
       revisionId: startedSession.courseContext.revisionId,
+      selected: true,
     });
     expect(resumedDay.id).toBe(initialDay.id);
     expect(resumedDay).toMatchObject({
@@ -1631,6 +1780,18 @@ describe("versioned learning API", () => {
       "isolated-next",
       true,
     );
+    const selectedNextRevision = await request(
+      app,
+      `/api/learning/courses/${sourcePath.courseContext.courseId}/select`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          revisionId: nextRevisionId,
+          operationId: "select-isolated-next",
+        }),
+      },
+    );
+    expect(selectedNextRevision.status).toBe(200);
     const nextResponse = await request(app, "/api/learning/path");
     expect(nextResponse.status).toBe(200);
     const nextPath = RevisionPathSchema.parse(await nextResponse.json());

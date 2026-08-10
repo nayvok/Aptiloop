@@ -94,8 +94,14 @@ function pathFixture(
     status: "in_progress",
     sessionId: "session-active",
   }),
+  selected = true,
 ) {
   return {
+    courseContext: {
+      courseId: "course-1",
+      revisionId: "revision-2",
+      selected,
+    },
     curriculum: {
       id: "course-1",
       slug: "javascript-foundations",
@@ -260,10 +266,63 @@ describe("Aptiloop Home", () => {
     });
   });
 
+  it("requires explicit Course selection before starting its lesson", async () => {
+    let selected = false;
+    const endpoint = "/learning/courses/course-1/revisions/revision-2/path";
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/settings") return Promise.resolve(mockSettings());
+      if (path === endpoint)
+        return Promise.resolve(pathFixture(undefined, selected));
+      if (path === "/learning/courses/course-1/select") {
+        selected = true;
+        return Promise.resolve({
+          selected: true,
+          courseId: "course-1",
+          revisionId: "revision-2",
+        });
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+    renderWithQuery(
+      <HomeClient
+        pathEndpoint={endpoint}
+        selectionTarget={{ courseId: "course-1", revisionId: "revision-2" }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Use this Course" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /Resume lesson/u }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Use this Course" }));
+
+    await vi.waitFor(() => {
+      expect(apiMock).toHaveBeenCalledWith(
+        "/learning/courses/course-1/select",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            revisionId: "revision-2",
+            operationId: "123e4567-e89b-42d3-a456-426614174000",
+          }),
+        },
+      );
+    });
+    await vi.waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Resume lesson/u }),
+      ).toBeEnabled();
+    });
+  });
+
   it("shows an actionable empty state without an active Course", async () => {
     apiMock.mockImplementation((path: string) =>
       Promise.resolve(
-        path === "/settings" ? mockSettings() : { curriculum: null },
+        path === "/settings"
+          ? mockSettings()
+          : { courseContext: null, curriculum: null },
       ),
     );
     renderWithQuery(<HomeClient />);

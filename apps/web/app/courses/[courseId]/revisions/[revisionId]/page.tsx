@@ -11,6 +11,10 @@ export default async function CourseRevisionPage({
   return (
     <HomeClient
       pathEndpoint={`/learning/courses/${apiCourseId}/revisions/${apiRevisionId}/path`}
+      selectionTarget={{
+        courseId: decodeURIComponent(courseId),
+        revisionId: decodeURIComponent(revisionId),
+      }}
     />
   );
 }

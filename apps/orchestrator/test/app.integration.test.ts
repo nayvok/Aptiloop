@@ -228,14 +228,13 @@ describe("orchestrator vertical flow", () => {
     expect(existsSync(`${externalDatabase}-shm`)).toBe(false);
   });
 
-  it("serves a seeded dashboard and creates a resumable v2 session", async () => {
+  it("retires the legacy dashboard and creates a resumable v2 session", async () => {
     const { app } = runtime();
     const dashboard = await request(app, "/api/dashboard");
-    expect(dashboard.status).toBe(200);
-    const dashboardBody = z
-      .object({ week: z.object({ days: z.array(z.unknown()) }) })
-      .parse(await dashboard.json());
-    expect(dashboardBody.week.days).toHaveLength(7);
+    expect(dashboard.status).toBe(410);
+    expect(await dashboard.json()).toEqual({
+      error: "Legacy dashboard retired; use /api/home and /api/courses",
+    });
 
     const learningPath = z
       .object({

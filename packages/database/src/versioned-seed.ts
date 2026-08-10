@@ -525,7 +525,7 @@ export function seedVersionedCurriculum(
           activeCurriculumVersion,
         ]
       : [source];
-  return sources.reduce<VersionedSeedResult>(
+  const result = sources.reduce<VersionedSeedResult>(
     (total, candidate) => {
       const seeded = seedSingleVersion(connection, candidate);
       return {
@@ -543,4 +543,44 @@ export function seedVersionedCurriculum(
       versionedUnits: 0,
     },
   );
+  const hasLearnerCourseStates = Boolean(
+    connection.sqlite
+      .prepare(
+        `SELECT 1 FROM sqlite_schema
+         WHERE type = 'table' AND name = 'learner_course_states'`,
+      )
+      .get(),
+  );
+  if (!hasLearnerCourseStates) return result;
+  for (const courseId of new Set(
+    sources.map((candidate) => candidate.curriculumId),
+  )) {
+    const now = Math.max(
+      ...sources
+        .filter((candidate) => candidate.curriculumId === courseId)
+        .map((candidate) =>
+          Date.parse(candidate.publishedAt ?? candidate.createdAt),
+        ),
+    );
+    connection.sqlite
+      .prepare(
+        `INSERT INTO learner_course_states (
+           course_id, active_revision_id, current_learning_session_id,
+           is_selected, created_at, updated_at
+         )
+         SELECT course.id, course.active_revision_id, NULL,
+                CASE WHEN EXISTS (
+                  SELECT 1 FROM learner_course_states WHERE is_selected = 1
+                ) THEN 0 ELSE 1 END,
+                ?, ?
+         FROM courses course
+         JOIN course_revisions revision
+           ON revision.course_id = course.id
+          AND revision.id = course.active_revision_id
+         WHERE course.id = ? AND revision.status = 'published'
+         ON CONFLICT(course_id) DO NOTHING`,
+      )
+      .run(now, now, courseId);
+  }
+  return result;
 }

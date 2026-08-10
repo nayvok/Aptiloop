@@ -753,6 +753,7 @@ describe("restart-safe interview v2", () => {
       topics: ["closures"],
       difficulty: "interview-ready",
       questionCount: 3,
+      learningSessionId: "session-interview-1",
     });
     expect(started.status).toBe(201);
     const { id } = (await started.json()) as { id: string };

@@ -138,6 +138,14 @@ describe("Course Pack HTTP lifecycle", () => {
         curriculum: { weeks: Array<{ days: Array<{ id: string }> }> };
       }
     ).curriculum.weeks[0]?.days[0]?.id;
+    const selected = await app.request(
+      `/api/learning/courses/${encodeURIComponent(pack.course.courseKey)}/select`,
+      jsonRequest({
+        revisionId: pack.revision.revisionKey,
+        operationId: "select-installed-pack",
+      }),
+    );
+    expect(selected.status).toBe(200);
     expect(lessonId).toBeTypeOf("string");
     const started = await app.request(
       "/api/learning/sessions/v2",

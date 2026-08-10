@@ -21,6 +21,7 @@ export const InterviewSetupRequestSchema = z
     topics: z.array(TopicSchema).min(1).max(12),
     difficulty: DifficultySchema,
     questionCount: z.number().int().min(1).max(12),
+    learningSessionId: z.string().trim().min(1).optional(),
     disclosureOperationId: OperationIdSchema.optional(),
   })
   .strict();
@@ -42,6 +43,7 @@ const StoredSetupSchema = z.object({
   topics: z.array(TopicSchema).min(1).max(12),
   difficulty: DifficultySchema,
   questionCount: z.number().int().min(1).max(12),
+  learningSessionId: z.string().trim().min(1).optional(),
   conversationId: z.string().min(1),
 });
 
@@ -181,7 +183,7 @@ export function registerInterviewV2Routes(
         );
       }
 
-      const learningSessionId = findCurrentLearningSessionId(state);
+      const learningSessionId = body.learningSessionId ?? null;
       if (learningSessionId) {
         assertCourseScopedSessionSideEffectAllowed(
           state.connection,
@@ -997,25 +999,6 @@ async function readStoredInterviewerSelection(
   return selection;
 }
 
-function findCurrentLearningSessionId(state: InterviewV2State): string | null {
-  const row = state.connection.sqlite
-    .prepare(
-      `SELECT session.id
-       FROM learner_state learner
-       JOIN learning_sessions session
-         ON session.id = learner.current_learning_session_id
-       JOIN session_snapshots snapshot ON snapshot.session_id = session.id
-       WHERE learner.id = 'default'
-         AND session.status = 'active'
-         AND session.curriculum_day_v2_id IS NOT NULL
-         AND snapshot.schema_version >= 2
-         AND snapshot.curriculum_version_id != 'legacy-v1'
-         AND session.curriculum_day_v2_id = snapshot.curriculum_day_id`,
-    )
-    .get() as { id: string } | undefined;
-  return row?.id ?? null;
-}
-
 function assertSameSetup(
   stored: StoredState["setup"],
   request: z.infer<typeof InterviewSetupRequestSchema>,
@@ -1023,6 +1006,7 @@ function assertSameSetup(
   if (
     stored.difficulty !== request.difficulty ||
     stored.questionCount !== request.questionCount ||
+    stored.learningSessionId !== request.learningSessionId ||
     JSON.stringify(stored.topics) !== JSON.stringify(request.topics)
   ) {
     throw new Error(
