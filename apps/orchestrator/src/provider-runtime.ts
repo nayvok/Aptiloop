@@ -61,7 +61,7 @@ const DEFAULT_BUDGETS: Readonly<Record<AptiloopAiRole, RoleBudgets>> = {
 };
 
 const TOOL_POLICY_BY_ROLE: Readonly<Record<AptiloopAiRole, string>> = {
-  "course-designer": "apt.role.course-designer.v1",
+  "course-designer": "apt.role.course-designer.v2",
   tutor: "apt.role.tutor.v1",
   evaluator: "apt.role.evaluator.v1",
   reviewer: "apt.role.reviewer.v1",

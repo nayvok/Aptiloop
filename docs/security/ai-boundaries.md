@@ -1,6 +1,6 @@
 # AI Runtime and Tool Boundaries
 
-**Document status:** Approved Core Alpha target with a partial evidenced **Implemented baseline**. M1 still blocks every external legacy learning role and permits deterministic Mock only. The M6 foundation now supplies the constrained Pi adapter, Provider Hub resolution, finite Aptiloop role/tool policies, strict tool input/output validation, immutable disclosure decisions, and minimized provider-turn provenance; the legacy learning route, disclosure UI, context builders, cumulative budgets, authenticated provider smoke, and final role/tool adversarial matrix are not yet migrated or claimed complete.
+**Document status:** Approved Core Alpha target with an evidenced **Implemented baseline** through M10. M6 supplies constrained Pi adapters, Provider Hub resolution, active role caller cutover, finite Aptiloop role/tool policies, strict tool input/output validation, exact disclosure, cumulative budgets, adversarial coverage, and minimized provider provenance. M10 adds the persisted Course Designer workflow, approved-source projection, strict typed proposal/diff validation, immutable attribution, and separate application/manual-publication gates.
 
 ## 1. Ownership boundary
 
@@ -8,7 +8,7 @@ Aptiloop owns Course/learner/session identity, roles, prompts, authorization, ty
 
 Course Designer, Tutor, Evaluator, and Reviewer are Aptiloop roles; they are not Pi permission classes. The deterministic Learning Kernel alone owns progression, evidence acceptance, adaptation, and mastery. AI may propose content or return bounded analysis, but it cannot publish a revision, apply a patch, execute a command, write mastery, or decide that evidence exists.
 
-**Approved Core Alpha target:** no AI receives arbitrary filesystem, shell, process, network, HTTP, edit, patch, plugin, secret, provider-RPC, or database tools. Every effect is an Aptiloop-owned typed tool with strict input/output schema, per-role allowlist, server-side authorization, bounded result, audit metadata, and deterministic application semantics.
+**Implemented baseline:** no active Aptiloop AI role receives arbitrary filesystem, shell, process, network, HTTP, edit, patch, plugin, secret, provider-RPC, or database tools. Every exposed effect is an Aptiloop-owned typed tool with strict input/output schema, per-role allowlist, server-side scope checks, bounded result, audit metadata, and non-authoritative proposal/result semantics.
 
 Reviewer is evidence-only: it receives only the bounded app-built review capsule, has no local filesystem/general tools or patch/apply authority, and returns typed advice/evidence without mutating learner work.
 
@@ -40,17 +40,17 @@ Pi is MIT-licensed at the researched revision; project licensing still requires 
 | Arbitrary filesystem/shell/network/edit/provider tool | Denied                                                      | Denied          | Denied          | Denied          |
 | Invoke a trusted check                                | Denied directly; application may dispatch after user action | Denied directly | Denied directly | Denied directly |
 
-These domain tool names are now the closed implemented baseline registry in `packages/shared/src/provider-hub.ts` and `packages/agent-core/src/typed-tool-host.ts`; role-specific service handlers and full orchestrator cutover remain M6 work.
+These domain tool names are the closed implemented registry in `packages/shared/src/provider-hub.ts` and `packages/agent-core/src/typed-tool-host.ts`. Active M6 role handlers and the M10 Course Designer resolve through the same Provider Hub boundary; Course Designer handlers re-resolve the workflow Draft and return only bounded Draft/source/proposal data.
 
 ## 4. Provider resolution and Mock policy
 
-**Approved Core Alpha target:** provider and model resolution is server-owned, explicit, and role-scoped. A request may not bypass policy with a browser-supplied provider/model unless the server validates it against the same approved profile. Authentication failure, unavailable model, policy denial, and transport failure remain explicit terminal states.
+**Implemented baseline:** provider and model resolution is server-owned, explicit, and role-scoped. Browser bodies cannot select a provider/model outside the persisted RoleProfile. Authentication failure, unavailable model, policy denial, AI Off, and transport failure remain explicit terminal states.
 
 There is no silent real-provider-to-Mock fallback. Mock is permitted only for tests, CI, and explicit development selection. It is not production content/runtime evidence and cannot make Settings display a real provider as healthy.
 
 Private data is sent to a real provider only after a separate explicit user action that identifies provider, data classes, scope, and purpose. General consent to “use AI” is not consent to upload private sources, learner history, code, paths, or credentials.
 
-**Implemented baseline:** the orchestrator owns a fixed Mock-only learning profile for Teacher, Reviewer, Interviewer, Curator, and Codex Expert. Browser bodies cannot select provider/model, real-provider failure cannot substitute Mock, and `npm start` launches no sidecar. The Codex/OpenCode adapters remain readable legacy boundaries for later migration but are not learning capabilities.
+**Implemented baseline:** active learning and Course Designer roles resolve exact persisted connection/model profiles. Browser bodies cannot override provider/model, real-provider failure cannot substitute Mock, and `npm start` launches no sidecar. Mock is available only in explicit test/development composition; Codex/OpenCode legacy adapters remain compatibility boundaries rather than alternative fallback routes.
 
 ## 5. Control records
 

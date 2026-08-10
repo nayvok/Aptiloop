@@ -204,9 +204,10 @@ describe("AptiloopTypedToolHost", () => {
   it.each([
     [
       "course-designer",
-      "apt.role.course-designer.v1",
+      "apt.role.course-designer.v2",
       [
         "course.readDraftSlice",
+        "course.readApprovedSources",
         "course.proposeDraftPatch",
         "knowledge.readCapsule",
       ],

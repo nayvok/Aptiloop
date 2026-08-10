@@ -9,7 +9,13 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
-import { AiDisclosureSchema, CourseDraftProposalSchema } from "@dlh/shared";
+import {
+  AiDisclosureSchema,
+  CourseDesignerSourceSchema,
+  CourseDesignerWorkflowSchema,
+  CourseDraftProposalDiffSchema,
+  CourseDraftProposalSchema,
+} from "@dlh/shared";
 import { z } from "zod";
 
 import { Badge } from "@/components/ui/badge";
@@ -211,6 +217,43 @@ const changeReviewResponseSchema = z
       .strict(),
   })
   .strict();
+const proposalAttributionSchema = z
+  .object({
+    workflowId: idSchema,
+    connectionId: idSchema,
+    providerType: z.string().min(1),
+    modelId: z.string().min(1),
+    promptTemplateId: idSchema,
+    promptTemplateVersion: z.string().regex(/^v\d+\.\d+\.\d+$/u),
+    disclosureOperationId: idSchema.nullable(),
+    diffs: z.array(CourseDraftProposalDiffSchema),
+    provenance: z
+      .object({
+        sourceIds: z.array(idSchema),
+        sources: z.array(CourseDesignerSourceSchema),
+        authoringRequestOperationId: idSchema,
+        providerOperationId: idSchema,
+      })
+      .strict(),
+    validation: z
+      .object({
+        valid: z.boolean(),
+        errors: z.number().int().nonnegative(),
+        warnings: z.number().int().nonnegative(),
+        diagnostics: z.array(
+          z
+            .object({
+              code: z.string().min(1),
+              severity: z.enum(["error", "warning"]),
+              targetStableId: idSchema,
+              message: z.string().min(1),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+  })
+  .strict();
 const courseProposalRecordSchema = z
   .object({
     id: idSchema,
@@ -223,13 +266,23 @@ const courseProposalRecordSchema = z
     providerOperationId: idSchema,
     createdAt: z.number().int().nonnegative(),
     reviewedAt: z.number().int().nonnegative().nullable(),
+    attribution: proposalAttributionSchema.nullable(),
   })
   .strict();
 const courseProposalResponseSchema = z
-  .object({ proposal: courseProposalRecordSchema })
+  .object({
+    proposal: courseProposalRecordSchema,
+    workflow: CourseDesignerWorkflowSchema.optional(),
+  })
   .strict();
 const courseProposalListSchema = z
   .object({ proposals: z.array(courseProposalRecordSchema) })
+  .strict();
+const courseDesignerWorkflowResponseSchema = z
+  .object({ workflow: CourseDesignerWorkflowSchema })
+  .strict();
+const courseDesignerWorkflowListSchema = z
+  .object({ workflows: z.array(CourseDesignerWorkflowSchema) })
   .strict();
 const disclosurePreparationSchema = z.discriminatedUnion("required", [
   z.object({ required: z.literal(false) }).strict(),
@@ -1477,6 +1530,25 @@ function UnitForm({
   );
 }
 
+function designerLines(value: FormDataEntryValue | null): string[] {
+  return String(value ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function designerSources(lines: readonly string[]) {
+  return lines.map((locator, index) => ({
+    id: `source:${index + 1}`,
+    title: locator.slice(0, 500),
+    kind: /^https?:\/\//u.test(locator)
+      ? ("url-reference" as const)
+      : ("provided-text" as const),
+    locator,
+    approved: true as const,
+  }));
+}
+
 function CourseDesignerPanel({
   graph,
   mutate,
@@ -1488,14 +1560,27 @@ function CourseDesignerPanel({
 }) {
   const { locale, t } = useI18n();
   const queryClient = useQueryClient();
-  const [prompt, setPrompt] = useState("");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [diagnosticAnswers, setDiagnosticAnswers] = useState<
+    Record<string, string>
+  >({});
+  const [revisionRequest, setRevisionRequest] = useState("");
   const [pendingDisclosure, setPendingDisclosure] = useState<{
     authoringOperationId: string;
-    prompt: string;
+    workflowId: string;
     disclosure: z.infer<typeof AiDisclosureSchema>;
   } | null>(null);
+  const workflows = useQuery({
+    queryKey: ["curriculum-editor", "designer-workflows", graph.version.id],
+    enabled: graph.version.status === "draft",
+    queryFn: () =>
+      checkedApi(
+        `/curriculum-editor/versions/${graph.version.id}/designer/workflows`,
+        courseDesignerWorkflowListSchema,
+        t,
+      ),
+  });
   const proposals = useQuery({
     queryKey: ["curriculum-editor", "designer-proposals", graph.version.id],
     enabled: graph.version.status === "draft",
@@ -1506,63 +1591,92 @@ function CourseDesignerPanel({
         t,
       ),
   });
+  const activeWorkflow = workflows.data?.workflows[0] ?? null;
 
   if (graph.version.status !== "draft") return null;
 
+  const refreshDesigner = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: ["curriculum-editor", "designer-workflows", graph.version.id],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["curriculum-editor", "designer-proposals", graph.version.id],
+      }),
+    ]);
+  };
+
+  const advance = async (
+    action:
+      | "submit-request"
+      | "complete-discovery"
+      | "answer-diagnostic"
+      | "skip-diagnostic"
+      | "confirm-proposal"
+      | "reject-proposal"
+      | "request-revision",
+    extra: Record<string, unknown> = {},
+  ) => {
+    if (!activeWorkflow) return;
+    setError(null);
+    try {
+      await mutate(
+        `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/advance`,
+        { method: "POST", body: JSON.stringify({ action, ...extra }) },
+        courseDesignerWorkflowResponseSchema,
+      );
+    } catch (cause) {
+      setError(errorMessage(cause, t));
+    }
+  };
+
   const generate = async (
+    workflowId: string,
     authoringOperationId: string,
-    requestedPrompt: string,
     disclosureOperationId?: string,
   ) => {
     await checkedApi(
-      `/curriculum-editor/versions/${graph.version.id}/designer/generate`,
+      `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(workflowId)}/generate`,
       courseProposalResponseSchema,
       t,
       {
         method: "POST",
         body: JSON.stringify({
           operationId: authoringOperationId,
-          prompt: requestedPrompt,
           ...(disclosureOperationId ? { disclosureOperationId } : {}),
         }),
       },
     );
-    await queryClient.invalidateQueries({
-      queryKey: ["curriculum-editor", "designer-proposals", graph.version.id],
-    });
+    await refreshDesigner();
   };
 
   const requestProposal = async () => {
-    const requestedPrompt = prompt.trim();
-    if (!requestedPrompt) return;
+    if (!activeWorkflow) return;
     setWorking(true);
     setError(null);
     const authoringOperationId = operationId();
     try {
       const preparation = await checkedApi(
-        `/curriculum-editor/versions/${graph.version.id}/designer/disclosures`,
+        `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/disclosures`,
         disclosurePreparationSchema,
         t,
         {
           method: "POST",
-          body: JSON.stringify({
-            operationId: authoringOperationId,
-            prompt: requestedPrompt,
-          }),
+          body: JSON.stringify({ operationId: authoringOperationId }),
         },
       );
       if (preparation.required) {
         setPendingDisclosure({
           authoringOperationId,
-          prompt: requestedPrompt,
+          workflowId: activeWorkflow.id,
           disclosure: preparation.disclosure,
         });
         return;
       }
-      await generate(authoringOperationId, requestedPrompt);
-      setPrompt("");
+      await generate(activeWorkflow.id, authoringOperationId);
     } catch (cause) {
       setError(errorMessage(cause, t));
+      await refreshDesigner();
     } finally {
       setWorking(false);
     }
@@ -1581,21 +1695,24 @@ function CourseDesignerPanel({
       );
       if (approved) {
         await generate(
+          pendingDisclosure.workflowId,
           pendingDisclosure.authoringOperationId,
-          pendingDisclosure.prompt,
           pendingDisclosure.disclosure.operationId,
         );
-        setPrompt("");
       }
       setPendingDisclosure(null);
     } catch (cause) {
       setError(errorMessage(cause, t));
+      await refreshDesigner();
     } finally {
       setWorking(false);
     }
   };
 
   const proposalRows = proposals.data?.proposals ?? [];
+  const activeProposal = activeWorkflow?.activeProposalId
+    ? proposalRows.find(({ id }) => id === activeWorkflow.activeProposalId)
+    : undefined;
   return (
     <section className={panelClass} aria-labelledby="course-designer-heading">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1610,31 +1727,308 @@ function CourseDesignerPanel({
             {t("authoring.designer.description")}
           </p>
         </div>
-        <Badge variant="outline">{t("authoring.designer.proposalOnly")}</Badge>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">
+            {t("authoring.designer.proposalOnly")}
+          </Badge>
+          {activeWorkflow ? (
+            <Badge variant="secondary">
+              {t(`authoring.designer.state.${activeWorkflow.state}`)}
+            </Badge>
+          ) : null}
+        </div>
       </div>
-      <label className={`${labelClass} mt-5`}>
-        {t("authoring.designer.prompt")}
-        <textarea
-          className={`${fieldClass} min-h-28`}
-          value={prompt}
-          maxLength={50_000}
-          placeholder={t("authoring.designer.promptPlaceholder")}
-          onChange={(event) => setPrompt(event.target.value)}
-        />
-      </label>
-      <div className="mt-3">
-        <Button
-          type="button"
-          disabled={busy || working || !prompt.trim()}
-          onClick={() => void requestProposal()}
+
+      {!activeWorkflow ? (
+        <form
+          className="mt-5 grid gap-4 md:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            const sourceLines = designerLines(form.get("sources"));
+            setError(null);
+            void mutate(
+              `/curriculum-editor/versions/${graph.version.id}/designer/workflows`,
+              {
+                method: "POST",
+                body: JSON.stringify({
+                  request: {
+                    goal: String(form.get("goal") ?? "").trim(),
+                    targetOutcome: String(
+                      form.get("targetOutcome") ?? "",
+                    ).trim(),
+                    currentLevel: String(form.get("currentLevel") ?? "").trim(),
+                    constraints: designerLines(form.get("constraints")),
+                    sources: designerSources(sourceLines),
+                    activityPreferences: designerLines(
+                      form.get("activityPreferences"),
+                    ),
+                    runtimeRequirements: designerLines(
+                      form.get("runtimeRequirements"),
+                    ),
+                  },
+                }),
+              },
+              courseDesignerWorkflowResponseSchema,
+            ).catch((cause) => setError(errorMessage(cause, t)));
+          }}
         >
-          {t(
-            working
-              ? "authoring.designer.generating"
-              : "authoring.designer.generate",
-          )}
-        </Button>
-      </div>
+          <label className={labelClass}>
+            {t("authoring.designer.form.goal")}
+            <textarea
+              className={`${fieldClass} min-h-24`}
+              name="goal"
+              required
+              maxLength={50_000}
+            />
+          </label>
+          <label className={labelClass}>
+            {t("authoring.designer.form.targetOutcome")}
+            <textarea
+              className={`${fieldClass} min-h-24`}
+              name="targetOutcome"
+              required
+              maxLength={50_000}
+            />
+          </label>
+          <label className={labelClass}>
+            {t("authoring.designer.form.currentLevel")}
+            <textarea
+              className={`${fieldClass} min-h-24`}
+              name="currentLevel"
+              required
+              maxLength={50_000}
+            />
+          </label>
+          <label className={labelClass}>
+            {t("authoring.designer.form.constraints")}
+            <textarea
+              className={`${fieldClass} min-h-24`}
+              name="constraints"
+              placeholder={t("authoring.designer.form.onePerLine")}
+            />
+          </label>
+          <label className={labelClass}>
+            {t("authoring.designer.form.sources")}
+            <textarea
+              className={`${fieldClass} min-h-24`}
+              name="sources"
+              placeholder={t("authoring.designer.form.sourcesHint")}
+            />
+          </label>
+          <label className={labelClass}>
+            {t("authoring.designer.form.activities")}
+            <textarea
+              className={`${fieldClass} min-h-24`}
+              name="activityPreferences"
+              placeholder={t("authoring.designer.form.onePerLine")}
+            />
+          </label>
+          <label className={`${labelClass} md:col-span-2`}>
+            {t("authoring.designer.form.runtime")}
+            <textarea
+              className={`${fieldClass} min-h-24`}
+              name="runtimeRequirements"
+              placeholder={t("authoring.designer.form.onePerLine")}
+            />
+          </label>
+          <div className="md:col-span-2">
+            <Button disabled={busy} type="submit">
+              {t("authoring.designer.form.start")}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="mt-5 rounded-lg border border-border bg-background p-4">
+          <p className="font-medium">{activeWorkflow.request.goal}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {activeWorkflow.request.targetOutcome}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {activeWorkflow.state === "DRAFT_REQUEST" ? (
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => void advance("submit-request")}
+              >
+                {t("authoring.designer.action.submitRequest")}
+              </Button>
+            ) : null}
+            {activeWorkflow.state === "DISCOVERY" ? (
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => void advance("complete-discovery")}
+              >
+                {t("authoring.designer.action.completeDiscovery")}
+              </Button>
+            ) : null}
+            {activeWorkflow.state === "CURRICULUM_PROPOSAL" ? (
+              <Button
+                type="button"
+                disabled={busy || working}
+                onClick={() => void requestProposal()}
+              >
+                {t(
+                  working
+                    ? "authoring.designer.generating"
+                    : "authoring.designer.generate",
+                )}
+              </Button>
+            ) : null}
+            {activeWorkflow.state === "FAILED" ? (
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setError(null);
+                  void mutate(
+                    `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/retry`,
+                    { method: "POST", body: JSON.stringify({}) },
+                    courseDesignerWorkflowResponseSchema,
+                  ).catch((cause) => setError(errorMessage(cause, t)));
+                }}
+              >
+                {t("authoring.designer.action.retry")}
+              </Button>
+            ) : null}
+          </div>
+
+          {activeWorkflow.state === "DIAGNOSTIC" ? (
+            <div className="mt-5 grid gap-3">
+              <h4 className="font-medium">
+                {t("authoring.designer.diagnosticTitle")}
+              </h4>
+              {activeWorkflow.diagnostic.questions.map((question) => (
+                <label className={labelClass} key={question.id}>
+                  {question.prompt}
+                  <textarea
+                    className={`${fieldClass} min-h-20`}
+                    value={diagnosticAnswers[question.id] ?? ""}
+                    onChange={(event) =>
+                      setDiagnosticAnswers((current) => ({
+                        ...current,
+                        [question.id]: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              ))}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={
+                    busy ||
+                    activeWorkflow.diagnostic.questions.some(
+                      ({ id }) => !diagnosticAnswers[id]?.trim(),
+                    )
+                  }
+                  onClick={() =>
+                    void advance("answer-diagnostic", {
+                      answers: diagnosticAnswers,
+                    })
+                  }
+                >
+                  {t("authoring.designer.action.answerDiagnostic")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void advance("skip-diagnostic")}
+                >
+                  {t("authoring.designer.action.skipDiagnostic")}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {activeWorkflow.state === "USER_REVIEW" && activeProposal ? (
+            <div className="mt-5 grid gap-3 border-t border-border pt-4">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={
+                    busy ||
+                    activeProposal.attribution?.validation.valid === false
+                  }
+                  onClick={() => void advance("confirm-proposal")}
+                >
+                  {t("authoring.designer.action.confirm")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void advance("reject-proposal")}
+                >
+                  {t("authoring.designer.reject")}
+                </Button>
+              </div>
+              <label className={labelClass}>
+                {t("authoring.designer.revisionLabel")}
+                <textarea
+                  className={`${fieldClass} min-h-20`}
+                  value={revisionRequest}
+                  onChange={(event) => setRevisionRequest(event.target.value)}
+                />
+              </label>
+              <div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy || !revisionRequest.trim()}
+                  onClick={() => {
+                    void advance("request-revision", {
+                      revisionRequest: revisionRequest.trim(),
+                    });
+                    setRevisionRequest("");
+                  }}
+                >
+                  {t("authoring.designer.action.requestRevision")}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {activeWorkflow.state === "COMPILATION" && activeProposal ? (
+            <div className="mt-5 border-t border-border pt-4">
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setError(null);
+                  void mutate(
+                    `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/proposals/${encodeURIComponent(activeProposal.id)}/apply`,
+                    { method: "POST", body: JSON.stringify({}) },
+                    z
+                      .object({
+                        workflow: CourseDesignerWorkflowSchema,
+                        proposal: courseProposalRecordSchema,
+                        curriculum: graphSchema,
+                        validation: validationReportSchema,
+                      })
+                      .strict(),
+                  ).catch((cause) => setError(errorMessage(cause, t)));
+                }}
+              >
+                {t("authoring.designer.apply")}
+              </Button>
+            </div>
+          ) : null}
+
+          {activeWorkflow.state === "VALIDATION" ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              {t("authoring.designer.validationPending")}
+            </p>
+          ) : null}
+          {activeWorkflow.state === "FAILED" ? (
+            <p className="mt-4 text-sm text-destructive" role="alert">
+              {activeWorkflow.failureMessage ?? t("authoring.designer.failed")}
+            </p>
+          ) : null}
+        </div>
+      )}
 
       {pendingDisclosure ? (
         <div
@@ -1677,11 +2071,11 @@ function CourseDesignerPanel({
       ) : null}
 
       <SubmitError message={error} />
-      {proposals.isError ? (
+      {workflows.isError || proposals.isError ? (
         <div className="mt-5">
           <QueryError
             message={t("authoring.designer.proposalsUnavailable")}
-            retry={() => void proposals.refetch()}
+            retry={() => void refreshDesigner()}
           />
         </div>
       ) : proposalRows.length > 0 ? (
@@ -1717,56 +2111,60 @@ function CourseDesignerPanel({
                 </Badge>
               </div>
               <ul className="mt-3 grid gap-2 text-sm">
-                {record.proposal.changes.map((change, index) => (
-                  <li
-                    key={`${record.id}:${index}`}
-                    className="rounded-md border border-border px-3 py-2"
-                  >
-                    <span className="font-medium">
-                      {t(`authoring.designer.change.${change.kind}`)}
-                    </span>{" "}
-                    · {change.title} · <code>{change.stableId}</code>
-                  </li>
-                ))}
+                {record.proposal.changes.map((change, index) => {
+                  const target =
+                    "stableId" in change
+                      ? change.stableId
+                      : change.targetStableId;
+                  const title = "title" in change ? change.title : undefined;
+                  return (
+                    <li
+                      key={`${record.id}:${index}`}
+                      className="rounded-md border border-border px-3 py-2"
+                    >
+                      <span className="font-medium">
+                        {t(`authoring.designer.change.${change.kind}`)}
+                      </span>{" "}
+                      · {title ? `${title} · ` : null}
+                      <code>{target}</code>
+                    </li>
+                  );
+                })}
               </ul>
-              {record.status === "proposed" ? (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={busy || working}
-                    onClick={() => {
-                      setError(null);
-                      void mutate(
-                        `/curriculum-editor/versions/${graph.version.id}/designer/proposals/${encodeURIComponent(record.id)}/apply`,
-                        { method: "POST", body: JSON.stringify({}) },
-                        z
-                          .object({
-                            proposal: courseProposalRecordSchema,
-                            curriculum: graphSchema,
-                          })
-                          .strict(),
-                      ).catch((cause) => setError(errorMessage(cause, t)));
-                    }}
-                  >
-                    {t("authoring.designer.apply")}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={busy || working}
-                    onClick={() => {
-                      setError(null);
-                      void mutate(
-                        `/curriculum-editor/versions/${graph.version.id}/designer/proposals/${encodeURIComponent(record.id)}/reject`,
-                        { method: "POST", body: JSON.stringify({}) },
-                        courseProposalResponseSchema,
-                      ).catch((cause) => setError(errorMessage(cause, t)));
-                    }}
-                  >
-                    {t("authoring.designer.reject")}
-                  </Button>
+              {record.attribution ? (
+                <div className="mt-4 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+                  <p>
+                    {t("authoring.designer.attribution", {
+                      provider: record.attribution.providerType,
+                      model: record.attribution.modelId,
+                      version: record.attribution.promptTemplateVersion,
+                    })}
+                  </p>
+                  <p className="mt-1">
+                    {t("authoring.designer.provenance", {
+                      count:
+                        record.attribution.provenance.sourceIds.length.toLocaleString(
+                          locale,
+                        ),
+                    })}
+                  </p>
+                  <p className="mt-1">
+                    {t(
+                      record.attribution.validation.valid
+                        ? "authoring.designer.validProposal"
+                        : "authoring.designer.invalidProposal",
+                      {
+                        errors:
+                          record.attribution.validation.errors.toLocaleString(
+                            locale,
+                          ),
+                        warnings:
+                          record.attribution.validation.warnings.toLocaleString(
+                            locale,
+                          ),
+                      },
+                    )}
+                  </p>
                 </div>
               ) : null}
             </article>

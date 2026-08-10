@@ -139,10 +139,11 @@ export class AptiloopTypedToolHost {
 
 export const CORE_TOOL_POLICIES = [
   {
-    toolPolicyId: "apt.role.course-designer.v1",
+    toolPolicyId: "apt.role.course-designer.v2",
     role: "course-designer",
     allowedTools: [
       "course.readDraftSlice",
+      "course.readApprovedSources",
       "course.proposeDraftPatch",
       "knowledge.readCapsule",
     ],

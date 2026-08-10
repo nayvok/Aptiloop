@@ -57,10 +57,12 @@ test("hydrates stored light and dark themes without an icon mismatch", async ({
   await expect(
     page.getByRole("heading", { name: "Choose interface language" }),
   ).toBeVisible();
-  await page.getByLabel("Interface language").selectOption("ru-RU");
+  await page
+    .getByLabel("Interface language", { exact: true })
+    .selectOption("ru-RU");
   await page.getByRole("button", { name: "Использовать этот язык" }).click();
   await expect(
-    page.getByRole("button", { name: "Включить системную тему" }),
+    page.getByRole("button", { name: "Включить тему: системная" }),
   ).toBeVisible();
   expect(hydrationErrors).toEqual([]);
 });
@@ -77,27 +79,27 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.getByText("0 из 81 шагов пройдено")).toBeVisible();
-  await page.getByRole("button", { name: "Начать обучение" }).click();
+  await expect(page.getByText("Активностей: 0 из 5")).toBeVisible();
+  await page.getByRole("button", { name: "Начать занятие" }).click();
   await expect(page).toHaveURL(/\/session\?id=/u);
   const sessionId = new URL(page.url()).searchParams.get("id");
   if (!sessionId) throw new Error("Session ID is missing from the guided flow");
 
-  // Активный unit в фокусе; план дня открывается в drawer.
-  await expect(page.getByRole("button", { name: "План дня" })).toBeVisible();
-  await page.getByRole("button", { name: "План дня" }).click();
-  await expect(page.getByText("Учебные блоки")).toBeVisible();
+  // The active Activity stays in focus; lesson context opens in a drawer.
+  await expect(page.getByRole("button", { name: "План урока" })).toBeVisible();
+  await page.getByRole("button", { name: "План урока" }).click();
+  await expect(page.getByText("Этапы обучения")).toBeVisible();
   await expect(page.getByText("Темы", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Ожидаемые результаты", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("Вне дня", { exact: true })).toBeVisible();
+  await expect(page.getByText("Вне занятия", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Закрыть" }).click();
 
   await startUnit(page);
   await expect(page.getByText("Сегодня разберём")).toBeVisible();
-  await expect(page.getByText("После занятия сможешь")).toBeVisible();
-  await expect(page.getByText("Уровень")).toBeVisible();
+  await expect(page.getByText("После занятия сможете")).toBeVisible();
+  await expect(page.getByText("Глубина")).toBeVisible();
   await page.getByRole("button", { name: "Перейти к изучению" }).click();
 
   for (const [note, checklistCount] of [
@@ -119,11 +121,9 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
     await finishStudy.click();
   }
 
-  // Переход между блоками: Изучение завершён → Проверка понимания.
-  await expect(page.getByText("Блок 1 из 3 завершён")).toBeVisible();
-  await expect(
-    page.getByText(/Переходим к блоку «Проверка понимания»/u),
-  ).toBeVisible();
+  // Phase transition: Understand completed → Demonstrate.
+  await expect(page.getByText("Этап 1 из 3 завершён")).toBeVisible();
+  await expect(page.getByText("Далее: Подтвердить")).toBeVisible();
   await page.getByRole("button", { name: "Продолжить сейчас" }).click();
 
   const recallAnswers = [
@@ -131,9 +131,11 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
     "null задан явно, undefined означает отсутствие значения, а отсутствующее свойство проверяется через hasOwn или оператор in.",
     "Spread копирует только внешний уровень; structuredClone не подходит для функций и некоторых специальных значений.",
   ];
-  const recallTextareas = page.locator(
-    '[data-slot="unit-shell-content"] textarea',
-  );
+  const recallTextareas = page
+    .getByRole("region", {
+      name: "Воспроизведение по памяти без подсказок",
+    })
+    .getByRole("textbox");
   await expect(recallTextareas).toHaveCount(recallAnswers.length);
   for (const [index, answer] of recallAnswers.entries()) {
     await recallTextareas.nth(index).fill(answer);
@@ -188,9 +190,9 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   await page.getByRole("button", { name: "Сохранить разбор" }).click();
   await page.getByRole("button", { name: "Завершить чтение кода" }).click();
 
-  // Переход между блоками: Проверка понимания завершена → Практика.
-  await expect(page.getByText("Блок 2 из 3 завершён")).toBeVisible();
-  await expect(page.getByText(/Переходим к блоку «Практика»/u)).toBeVisible();
+  // Phase transition: Demonstrate completed → Practice and review.
+  await expect(page.getByText("Этап 2 из 3 завершён")).toBeVisible();
+  await expect(page.getByText("Далее: Практика и повторение")).toBeVisible();
   await page.getByRole("button", { name: "Продолжить сейчас" }).click();
   await page.getByRole("button", { name: "Открыть практику" }).click();
   await expect(page).toHaveURL(/\/exercise\?sessionId=/u);
@@ -268,14 +270,17 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   await startUnit(page);
   await page.getByRole("button", { name: "Сформировать итог" }).click();
   await expect(
-    page.getByRole("button", { name: "Завершить день" }),
+    page.getByRole("button", { name: "Завершить урок" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Завершить день" }).click();
-  await expect(page.getByText("Шаг завершён и сохранён")).toBeVisible();
+  await page.getByRole("button", { name: "Завершить урок" }).click();
+  await expect(page.getByText("Урок завершён")).toBeVisible();
 
-  await page.getByRole("link", { name: "Карта знаний" }).click();
-  await expect(page.getByText("primitive values")).toBeVisible();
-  await page.getByRole("link", { name: "Ошибки" }).click();
+  await page.getByRole("link", { name: "Навыки" }).click();
+  await expect(
+    page.getByRole("rowheader", { name: /primitive values/u }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Повторение" }).click();
+  await page.getByRole("link", { name: "Исправления" }).click();
   await expect(
     page.getByText("В квизе выбран неверный или неполный ответ."),
   ).toBeVisible();
@@ -286,10 +291,10 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
 
   await page.goto("/");
   await expect(
-    page.getByText(/День 2 · Scope, функции и замыкания/u),
+    page.getByText(/Урок 2 · Scope, функции и замыкания/u),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Начать обучение" }),
+    page.getByRole("button", { name: "Начать занятие" }),
   ).toBeVisible();
 });
 
@@ -328,6 +333,12 @@ test("publishes a curriculum graph and keeps an active session on its original r
     .getByRole("button", { name: "Поднять юнит Второй E2E unit" })
     .click();
 
+  await page.getByRole("button", { name: "Запустить проверку" }).click();
+  await expect(page.getByText("Проверка пройдена")).toBeVisible();
+  await page.getByRole("button", { name: "Открыть предпросмотр" }).click();
+  await expect(page.getByText("Дней: 1")).toBeVisible();
+  await page.getByRole("button", { name: "Проверить изменения" }).click();
+  await expect(page.getByText(/Добавлено: \d+/u)).toBeVisible();
   const publish = page.getByRole("button", {
     name: "Опубликовать неизменяемую ревизию",
   });
@@ -336,15 +347,36 @@ test("publishes a curriculum graph and keeps an active session on its original r
     .check();
   await publish.click();
   await expect(
-    page.getByText("Опубликована · read-only").first(),
+    page.getByText("Опубликована · только чтение").first(),
   ).toBeVisible();
 
-  await page.goto("/");
+  const versionsResponse = await request.get(
+    `${orchestratorOrigin}/api/curriculum-editor/versions`,
+    { headers: { "X-DLH-Client": "web", Origin: webOrigin } },
+  );
+  expect(versionsResponse.ok()).toBe(true);
+  const versionsBody = (await versionsResponse.json()) as {
+    versions: Array<{
+      id: string;
+      curriculumId: string;
+      status: "draft" | "published" | "archived";
+    }>;
+  };
+  const publishedVersion = versionsBody.versions.find(
+    (version) =>
+      version.curriculumId === "e2e-curriculum" &&
+      version.status === "published",
+  );
+  if (!publishedVersion) throw new Error("Published E2E revision is missing");
+
+  await page.goto(
+    `/courses/e2e-curriculum/revisions/${encodeURIComponent(publishedVersion.id)}`,
+  );
   await expect(
     page.getByRole("heading", { name: "E2E Curriculum", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText(/День 1 · E2E Day/u)).toBeVisible();
-  await page.getByRole("button", { name: "Начать обучение" }).click();
+  await expect(page.getByText(/Урок 1 · E2E Day/u)).toBeVisible();
+  await page.getByRole("button", { name: "Начать занятие" }).click();
   await expect(page).toHaveURL(/\/session\?id=/u);
 
   const currentBefore = await currentLearningSession(request);
@@ -355,7 +387,7 @@ test("publishes a curriculum graph and keeps an active session on its original r
   await page.getByRole("button", { name: "Клонировать в черновик" }).click();
   await expect(
     page.getByRole("heading", {
-      name: "E2E Revision — новая редакция",
+      name: "E2E Revision — new edition",
       exact: true,
     }),
   ).toBeVisible();
@@ -375,7 +407,7 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
   await expect(
     page.getByRole("radio", { name: /Только изученные/u }),
   ).toBeChecked();
-  await expect(page.getByText(/Пока нет изученных тем/u)).toBeVisible();
+  await expect(page.getByText("Темы для интервью")).toBeVisible();
   await page.getByRole("radio", { name: /Выбрать вручную/u }).check();
   await page
     .getByRole("textbox", { name: "Темы через запятую" })
@@ -402,11 +434,11 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
   await page.getByRole("button", { name: "Отправить ответ" }).click();
   await page.getByRole("button", { name: "Завершить и открыть отчёт" }).click();
   await expect(page.getByText("Отчёт по интервью")).toBeVisible();
-  await expect(page.getByText("100%")).toBeVisible();
+  await expect(page.getByText("100 %", { exact: true })).toBeVisible();
 
   await page.reload();
   await expect(page.getByText("Отчёт по интервью")).toBeVisible();
-  await expect(page.getByText("100%")).toBeVisible();
+  await expect(page.getByText("100 %", { exact: true })).toBeVisible();
 
   await page.goto("/interview?sessionId=demo-session");
   await page.getByRole("button", { name: "Вернуться к занятию" }).click();
@@ -414,7 +446,7 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
 });
 
 async function startUnit(page: Page): Promise<void> {
-  const button = page.getByRole("button", { name: "Начать шаг" });
+  const button = page.getByRole("button", { name: "Начать активность" });
   await expect(button).toBeVisible();
   await button.click();
   await expect(button).toBeHidden();

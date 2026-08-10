@@ -2,13 +2,13 @@
 
 ## Document status
 
-**Approved Core Alpha target** overall. The external Course Pack V1 path, version-matched Authoring Kit, and M9 Adaptive Studio manual editorial workflow are an **Implemented baseline**; guided AI proposals and production Course publication are not claimed implemented.
+**Approved Core Alpha target** overall. The external Course Pack V1 path, version-matched Authoring Kit, M9 Adaptive Studio manual editorial workflow, and M10 guided Course Designer are an **Implemented baseline**; production Course publication is not claimed implemented.
 
 ## Implemented baseline
 
-The current Dev Learning Harness has an AI-Off Adaptive Studio workflow backed by versioned curriculum tables. It can create or clone a draft revision, edit/reorder week/day/unit records through typed forms, validate, Preview, review changes, and explicitly publish an immutable revision with a content hash. M2 adds target Course/revision/section/lesson/Activity, personal Adaptation Branch, Source Snapshot, and Knowledge Capsule contracts and persistence. M3 adds the strict external Course Pack V1 validator, Preview/install/open-as-draft/export/uninstall lifecycle, and version-matched Authoring Kit. M5 validates runtime requirements against the finite app-owned Environment Pack/check registry. M9 adds upstream/personal revision comparison, isolated branch creation and personal Publish, deterministic conflict/impact reporting, and explicit upstream integration into a new personal Draft.
+The current Dev Learning Harness has an Adaptive Studio workflow backed by versioned curriculum tables. It can create or clone a draft revision, edit/reorder week/day/unit records through typed forms, validate, Preview, review changes, and explicitly publish an immutable revision with a content hash. The optional M10 Course Designer persists its finite workflow and diagnostics, reads only the selected Draft and explicitly approved sources, returns strict stable-ID changes with immutable provider/model/prompt/source attribution and structured diffs, and requires explicit revision/reject/confirm/Apply actions before deterministic validation. Apply mutates only the Draft; only the independent manual Publish route can create an immutable revision. M2 adds target Course/revision/section/lesson/Activity, personal Adaptation Branch, Source Snapshot, and Knowledge Capsule contracts and persistence. M3 adds the strict external Course Pack V1 validator, canonicalizer, local lifecycle, and version-matched Authoring Kit. M9 keeps source and personal revisions separate and integrates upstream changes only into a new personal Draft.
 
-The active curriculum and Authoring Kit fixture are development content, not production Courses. Source Snapshot/Capsule tables contain no approved production material. Complete production Course locale resources and guided typed AI proposals remain **Approved Core Alpha target** work. Existing hardcoded Russian Course content and retained legacy authoring routes are compatibility surfaces, not evidence that Course localization or the M11 cutover is complete.
+The active curriculum and Authoring Kit fixture are development content, not production Courses. Source Snapshot/Capsule tables contain no approved production material. Complete production Course locale resources remain **Approved Core Alpha target** work. Existing hardcoded Russian Course content and retained legacy authoring routes are compatibility surfaces, not evidence that Course localization or the M11 cutover is complete.
 
 ## Authoring principles
 
@@ -72,7 +72,7 @@ A finite set of typed Activities and explicit prerequisite edges. It has at leas
 
 ### Embedded: Adaptive Studio
 
-**Implemented baseline** for the M9 AI-Off manual editorial and Personal Adaptation workflows; **Approved Core Alpha target** for the guided AI designer and production Course authoring gates.
+**Implemented baseline** for the M9 manual editorial/Personal Adaptation workflows and M10 guided Course Designer; **Approved Core Alpha target** for production Course authoring gates.
 
 Adaptive Studio is 70% editorial workspace and 30% developer instrument. It is not an IDE and must not expose a general terminal.
 
@@ -92,23 +92,23 @@ Published revisions are read-only. Editing begins by cloning to a new Draft or c
 
 #### Guided Course Designer
 
-**Approved Core Alpha target**
+**Implemented baseline** for the persisted M10 workflow against a selected local Draft; production Course content remains an **Approved Core Alpha target**.
 
-`/courses/new` offers two equal-trust paths: **Create manually** and **Describe a learning goal**. Manual creation opens the same typed Draft contract without an AI dependency. The guided Course Designer is optional and uses this restart-safe state machine:
+Adaptive Studio exposes two equal-trust paths on the selected local Draft: the existing structured manual editor and the optional guided Course Designer. The guided path uses this restart-safe state machine:
 
 | State                 | Required behavior                                                                                                                                                                                                                           |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DRAFT_REQUEST`       | Capture a natural-language goal, target outcome, current level, primary Course locale, time/pacing, tools, accessibility needs, and constraints. The UI locale remains independent. No Course exists yet.                                   |
+| `DRAFT_REQUEST`       | Capture a natural-language goal, target outcome, current level, primary Course locale, time/pacing, tools, accessibility needs, and constraints for the selected local Draft. The UI locale remains independent.                            |
 | `DISCOVERY`           | Resolve missing scope through bounded questions; propose candidate sources, skills, activity families, and runtime needs as assumptions for review. External-provider transmission requires the privacy preflight.                          |
 | `DIAGNOSTIC`          | Offer optional bounded questions or practical tasks to calibrate prior knowledge. Skip is always available; diagnostic output is evidence for the proposal, not mastery.                                                                    |
 | `CURRICULUM_PROPOSAL` | Show proposed Course structure, sequencing, prerequisites, Source Snapshot candidates, Knowledge Capsules, activity/evidence contracts, Node/Python needs, trusted check references, estimates, assumptions, and provider/model provenance. |
 | `USER_REVIEW`         | Let the user edit structured fields, request a revision, reject, or explicitly confirm compilation. Confirmation is not Apply, Validate, or Publish.                                                                                        |
-| `COMPILATION`         | Compile the confirmed proposal into the same strict Course Pack/Draft schema used by manual and external authoring. Create only a local Draft with proposal provenance.                                                                     |
+| `COMPILATION`         | Compile the confirmed proposal into the same strict typed Draft contract used by the manual Adaptive Studio editor. Proposal confirmation still does not mutate the Draft.                                                                  |
 | `VALIDATION`          | Run Aptiloop's deterministic whole-Course validators. Errors return to the exact Draft field; model output never overrides a finding.                                                                                                       |
 | `PUBLISHED`           | Enter only after the separate Preview, Change review, and explicit immutable Publish gate succeeds. The designer cannot transition here directly.                                                                                           |
 | `FAILED`              | Preserve user input, prior safe state, operation identity, and exact failure layer; offer Retry, Back, switch provider where explicitly configured, or continue manually. Never select Mock silently.                                       |
 
-Every transition is persisted with a bounded audit record and is idempotent on operation ID. Restart resumes the last committed state. Diagnostic answers, source material, provider responses, and proposal revisions remain distinct from deterministic learner Evidence. AI Off bypasses `DISCOVERY`/`DIAGNOSTIC`/proposal generation and leaves the complete structured manual path available.
+Every transition is persisted with a bounded audit record and is idempotent on operation ID. Restart resumes the last committed state. Diagnostic answers, approved source material, provider responses, and proposal revisions remain distinct from deterministic learner Evidence. AI Off rejects optional proposal generation explicitly and leaves the complete structured manual path available.
 
 ### External: Course Pack
 
@@ -232,7 +232,7 @@ A pack with an unknown or incompatible environment/check ID may be inspected but
 
 ## Optional AI proposals
 
-**Approved Core Alpha target**
+**Implemented baseline** for M10 Draft proposals; production source acquisition and Course approval remain an **Approved Core Alpha target**.
 
 Course Designer may use Pi runtime through narrowly scoped Aptiloop typed tools such as proposing metadata, capsule text, activity fields, graph edges, or translations. Tool inputs/outputs are strict, bounded, and validated.
 
@@ -250,7 +250,7 @@ AI has no filesystem, shell, network, credential, general edit, install, environ
 
 ## Validation
 
-**Implemented baseline for Course Pack V1 validation/install and M9 Adaptive Studio manual validation/publication; Approved Core Alpha target for AI-assisted authoring and production Course approval.**
+**Implemented baseline for Course Pack V1 validation/install, M9 Adaptive Studio manual validation/publication, and M10 deterministic validation after an explicitly applied AI proposal; Approved Core Alpha target for production Course approval.**
 
 Publication and installation require zero errors across:
 
@@ -272,7 +272,7 @@ Warnings may cover optional translation completeness, unavailable optional AI, u
 
 ## Publish, install, and export
 
-**Implemented baseline for external Pack Install/Export and M9 Adaptive Studio manual Publish/clone/personal integration; Approved Core Alpha target for AI-assisted and production publication gates.**
+**Implemented baseline for external Pack Install/Export, M9 Adaptive Studio manual Publish/clone/personal integration, and M10's separate manual Publish after proposal Apply; Approved Core Alpha target for production publication gates.**
 
 - **Publish** converts a local Draft into an immutable revision after Validate, Preview, change review, and explicit confirmation.
 - **Install** atomically records a validated external immutable revision after Preview and explicit confirmation.

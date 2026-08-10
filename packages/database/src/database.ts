@@ -423,6 +423,7 @@ const learningKernelMigrationId = "0012_learning_kernel";
 const executionFabricMigrationId = "0013_execution_fabric";
 const providerHubMigrationId = "0014_provider_hub";
 const adaptiveStudioMigrationId = "0015_adaptive_studio";
+const courseDesignerWorkflowMigrationId = "0016_course_designer_workflow";
 const legacyCompatibleMigrationIds = [
   "0000_initial",
   "0001_versioned_curriculum",
@@ -525,6 +526,15 @@ export const adaptiveStudioMigrationContract: CurrentDatabaseMigrationContract =
     schemaSha256:
       "4bc021f2fa2807738aa429c58d743d9f8cbe441824b8f063dde9e5fc50d0e55f",
   };
+export const courseDesignerWorkflowMigrationContract: CurrentDatabaseMigrationContract =
+  {
+    migrationIds: [
+      ...adaptiveStudioMigrationContract.migrationIds,
+      courseDesignerWorkflowMigrationId,
+    ],
+    schemaSha256:
+      "f23afd4470b6f221273fb15a0f783f08104650cf0fdda728b4f44409e73585aa",
+  };
 const approvedM2SourceMigrationContracts = [
   legacyCompatibleMigrationContract,
   courseFoundationsBaseMigrationContract,
@@ -536,6 +546,7 @@ const approvedM2SourceMigrationContracts = [
   learningKernelMigrationContract,
   executionFabricMigrationContract,
   providerHubMigrationContract,
+  adaptiveStudioMigrationContract,
 ] as const;
 const approvedM2StageContracts: Readonly<
   Record<string, CurrentDatabaseMigrationContract>
@@ -554,6 +565,7 @@ const approvedM2StageContracts: Readonly<
   [executionFabricMigrationId]: executionFabricMigrationContract,
   [providerHubMigrationId]: providerHubMigrationContract,
   [adaptiveStudioMigrationId]: adaptiveStudioMigrationContract,
+  [courseDesignerWorkflowMigrationId]: courseDesignerWorkflowMigrationContract,
 };
 
 const courseFoundationsBackfillMarker = "-- dlh-course-foundations-backfill";

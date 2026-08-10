@@ -63,6 +63,7 @@ describe("SQLite database", () => {
       "0013_execution_fabric",
       "0014_provider_hub",
       "0015_adaptive_studio",
+      "0016_course_designer_workflow",
     ]);
     expect(() =>
       connection.sqlite

@@ -67,14 +67,14 @@ Pi owns model transport, provider auth/stream integration, agent-loop mechanics 
 
 ## Aptiloop roles and typed tools
 
-**Approved Core Alpha target.** Course Designer, Tutor, Evaluator, and Reviewer are Aptiloop-owned roles rather than Pi APIs; each has default-deny tools.
+**Implemented baseline.** Course Designer, Tutor, Evaluator, and Reviewer are Aptiloop-owned roles rather than Pi APIs, each with a default-deny policy. M10 supplies the Course Designer handlers and workflow; the other active role handlers retain their M6 boundaries.
 
-| Role            | Allowed typed tools                                                                         | Explicitly forbidden                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Course Designer | `course.readDraftSlice`, `course.proposeDraftPatch`, `knowledge.readCapsule`                | apply/publish, credentials, arbitrary files/network, commands, plugins                                  |
-| Tutor           | `lesson.readLearnerSafeContext`, `lesson.submitTutorMessage`, `knowledge.readSnapshotSlice` | protected answers before attempt, progress transition, mastery mutation, arbitrary research/files/tools |
-| Evaluator       | `evaluation.readAttemptBundle`, `evaluation.submitTypedResult`                              | learner-state mutation, answer disclosure to Tutor, commands/network/filesystem                         |
-| Reviewer        | `review.readBundle`, `review.submitResult`                                                  | patches/edits/apply, command execution, network, arbitrary repository/workspace reads                   |
+| Role            | Allowed typed tools                                                                                        | Explicitly forbidden                                                                                    |
+| --------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Course Designer | `course.readDraftSlice`, `course.readApprovedSources`, `course.proposeDraftPatch`, `knowledge.readCapsule` | apply/publish, credentials, arbitrary files/network, commands, plugins                                  |
+| Tutor           | `lesson.readLearnerSafeContext`, `lesson.submitTutorMessage`, `knowledge.readSnapshotSlice`                | protected answers before attempt, progress transition, mastery mutation, arbitrary research/files/tools |
+| Evaluator       | `evaluation.readAttemptBundle`, `evaluation.submitTypedResult`                                             | learner-state mutation, answer disclosure to Tutor, commands/network/filesystem                         |
+| Reviewer        | `review.readBundle`, `review.submitResult`                                                                 | patches/edits/apply, command execution, network, arbitrary repository/workspace reads                   |
 
 Tool schemas use stable IDs and bounded fields. Tool execution re-resolves every ID, checks role/session/activity scope and state, validates output, applies byte/event/deadline budgets, and persists only a minimized audit envelope. A typed tool never accepts executable, argv, cwd, environment, raw SQL, arbitrary URL/path, provider credentials, or a requested state transition.
 

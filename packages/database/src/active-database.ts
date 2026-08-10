@@ -12,6 +12,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   assertExactDatabaseMigrationContract,
+  adaptiveStudioMigrationContract,
   courseFoundationsBaseMigrationContract,
   courseFoundationsMigrationContract,
   coursePackMigrationContract,
@@ -540,6 +541,30 @@ export function assertM1DatabaseMigrationAdmission(
       kind: "current",
       contract: currentContract,
       logicalSha256: candidate.health.logicalSha256,
+    };
+  }
+
+  if (
+    allowLegacyCompatibility &&
+    candidate.health.legacyCompatibility.coherent &&
+    matchesMigrationIds(
+      candidate.health.migrations.ids,
+      adaptiveStudioMigrationContract,
+    ) &&
+    candidate.health.schemaSha256 ===
+      adaptiveStudioMigrationContract.schemaSha256 &&
+    hasCurrentDatabaseHealth(candidate.health)
+  ) {
+    const migrationCapability: DatabaseMigrationAdmissionCapability = {
+      kind: "legacy-compatible-noop",
+      contract: adaptiveStudioMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+    };
+    return {
+      kind: "legacy-compatible",
+      contract: adaptiveStudioMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+      migrationCapability,
     };
   }
 

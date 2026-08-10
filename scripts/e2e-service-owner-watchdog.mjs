@@ -26,7 +26,13 @@ const owner = createNextEnvLockOwner(runId, {
   token: requiredEnvironment("E2E_LOCK_TOKEN"),
 });
 
-const failurePolicy = createOwnerWatchdogPolicy();
+// Heartbeat replacement and inspection can be delayed briefly while Next.js
+// compiles on Windows. Keep initial validation fail-closed, but require a
+// sustained three-second loss after startup before killing healthy services.
+const maximumConsecutiveOwnershipFailures = 12;
+const failurePolicy = createOwnerWatchdogPolicy(
+  maximumConsecutiveOwnershipFailures,
+);
 let checking = false;
 let terminating = false;
 

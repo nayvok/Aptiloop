@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "next build --webpack",
-    "dev": "next dev --hostname 127.0.0.1",
+    "dev": "next dev --webpack --hostname 127.0.0.1",
     "lint": "eslint app components lib test --max-warnings=0",
     "start": "next start --hostname 127.0.0.1",
     "test": "vitest run",

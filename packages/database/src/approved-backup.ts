@@ -41,6 +41,7 @@ import {
   type OwnedDatabaseArtifact,
 } from "./backup.js";
 import {
+  adaptiveStudioMigrationContract,
   executionFabricMigrationContract,
   getCurrentDatabaseMigrationContract,
   openDatabase,
@@ -553,6 +554,7 @@ export function verifyApprovedM2MigrationBackup(
       learningKernelMigrationContract,
       executionFabricMigrationContract,
       providerHubMigrationContract,
+      adaptiveStudioMigrationContract,
     ].some((contract) => sameMigrationContract(sourceContract, contract));
   const correctionPending =
     sourceAdmission.kind === "legacy-compatible" &&
@@ -628,6 +630,8 @@ export function verifyApprovedM2MigrationBackup(
                 learningKernelMigrationContract,
                 executionFabricMigrationContract,
                 postMigrationContract,
+                providerHubMigrationContract,
+                adaptiveStudioMigrationContract,
               ]
             : [preMigrationContract];
   const inspectedBackup = inspectApprovedCandidateForContracts(

@@ -220,7 +220,7 @@ interface AuthoringDiagnostic {
   readonly message: string;
 }
 
-interface AuthoringValidationReport {
+export interface AuthoringValidationReport {
   readonly validatorVersion: "m9-v1";
   readonly versionId: string;
   readonly draftHash: string;
@@ -489,7 +489,7 @@ function sha256(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
-function authoringValidationReport(
+export function authoringValidationReport(
   graph: CurriculumVersionGraph,
 ): AuthoringValidationReport {
   const diagnostics: AuthoringDiagnostic[] = [];
@@ -577,6 +577,49 @@ function authoringValidationReport(
     ...reportBody,
     validationHash: sha256(JSON.stringify(reportBody)),
   };
+}
+
+function markDesignerWorkflowsPublished(
+  connection: DatabaseConnection,
+  versionId: string,
+  operationId: string,
+): void {
+  const rows = connection.sqlite
+    .prepare(
+      `SELECT id FROM course_designer_workflows
+       WHERE version_id = ? AND state = 'VALIDATION'`,
+    )
+    .all(versionId) as unknown as Array<{ id: string }>;
+  if (rows.length === 0) return;
+  const now = Date.now();
+  connection.sqlite.exec("BEGIN IMMEDIATE");
+  try {
+    const update = connection.sqlite.prepare(
+      `UPDATE course_designer_workflows
+       SET state = 'PUBLISHED', recovery_state = NULL, updated_at = ?
+       WHERE id = ? AND state = 'VALIDATION'`,
+    );
+    const insert = connection.sqlite.prepare(
+      `INSERT OR IGNORE INTO course_designer_events
+       (workflow_id, operation_id, event_type, from_state, to_state,
+        payload_json, created_at)
+       VALUES (?, ?, 'published', 'VALIDATION', 'PUBLISHED', ?, ?)`,
+    );
+    for (const row of rows) {
+      if (update.run(now, row.id).changes === 1) {
+        insert.run(
+          row.id,
+          `publish:${operationId}`,
+          JSON.stringify({ versionId }),
+          now,
+        );
+      }
+    }
+    connection.sqlite.exec("COMMIT");
+  } catch (error) {
+    connection.sqlite.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function comparableAuthoringEntities(
@@ -960,6 +1003,11 @@ export function registerCurriculumEditorRoutes(
           : isPersonalAdaptation(state.connection, versionId)
             ? await publishPersonalAdaptation(state.connection, versionId)
             : await repository.publishVersion(versionId);
+      markDesignerWorkflowsPublished(
+        state.connection,
+        versionId,
+        input.operationId,
+      );
       return context.json({ version });
     }),
   );

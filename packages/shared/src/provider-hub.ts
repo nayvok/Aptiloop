@@ -27,6 +27,7 @@ export type AptiloopAiRole = z.infer<typeof AptiloopAiRoleSchema>;
 
 export const AptiloopToolNameSchema = z.enum([
   "course.readDraftSlice",
+  "course.readApprovedSources",
   "course.proposeDraftPatch",
   "knowledge.readCapsule",
   "lesson.readLearnerSafeContext",

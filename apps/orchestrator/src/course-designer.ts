@@ -10,15 +10,26 @@ import {
   type CurriculumVersionGraph,
   type DatabaseConnection,
 } from "@dlh/database";
+import { getLatestPrompt } from "@dlh/prompt-library";
 import {
+  CourseDesignerRequestSchema,
+  CourseDesignerWorkflowSchema,
+  CourseDraftProposalDiffSchema,
   CourseDraftProposalSchema,
+  type CourseDesignerDiagnostic,
+  type CourseDesignerRequest,
+  type CourseDesignerWorkflow,
+  type CourseDesignerWorkflowState,
   type CourseDraftProposal,
+  type CourseDraftProposalDiff,
+  type JsonValue,
 } from "@dlh/shared";
 import type { Context, Hono } from "hono";
 import { Type } from "typebox";
 import { z } from "zod";
 
-import { authoringDraftHash } from "./curriculum-editor.js";
+import { authoringDraftHash } from "./authoring-draft-hash.js";
+import { authoringValidationReport } from "./curriculum-editor.js";
 import {
   type ProviderDispatch,
   type ProviderRuntime,
@@ -26,8 +37,16 @@ import {
 } from "./provider-runtime.js";
 
 const idSchema = z.string().trim().min(1).max(200);
+const textSchema = z.string().trim().min(1).max(50_000);
+const emptyDiagnostic: CourseDesignerDiagnostic = {
+  questions: [],
+  answers: {},
+  skipped: false,
+};
 
 type ToolsForRole = NonNullable<PiAgentProviderOptions["toolsForRole"]>;
+
+type ProposalStatus = "proposed" | "applied" | "rejected";
 
 interface ProposalRow {
   id: string;
@@ -36,28 +55,177 @@ interface ProposalRow {
   prompt: string;
   proposal_json: string;
   authoring_operation_id: string;
-  status: "proposed" | "applied" | "rejected";
+  status: ProposalStatus;
   provider_operation_id: string;
   created_at: number;
   reviewed_at: number | null;
 }
 
+interface AttributionRow {
+  proposal_id: string;
+  workflow_id: string;
+  connection_id: string;
+  provider_type: string;
+  model_id: string;
+  prompt_template_id: string;
+  prompt_template_version: string;
+  disclosure_operation_id: string | null;
+  diff_json: string;
+  provenance_json: string;
+  validation_json: string;
+  created_at: number;
+}
+
+interface WorkflowRow {
+  id: string;
+  version_id: string;
+  state: CourseDesignerWorkflowState;
+  recovery_state: Exclude<CourseDesignerWorkflowState, "FAILED"> | null;
+  request_json: string;
+  diagnostic_json: string;
+  revision_requests_json: string;
+  active_proposal_id: string | null;
+  authoring_operation_id: string;
+  failure_code: string | null;
+  failure_message: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
 const toolMetadataSchema = z
   .object({
     versionId: idSchema,
+    workflowId: idSchema,
     draftHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
-    prompt: z.string().trim().min(1).max(50_000),
+    prompt: textSchema,
     authoringOperationId: idSchema,
     providerOperationId: idSchema,
+    approvedSources: CourseDesignerRequestSchema.shape.sources,
   })
-  .passthrough();
+  .strict();
+
+const proposalChangeParameters = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("add-week"),
+      stableId: Type.String(),
+      title: Type.String(),
+      description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      orderIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("update-week"),
+      targetStableId: Type.String(),
+      title: Type.Optional(Type.String()),
+      description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      orderIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("add-day"),
+      parentStableId: Type.String(),
+      stableId: Type.String(),
+      title: Type.String(),
+      description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      goal: Type.String(),
+      estimatedMinutes: Type.Integer({ minimum: 1, maximum: 10_000 }),
+      prerequisites: Type.Optional(Type.Array(Type.String())),
+      expectedOutcomes: Type.Optional(Type.Array(Type.String())),
+      depthLevel: Type.String(),
+      outOfScope: Type.Optional(Type.Array(Type.String())),
+      topics: Type.Optional(Type.Array(Type.String())),
+      orderIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("update-day"),
+      targetStableId: Type.String(),
+      title: Type.Optional(Type.String()),
+      description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      goal: Type.Optional(Type.String()),
+      estimatedMinutes: Type.Optional(
+        Type.Integer({ minimum: 1, maximum: 10_000 }),
+      ),
+      prerequisites: Type.Optional(Type.Array(Type.String())),
+      expectedOutcomes: Type.Optional(Type.Array(Type.String())),
+      depthLevel: Type.Optional(Type.String()),
+      outOfScope: Type.Optional(Type.Array(Type.String())),
+      topics: Type.Optional(Type.Array(Type.String())),
+      orderIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("add-unit"),
+      parentStableId: Type.String(),
+      stableId: Type.String(),
+      type: Type.String(),
+      title: Type.String(),
+      description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      estimatedMinutes: Type.Optional(
+        Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+      ),
+      objectives: Type.Optional(Type.Array(Type.String())),
+      checklist: Type.Optional(Type.Array(Type.Unknown())),
+      sources: Type.Optional(Type.Array(Type.Unknown())),
+      questions: Type.Optional(Type.Array(Type.Unknown())),
+      misconceptions: Type.Optional(Type.Array(Type.String())),
+      referenceAnswer: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      completionCriteria: Type.Array(Type.Unknown(), { minItems: 1 }),
+      unlockRules: Type.Optional(Type.Array(Type.Unknown())),
+      optional: Type.Optional(Type.Boolean()),
+      depthLevel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      payload: Type.Unknown(),
+      orderIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("update-unit"),
+      targetStableId: Type.String(),
+      type: Type.Optional(Type.String()),
+      title: Type.Optional(Type.String()),
+      description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      estimatedMinutes: Type.Optional(
+        Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+      ),
+      objectives: Type.Optional(Type.Array(Type.String())),
+      checklist: Type.Optional(Type.Array(Type.Unknown())),
+      sources: Type.Optional(Type.Array(Type.Unknown())),
+      questions: Type.Optional(Type.Array(Type.Unknown())),
+      misconceptions: Type.Optional(Type.Array(Type.String())),
+      referenceAnswer: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      completionCriteria: Type.Optional(
+        Type.Array(Type.Unknown(), { minItems: 1 }),
+      ),
+      unlockRules: Type.Optional(Type.Array(Type.Unknown())),
+      optional: Type.Optional(Type.Boolean()),
+      depthLevel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      payload: Type.Optional(Type.Unknown()),
+      orderIndex: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 const proposalToolParameters = Type.Object(
   {
     proposal: Type.Object(
       {
-        summary: Type.String({ minLength: 1, maxLength: 10_000 }),
-        changes: Type.Array(Type.Unknown(), { minItems: 1, maxItems: 50 }),
+        summary: Type.String({ minLength: 1, maxLength: 50_000 }),
+        changes: Type.Array(proposalChangeParameters, {
+          minItems: 1,
+          maxItems: 50,
+        }),
       },
       { additionalProperties: false },
     ),
@@ -78,26 +246,74 @@ const readDraftToolParameters = Type.Object(
   },
   { additionalProperties: false },
 );
+const readSourcesToolParameters = Type.Object(
+  { sourceIds: Type.Array(Type.String(), { maxItems: 100 }) },
+  { additionalProperties: false },
+);
 const readDraftToolInputSchema = z
   .object({ section: z.enum(["all", "outline", "activities"]) })
+  .strict();
+const readSourcesToolInputSchema = z
+  .object({ sourceIds: z.array(idSchema).max(100) })
   .strict();
 const proposalToolInputSchema = z
   .object({ proposal: CourseDraftProposalSchema })
   .strict();
 
-function proposalDto(row: ProposalRow) {
+function parseJson(value: string): unknown {
+  return JSON.parse(value) as unknown;
+}
+
+function proposalDto(connection: DatabaseConnection, row: ProposalRow) {
+  const attribution = connection.sqlite
+    .prepare(
+      "SELECT * FROM course_draft_proposal_attribution WHERE proposal_id = ?",
+    )
+    .get(row.id) as AttributionRow | undefined;
   return {
     id: row.id,
     versionId: row.version_id,
     baseDraftHash: row.base_draft_hash,
     prompt: row.prompt,
-    proposal: CourseDraftProposalSchema.parse(JSON.parse(row.proposal_json)),
+    proposal: CourseDraftProposalSchema.parse(parseJson(row.proposal_json)),
     status: row.status,
     authoringOperationId: row.authoring_operation_id,
     providerOperationId: row.provider_operation_id,
     createdAt: row.created_at,
     reviewedAt: row.reviewed_at,
+    attribution: attribution
+      ? {
+          workflowId: attribution.workflow_id,
+          connectionId: attribution.connection_id,
+          providerType: attribution.provider_type,
+          modelId: attribution.model_id,
+          promptTemplateId: attribution.prompt_template_id,
+          promptTemplateVersion: attribution.prompt_template_version,
+          disclosureOperationId: attribution.disclosure_operation_id,
+          diffs: parseJson(attribution.diff_json),
+          provenance: parseJson(attribution.provenance_json),
+          validation: parseJson(attribution.validation_json),
+        }
+      : null,
   };
+}
+
+function workflowDto(row: WorkflowRow): CourseDesignerWorkflow {
+  return CourseDesignerWorkflowSchema.parse({
+    id: row.id,
+    versionId: row.version_id,
+    state: row.state,
+    recoveryState: row.recovery_state,
+    request: parseJson(row.request_json),
+    diagnostic: parseJson(row.diagnostic_json),
+    revisionRequests: parseJson(row.revision_requests_json),
+    activeProposalId: row.active_proposal_id,
+    authoringOperationId: row.authoring_operation_id,
+    failureCode: row.failure_code,
+    failureMessage: row.failure_message,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
 }
 
 function insertProposal(
@@ -222,6 +438,32 @@ export function createCourseDesignerTools(
         },
       },
       {
+        name: "course.readApprovedSources",
+        label: "Read approved Course sources",
+        description:
+          "Read only source references explicitly approved in this authoring request. This tool never fetches a URL or filesystem path.",
+        parameters: readSourcesToolParameters,
+        executionMode: "sequential",
+        execute: async (_toolCallId, parameters, signal) => {
+          signal?.throwIfAborted();
+          const { sourceIds } = readSourcesToolInputSchema.parse(parameters);
+          const byId = new Map(
+            metadata.approvedSources.map((source) => [source.id, source]),
+          );
+          const sources = sourceIds.map((sourceId) => {
+            const source = byId.get(sourceId);
+            if (!source) throw new Error(`Source ${sourceId} is not approved`);
+            return source;
+          });
+          return {
+            content: [
+              { type: "text" as const, text: JSON.stringify({ sources }) },
+            ],
+            details: { workflowId: metadata.workflowId, sourceIds },
+          };
+        },
+      },
+      {
         name: "course.proposeDraftPatch",
         label: "Propose Course draft patch",
         description:
@@ -258,17 +500,45 @@ export interface CourseDesignerState {
   providerRuntime: ProviderRuntime;
 }
 
-const generationSchema = z
+const createWorkflowSchema = z
   .object({
     operationId: idSchema,
-    prompt: z.string().trim().min(1).max(50_000),
-    disclosureOperationId: idSchema.optional(),
+    request: CourseDesignerRequestSchema,
   })
   .strict();
-const disclosureSchema = generationSchema
-  .omit({ disclosureOperationId: true })
+const workflowOperationSchema = z.object({ operationId: idSchema }).strict();
+const generationSchema = workflowOperationSchema
+  .extend({ disclosureOperationId: idSchema.optional() })
   .strict();
-const reviewSchema = z.object({ operationId: idSchema }).strict();
+const advanceSchema = z.discriminatedUnion("action", [
+  workflowOperationSchema
+    .extend({ action: z.literal("submit-request") })
+    .strict(),
+  workflowOperationSchema
+    .extend({ action: z.literal("complete-discovery") })
+    .strict(),
+  workflowOperationSchema
+    .extend({
+      action: z.literal("answer-diagnostic"),
+      answers: z.record(idSchema, textSchema),
+    })
+    .strict(),
+  workflowOperationSchema
+    .extend({ action: z.literal("skip-diagnostic") })
+    .strict(),
+  workflowOperationSchema
+    .extend({ action: z.literal("confirm-proposal") })
+    .strict(),
+  workflowOperationSchema
+    .extend({ action: z.literal("reject-proposal") })
+    .strict(),
+  workflowOperationSchema
+    .extend({
+      action: z.literal("request-revision"),
+      revisionRequest: textSchema,
+    })
+    .strict(),
+]);
 
 class CourseDesignerError extends Error {
   constructor(
@@ -292,7 +562,7 @@ async function readJson<T>(context: Context, schema: z.ZodType<T>): Promise<T> {
   return parsed.data;
 }
 
-function versionId(context: Context): string {
+function routeVersionId(context: Context): string {
   const parsed = idSchema.safeParse(context.req.param("versionId"));
   if (!parsed.success) {
     throw new CourseDesignerError(
@@ -304,29 +574,28 @@ function versionId(context: Context): string {
   return parsed.data;
 }
 
-function designerPayload(
-  graph: CurriculumVersionGraph,
-  prompt: string,
-): string {
-  return JSON.stringify({
-    task: prompt,
-    constraints: {
-      apply: false,
-      publish: false,
-      allowedChangeKinds: ["add-week", "add-day", "add-unit"],
-    },
-    draft: graph,
-  });
-}
-
-function assertDraft(graph: CurriculumVersionGraph): void {
-  if (graph.version.status !== "draft") {
+function routeWorkflowId(context: Context): string {
+  const parsed = idSchema.safeParse(context.req.param("workflowId"));
+  if (!parsed.success) {
     throw new CourseDesignerError(
-      409,
-      "immutable_version",
-      "Course Designer can only propose changes to a draft revision",
+      400,
+      "invalid_request",
+      "Workflow ID is invalid",
     );
   }
+  return parsed.data;
+}
+
+function routeProposalId(context: Context): string {
+  const parsed = idSchema.safeParse(context.req.param("proposalId"));
+  if (!parsed.success) {
+    throw new CourseDesignerError(
+      400,
+      "invalid_request",
+      "Proposal ID is invalid",
+    );
+  }
+  return parsed.data;
 }
 
 async function route<T>(
@@ -342,32 +611,382 @@ async function route<T>(
         error.status,
       );
     }
+    if (error instanceof ProviderHubError) {
+      return context.json(
+        {
+          error: "Course Designer provider turn failed",
+          code: error.failure.code,
+          failure: error.failure,
+        },
+        409,
+      );
+    }
     throw error;
   }
+}
+
+function assertDraft(graph: CurriculumVersionGraph): void {
+  if (graph.version.status !== "draft") {
+    throw new CourseDesignerError(
+      409,
+      "immutable_version",
+      "Course Designer can only propose changes to a draft revision",
+    );
+  }
+}
+
+function readWorkflow(
+  connection: DatabaseConnection,
+  workflowId: string,
+  versionId?: string,
+): WorkflowRow {
+  const row = connection.sqlite
+    .prepare(
+      versionId
+        ? "SELECT * FROM course_designer_workflows WHERE id = ? AND version_id = ?"
+        : "SELECT * FROM course_designer_workflows WHERE id = ?",
+    )
+    .get(...(versionId ? [workflowId, versionId] : [workflowId])) as
+    WorkflowRow | undefined;
+  if (!row) {
+    throw new CourseDesignerError(
+      404,
+      "workflow_not_found",
+      "Course Designer workflow was not found",
+    );
+  }
+  return row;
+}
+
+function transitionWithinTransaction(
+  connection: DatabaseConnection,
+  row: WorkflowRow,
+  input: {
+    operationId: string;
+    eventType: string;
+    toState: CourseDesignerWorkflowState;
+    payload?: unknown;
+    recoveryState?: Exclude<CourseDesignerWorkflowState, "FAILED"> | null;
+    diagnostic?: CourseDesignerDiagnostic;
+    revisionRequests?: readonly string[];
+    activeProposalId?: string | null;
+    failureCode?: string | null;
+    failureMessage?: string | null;
+  },
+): WorkflowRow {
+  const now = Date.now();
+  const result = connection.sqlite
+    .prepare(
+      `UPDATE course_designer_workflows
+       SET state = ?, recovery_state = ?, diagnostic_json = ?,
+           revision_requests_json = ?, active_proposal_id = ?, failure_code = ?,
+           failure_message = ?, updated_at = ?
+       WHERE id = ? AND state = ?`,
+    )
+    .run(
+      input.toState,
+      input.recoveryState === undefined
+        ? input.toState === "FAILED"
+          ? row.recovery_state
+          : null
+        : input.recoveryState,
+      JSON.stringify(
+        input.diagnostic ??
+          (parseJson(row.diagnostic_json) as CourseDesignerDiagnostic),
+      ),
+      JSON.stringify(
+        input.revisionRequests ??
+          (parseJson(row.revision_requests_json) as string[]),
+      ),
+      input.activeProposalId === undefined
+        ? row.active_proposal_id
+        : input.activeProposalId,
+      input.failureCode === undefined ? null : input.failureCode,
+      input.failureMessage === undefined ? null : input.failureMessage,
+      now,
+      row.id,
+      row.state,
+    );
+  if (result.changes !== 1) {
+    throw new CourseDesignerError(
+      409,
+      "workflow_state_changed",
+      "Course Designer workflow state changed concurrently",
+    );
+  }
+  connection.sqlite
+    .prepare(
+      `INSERT INTO course_designer_events
+       (workflow_id, operation_id, event_type, from_state, to_state, payload_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      row.id,
+      input.operationId,
+      input.eventType,
+      row.state,
+      input.toState,
+      JSON.stringify(input.payload ?? {}),
+      now,
+    );
+  return readWorkflow(connection, row.id);
+}
+
+function transitionWorkflow(
+  connection: DatabaseConnection,
+  row: WorkflowRow,
+  expectedState: CourseDesignerWorkflowState,
+  input: Parameters<typeof transitionWithinTransaction>[2],
+): WorkflowRow {
+  const prior = connection.sqlite
+    .prepare(
+      "SELECT 1 FROM course_designer_events WHERE workflow_id = ? AND operation_id = ?",
+    )
+    .get(row.id, input.operationId);
+  if (prior) return readWorkflow(connection, row.id);
+  if (row.state !== expectedState) {
+    throw new CourseDesignerError(
+      409,
+      "invalid_workflow_transition",
+      `Action requires ${expectedState}; workflow is ${row.state}`,
+    );
+  }
+  connection.sqlite.exec("BEGIN IMMEDIATE");
+  try {
+    const updated = transitionWithinTransaction(connection, row, input);
+    connection.sqlite.exec("COMMIT");
+    return updated;
+  } catch (error) {
+    connection.sqlite.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function createDiagnostic(
+  request: CourseDesignerRequest,
+): CourseDesignerDiagnostic {
+  const questions: CourseDesignerDiagnostic["questions"] = [];
+  if (request.sources.length === 0) {
+    questions.push({
+      id: "diagnostic:no-sources",
+      prompt: "Should the draft proceed without an approved source reference?",
+    });
+  }
+  if (request.constraints.length === 0) {
+    questions.push({
+      id: "diagnostic:constraints",
+      prompt:
+        "Are there time, scope, safety, or accessibility constraints to add?",
+    });
+  }
+  if (request.activityPreferences.length === 0) {
+    questions.push({
+      id: "diagnostic:activities",
+      prompt: "Which evidence-producing activity types should be emphasized?",
+    });
+  }
+  return { questions, answers: {}, skipped: false };
+}
+
+function designerPayload(
+  graph: CurriculumVersionGraph,
+  workflow: CourseDesignerWorkflow,
+): string {
+  return JSON.stringify({
+    task: "Propose a finite typed change set for this Course Draft.",
+    request: workflow.request,
+    diagnostic: workflow.diagnostic,
+    revisionRequests: workflow.revisionRequests,
+    constraints: {
+      apply: false,
+      publish: false,
+      fetchSources: false,
+      stableTargetIds: true,
+      allowedChangeKinds: [
+        "add-week",
+        "update-week",
+        "add-day",
+        "update-day",
+        "add-unit",
+        "update-unit",
+      ],
+    },
+    draft: graph,
+  });
+}
+
+function jsonRecord(value: unknown): Record<string, JsonValue> {
+  return JSON.parse(JSON.stringify(value)) as Record<string, JsonValue>;
+}
+
+function proposalDiffs(
+  graph: CurriculumVersionGraph,
+  proposal: CourseDraftProposal,
+): CourseDraftProposalDiff[] {
+  const weeks = new Map(graph.weeks.map((week) => [week.stableId, week]));
+  const days = new Map(
+    graph.weeks.flatMap((week) =>
+      week.days.map((day) => [day.stableId, day] as const),
+    ),
+  );
+  const units = new Map(
+    graph.weeks.flatMap((week) =>
+      week.days.flatMap((day) =>
+        day.units.map((unit) => [unit.stableId, unit] as const),
+      ),
+    ),
+  );
+  return CourseDraftProposalDiffSchema.array().parse(
+    proposal.changes.map((change) => {
+      const targetStableId =
+        "targetStableId" in change ? change.targetStableId : change.stableId;
+      const beforeEntity =
+        change.kind === "update-week"
+          ? weeks.get(change.targetStableId)
+          : change.kind === "update-day"
+            ? days.get(change.targetStableId)
+            : change.kind === "update-unit"
+              ? units.get(change.targetStableId)
+              : undefined;
+      const changeBody = jsonRecord(change);
+      delete changeBody.kind;
+      delete changeBody.targetStableId;
+      delete changeBody.parentStableId;
+      const before = beforeEntity ? jsonRecord(beforeEntity) : null;
+      return {
+        kind: change.kind,
+        targetStableId,
+        before,
+        after: before ? { ...before, ...changeBody } : changeBody,
+      };
+    }),
+  );
+}
+
+function validateProposal(
+  graph: CurriculumVersionGraph,
+  proposal: CourseDraftProposal,
+): {
+  valid: boolean;
+  errors: number;
+  warnings: number;
+  diagnostics: Array<{
+    code: string;
+    severity: "error" | "warning";
+    targetStableId: string;
+    message: string;
+  }>;
+} {
+  const weekIds = new Set(graph.weeks.map((week) => week.stableId));
+  const dayIds = new Set(
+    graph.weeks.flatMap((week) => week.days.map((day) => day.stableId)),
+  );
+  const unitIds = new Set(
+    graph.weeks.flatMap((week) =>
+      week.days.flatMap((day) => day.units.map((unit) => unit.stableId)),
+    ),
+  );
+  const allIds = new Set([...weekIds, ...dayIds, ...unitIds]);
+  const diagnostics: Array<{
+    code: string;
+    severity: "error" | "warning";
+    targetStableId: string;
+    message: string;
+  }> = [];
+  for (const change of proposal.changes) {
+    if ("stableId" in change) {
+      if (allIds.has(change.stableId)) {
+        diagnostics.push({
+          code: "stable_id_conflict",
+          severity: "error",
+          targetStableId: change.stableId,
+          message: "Stable ID already identifies an authored entity",
+        });
+      } else {
+        allIds.add(change.stableId);
+        if (change.kind === "add-week") weekIds.add(change.stableId);
+        if (change.kind === "add-day") dayIds.add(change.stableId);
+        if (change.kind === "add-unit") unitIds.add(change.stableId);
+      }
+      if (change.kind === "add-day" && !weekIds.has(change.parentStableId)) {
+        diagnostics.push({
+          code: "missing_parent",
+          severity: "error",
+          targetStableId: change.stableId,
+          message: `Week ${change.parentStableId} does not exist`,
+        });
+      }
+      if (change.kind === "add-unit" && !dayIds.has(change.parentStableId)) {
+        diagnostics.push({
+          code: "missing_parent",
+          severity: "error",
+          targetStableId: change.stableId,
+          message: `Day ${change.parentStableId} does not exist`,
+        });
+      }
+      continue;
+    }
+    const exists =
+      change.kind === "update-week"
+        ? weekIds.has(change.targetStableId)
+        : change.kind === "update-day"
+          ? dayIds.has(change.targetStableId)
+          : unitIds.has(change.targetStableId);
+    if (!exists) {
+      diagnostics.push({
+        code: "unknown_target",
+        severity: "error",
+        targetStableId: change.targetStableId,
+        message: "Proposal references an unknown stable target ID",
+      });
+    }
+  }
+  if (proposal.changes.length > 25) {
+    diagnostics.push({
+      code: "large_change_set",
+      severity: "warning",
+      targetStableId: graph.version.id,
+      message: "Review this large proposal in smaller bounded slices",
+    });
+  }
+  const errors = diagnostics.filter(
+    ({ severity }) => severity === "error",
+  ).length;
+  return {
+    valid: errors === 0,
+    errors,
+    warnings: diagnostics.length - errors,
+    diagnostics,
+  };
 }
 
 async function runDesignerTurn(
   state: CourseDesignerState,
   dispatch: ProviderDispatch,
   graph: CurriculumVersionGraph,
-  prompt: string,
+  workflow: CourseDesignerWorkflow,
   authoringOperationId: string,
   signal: AbortSignal,
 ): Promise<ProposalRow> {
+  const promptDefinition = getLatestPrompt("course-designer");
+  const prompt = workflow.request.goal;
   let providerSessionId: string | null = null;
   let completedContent: string | null = null;
   try {
     const session = await dispatch.provider.createSession({
       role: "course-designer",
       modelId: dispatch.modelId,
-      systemPrompt:
-        "You are Aptiloop Course Designer. Inspect only the supplied draft. Use course.readDraftSlice when needed, then call course.proposeDraftPatch with a finite typed proposal. Never apply or publish changes. Stable IDs identify meaning and must not be reused.",
+      systemPrompt: promptDefinition.systemPrompt,
       metadata: {
         versionId: graph.version.id,
+        workflowId: workflow.id,
         draftHash: authoringDraftHash(graph),
         prompt,
         authoringOperationId,
         providerOperationId: dispatch.operationId,
+        approvedSources: JSON.parse(
+          JSON.stringify(workflow.request.sources),
+        ) as JsonValue,
       },
     });
     providerSessionId = session.id;
@@ -432,14 +1051,56 @@ async function runDesignerTurn(
   }
 }
 
+function persistAttribution(
+  connection: DatabaseConnection,
+  input: {
+    proposal: ProposalRow;
+    workflow: CourseDesignerWorkflow;
+    dispatch: ProviderDispatch;
+    graph: CurriculumVersionGraph;
+  },
+): void {
+  const prompt = getLatestPrompt("course-designer");
+  const proposal = CourseDraftProposalSchema.parse(
+    parseJson(input.proposal.proposal_json),
+  );
+  connection.sqlite
+    .prepare(
+      `INSERT OR IGNORE INTO course_draft_proposal_attribution
+       (proposal_id, workflow_id, connection_id, provider_type, model_id,
+        prompt_template_id, prompt_template_version, disclosure_operation_id,
+        diff_json, provenance_json, validation_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.proposal.id,
+      input.workflow.id,
+      input.dispatch.connection.connectionId,
+      input.dispatch.connection.providerType,
+      input.dispatch.modelId,
+      prompt.id,
+      prompt.version,
+      input.dispatch.disclosure?.operationId ?? null,
+      JSON.stringify(proposalDiffs(input.graph, proposal)),
+      JSON.stringify({
+        sourceIds: input.workflow.request.sources.map(({ id }) => id),
+        sources: input.workflow.request.sources,
+        authoringRequestOperationId: input.workflow.authoringOperationId,
+        providerOperationId: input.dispatch.operationId,
+      }),
+      JSON.stringify(validateProposal(input.graph, proposal)),
+      Date.now(),
+    );
+}
+
 async function applyChange(
   repository: CurriculumAuthoringRepository,
-  versionIdValue: string,
+  versionId: string,
   change: CourseDraftProposal["changes"][number],
 ): Promise<void> {
   if (change.kind === "add-week") {
     await repository.addWeek({
-      versionId: versionIdValue,
+      versionId,
       stableId: change.stableId,
       title: change.title,
       ...(change.description !== undefined
@@ -451,8 +1112,22 @@ async function applyChange(
     });
     return;
   }
+  if (change.kind === "update-week") {
+    await repository.updateWeek({
+      versionId,
+      targetStableId: change.targetStableId,
+      ...(change.title !== undefined ? { title: change.title } : {}),
+      ...(change.description !== undefined
+        ? { description: change.description }
+        : {}),
+      ...(change.orderIndex !== undefined
+        ? { orderIndex: change.orderIndex }
+        : {}),
+    });
+    return;
+  }
 
-  const graph = await repository.getVersionGraph(versionIdValue);
+  const graph = await repository.getVersionGraph(versionId);
   if (change.kind === "add-day") {
     const parent = graph.weeks.find(
       (week) => week.stableId === change.parentStableId,
@@ -465,7 +1140,7 @@ async function applyChange(
       );
     }
     await repository.addDay({
-      versionId: versionIdValue,
+      versionId,
       weekId: parent.id,
       stableId: change.stableId,
       title: change.title,
@@ -491,6 +1166,84 @@ async function applyChange(
     });
     return;
   }
+  if (change.kind === "update-day") {
+    await repository.updateDay({
+      versionId,
+      targetStableId: change.targetStableId,
+      ...(change.title !== undefined ? { title: change.title } : {}),
+      ...(change.description !== undefined
+        ? { description: change.description }
+        : {}),
+      ...(change.goal !== undefined ? { goal: change.goal } : {}),
+      ...(change.estimatedMinutes !== undefined
+        ? { estimatedMinutes: change.estimatedMinutes }
+        : {}),
+      ...(change.prerequisites !== undefined
+        ? { prerequisites: change.prerequisites }
+        : {}),
+      ...(change.expectedOutcomes !== undefined
+        ? { expectedOutcomes: change.expectedOutcomes }
+        : {}),
+      ...(change.depthLevel !== undefined
+        ? { depthLevel: change.depthLevel }
+        : {}),
+      ...(change.outOfScope !== undefined
+        ? { outOfScope: change.outOfScope }
+        : {}),
+      ...(change.topics !== undefined ? { topics: change.topics } : {}),
+      ...(change.orderIndex !== undefined
+        ? { orderIndex: change.orderIndex }
+        : {}),
+    });
+    return;
+  }
+  if (change.kind === "update-unit") {
+    await repository.updateUnit({
+      versionId,
+      targetStableId: change.targetStableId,
+      ...(change.type !== undefined ? { type: change.type } : {}),
+      ...(change.title !== undefined ? { title: change.title } : {}),
+      ...(change.description !== undefined
+        ? { description: change.description }
+        : {}),
+      ...(change.estimatedMinutes !== undefined
+        ? { estimatedMinutes: change.estimatedMinutes }
+        : {}),
+      ...(change.objectives !== undefined
+        ? { objectives: change.objectives }
+        : {}),
+      ...(change.checklist !== undefined
+        ? { checklist: change.checklist }
+        : {}),
+      ...(change.sources !== undefined ? { sources: change.sources } : {}),
+      ...(change.questions !== undefined
+        ? { questions: change.questions }
+        : {}),
+      ...(change.misconceptions !== undefined
+        ? { misconceptions: change.misconceptions }
+        : {}),
+      ...(change.referenceAnswer !== undefined
+        ? { referenceAnswer: change.referenceAnswer }
+        : {}),
+      ...(change.completionCriteria !== undefined
+        ? { completionCriteria: change.completionCriteria }
+        : {}),
+      ...(change.unlockRules !== undefined
+        ? { unlockRules: change.unlockRules }
+        : {}),
+      ...(change.optional !== undefined ? { optional: change.optional } : {}),
+      ...(change.depthLevel !== undefined
+        ? { depthLevel: change.depthLevel }
+        : {}),
+      ...(change.payload !== undefined
+        ? { payload: change.payload as Record<string, unknown> }
+        : {}),
+      ...(change.orderIndex !== undefined
+        ? { orderIndex: change.orderIndex }
+        : {}),
+    });
+    return;
+  }
 
   const parent = graph.weeks
     .flatMap((week) => week.days)
@@ -503,7 +1256,7 @@ async function applyChange(
     );
   }
   await repository.addUnit({
-    versionId: versionIdValue,
+    versionId,
     dayId: parent.id,
     stableId: change.stableId,
     type: change.type,
@@ -541,10 +1294,455 @@ async function applyChange(
   });
 }
 
+function reconcilePublishedWorkflow(
+  connection: DatabaseConnection,
+  row: WorkflowRow,
+): WorkflowRow {
+  if (row.state !== "VALIDATION") return row;
+  const version = connection.sqlite
+    .prepare("SELECT status FROM curriculum_versions WHERE id = ?")
+    .get(row.version_id) as { status: string } | undefined;
+  if (version?.status !== "published") return row;
+  return transitionWorkflow(connection, row, "VALIDATION", {
+    operationId: `publish-reconcile:${row.id}`,
+    eventType: "published",
+    toState: "PUBLISHED",
+    payload: { versionId: row.version_id },
+  });
+}
+
+function failWorkflow(
+  connection: DatabaseConnection,
+  row: WorkflowRow,
+  operationId: string,
+  recoveryState: Exclude<CourseDesignerWorkflowState, "FAILED">,
+  error: unknown,
+): void {
+  const current = readWorkflow(connection, row.id);
+  if (current.state === "FAILED" || current.state === "PUBLISHED") return;
+  transitionWorkflow(connection, current, current.state, {
+    operationId: `failure:${operationId}`,
+    eventType: "failed",
+    toState: "FAILED",
+    recoveryState,
+    failureCode: providerFailureCode(error),
+    failureMessage: "Course Designer provider turn failed",
+    payload: { code: providerFailureCode(error), recoveryState },
+  });
+}
+
 export function registerCourseDesignerRoutes(
   app: Hono,
   state: CourseDesignerState,
 ): void {
+  app.get(
+    "/api/curriculum-editor/versions/:versionId/designer/workflows",
+    (context) =>
+      route(context, async () => {
+        const versionId = routeVersionId(context);
+        const rows = state.connection.sqlite
+          .prepare(
+            `SELECT * FROM course_designer_workflows
+             WHERE version_id = ? ORDER BY updated_at DESC, id`,
+          )
+          .all(versionId) as unknown as WorkflowRow[];
+        return {
+          workflows: rows.map((row) =>
+            workflowDto(reconcilePublishedWorkflow(state.connection, row)),
+          ),
+        };
+      }),
+  );
+
+  app.post(
+    "/api/curriculum-editor/versions/:versionId/designer/workflows",
+    (context) =>
+      route(context, async () => {
+        const input = await readJson(context, createWorkflowSchema);
+        const versionId = routeVersionId(context);
+        const repository = new CurriculumAuthoringRepository(state.connection);
+        assertDraft(await repository.getVersionGraph(versionId));
+        const existing = state.connection.sqlite
+          .prepare(
+            `SELECT * FROM course_designer_workflows
+             WHERE version_id = ? AND authoring_operation_id = ?`,
+          )
+          .get(versionId, input.operationId) as WorkflowRow | undefined;
+        if (existing) return { workflow: workflowDto(existing) };
+        const now = Date.now();
+        const id = `course-designer:${randomUUID()}`;
+        state.connection.sqlite.exec("BEGIN IMMEDIATE");
+        try {
+          state.connection.sqlite
+            .prepare(
+              `INSERT INTO course_designer_workflows
+               (id, version_id, state, recovery_state, request_json,
+                diagnostic_json, revision_requests_json, active_proposal_id,
+                authoring_operation_id, failure_code, failure_message,
+                created_at, updated_at)
+               VALUES (?, ?, 'DRAFT_REQUEST', NULL, ?, ?, '[]', NULL, ?, NULL, NULL, ?, ?)`,
+            )
+            .run(
+              id,
+              versionId,
+              JSON.stringify(input.request),
+              JSON.stringify(emptyDiagnostic),
+              input.operationId,
+              now,
+              now,
+            );
+          state.connection.sqlite
+            .prepare(
+              `INSERT INTO course_designer_events
+               (workflow_id, operation_id, event_type, from_state, to_state,
+                payload_json, created_at)
+               VALUES (?, ?, 'created', NULL, 'DRAFT_REQUEST', '{}', ?)`,
+            )
+            .run(id, input.operationId, now);
+          state.connection.sqlite.exec("COMMIT");
+        } catch (error) {
+          state.connection.sqlite.exec("ROLLBACK");
+          throw error;
+        }
+        return { workflow: workflowDto(readWorkflow(state.connection, id)) };
+      }),
+  );
+
+  app.get(
+    "/api/curriculum-editor/versions/:versionId/designer/workflows/:workflowId",
+    (context) =>
+      route(context, async () => {
+        const row = readWorkflow(
+          state.connection,
+          routeWorkflowId(context),
+          routeVersionId(context),
+        );
+        return {
+          workflow: workflowDto(
+            reconcilePublishedWorkflow(state.connection, row),
+          ),
+        };
+      }),
+  );
+
+  app.post(
+    "/api/curriculum-editor/versions/:versionId/designer/workflows/:workflowId/advance",
+    (context) =>
+      route(context, async () => {
+        const input = await readJson(context, advanceSchema);
+        let row = readWorkflow(
+          state.connection,
+          routeWorkflowId(context),
+          routeVersionId(context),
+        );
+        if (input.action === "submit-request") {
+          row = transitionWorkflow(state.connection, row, "DRAFT_REQUEST", {
+            operationId: input.operationId,
+            eventType: "request-submitted",
+            toState: "DISCOVERY",
+          });
+        } else if (input.action === "complete-discovery") {
+          const request = CourseDesignerRequestSchema.parse(
+            parseJson(row.request_json),
+          );
+          const diagnostic = createDiagnostic(request);
+          row = transitionWorkflow(state.connection, row, "DISCOVERY", {
+            operationId: input.operationId,
+            eventType: "discovery-completed",
+            toState: "DIAGNOSTIC",
+            diagnostic,
+            payload: { questionCount: diagnostic.questions.length },
+          });
+        } else if (input.action === "answer-diagnostic") {
+          const diagnostic = parseJson(
+            row.diagnostic_json,
+          ) as CourseDesignerDiagnostic;
+          const missing = diagnostic.questions.filter(
+            ({ id }) => input.answers[id] === undefined,
+          );
+          if (missing.length > 0) {
+            throw new CourseDesignerError(
+              400,
+              "diagnostic_incomplete",
+              "Every diagnostic question requires an answer",
+            );
+          }
+          row = transitionWorkflow(state.connection, row, "DIAGNOSTIC", {
+            operationId: input.operationId,
+            eventType: "diagnostic-answered",
+            toState: "CURRICULUM_PROPOSAL",
+            diagnostic: {
+              ...diagnostic,
+              answers: input.answers,
+              skipped: false,
+            },
+          });
+        } else if (input.action === "skip-diagnostic") {
+          const diagnostic = parseJson(
+            row.diagnostic_json,
+          ) as CourseDesignerDiagnostic;
+          row = transitionWorkflow(state.connection, row, "DIAGNOSTIC", {
+            operationId: input.operationId,
+            eventType: "diagnostic-skipped",
+            toState: "CURRICULUM_PROPOSAL",
+            diagnostic: { ...diagnostic, answers: {}, skipped: true },
+          });
+        } else if (input.action === "confirm-proposal") {
+          if (!row.active_proposal_id) {
+            throw new CourseDesignerError(
+              409,
+              "missing_proposal",
+              "Workflow has no active proposal to confirm",
+            );
+          }
+          row = transitionWorkflow(state.connection, row, "USER_REVIEW", {
+            operationId: input.operationId,
+            eventType: "proposal-confirmed",
+            toState: "COMPILATION",
+            payload: { proposalId: row.active_proposal_id },
+          });
+        } else {
+          const revisions = parseJson(row.revision_requests_json) as string[];
+          const prior = state.connection.sqlite
+            .prepare(
+              "SELECT 1 FROM course_designer_events WHERE workflow_id = ? AND operation_id = ?",
+            )
+            .get(row.id, input.operationId);
+          if (!prior) {
+            if (row.state !== "USER_REVIEW") {
+              throw new CourseDesignerError(
+                409,
+                "invalid_workflow_transition",
+                `Action requires USER_REVIEW; workflow is ${row.state}`,
+              );
+            }
+            const proposalId = row.active_proposal_id;
+            state.connection.sqlite.exec("BEGIN IMMEDIATE");
+            try {
+              if (proposalId) {
+                state.connection.sqlite
+                  .prepare(
+                    `UPDATE course_draft_proposals
+                     SET status = 'rejected', reviewed_at = ?
+                     WHERE id = ? AND status = 'proposed'`,
+                  )
+                  .run(Date.now(), proposalId);
+              }
+              const revisionRequested = input.action === "request-revision";
+              row = transitionWithinTransaction(state.connection, row, {
+                operationId: input.operationId,
+                eventType: revisionRequested
+                  ? "revision-requested"
+                  : "proposal-rejected",
+                toState: "CURRICULUM_PROPOSAL",
+                revisionRequests: revisionRequested
+                  ? [...revisions, input.revisionRequest]
+                  : revisions,
+                activeProposalId: null,
+                payload: revisionRequested
+                  ? { proposalId, revisionRequest: input.revisionRequest }
+                  : { proposalId },
+              });
+              state.connection.sqlite.exec("COMMIT");
+            } catch (error) {
+              state.connection.sqlite.exec("ROLLBACK");
+              throw error;
+            }
+          } else {
+            row = readWorkflow(state.connection, row.id);
+          }
+        }
+        return { workflow: workflowDto(row) };
+      }),
+  );
+
+  app.post(
+    "/api/curriculum-editor/versions/:versionId/designer/workflows/:workflowId/retry",
+    (context) =>
+      route(context, async () => {
+        const input = await readJson(context, workflowOperationSchema);
+        const row = readWorkflow(
+          state.connection,
+          routeWorkflowId(context),
+          routeVersionId(context),
+        );
+        if (!row.recovery_state) {
+          throw new CourseDesignerError(
+            409,
+            "missing_recovery_state",
+            "Failed workflow has no recovery state",
+          );
+        }
+        return {
+          workflow: workflowDto(
+            transitionWorkflow(state.connection, row, "FAILED", {
+              operationId: input.operationId,
+              eventType: "retried",
+              toState: row.recovery_state,
+              payload: { recoveryState: row.recovery_state },
+            }),
+          ),
+        };
+      }),
+  );
+
+  app.post(
+    "/api/curriculum-editor/versions/:versionId/designer/workflows/:workflowId/disclosures",
+    (context) =>
+      route(context, async () => {
+        await readJson(context, workflowOperationSchema);
+        const versionId = routeVersionId(context);
+        const row = readWorkflow(
+          state.connection,
+          routeWorkflowId(context),
+          versionId,
+        );
+        if (row.state !== "CURRICULUM_PROPOSAL") {
+          throw new CourseDesignerError(
+            409,
+            "invalid_workflow_transition",
+            `Disclosure requires CURRICULUM_PROPOSAL; workflow is ${row.state}`,
+          );
+        }
+        const graph = await new CurriculumAuthoringRepository(
+          state.connection,
+        ).getVersionGraph(versionId);
+        assertDraft(graph);
+        const workflow = workflowDto(row);
+        return state.providerRuntime.prepareDisclosure({
+          role: "course-designer",
+          payload: designerPayload(graph, workflow),
+          payloadCategories: ["course-content", "learner-message"],
+          entityIds: {
+            "course-revision": versionId,
+            "course-designer-workflow": workflow.id,
+          },
+          exclusions: [
+            "No URL or repository source is fetched by Course Designer",
+            "No learner evidence, credentials, or protected answers",
+          ],
+          destinationPurpose: "optional Course draft authoring assistance",
+        });
+      }),
+  );
+
+  app.post(
+    "/api/curriculum-editor/versions/:versionId/designer/workflows/:workflowId/generate",
+    (context) =>
+      route(context, async () => {
+        const input = await readJson(context, generationSchema);
+        const versionId = routeVersionId(context);
+        let row = readWorkflow(
+          state.connection,
+          routeWorkflowId(context),
+          versionId,
+        );
+        const existingProposal = state.connection.sqlite
+          .prepare(
+            `SELECT * FROM course_draft_proposals
+             WHERE version_id = ? AND authoring_operation_id = ?`,
+          )
+          .get(versionId, input.operationId) as ProposalRow | undefined;
+        if (
+          existingProposal &&
+          row.state === "USER_REVIEW" &&
+          row.active_proposal_id === existingProposal.id
+        ) {
+          return {
+            workflow: workflowDto(row),
+            proposal: proposalDto(state.connection, existingProposal),
+          };
+        }
+        if (row.state !== "CURRICULUM_PROPOSAL") {
+          throw new CourseDesignerError(
+            409,
+            "invalid_workflow_transition",
+            `Generation requires CURRICULUM_PROPOSAL; workflow is ${row.state}`,
+          );
+        }
+        if (existingProposal) {
+          throw new CourseDesignerError(
+            409,
+            "incomplete_provider_operation",
+            "This authoring operation did not complete attribution; retry with a new operation ID",
+          );
+        }
+        const repository = new CurriculumAuthoringRepository(state.connection);
+        const graph = await repository.getVersionGraph(versionId);
+        assertDraft(graph);
+        const workflow = workflowDto(row);
+        const payload = designerPayload(graph, workflow);
+        try {
+          const prompt = getLatestPrompt("course-designer");
+          const dispatch = await state.providerRuntime.resolveDispatch({
+            role: "course-designer",
+            payload,
+            ...(input.disclosureOperationId
+              ? { disclosureOperationId: input.disclosureOperationId }
+              : {}),
+            metadata: {
+              authoringOperationId: input.operationId,
+              workflowId: workflow.id,
+              versionId,
+              draftHash: authoringDraftHash(graph),
+              promptTemplateId: prompt.id,
+              promptTemplateVersion: prompt.version,
+            },
+          });
+          const proposal = await runDesignerTurn(
+            state,
+            dispatch,
+            graph,
+            workflow,
+            input.operationId,
+            context.req.raw.signal,
+          );
+          const parsedProposal = CourseDraftProposalSchema.parse(
+            parseJson(proposal.proposal_json),
+          );
+          const validation = validateProposal(graph, parsedProposal);
+          state.connection.sqlite.exec("BEGIN IMMEDIATE");
+          try {
+            persistAttribution(state.connection, {
+              proposal,
+              workflow,
+              dispatch,
+              graph,
+            });
+            row = transitionWithinTransaction(state.connection, row, {
+              operationId: input.operationId,
+              eventType: "proposal-generated",
+              toState: "USER_REVIEW",
+              activeProposalId: proposal.id,
+              payload: {
+                proposalId: proposal.id,
+                valid: validation.valid,
+                errors: validation.errors,
+                warnings: validation.warnings,
+              },
+            });
+            state.connection.sqlite.exec("COMMIT");
+          } catch (error) {
+            state.connection.sqlite.exec("ROLLBACK");
+            throw error;
+          }
+          return {
+            workflow: workflowDto(row),
+            proposal: proposalDto(state.connection, proposal),
+          };
+        } catch (error) {
+          failWorkflow(
+            state.connection,
+            row,
+            input.operationId,
+            "CURRICULUM_PROPOSAL",
+            error,
+          );
+          throw error;
+        }
+      }),
+  );
+
   app.get(
     "/api/curriculum-editor/versions/:versionId/designer/proposals",
     (context) =>
@@ -552,92 +1750,62 @@ export function registerCourseDesignerRoutes(
         const rows = state.connection.sqlite
           .prepare(
             `SELECT * FROM course_draft_proposals
-           WHERE version_id = ? ORDER BY created_at DESC, id`,
+             WHERE version_id = ? ORDER BY created_at DESC, id`,
           )
-          .all(versionId(context)) as unknown as ProposalRow[];
-        return { proposals: rows.map(proposalDto) };
+          .all(routeVersionId(context)) as unknown as ProposalRow[];
+        return {
+          proposals: rows.map((row) => proposalDto(state.connection, row)),
+        };
       }),
   );
 
   app.post(
-    "/api/curriculum-editor/versions/:versionId/designer/disclosures",
+    "/api/curriculum-editor/versions/:versionId/designer/workflows/:workflowId/proposals/:proposalId/apply",
     (context) =>
       route(context, async () => {
-        const input = await readJson(context, disclosureSchema);
-        const id = versionId(context);
-        const graph = await new CurriculumAuthoringRepository(
+        const input = await readJson(context, workflowOperationSchema);
+        const versionId = routeVersionId(context);
+        let workflow = readWorkflow(
           state.connection,
-        ).getVersionGraph(id);
-        assertDraft(graph);
-        return state.providerRuntime.prepareDisclosure({
-          role: "course-designer",
-          payload: designerPayload(graph, input.prompt),
-          payloadCategories: ["course-content", "learner-message"],
-          entityIds: { "course-revision": id },
-          destinationPurpose: "optional Course draft authoring assistance",
-        });
-      }),
-  );
-
-  app.post(
-    "/api/curriculum-editor/versions/:versionId/designer/generate",
-    (context) =>
-      route(context, async () => {
-        const input = await readJson(context, generationSchema);
-        const id = versionId(context);
-        const repository = new CurriculumAuthoringRepository(state.connection);
-        const graph = await repository.getVersionGraph(id);
-        assertDraft(graph);
-        const existingProposal = state.connection.sqlite
-          .prepare(
-            `SELECT * FROM course_draft_proposals
-             WHERE version_id = ? AND authoring_operation_id = ?`,
-          )
-          .get(id, input.operationId) as unknown as ProposalRow | undefined;
-        if (existingProposal) {
-          return { proposal: proposalDto(existingProposal) };
-        }
-        const dispatch = await state.providerRuntime.resolveDispatch({
-          role: "course-designer",
-          payload: designerPayload(graph, input.prompt),
-          ...(input.disclosureOperationId
-            ? { disclosureOperationId: input.disclosureOperationId }
-            : {}),
-          metadata: {
-            authoringOperationId: input.operationId,
-            versionId: id,
-            draftHash: authoringDraftHash(graph),
-          },
-        });
-        const proposal = await runDesignerTurn(
-          state,
-          dispatch,
-          graph,
-          input.prompt,
-          input.operationId,
-          context.req.raw.signal,
+          routeWorkflowId(context),
+          versionId,
         );
-        return { proposal: proposalDto(proposal) };
-      }),
-  );
-
-  app.post(
-    "/api/curriculum-editor/versions/:versionId/designer/proposals/:proposalId/apply",
-    (context) =>
-      route(context, async () => {
-        await readJson(context, reviewSchema);
-        const id = versionId(context);
-        const proposalId = idSchema.parse(context.req.param("proposalId"));
+        const prior = state.connection.sqlite
+          .prepare(
+            "SELECT 1 FROM course_designer_events WHERE workflow_id = ? AND operation_id = ?",
+          )
+          .get(workflow.id, input.operationId);
+        const proposalId = routeProposalId(context);
         const row = state.connection.sqlite
           .prepare(
-            `SELECT * FROM course_draft_proposals WHERE id = ? AND version_id = ?`,
+            `SELECT * FROM course_draft_proposals
+             WHERE id = ? AND version_id = ?`,
           )
-          .get(proposalId, id) as ProposalRow | undefined;
+          .get(proposalId, versionId) as ProposalRow | undefined;
         if (!row) {
           throw new CourseDesignerError(
             404,
             "not_found",
             "Proposal was not found",
+          );
+        }
+        if (prior) {
+          return {
+            workflow: workflowDto(readWorkflow(state.connection, workflow.id)),
+            proposal: proposalDto(state.connection, row),
+            curriculum: await new CurriculumAuthoringRepository(
+              state.connection,
+            ).getVersionGraph(versionId),
+          };
+        }
+        if (
+          workflow.state !== "COMPILATION" ||
+          workflow.active_proposal_id !== proposalId
+        ) {
+          throw new CourseDesignerError(
+            409,
+            "invalid_workflow_transition",
+            "The active proposal must be explicitly confirmed before compilation",
           );
         }
         if (row.status !== "proposed") {
@@ -648,7 +1816,7 @@ export function registerCourseDesignerRoutes(
           );
         }
         const repository = new CurriculumAuthoringRepository(state.connection);
-        const graph = await repository.getVersionGraph(id);
+        const graph = await repository.getVersionGraph(versionId);
         assertDraft(graph);
         if (authoringDraftHash(graph) !== row.base_draft_hash) {
           throw new CourseDesignerError(
@@ -658,13 +1826,21 @@ export function registerCourseDesignerRoutes(
           );
         }
         const proposal = CourseDraftProposalSchema.parse(
-          JSON.parse(row.proposal_json),
+          parseJson(row.proposal_json),
         );
+        const proposalValidation = validateProposal(graph, proposal);
+        if (!proposalValidation.valid) {
+          throw new CourseDesignerError(
+            409,
+            "invalid_proposal",
+            "Proposal contains invalid stable targets or parent references",
+          );
+        }
 
         state.connection.sqlite.exec("BEGIN IMMEDIATE");
         try {
           for (const change of proposal.changes) {
-            await applyChange(repository, id, change);
+            await applyChange(repository, versionId, change);
           }
           state.connection.sqlite
             .prepare(
@@ -673,58 +1849,41 @@ export function registerCourseDesignerRoutes(
                WHERE id = ? AND status = 'proposed'`,
             )
             .run(Date.now(), row.id);
+          const curriculum = await repository.getVersionGraph(versionId);
+          const report = authoringValidationReport(curriculum);
+          workflow = transitionWithinTransaction(state.connection, workflow, {
+            operationId: input.operationId,
+            eventType: "proposal-compiled",
+            toState: "VALIDATION",
+            payload: {
+              proposalId,
+              validationHash: report.validationHash,
+              valid: report.valid,
+              errors: report.errors,
+              warnings: report.warnings,
+            },
+          });
           state.connection.sqlite.exec("COMMIT");
+          const updated = state.connection.sqlite
+            .prepare("SELECT * FROM course_draft_proposals WHERE id = ?")
+            .get(row.id) as unknown as ProposalRow;
+          return {
+            workflow: workflowDto(workflow),
+            proposal: proposalDto(state.connection, updated),
+            curriculum,
+            validation: report,
+          };
         } catch (error) {
           state.connection.sqlite.exec("ROLLBACK");
+          failWorkflow(
+            state.connection,
+            workflow,
+            input.operationId,
+            "COMPILATION",
+            error,
+          );
           throw error;
         }
-        const updated = state.connection.sqlite
-          .prepare("SELECT * FROM course_draft_proposals WHERE id = ?")
-          .get(row.id) as unknown as ProposalRow;
-        return {
-          proposal: proposalDto(updated),
-          curriculum: await repository.getVersionGraph(id),
-        };
-      }),
-  );
-
-  app.post(
-    "/api/curriculum-editor/versions/:versionId/designer/proposals/:proposalId/reject",
-    (context) =>
-      route(context, async () => {
-        await readJson(context, reviewSchema);
-        const id = versionId(context);
-        const proposalId = idSchema.parse(context.req.param("proposalId"));
-        const result = state.connection.sqlite
-          .prepare(
-            `UPDATE course_draft_proposals
-             SET status = 'rejected', reviewed_at = ?
-             WHERE id = ? AND version_id = ? AND status = 'proposed'`,
-          )
-          .run(Date.now(), proposalId, id);
-        if (result.changes !== 1) {
-          const exists = state.connection.sqlite
-            .prepare(
-              "SELECT status FROM course_draft_proposals WHERE id = ? AND version_id = ?",
-            )
-            .get(proposalId, id) as { status: string } | undefined;
-          if (!exists) {
-            throw new CourseDesignerError(
-              404,
-              "not_found",
-              "Proposal was not found",
-            );
-          }
-          throw new CourseDesignerError(
-            409,
-            "proposal_reviewed",
-            "Proposal has already been reviewed",
-          );
-        }
-        const row = state.connection.sqlite
-          .prepare("SELECT * FROM course_draft_proposals WHERE id = ?")
-          .get(proposalId) as unknown as ProposalRow;
-        return { proposal: proposalDto(row) };
       }),
   );
 }

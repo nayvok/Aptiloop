@@ -839,6 +839,43 @@ export class CurriculumAuthoringRepository {
     );
   }
 
+  async updateWeek(input: {
+    versionId: string;
+    targetStableId: string;
+    title?: string;
+    description?: string | null;
+    orderIndex?: number;
+  }): Promise<CurriculumWeek> {
+    this.#assertDraft(input.versionId);
+    const current = this.#connection.sqlite
+      .prepare(
+        "SELECT * FROM curriculum_weeks WHERE version_id = ? AND stable_id = ?",
+      )
+      .get(input.versionId, input.targetStableId) as WeekRow | undefined;
+    if (!current) throw new Error(`Unknown week: ${input.targetStableId}`);
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE curriculum_weeks
+         SET title = ?, description = ?, order_index = ?, updated_at = ?
+         WHERE id = ? AND version_id = ?`,
+      )
+      .run(
+        input.title ?? current.title,
+        input.description !== undefined
+          ? input.description
+          : current.description,
+        input.orderIndex ?? current.order_index,
+        this.#now(),
+        current.id,
+        input.versionId,
+      );
+    return mapWeek(
+      this.#connection.sqlite
+        .prepare("SELECT * FROM curriculum_weeks WHERE id = ?")
+        .get(current.id) as WeekRow,
+    );
+  }
+
   async addDay(input: {
     versionId: string;
     weekId: string;
@@ -896,6 +933,67 @@ export class CurriculumAuthoringRepository {
       this.#connection.sqlite
         .prepare("SELECT * FROM curriculum_days_v2 WHERE id = ?")
         .get(id) as DayRow,
+    );
+  }
+
+  async updateDay(input: {
+    versionId: string;
+    targetStableId: string;
+    title?: string;
+    description?: string | null;
+    goal?: string;
+    estimatedMinutes?: number;
+    prerequisites?: unknown[];
+    expectedOutcomes?: unknown[];
+    depthLevel?: string;
+    outOfScope?: unknown[];
+    topics?: unknown[];
+    orderIndex?: number;
+  }): Promise<CurriculumDayV2> {
+    this.#assertDraft(input.versionId);
+    const current = this.#connection.sqlite
+      .prepare(
+        "SELECT * FROM curriculum_days_v2 WHERE version_id = ? AND stable_id = ?",
+      )
+      .get(input.versionId, input.targetStableId) as DayRow | undefined;
+    if (!current) throw new Error(`Unknown day: ${input.targetStableId}`);
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE curriculum_days_v2
+         SET title = ?, description = ?, goal = ?, estimated_minutes = ?,
+             prerequisites_json = ?, expected_outcomes_json = ?, depth_level = ?,
+             out_of_scope_json = ?, topics_json = ?, order_index = ?, updated_at = ?
+         WHERE id = ? AND version_id = ?`,
+      )
+      .run(
+        input.title ?? current.title,
+        input.description !== undefined
+          ? input.description
+          : current.description,
+        input.goal ?? current.goal,
+        input.estimatedMinutes ?? current.estimated_minutes,
+        input.prerequisites === undefined
+          ? current.prerequisites_json
+          : json(input.prerequisites, "day prerequisites"),
+        input.expectedOutcomes === undefined
+          ? current.expected_outcomes_json
+          : json(input.expectedOutcomes, "day outcomes"),
+        input.depthLevel ?? current.depth_level,
+        input.outOfScope === undefined
+          ? current.out_of_scope_json
+          : json(input.outOfScope, "day out-of-scope"),
+        input.topics === undefined
+          ? current.topics_json
+          : json(input.topics, "day topics"),
+        input.orderIndex ?? current.order_index,
+        this.#now(),
+        current.id,
+        input.versionId,
+      );
+    return mapDay(
+      this.#connection.sqlite
+        .prepare("SELECT * FROM curriculum_days_v2 WHERE id = ?")
+        .get(current.id) as DayRow,
     );
   }
 
@@ -976,6 +1074,112 @@ export class CurriculumAuthoringRepository {
       this.#connection.sqlite
         .prepare("SELECT * FROM curriculum_units WHERE id = ?")
         .get(id) as UnitRow,
+    );
+  }
+
+  async updateUnit(input: {
+    versionId: string;
+    targetStableId: string;
+    type?: string;
+    title?: string;
+    description?: string | null;
+    estimatedMinutes?: number | null;
+    objectives?: unknown[];
+    checklist?: unknown[];
+    sources?: unknown[];
+    questions?: unknown[];
+    misconceptions?: unknown[];
+    referenceAnswer?: unknown;
+    completionCriteria?: unknown[];
+    unlockRules?: unknown[];
+    optional?: boolean;
+    depthLevel?: string | null;
+    payload?: Record<string, unknown>;
+    orderIndex?: number;
+  }): Promise<CurriculumUnit> {
+    this.#assertDraft(input.versionId);
+    const current = this.#connection.sqlite
+      .prepare(
+        "SELECT * FROM curriculum_units WHERE version_id = ? AND stable_id = ?",
+      )
+      .get(input.versionId, input.targetStableId) as UnitRow | undefined;
+    if (!current) throw new Error(`Unknown unit: ${input.targetStableId}`);
+    const type = input.type ?? current.type;
+    if (!unitTypes.has(type)) throw new Error(`Unknown unit type: ${type}`);
+    const payload =
+      input.payload === undefined
+        ? parseObject(current.payload_json, "unit payload")
+        : input.payload;
+    if (payload.type !== type) {
+      throw new Error("Unit payload type must match unit type");
+    }
+    const completionCriteria =
+      input.completionCriteria === undefined
+        ? parseArray(
+            current.completion_criteria_json,
+            "unit completion criteria",
+          )
+        : input.completionCriteria;
+    if (completionCriteria.length === 0) {
+      throw new Error("Unit completion criteria cannot be empty");
+    }
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE curriculum_units
+         SET type = ?, title = ?, description = ?, estimated_minutes = ?,
+             objectives_json = ?, checklist_json = ?, sources_json = ?, questions_json = ?,
+             misconceptions_json = ?, reference_answer_json = ?, completion_criteria_json = ?,
+             unlock_rules_json = ?, optional = ?, depth_level = ?, payload_json = ?,
+             order_index = ?, updated_at = ?
+         WHERE id = ? AND version_id = ?`,
+      )
+      .run(
+        type,
+        input.title ?? current.title,
+        input.description !== undefined
+          ? input.description
+          : current.description,
+        input.estimatedMinutes !== undefined
+          ? input.estimatedMinutes
+          : current.estimated_minutes,
+        input.objectives === undefined
+          ? current.objectives_json
+          : json(input.objectives, "unit objectives"),
+        input.checklist === undefined
+          ? current.checklist_json
+          : json(input.checklist, "unit checklist"),
+        input.sources === undefined
+          ? current.sources_json
+          : json(input.sources, "unit sources"),
+        input.questions === undefined
+          ? current.questions_json
+          : json(input.questions, "unit questions"),
+        input.misconceptions === undefined
+          ? current.misconceptions_json
+          : json(input.misconceptions, "unit misconceptions"),
+        input.referenceAnswer !== undefined
+          ? json(input.referenceAnswer, "unit reference answer")
+          : current.reference_answer_json,
+        json(completionCriteria, "unit completion criteria"),
+        input.unlockRules === undefined
+          ? current.unlock_rules_json
+          : json(input.unlockRules, "unit unlock rules"),
+        input.optional === undefined
+          ? current.optional
+          : input.optional
+            ? 1
+            : 0,
+        input.depthLevel !== undefined ? input.depthLevel : current.depth_level,
+        json(payload, "unit payload"),
+        input.orderIndex ?? current.order_index,
+        this.#now(),
+        current.id,
+        input.versionId,
+      );
+    return mapUnit(
+      this.#connection.sqlite
+        .prepare("SELECT * FROM curriculum_units WHERE id = ?")
+        .get(current.id) as UnitRow,
     );
   }
 

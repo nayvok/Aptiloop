@@ -185,22 +185,23 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M10 — Adaptive Studio typed AI proposals
 
-**Status:** Approved Core Alpha target. Implementation remains gated by M9 acceptance.
+**Status:** Implemented baseline. Accepted locally on 2026-08-10 after the M9 gate, with a persisted finite workflow, constrained provider role, immutable attribution, typed stable-ID diffs, explicit revision/reject/confirm/apply/recovery operations, and separate manual Publish.
 
 - **Objective:** Add the optional 30% developer instrument and guided Course Designer as reviewable typed proposals, without weakening manual authoring or publish gates.
 - **Scope:** Guided Course Designer state machine (`DRAFT_REQUEST → DISCOVERY → DIAGNOSTIC → CURRICULUM_PROPOSAL → USER_REVIEW → COMPILATION → VALIDATION → PUBLISHED`, with `FAILED` recovery); natural-language goal, target outcome, current level, constraints, sources, activities, and runtime requirements; optional diagnostic questions or practical tasks; revision requests and explicit confirmation; typed Course Designer/Research proposal tools; stable target IDs; structured before/after diff; provenance and model disclosure; validation; Apply/Reject; draft-only mutation; Research Gateway with explicit source/private-data actions.
 - **Non-goals:** Autonomous course generation/publishing, direct file edits, arbitrary web access, hidden provider use, model-owned validation, or AI requirement for Studio.
 - **Migrations:** Store designer workflow state, diagnostic answers, proposal audit envelopes, and explicit apply events separately from immutable Course releases. Existing drafts remain editable without AI.
-- **Tests:** Every state transition and failed-state recovery; resume after restart; diagnostic skip/manual path; invalid/unknown target IDs; schema-invalid proposals; stale-base conflicts; private-source disclosure confirmation; provider failure; revision loop; apply/reject audit trail; compilation to the same Course Pack schema; validation after apply; proof that confirmation/Apply cannot publish; AI Off manual parity.
+- **Tests:** Every state transition and failed-state recovery; resume after restart; diagnostic skip/manual path; invalid/unknown target IDs; schema-invalid proposals; stale-base conflicts; private-source disclosure confirmation; provider failure; revision loop; apply/reject audit trail; compilation to the same typed Draft contract; validation after apply; proof that confirmation/Apply cannot publish; AI Off manual parity.
 - **Docs:** Course authoring and Authoring Kit, Adaptive Studio, Research Gateway, Provider Hub, Pi runtime, AI/security boundaries, and private-source policy.
 - **Demo:** Enter a learning goal and constraints, complete or skip an optional diagnostic, inspect and revise a curriculum proposal, confirm compilation into a local draft, reject one bounded proposal, apply another, validate, then perform a separate manual publish confirmation.
-- **Acceptance:** Every AI change is typed, reviewable, attributable, draft-only, and explicitly applied; designer workflow state resumes safely; compilation uses the same strict Course Pack contract as external authoring; rejecting or disabling AI loses no manual capability; confirmation and publish remain independent.
+- **Acceptance evidence:** focused shared, agent-core, prompt-library, database, orchestrator, and web suites cover the finite role/tool matrix, strict typed output, every principal transition, idempotent operations, diagnostic skip, revision and rejection audit, immutable attribution, stale-base rollback, invalid output, explicit AI-Off failure, provider-backed deterministic output, disclosure UI, validation, and manual-only publication. The valuable active database was inventoried, backed up without overwrite, migrated additively through `0016_course_designer_workflow`, re-inventoried at schema SHA-256 `f23afd4470b6f221273fb15a0f783f08104650cf0fdda728b4f44409e73585aa`, and admitted as current.
+- **Acceptance:** Every AI change is typed, reviewable, attributable, draft-only, and explicitly applied; designer workflow state resumes safely; compilation uses the same strict typed Draft contract as manual authoring; rejecting or disabling AI loses no manual capability; confirmation and publish remain independent.
 - **Known limitations:** Output quality varies and remains advisory. Research access is limited to approved tools/sources and explicit disclosure actions.
 - **Rollback/compatibility:** Rejecting a proposal is a no-op. Applied draft changes can be reverted within draft history; published revisions remain immutable. Provider removal does not affect existing packs or learner evidence.
 
 ## M11 — Course/session cutover and legacy retirement
 
-**Status:** Approved Core Alpha target. Implementation remains gated by M10 acceptance.
+**Status:** Approved Core Alpha target. The M10 gate is satisfied; M11 implementation has not started.
 
 - **Objective:** Move all product callers to the target Course/session/evidence model and retire obsolete runtime paths only after parity and recovery evidence.
 - **Scope:** Explicit course selection; per-course active revision/session; Personal Adaptation Branch; target evidence/review reads and writes; removal of v1 caller-supplied mastery/fixed completion; removal of global `learner_state='default'` and `LIMIT 1` selection assumptions; historical data retention/export.

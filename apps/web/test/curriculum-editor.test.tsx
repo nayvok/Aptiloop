@@ -823,10 +823,41 @@ describe("CurriculumEditorClient", () => {
     expect(await screen.findByText("Новая неделя")).toBeInTheDocument();
   });
 
-  it("reviews a disclosed Course Designer proposal before applying it", async () => {
+  it("guides a disclosed Course Designer workflow through explicit review", async () => {
     const draft = version("draft-designer", 1, "draft");
     const graph = { version: draft, weeks: [] as ReturnType<typeof week>[] };
     const draftHash = `sha256:${"a".repeat(64)}`;
+    const workflow = {
+      id: "course-designer-workflow:test",
+      versionId: draft.id,
+      state: "DRAFT_REQUEST",
+      recoveryState: null,
+      request: {
+        goal: "Создать вводный модуль",
+        targetOutcome: "Объяснить основы без подсказок",
+        currentLevel: "Начальный",
+        constraints: ["Одна сессия"],
+        sources: [
+          {
+            id: "source:1",
+            title: "Provided text 1",
+            kind: "provided-text",
+            locator: "Основы из заметок автора",
+            approved: true,
+          },
+        ],
+        activityPreferences: [],
+        runtimeRequirements: [],
+      },
+      diagnostic: { questions: [], answers: {}, skipped: false },
+      revisionRequests: [],
+      activeProposalId: null as string | null,
+      authoringOperationId: "workflow:create",
+      failureCode: null,
+      failureMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    };
     const disclosure = {
       operationId: "disclosure:designer-test",
       scope: {
@@ -852,7 +883,7 @@ describe("CurriculumEditorClient", () => {
       id: "course-proposal:designer-test",
       versionId: draft.id,
       baseDraftHash: draftHash,
-      prompt: "Добавь вводную неделю",
+      prompt: "Создать вводный модуль",
       proposal: {
         summary: "Добавить вводную неделю",
         changes: [
@@ -869,8 +900,45 @@ describe("CurriculumEditorClient", () => {
       providerOperationId: "provider-operation-designer",
       createdAt: now,
       reviewedAt: null as number | null,
+      attribution: {
+        workflowId: "course-designer-workflow:test",
+        connectionId: "conn:pi:openai",
+        providerType: "openai",
+        modelId: "gpt-5.2",
+        promptTemplateId: "course-designer-workflow",
+        promptTemplateVersion: "v1.1.0",
+        disclosureOperationId: "disclosure:designer-test",
+        diffs: [
+          {
+            kind: "add-week",
+            targetStableId: "week-foundations",
+            before: null,
+            after: {
+              stableId: "week-foundations",
+              title: "Вводная неделя",
+              description: "Основы курса",
+            },
+          },
+        ],
+        provenance: {
+          sourceIds: ["source:1"],
+          sources: [
+            {
+              id: "source:1",
+              title: "Provided text 1",
+              kind: "provided-text",
+              locator: "Основы из заметок автора",
+              approved: true,
+            },
+          ],
+          authoringRequestOperationId: "workflow:create",
+          providerOperationId: "provider-operation-designer",
+        },
+        validation: { valid: true, errors: 0, warnings: 0, diagnostics: [] },
+      },
     };
     let generated = false;
+    let created = false;
     apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === "/curriculum-editor/versions" && !init) {
         return { versions: [listItem(draft)] };
@@ -878,10 +946,31 @@ describe("CurriculumEditorClient", () => {
       if (path === `/curriculum-editor/versions/${draft.id}` && !init) {
         return { curriculum: structuredClone(graph) };
       }
+      if (path.endsWith("/designer/workflows") && !init) {
+        return { workflows: created ? [structuredClone(workflow)] : [] };
+      }
       if (path.endsWith("/designer/proposals") && !init) {
         return { proposals: generated ? [structuredClone(proposal)] : [] };
       }
-      if (path.endsWith("/designer/disclosures") && init?.method === "POST") {
+      if (path.endsWith("/designer/workflows") && init?.method === "POST") {
+        created = true;
+        return { workflow: structuredClone(workflow) };
+      }
+      if (path.endsWith("/advance") && init?.method === "POST") {
+        const input = JSON.parse(String(init.body)) as {
+          action: string;
+        };
+        workflow.state =
+          input.action === "submit-request"
+            ? "DISCOVERY"
+            : input.action === "complete-discovery"
+              ? "DIAGNOSTIC"
+              : input.action === "skip-diagnostic"
+                ? "CURRICULUM_PROPOSAL"
+                : "COMPILATION";
+        return { workflow: structuredClone(workflow) };
+      }
+      if (path.endsWith("/disclosures") && init?.method === "POST") {
         return { required: true, disclosure };
       }
       if (
@@ -896,28 +985,71 @@ describe("CurriculumEditorClient", () => {
           },
         };
       }
-      if (path.endsWith("/designer/generate") && init?.method === "POST") {
+      if (path.endsWith("/generate") && init?.method === "POST") {
         generated = true;
-        return { proposal: structuredClone(proposal) };
+        workflow.state = "USER_REVIEW";
+        workflow.activeProposalId = proposal.id;
+        return {
+          workflow: structuredClone(workflow),
+          proposal: structuredClone(proposal),
+        };
       }
       if (path.endsWith("/apply") && init?.method === "POST") {
         proposal.status = "applied";
         proposal.reviewedAt = now + 1;
+        workflow.state = "VALIDATION";
         graph.weeks.push(week("week-generated", draft.id, "Вводная неделя"));
         return {
+          workflow: structuredClone(workflow),
           proposal: structuredClone(proposal),
           curriculum: structuredClone(graph),
+          validation: {
+            validatorVersion: "m9-v1",
+            versionId: draft.id,
+            draftHash,
+            validationHash: `sha256:${"2".repeat(64)}`,
+            valid: true,
+            errors: 0,
+            warnings: 0,
+            diagnostics: [],
+          },
         };
       }
       throw new Error(`Unexpected API call ${path}`);
     });
 
     renderEditor();
-    fireEvent.change(await screen.findByLabelText("Запрос на авторинг"), {
-      target: { value: "Добавь вводную неделю" },
+    fireEvent.change(await screen.findByLabelText("Учебная цель"), {
+      target: { value: "Создать вводный модуль" },
+    });
+    fireEvent.change(screen.getByLabelText("Целевой результат"), {
+      target: { value: "Объяснить основы без подсказок" },
+    });
+    fireEvent.change(screen.getByLabelText("Текущий уровень"), {
+      target: { value: "Начальный" },
+    });
+    fireEvent.change(screen.getByLabelText("Ограничения"), {
+      target: { value: "Одна сессия" },
+    });
+    fireEvent.change(screen.getByLabelText("Одобренные источники"), {
+      target: { value: "Основы из заметок автора" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: "Сгенерировать предложение" }),
+      screen.getByRole("button", { name: "Начать пошаговое проектирование" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Отправить запрос" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Завершить уточнение" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Пропустить диагностику" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Сгенерировать предложение",
+      }),
     );
 
     expect(
@@ -931,8 +1063,15 @@ describe("CurriculumEditorClient", () => {
     expect(
       await screen.findByText("Добавить вводную неделю"),
     ).toBeInTheDocument();
+    expect(screen.getByText(/openai · gpt-5\.2/u)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Отклонить" }),
+    ).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: "Применить предложение" }),
+      screen.getByRole("button", { name: "Подтвердить для компиляции" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Применить предложение" }),
     );
     expect(await screen.findByText("Применено")).toBeInTheDocument();
     expect(graph.weeks).toHaveLength(1);

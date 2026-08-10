@@ -603,6 +603,23 @@ const CourseDraftAddWeekChangeSchema = z
   })
   .strict();
 
+const CourseDraftUpdateWeekChangeSchema = z
+  .object({
+    kind: z.literal("update-week"),
+    targetStableId: IdSchema,
+    title: ShortTextSchema.optional(),
+    description: TextSchema.nullable().optional(),
+    orderIndex: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    ({ title, description, orderIndex }) =>
+      title !== undefined ||
+      description !== undefined ||
+      orderIndex !== undefined,
+    { message: "A week update requires at least one changed field" },
+  );
+
 const CourseDraftAddDayChangeSchema = z
   .object({
     kind: z.literal("add-day"),
@@ -620,6 +637,28 @@ const CourseDraftAddDayChangeSchema = z
     orderIndex: z.number().int().nonnegative().optional(),
   })
   .strict();
+
+const CourseDraftUpdateDayChangeSchema = z
+  .object({
+    kind: z.literal("update-day"),
+    targetStableId: IdSchema,
+    title: ShortTextSchema.optional(),
+    description: TextSchema.nullable().optional(),
+    goal: TextSchema.optional(),
+    estimatedMinutes: z.number().int().min(1).max(10_000).optional(),
+    prerequisites: StringListSchema.optional(),
+    expectedOutcomes: StringListSchema.optional(),
+    depthLevel: DepthLevelSchema.optional(),
+    outOfScope: StringListSchema.optional(),
+    topics: StringListSchema.optional(),
+    orderIndex: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    ({ kind: _kind, targetStableId: _targetStableId, ...changes }) =>
+      Object.values(changes).some((value) => value !== undefined),
+    { message: "A day update requires at least one changed field" },
+  );
 
 const CourseDraftAddUnitChangeSchema = z
   .object({
@@ -654,10 +693,70 @@ const CourseDraftAddUnitChangeSchema = z
     }
   });
 
+const CourseDraftUpdateUnitChangeSchema = z
+  .object({
+    kind: z.literal("update-unit"),
+    targetStableId: IdSchema,
+    type: UnitTypeSchema.optional(),
+    title: ShortTextSchema.optional(),
+    description: TextSchema.nullable().optional(),
+    estimatedMinutes: z.number().int().min(1).max(10_000).nullable().optional(),
+    objectives: StringListSchema.optional(),
+    checklist: z.array(UnitChecklistItemSchema).max(500).optional(),
+    sources: z.array(CurriculumSourceSchema).max(500).optional(),
+    questions: z.array(UnitQuestionSchema).max(500).optional(),
+    misconceptions: StringListSchema.optional(),
+    referenceAnswer: TextSchema.nullable().optional(),
+    completionCriteria: z
+      .array(UnitCompletionCriterionSchema)
+      .min(1)
+      .max(50)
+      .optional(),
+    unlockRules: z.array(UnitUnlockRuleSchema).max(500).optional(),
+    optional: z.boolean().optional(),
+    depthLevel: DepthLevelSchema.nullable().optional(),
+    payload: UnitPayloadSchema.optional(),
+    orderIndex: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .superRefine(
+    ({ kind: _kind, targetStableId: _targetStableId, ...changes }, context) => {
+      if (!Object.values(changes).some((value) => value !== undefined)) {
+        context.addIssue({
+          code: "custom",
+          message: "A unit update requires at least one changed field",
+        });
+      }
+      if (
+        changes.type !== undefined &&
+        changes.payload !== undefined &&
+        changes.type !== changes.payload.type
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["payload", "type"],
+          message: "Unit payload type must match unit type",
+        });
+      }
+    },
+  );
+
+export const CourseDraftProposalChangeKindSchema = z.enum([
+  "add-week",
+  "update-week",
+  "add-day",
+  "update-day",
+  "add-unit",
+  "update-unit",
+]);
+
 export const CourseDraftProposalChangeSchema = z.discriminatedUnion("kind", [
   CourseDraftAddWeekChangeSchema,
+  CourseDraftUpdateWeekChangeSchema,
   CourseDraftAddDayChangeSchema,
+  CourseDraftUpdateDayChangeSchema,
   CourseDraftAddUnitChangeSchema,
+  CourseDraftUpdateUnitChangeSchema,
 ]);
 export type CourseDraftProposalChange = z.infer<
   typeof CourseDraftProposalChangeSchema
@@ -669,4 +768,93 @@ export const CourseDraftProposalSchema = z
     changes: z.array(CourseDraftProposalChangeSchema).min(1).max(50),
   })
   .strict();
+
+export const CourseDesignerWorkflowStateSchema = z.enum([
+  "DRAFT_REQUEST",
+  "DISCOVERY",
+  "DIAGNOSTIC",
+  "CURRICULUM_PROPOSAL",
+  "USER_REVIEW",
+  "COMPILATION",
+  "VALIDATION",
+  "PUBLISHED",
+  "FAILED",
+]);
+export type CourseDesignerWorkflowState = z.infer<
+  typeof CourseDesignerWorkflowStateSchema
+>;
+
+export const CourseDesignerSourceSchema = z
+  .object({
+    id: IdSchema,
+    title: ShortTextSchema,
+    kind: z.enum(["provided-text", "url-reference", "repository-reference"]),
+    locator: TextSchema,
+    notes: TextSchema.nullable().optional(),
+    attribution: TextSchema.nullable().optional(),
+    approved: z.literal(true),
+  })
+  .strict();
+export type CourseDesignerSource = z.infer<typeof CourseDesignerSourceSchema>;
+
+export const CourseDesignerRequestSchema = z
+  .object({
+    goal: TextSchema,
+    targetOutcome: TextSchema,
+    currentLevel: TextSchema,
+    constraints: z.array(TextSchema).max(100),
+    sources: z.array(CourseDesignerSourceSchema).max(100),
+    activityPreferences: z.array(TextSchema).max(100),
+    runtimeRequirements: z.array(TextSchema).max(100),
+  })
+  .strict();
+export type CourseDesignerRequest = z.infer<typeof CourseDesignerRequestSchema>;
+
+export const CourseDesignerDiagnosticSchema = z
+  .object({
+    questions: z
+      .array(z.object({ id: IdSchema, prompt: TextSchema }).strict())
+      .max(10),
+    answers: z.record(IdSchema, TextSchema),
+    skipped: z.boolean(),
+  })
+  .strict();
+export type CourseDesignerDiagnostic = z.infer<
+  typeof CourseDesignerDiagnosticSchema
+>;
+
+export const CourseDesignerWorkflowSchema = z
+  .object({
+    id: IdSchema,
+    versionId: IdSchema,
+    state: CourseDesignerWorkflowStateSchema,
+    recoveryState: CourseDesignerWorkflowStateSchema.exclude([
+      "FAILED",
+    ]).nullable(),
+    request: CourseDesignerRequestSchema,
+    diagnostic: CourseDesignerDiagnosticSchema,
+    revisionRequests: z.array(TextSchema).max(50),
+    activeProposalId: IdSchema.nullable(),
+    authoringOperationId: IdSchema,
+    failureCode: ShortTextSchema.nullable(),
+    failureMessage: TextSchema.nullable(),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export type CourseDesignerWorkflow = z.infer<
+  typeof CourseDesignerWorkflowSchema
+>;
+
+export const CourseDraftProposalDiffSchema = z
+  .object({
+    kind: CourseDraftProposalChangeKindSchema,
+    targetStableId: IdSchema,
+    before: z.record(z.string(), z.json()).nullable(),
+    after: z.record(z.string(), z.json()),
+  })
+  .strict();
+export type CourseDraftProposalDiff = z.infer<
+  typeof CourseDraftProposalDiffSchema
+>;
 export type CourseDraftProposal = z.infer<typeof CourseDraftProposalSchema>;
