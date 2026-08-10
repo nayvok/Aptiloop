@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentChat } from "@/components/agent-chat";
+import { LocaleProvider } from "@/lib/i18n";
 
 const mockAgentState = vi.hoisted(() => ({
   messages: [] as Array<{
@@ -149,7 +150,9 @@ function renderAgentChat() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <AgentChat />
+      <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
+        <AgentChat />
+      </LocaleProvider>
     </QueryClientProvider>,
   );
 }

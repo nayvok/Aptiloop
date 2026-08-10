@@ -6,6 +6,7 @@ import { Dialog } from "radix-ui";
 import { XIcon } from "@phosphor-icons/react";
 
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 
 const Sheet = Dialog.Root;
 const SheetTrigger = Dialog.Trigger;
@@ -32,32 +33,36 @@ const SheetContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof Dialog.Content> & {
     side?: "right" | "left";
   }
->(({ side = "right", className, children, ...props }, ref) => (
-  <SheetPortal>
-    <SheetOverlay />
-    <Dialog.Content
-      ref={ref}
-      className={cn(
-        "fixed inset-y-0 z-50 flex w-full max-w-md flex-col bg-background shadow-xl outline-none",
-        side === "right" &&
-          "right-0 border-l border-border data-[state=closed]:animate-[sheet-out-right_160ms_ease-out] data-[state=open]:animate-[sheet-in-right_180ms_ease-out]",
-        side === "left" &&
-          "left-0 border-r border-border data-[state=closed]:animate-[sheet-out-left_160ms_ease-out] data-[state=open]:animate-[sheet-in-left_180ms_ease-out]",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-      <Dialog.Close
-        data-slot="sheet-close"
-        aria-label="Закрыть"
-        className="absolute right-4 top-4 grid size-9 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+>(({ side = "right", className, children, ...props }, ref) => {
+  const { t } = useI18n();
+
+  return (
+    <SheetPortal>
+      <SheetOverlay />
+      <Dialog.Content
+        ref={ref}
+        className={cn(
+          "fixed inset-y-0 z-50 flex w-full max-w-md flex-col bg-background shadow-xl outline-none",
+          side === "right" &&
+            "right-0 border-l border-border data-[state=closed]:animate-[sheet-out-right_160ms_ease-out] data-[state=open]:animate-[sheet-in-right_180ms_ease-out]",
+          side === "left" &&
+            "left-0 border-r border-border data-[state=closed]:animate-[sheet-out-left_160ms_ease-out] data-[state=open]:animate-[sheet-in-left_180ms_ease-out]",
+          className,
+        )}
+        {...props}
       >
-        <XIcon aria-hidden className="size-4" />
-      </Dialog.Close>
-    </Dialog.Content>
-  </SheetPortal>
-));
+        {children}
+        <Dialog.Close
+          data-slot="sheet-close"
+          aria-label={t("ui.close")}
+          className="absolute right-4 top-4 grid size-9 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <XIcon aria-hidden className="size-4" />
+        </Dialog.Close>
+      </Dialog.Content>
+    </SheetPortal>
+  );
+});
 SheetContent.displayName = "SheetContent";
 
 function SheetHeader({

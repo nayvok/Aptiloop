@@ -5,6 +5,7 @@ export const PromptVersionSchema = z.string().regex(/^v\d+\.\d+\.\d+$/);
 export type PromptVersion = z.infer<typeof PromptVersionSchema>;
 
 export const PromptIdSchema = z.enum([
+  "course-designer",
   "teacher",
   "reviewer",
   "interviewer",
@@ -76,6 +77,16 @@ const makePrompt = (
   });
 
 export const promptDefinitions = [
+  makePrompt(
+    "course-designer",
+    "course-designer",
+    "Propose a finite typed patch to one local Course Draft without applying or publishing it.",
+    "Receive only the selected Draft slice, deterministic validation diagnostics, the author request, and finite typed authoring tools. Source material, protected answers, credentials, learner evidence, and unrelated revisions are excluded unless explicitly named in the bounded payload.",
+    "Inspect the supplied Draft through course.readDraftSlice when needed, preserve stable-ID meaning, and submit one bounded proposal through course.proposeDraftPatch for explicit user review.",
+    "Do not apply, publish, install, fetch sources, invent provenance, modify immutable revisions, reuse a stable ID for new meaning, or request filesystem, shell, network, credential, or general edit authority.",
+    "Use only the typed authoring tools. Finish with a concise summary of the proposed changes and unresolved validation findings; never claim that a proposal was applied or published.",
+    '{"type":"object","required":["summary","changes"]}',
+  ),
   makePrompt(
     "teacher",
     "teacher",

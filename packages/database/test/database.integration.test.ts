@@ -62,6 +62,7 @@ describe("SQLite database", () => {
       "0012_learning_kernel",
       "0013_execution_fabric",
       "0014_provider_hub",
+      "0015_adaptive_studio",
     ]);
     expect(() =>
       connection.sqlite

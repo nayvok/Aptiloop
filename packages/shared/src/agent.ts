@@ -3,6 +3,7 @@ import { z } from "zod";
 import { JsonValueSchema } from "./json.js";
 
 export const AgentRoleSchema = z.enum([
+  "course-designer",
   "teacher",
   "reviewer",
   "interviewer",

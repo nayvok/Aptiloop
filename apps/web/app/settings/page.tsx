@@ -1,19 +1,16 @@
+"use client";
+
 import { PageHeader } from "@/components/page-header";
 import { SettingsForm } from "@/components/settings-form";
-import { Button } from "@/components/ui/button";
-import Link from "next/link";
+import { useI18n } from "@/lib/i18n";
 
 export default function SettingsPage() {
+  const { t } = useI18n();
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Настройки"
-        description="Тема изменяется здесь; AI-роли и локальные подключения задаются сервером и доступны только для чтения. Credentials никогда не возвращаются в UI."
-        actions={
-          <Button asChild variant="outline">
-            <Link href="/settings/curriculum">Редактор программы</Link>
-          </Button>
-        }
+        title={t("nav.settings")}
+        description={t("page.settings.description")}
       />
       <SettingsForm />
     </div>

@@ -7,12 +7,13 @@ import {
   remainingDayMinutes,
   type BlockUnit,
 } from "@/lib/learning-blocks";
+import { catalogs } from "@/lib/i18n";
 import { formatDuration, formatMinutesShort } from "@/lib/time";
 import {
   activityTone,
-  depthLabel,
-  sourceKindLabel,
-  unitTypeLabels,
+  depthMessageKey,
+  sourceKindMessageKey,
+  unitTypeMessageKeys,
 } from "@/lib/unit-labels";
 
 function unit(id: string, type: BlockUnit["type"], minutes: number): BlockUnit {
@@ -140,31 +141,38 @@ describe("focusedUnit", () => {
 
 describe("форматирование времени", () => {
   it("форматирует минуты", () => {
-    expect(formatMinutesShort(18)).toBe("18 мин");
-    expect(formatMinutesShort(168)).toBe("2 ч 48 мин");
-    expect(formatMinutesShort(120)).toBe("2 ч");
-    expect(formatDuration(18)).toBe("около 18 минут");
-    expect(formatDuration(168)).toBe("около 2 часов 48 мин");
-    expect(formatDuration(120)).toBe("около 2 часов");
+    expect(formatMinutesShort(18, "ru-RU")).toBe("18 мин");
+    expect(formatMinutesShort(168, "ru-RU")).toBe("2 ч 48 мин");
+    expect(formatMinutesShort(120, "ru-RU")).toBe("2 ч");
+    expect(formatDuration(18, "ru-RU")).toBe("≈ 18 мин");
+    expect(formatDuration(168, "en-US")).toBe("≈ 2 hr 48 min");
+    expect(formatDuration(120, "en-US")).toBe("≈ 2 hr");
   });
 });
 
 describe("learner labels", () => {
   it("использует понятную терминологию", () => {
-    expect(unitTypeLabels.study).toBe("Изучение");
-    expect(unitTypeLabels.recall).toBe("Воспроизведение по памяти");
-    expect(unitTypeLabels["teacher-dialogue"]).toBe("Разбор с преподавателем");
-    expect(unitTypeLabels.quiz).toBe("Короткая проверка");
-    expect(unitTypeLabels.exercise).toBe("Практическое задание");
-    expect(unitTypeLabels.review).toBe("Проверка решения");
-    expect(unitTypeLabels.summary).toBe("Итоги дня");
+    expect(catalogs["ru-RU"][unitTypeMessageKeys.study]).toBe("Изучение");
+    expect(catalogs["en-US"][unitTypeMessageKeys.recall]).toBe("Recall");
+    expect(catalogs["ru-RU"][unitTypeMessageKeys["teacher-dialogue"]]).toBe(
+      "Разбор с преподавателем",
+    );
+    expect(catalogs["en-US"][unitTypeMessageKeys.exercise]).toBe(
+      "Practice exercise",
+    );
   });
 
   it("переводит глубину и источники", () => {
-    expect(depthLabel("interview-ready")).toBe("Для собеседования");
-    expect(depthLabel("foundation")).toBe("Фундамент");
-    expect(sourceKindLabel("documentation")).toBe("Документация");
-    expect(sourceKindLabel("custom")).toBe("custom");
+    expect(catalogs["ru-RU"][depthMessageKey("interview-ready")!]).toBe(
+      "Для собеседования",
+    );
+    expect(catalogs["en-US"][depthMessageKey("foundation")!]).toBe(
+      "Foundation",
+    );
+    expect(catalogs["ru-RU"][sourceKindMessageKey("documentation")!]).toBe(
+      "Документация",
+    );
+    expect(sourceKindMessageKey("custom")).toBeNull();
   });
 
   it("сопоставляет activity tone для каждого типа", () => {

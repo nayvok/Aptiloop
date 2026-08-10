@@ -42,6 +42,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api";
+import { type MessageKey, useI18n } from "@/lib/i18n";
 
 const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const diagnosticSchema = z
@@ -156,18 +157,21 @@ type ValidationResponse = z.infer<typeof validationResponseSchema>;
 type CoursePackLibraryItem = z.infer<typeof libraryItemSchema>;
 type InstallAction = "install" | "open-as-draft";
 
-const statusLabels: Record<CoursePackLibraryItem["revisionStatus"], string> = {
-  draft: "Черновик",
-  published: "Установлен",
-  archived: "Удалён из библиотеки",
+const statusLabels: Readonly<
+  Record<CoursePackLibraryItem["revisionStatus"], MessageKey>
+> = {
+  draft: "courses.status.draft",
+  published: "courses.status.published",
+  archived: "courses.status.archived",
 };
 
 export function CoursePackClient() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { locale, t } = useI18n();
   const [file, setFile] = useState<File | null>(null);
   const [validation, setValidation] = useState<ValidationResponse | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<MessageKey | null>(null);
   const library = useQuery({
     queryKey: ["course-packs"],
     queryFn: async () => librarySchema.parse(await api("/course-packs")),
@@ -187,7 +191,9 @@ export function CoursePackClient() {
   });
   const commit = useMutation({
     mutationFn: async (action: InstallAction) => {
-      if (!validation?.valid) throw new Error("Сначала проверьте Course Pack");
+      if (!validation?.valid) {
+        throw new Error(t("courses.error.validateFirst"));
+      }
       return commitResponseSchema.parse(
         await api(
           `/course-packs/validations/${encodeURIComponent(validation.validationId)}/commit`,
@@ -208,8 +214,8 @@ export function CoursePackClient() {
       setValidation(null);
       setNotice(
         result.result.action === "install"
-          ? "Course Pack установлен. Открываем учебный путь."
-          : "Course Pack сохранён как черновик.",
+          ? "courses.notice.installed"
+          : "courses.notice.draftSaved",
       );
       if (result.openPath) router.push(result.openPath);
     },
@@ -226,9 +232,7 @@ export function CoursePackClient() {
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["course-packs"] });
-      setNotice(
-        "Course Pack удалён из активной библиотеки. История сохранена.",
-      );
+      setNotice("courses.notice.uninstalled");
     },
   });
 
@@ -237,8 +241,8 @@ export function CoursePackClient() {
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
-        title="Курсы"
-        description="Проверяйте декларативный Course Pack до установки. Файл не может передавать команды, пути, credentials или провайдерские настройки."
+        title={t("courses.page.title")}
+        description={t("courses.page.description")}
       />
 
       <section
@@ -255,17 +259,18 @@ export function CoursePackClient() {
                 id="course-pack-import-title"
                 className="text-lg font-semibold"
               >
-                Импорт Course Pack
+                {t("courses.import.title")}
               </h2>
               <p className="text-sm leading-6 text-muted-foreground">
-                Сначала — локальная проверка и Preview. Установка выполняется
-                только отдельным подтверждённым действием.
+                {t("courses.import.description")}
               </p>
             </div>
           </div>
           <FieldGroup>
             <Field data-invalid={validate.isError || undefined}>
-              <FieldLabel htmlFor="course-pack-file">JSON-файл</FieldLabel>
+              <FieldLabel htmlFor="course-pack-file">
+                {t("courses.import.fileLabel")}
+              </FieldLabel>
               <Input
                 id="course-pack-file"
                 type="file"
@@ -280,8 +285,7 @@ export function CoursePackClient() {
                 }}
               />
               <FieldDescription>
-                UTF-8 JSON, не более 1 MiB. Невалидные исходные байты не
-                сохраняются.
+                {t("courses.import.fileDescription")}
               </FieldDescription>
             </Field>
             <Field orientation="horizontal">
@@ -295,7 +299,7 @@ export function CoursePackClient() {
                 {validate.isPending ? (
                   <Spinner data-icon="inline-start" />
                 ) : null}
-                Проверить Pack
+                {t("courses.import.validate")}
               </Button>
               {file ? (
                 <span className="min-w-0 truncate text-sm text-muted-foreground">
@@ -308,25 +312,24 @@ export function CoursePackClient() {
           {!library.data?.storageAvailable ? (
             <Alert>
               <WarningCircleIcon aria-hidden />
-              <AlertTitle>Хранилище M3 недоступно</AlertTitle>
+              <AlertTitle>{t("courses.storageUnavailable.title")}</AlertTitle>
               <AlertDescription>
-                Preview работает, но установка заблокирована до применения
-                миграции Course Pack.
+                {t("courses.storageUnavailable.description")}
               </AlertDescription>
             </Alert>
           ) : null}
           {actionError ? (
             <Alert variant="destructive">
               <WarningCircleIcon aria-hidden />
-              <AlertTitle>Операция не выполнена</AlertTitle>
+              <AlertTitle>{t("courses.alert.errorTitle")}</AlertTitle>
               <AlertDescription>{actionError.message}</AlertDescription>
             </Alert>
           ) : null}
           {notice ? (
             <Alert>
               <CheckCircleIcon aria-hidden />
-              <AlertTitle>Готово</AlertTitle>
-              <AlertDescription>{notice}</AlertDescription>
+              <AlertTitle>{t("courses.alert.successTitle")}</AlertTitle>
+              <AlertDescription>{t(notice)}</AlertDescription>
             </Alert>
           ) : null}
         </div>
@@ -345,15 +348,18 @@ export function CoursePackClient() {
         <div className="flex items-end justify-between gap-4">
           <div className="flex flex-col gap-1">
             <h2 id="course-library-title" className="text-xl font-semibold">
-              Локальная библиотека
+              {t("courses.library.title")}
             </h2>
             <p className="text-sm text-muted-foreground">
-              Импортированные ревизии неизменяемы; удаление скрывает курс, но
-              сохраняет факты обучения.
+              {t("courses.library.description")}
             </p>
           </div>
           {library.data ? (
-            <Badge variant="outline">{library.data.packs.length} ревизий</Badge>
+            <Badge variant="outline">
+              {t("courses.library.revisions", {
+                count: library.data.packs.length.toLocaleString(locale),
+              })}
+            </Badge>
           ) : null}
         </div>
 
@@ -366,8 +372,8 @@ export function CoursePackClient() {
         ) : null}
         {library.data?.packs.length === 0 ? (
           <EmptyState
-            title="Course Pack пока не установлены"
-            description="Выберите JSON-файл выше: сначала система покажет ошибки, provenance, требования и хэш Preview."
+            title={t("courses.library.empty.title")}
+            description={t("courses.library.empty.description")}
           />
         ) : null}
         {library.data && library.data.packs.length > 0 ? (
@@ -381,7 +387,13 @@ export function CoursePackClient() {
                   uninstall.isPending &&
                   uninstall.variables?.revisionId === item.revisionId
                 }
-                onExport={() => void exportPack(item)}
+                onExport={() =>
+                  void exportPack(item, (status) =>
+                    t("courses.export.error", {
+                      status: status.toLocaleString(locale),
+                    }),
+                  )
+                }
                 onUninstall={() => uninstall.mutate(item)}
               />
             ))}
@@ -401,15 +413,16 @@ function CoursePackPreviewPanel({
   pending: boolean;
   onCommit: (action: InstallAction) => void;
 }) {
+  const { locale, t } = useI18n();
+
   if (!validation) {
     return (
       <div className="flex min-h-80 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-background/50 p-6 text-center">
         <PackageIcon aria-hidden className="size-8 text-muted-foreground" />
         <div className="flex flex-col gap-1">
-          <p className="font-medium">Preview появится здесь</p>
+          <p className="font-medium">{t("courses.preview.empty.title")}</p>
           <p className="max-w-[48ch] text-sm leading-6 text-muted-foreground">
-            Установка недоступна, пока схема, ссылки, граф, хэши и policy-gates
-            не пройдут проверку.
+            {t("courses.preview.empty.description")}
           </p>
         </div>
       </div>
@@ -420,8 +433,12 @@ function CoursePackPreviewPanel({
     return (
       <div className="flex min-h-80 flex-col gap-4 rounded-lg border border-destructive/40 bg-background p-5">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="font-semibold">Pack отклонён</h3>
-          <Badge variant="error">{validation.report.errors} ошибок</Badge>
+          <h3 className="font-semibold">{t("courses.preview.rejected")}</h3>
+          <Badge variant="error">
+            {t("courses.preview.errors", {
+              count: validation.report.errors.toLocaleString(locale),
+            })}
+          </Badge>
         </div>
         <DiagnosticList diagnostics={validation.report.diagnostics} />
       </div>
@@ -434,32 +451,46 @@ function CoursePackPreviewPanel({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
           <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            Проверенный Preview
+            {t("courses.preview.validated")}
           </p>
           <h3 className="text-xl font-semibold">{preview.courseTitle}</h3>
           <p className="max-w-[60ch] text-sm leading-6 text-muted-foreground">
-            {preview.courseKey} · revision {preview.revisionNumber}
+            {t("courses.revision", {
+              courseKey: preview.courseKey,
+              revision: preview.revisionNumber.toLocaleString(locale),
+            })}
           </p>
         </div>
-        <Badge variant="success">Готов к установке</Badge>
+        <Badge variant="success">{t("courses.preview.ready")}</Badge>
       </div>
 
       <dl className="grid grid-cols-2 gap-x-5 gap-y-3 text-sm sm:grid-cols-4">
-        <PreviewMetric label="Уроки" value={String(preview.lessonCount)} />
         <PreviewMetric
-          label="Активности"
-          value={String(preview.activityCount)}
+          label={t("courses.preview.metric.lessons")}
+          value={preview.lessonCount.toLocaleString(locale)}
         />
-        <PreviewMetric label="Язык" value={preview.primaryLocale} />
         <PreviewMetric
-          label="Источники"
-          value={`${preview.sourcePrivacyClasses.public} public / ${preview.sourcePrivacyClasses.private} private`}
+          label={t("courses.preview.metric.activities")}
+          value={preview.activityCount.toLocaleString(locale)}
+        />
+        <PreviewMetric
+          label={t("courses.preview.metric.language")}
+          value={preview.primaryLocale}
+        />
+        <PreviewMetric
+          label={t("courses.preview.metric.sources")}
+          value={t("courses.preview.sourcesValue", {
+            publicCount:
+              preview.sourcePrivacyClasses.public.toLocaleString(locale),
+            privateCount:
+              preview.sourcePrivacyClasses.private.toLocaleString(locale),
+          })}
         />
       </dl>
 
       <div className="flex flex-col gap-2">
         <p className="text-xs font-medium text-muted-foreground">
-          Content hash
+          {t("courses.preview.contentHash")}
         </p>
         <code className="break-all rounded-md bg-muted px-3 py-2 font-mono text-xs">
           {preview.contentHash}
@@ -468,23 +499,24 @@ function CoursePackPreviewPanel({
 
       <div className="grid gap-4 text-sm sm:grid-cols-2">
         <RequirementList
-          label="Типы активностей"
+          label={t("courses.preview.requirement.activityTypes")}
           values={preview.requirements.activityTypes}
         />
         <RequirementList
-          label="Trusted checks"
+          label={t("courses.preview.requirement.trustedChecks")}
           values={preview.requirements.checkIds}
         />
         <RequirementList
-          label="Environment contracts"
+          label={t("courses.preview.requirement.environments")}
           values={preview.requirements.environmentIds}
         />
         <RequirementList
-          label="Provenance"
+          label={t("courses.preview.requirement.provenance")}
           values={[
             preview.provenance.author,
             preview.provenance.ownership,
-            preview.provenance.licenseSpdx ?? "No project license claim",
+            preview.provenance.licenseSpdx ??
+              t("courses.preview.noLicenseClaim"),
           ]}
         />
       </div>
@@ -499,14 +531,14 @@ function CoursePackPreviewPanel({
           onClick={() => onCommit("install")}
         >
           {pending ? <Spinner data-icon="inline-start" /> : null}
-          Установить и открыть
+          {t("courses.action.installAndOpen")}
         </Button>
         <Button
           variant="outline"
           disabled={pending || !validation.storageAvailable}
           onClick={() => onCommit("open-as-draft")}
         >
-          Открыть как черновик
+          {t("courses.action.openAsDraft")}
         </Button>
       </div>
     </div>
@@ -529,6 +561,8 @@ function RequirementList({
   label: string;
   values: readonly string[];
 }) {
+  const { t } = useI18n();
+
   return (
     <div className="flex flex-col gap-2">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
@@ -540,7 +574,9 @@ function RequirementList({
             </Badge>
           ))
         ) : (
-          <span className="text-muted-foreground">Не требуются</span>
+          <span className="text-muted-foreground">
+            {t("courses.preview.notRequired")}
+          </span>
         )}
       </div>
     </div>
@@ -589,6 +625,7 @@ function CourseLibraryRow({
   onExport: () => void;
   onUninstall: () => void;
 }) {
+  const { locale, t } = useI18n();
   const openPath = `/courses/${encodeURIComponent(item.courseId)}/revisions/${encodeURIComponent(item.revisionId)}`;
   return (
     <article>
@@ -606,11 +643,14 @@ function CourseLibraryRow({
                     : "secondary"
               }
             >
-              {statusLabels[item.revisionStatus]}
+              {t(statusLabels[item.revisionStatus])}
             </Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            {item.courseKey} · ревизия {item.revisionNumber}
+            {t("courses.revision", {
+              courseKey: item.courseKey,
+              revision: item.revisionNumber.toLocaleString(locale),
+            })}
           </p>
           <code className="mt-2 block truncate font-mono text-xs text-muted-foreground">
             {item.contentHash}
@@ -621,42 +661,44 @@ function CourseLibraryRow({
             <Button asChild size="sm">
               <Link href={openPath}>
                 <ArrowSquareOutIcon data-icon="inline-start" aria-hidden />
-                Открыть
+                {t("courses.action.open")}
               </Link>
             </Button>
           ) : null}
           <Button size="sm" variant="outline" onClick={onExport}>
             <DownloadSimpleIcon data-icon="inline-start" aria-hidden />
-            Экспорт
+            {t("courses.action.export")}
           </Button>
           {item.lifecycleAction !== "uninstall" ? (
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button size="sm" variant="ghost">
                   <TrashIcon data-icon="inline-start" aria-hidden />
-                  Удалить
+                  {t("courses.action.remove")}
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    Удалить Course Pack из библиотеки?
+                    {t("courses.remove.title")}
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    Ревизия {item.revisionId} станет архивной. Course Pack,
-                    сессии и факты обучения не удаляются, чтобы replay и история
-                    оставались проверяемыми.
+                    {t("courses.remove.description", {
+                      revisionId: item.revisionId,
+                    })}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>Отмена</AlertDialogCancel>
+                  <AlertDialogCancel>
+                    {t("courses.action.cancel")}
+                  </AlertDialogCancel>
                   <AlertDialogAction
                     variant="destructive"
                     disabled={uninstalling}
                     onClick={onUninstall}
                   >
                     {uninstalling ? <Spinner data-icon="inline-start" /> : null}
-                    Удалить из библиотеки
+                    {t("courses.action.removeFromLibrary")}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -669,11 +711,13 @@ function CourseLibraryRow({
 }
 
 function CourseLibrarySkeleton() {
+  const { t } = useI18n();
+
   return (
     <div
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
       role="status"
-      aria-label="Загрузка библиотеки курсов"
+      aria-label={t("courses.library.loading")}
     >
       <Skeleton className="h-5 w-56" />
       <Skeleton className="h-4 w-80 max-w-full" />
@@ -682,12 +726,15 @@ function CourseLibrarySkeleton() {
   );
 }
 
-async function exportPack(item: CoursePackLibraryItem): Promise<void> {
+async function exportPack(
+  item: CoursePackLibraryItem,
+  formatError: (status: number) => string,
+): Promise<void> {
   const response = await fetch(
     `/api/course-packs/export?revisionId=${encodeURIComponent(item.revisionId)}`,
     { headers: { "X-DLH-Client": "web" } },
   );
-  if (!response.ok) throw new Error(`Export failed (${response.status})`);
+  if (!response.ok) throw new Error(formatError(response.status));
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");

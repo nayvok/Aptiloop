@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownIcon,
@@ -9,6 +9,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
+import { AiDisclosureSchema, CourseDraftProposalSchema } from "@dlh/shared";
 import { z } from "zod";
 
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,7 @@ import {
   UnitTypeSchema,
   UnitUnlockRuleSchema,
 } from "@/lib/curriculum-authoring-schemas";
+import { type MessageKey, type UiLocale, useI18n } from "@/lib/i18n";
 
 const idSchema = z.string().trim().min(1).max(200);
 const nullableTextSchema = z.string().nullable();
@@ -120,7 +122,188 @@ const weekSchema = z
 const graphSchema = z
   .object({ version: versionSchema, weeks: z.array(weekSchema) })
   .strict();
+const validationReportSchema = z
+  .object({
+    validatorVersion: z.literal("m9-v1"),
+    versionId: idSchema,
+    draftHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+    validationHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+    valid: z.boolean(),
+    errors: z.number().int().nonnegative(),
+    warnings: z.number().int().nonnegative(),
+    diagnostics: z.array(
+      z
+        .object({
+          code: z.string().min(1),
+          severity: z.enum(["error", "warning"]),
+          path: z.string(),
+          message: z.string().min(1),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+const validationResponseSchema = z
+  .object({ report: validationReportSchema })
+  .strict();
+const previewResponseSchema = z
+  .object({
+    preview: z
+      .object({
+        versionId: idSchema,
+        title: z.string().min(1),
+        description: nullableTextSchema,
+        draftHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+        weeks: z.array(
+          z
+            .object({
+              stableId: idSchema,
+              title: z.string().min(1),
+              description: nullableTextSchema,
+              days: z.array(
+                z
+                  .object({
+                    stableId: idSchema,
+                    title: z.string().min(1),
+                    description: nullableTextSchema,
+                    goal: z.string().min(1),
+                    estimatedMinutes: z.number().int().positive(),
+                    expectedOutcomes: z.array(z.unknown()),
+                    topics: z.array(z.unknown()),
+                    activities: z.array(
+                      z
+                        .object({
+                          stableId: idSchema,
+                          type: UnitTypeSchema,
+                          title: z.string().min(1),
+                          description: nullableTextSchema,
+                          estimatedMinutes: z.number().int().nullable(),
+                          objectives: z.array(z.unknown()),
+                          checklist: z.array(z.unknown()),
+                          sources: z.array(z.unknown()),
+                          optional: z.boolean(),
+                        })
+                        .strict(),
+                    ),
+                  })
+                  .strict(),
+              ),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+  })
+  .strict();
+const changeReviewResponseSchema = z
+  .object({
+    review: z
+      .object({
+        versionId: idSchema,
+        parentVersionId: idSchema.nullable(),
+        draftHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+        changeReviewHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+        added: z.number().int().nonnegative(),
+        changed: z.number().int().nonnegative(),
+        removed: z.number().int().nonnegative(),
+        ready: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+const courseProposalRecordSchema = z
+  .object({
+    id: idSchema,
+    versionId: idSchema,
+    baseDraftHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+    prompt: z.string().min(1),
+    proposal: CourseDraftProposalSchema,
+    status: z.enum(["proposed", "applied", "rejected"]),
+    authoringOperationId: idSchema,
+    providerOperationId: idSchema,
+    createdAt: z.number().int().nonnegative(),
+    reviewedAt: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+const courseProposalResponseSchema = z
+  .object({ proposal: courseProposalRecordSchema })
+  .strict();
+const courseProposalListSchema = z
+  .object({ proposals: z.array(courseProposalRecordSchema) })
+  .strict();
+const disclosurePreparationSchema = z.discriminatedUnion("required", [
+  z.object({ required: z.literal(false) }).strict(),
+  z
+    .object({ required: z.literal(true), disclosure: AiDisclosureSchema })
+    .strict(),
+]);
 
+const adaptationRevisionSchema = z
+  .object({
+    id: idSchema,
+    curriculumId: idSchema,
+    revision: z.number().int().positive(),
+    parentVersionId: idSchema.nullable(),
+    branchKind: z.enum(["upstream", "personal"]),
+    status: z.enum(["draft", "published", "archived"]),
+    title: z.string().min(1),
+    description: nullableTextSchema,
+    contentHash: z.string().nullable(),
+    basedOnContentHash: z.string().nullable(),
+    adaptationBranchId: idSchema.nullable(),
+    createdAt: z.number().int().nonnegative(),
+    publishedAt: z.number().int().nonnegative().nullable(),
+    archivedAt: z.number().int().nonnegative().nullable(),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+const adaptationBranchSchema = z
+  .object({
+    id: idSchema,
+    courseId: idSchema,
+    owner: z.literal("local"),
+    baseRevisionId: idSchema,
+    headRevisionId: idSchema.nullable(),
+    status: z.enum(["active", "archived"]),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+const adaptationComparisonSchema = z
+  .object({
+    status: z.enum(["current", "clean", "conflict"]),
+    baseRevisionId: idSchema,
+    upstreamRevisionId: idSchema,
+    personalVersionId: idSchema.nullable(),
+    baseDraftHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+    upstreamDraftHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+    personalDraftHash: z
+      .string()
+      .regex(/^sha256:[a-f0-9]{64}$/u)
+      .nullable(),
+    conflicts: z.array(z.string()),
+  })
+  .strict();
+const adaptationResponseSchema = z
+  .object({
+    branch: adaptationBranchSchema.nullable(),
+    revisions: z.array(adaptationRevisionSchema),
+    comparison: adaptationComparisonSchema,
+  })
+  .strict();
+const adaptationMutationResponseSchema = z
+  .object({
+    version: adaptationRevisionSchema,
+    branch: adaptationBranchSchema,
+  })
+  .strict();
+const adaptationIntegrationResponseSchema = z
+  .object({
+    version: adaptationRevisionSchema,
+    strategy: z.enum(["use-upstream", "keep-personal"]),
+    priorConflicts: z.array(z.string()),
+  })
+  .strict();
 type Version = z.infer<typeof versionSchema>;
 type VersionListItem = z.infer<typeof versionListItemSchema>;
 type Graph = z.infer<typeof graphSchema>;
@@ -143,25 +326,37 @@ const forbiddenResponseKeys = new Set([
   "protectedEvaluation",
 ]);
 
-function assertSafeResponse(value: unknown, path = "response"): void {
+type Translate = (
+  key: MessageKey,
+  values?: Readonly<Record<string, string | number>>,
+) => string;
+
+function assertSafeResponse(
+  value: unknown,
+  t: Translate,
+  path = "response",
+): void {
   if (Array.isArray(value)) {
     value.forEach((item, index) =>
-      assertSafeResponse(item, `${path}[${index}]`),
+      assertSafeResponse(item, t, `${path}[${index}]`),
     );
     return;
   }
   if (!value || typeof value !== "object") return;
   for (const [key, nested] of Object.entries(value)) {
     if (forbiddenResponseKeys.has(key)) {
-      throw new Error(`Небезопасное поле ответа: ${path}.${key}`);
+      throw new Error(
+        t("authoring.error.unsafeResponseField", { path: `${path}.${key}` }),
+      );
     }
-    assertSafeResponse(nested, `${path}.${key}`);
+    assertSafeResponse(nested, t, `${path}.${key}`);
   }
 }
 
 async function checkedApi<T>(
   path: string,
   schema: z.ZodType<T>,
+  t: Translate,
   init?: RequestInit,
 ): Promise<T> {
   const response = await fetch(`/api${path}`, {
@@ -189,34 +384,16 @@ async function checkedApi<T>(
     const message =
       typeof backendError === "string"
         ? backendError
-        : (backendError?.message ?? `Request failed (${response.status})`);
+        : (backendError?.message ??
+          t("authoring.error.requestFailed", { status: response.status }));
     throw new Error(message);
   }
-  assertSafeResponse(value);
+  assertSafeResponse(value, t);
   return schema.parse(value);
 }
 
 function operationId(): string {
   return crypto.randomUUID();
-}
-
-function formatDate(ms: number): string {
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(ms));
-}
-
-function plural(count: number, one: string, few: string, many: string): string {
-  const remainder = Math.abs(count) % 100;
-  const lastDigit = remainder % 10;
-  if (remainder > 10 && remainder < 20) return many;
-  if (lastDigit > 1 && lastDigit < 5) return few;
-  if (lastDigit === 1) return one;
-  return many;
 }
 
 function slugify(value: string): string {
@@ -255,28 +432,29 @@ const fieldClass =
 const labelClass = "grid gap-1.5 text-sm font-medium";
 const panelClass = "rounded-xl border border-border bg-card p-5";
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, t: Translate): string {
   if (error instanceof z.ZodError)
-    return "Ответ сервера не прошёл локальную проверку безопасности.";
+    return t("authoring.error.unsafeServerResponse");
   if (error instanceof Error) return error.message;
-  return "Изменение не удалось сохранить.";
+  return t("authoring.error.saveFailed");
 }
 
 function parseJson<T>(
   label: string,
   value: FormDataEntryValue | null,
   schema: z.ZodType<T>,
+  t: Translate,
 ): T {
   const text = typeof value === "string" ? value : "";
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(`${label}: требуется корректный JSON.`);
+    throw new Error(t("authoring.error.invalidJson", { label }));
   }
   const result = schema.safeParse(parsed);
   if (!result.success)
-    throw new Error(`${label}: структура не соответствует контракту.`);
+    throw new Error(t("authoring.error.invalidStructure", { label }));
   return result.data;
 }
 
@@ -289,30 +467,251 @@ function optionalText(form: FormData, name: string): string | null {
   return value || null;
 }
 
-function JsonField({
+type StructuredValue =
+  | null
+  | string
+  | number
+  | boolean
+  | StructuredValue[]
+  | { [key: string]: StructuredValue };
+
+const completionCriterionDefaults: Readonly<
+  Record<string, { [key: string]: StructuredValue }>
+> = {
+  acknowledgement: { type: "acknowledgement" },
+  checklist: { type: "checklist", requiredItemIds: [""] },
+  attempts: { type: "attempts", minimum: 1 },
+  dialogue: { type: "dialogue", minimumTurns: 1, requiresRevision: false },
+  score: { type: "score", minimum: 0.8, minimumAttempts: 1 },
+  fields: { type: "fields", required: [""] },
+  exercise: {
+    type: "exercise",
+    passingTestsRequired: true,
+    acceptedReviewRequired: true,
+  },
+  custom: { type: "custom", key: "" },
+};
+
+function structuredArrayDefault(path: string): StructuredValue {
+  const key = path.split(".").at(-1);
+  if (key === "checklist") return { id: "item", label: "", required: true };
+  if (key === "sources")
+    return {
+      id: "source",
+      title: "",
+      url: null,
+      kind: "source-required",
+      required: true,
+      estimatedMinutes: 0,
+      examplesToRepeat: [],
+    };
+  if (key === "questions")
+    return {
+      id: "question",
+      kind: "explain",
+      prompt: "",
+      options: [],
+      correctOptionIds: [],
+      referenceAnswer: null,
+      evaluationPoints: [],
+      commonMistakes: [],
+    };
+  if (key === "options") return { id: "option", label: "" };
+  if (key === "completionCriteria") return { type: "acknowledgement" };
+  if (key === "unlockRules") return { type: "unit-completed", unitId: "" };
+  return "";
+}
+
+function StructuredValueEditor({
+  value,
+  path,
+  onChange,
+}: {
+  value: StructuredValue;
+  path: string;
+  onChange: (value: StructuredValue) => void;
+}) {
+  const { t } = useI18n();
+  if (Array.isArray(value)) {
+    return (
+      <div className="grid gap-2 rounded-md border border-border p-3">
+        {value.map((item, index) => (
+          <div
+            key={`${path}-${index}`}
+            className="grid gap-2 rounded-md bg-muted/30 p-3"
+          >
+            <StructuredValueEditor
+              value={item}
+              path={`${path}.${index}`}
+              onChange={(next) =>
+                onChange(
+                  value.map((current, itemIndex) =>
+                    itemIndex === index ? next : current,
+                  ),
+                )
+              }
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                onChange(value.filter((_, itemIndex) => itemIndex !== index))
+              }
+            >
+              {t("authoring.structured.removeItem")}
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => onChange([...value, structuredArrayDefault(path)])}
+        >
+          <PlusIcon aria-hidden />
+          {t("authoring.structured.addItem")}
+        </Button>
+      </div>
+    );
+  }
+  if (value !== null && typeof value === "object") {
+    return (
+      <div className="grid gap-3 rounded-md border border-border p-3">
+        {Object.entries(value).map(([key, child]) => {
+          if (key === "type" && path.startsWith("completionCriteria")) {
+            return (
+              <label key={key} className={labelClass}>
+                {key}
+                <select
+                  className={fieldClass}
+                  value={String(child)}
+                  onChange={(event) =>
+                    onChange(
+                      structuredClone(
+                        completionCriterionDefaults[event.target.value] ??
+                          value,
+                      ),
+                    )
+                  }
+                >
+                  {Object.keys(completionCriterionDefaults).map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          }
+          if (key === "kind" && path.startsWith("questions")) {
+            return (
+              <label key={key} className={labelClass}>
+                {key}
+                <select
+                  className={fieldClass}
+                  value={String(child)}
+                  onChange={(event) =>
+                    onChange({ ...value, kind: event.target.value })
+                  }
+                >
+                  {[
+                    "explain",
+                    "compare",
+                    "predict-output",
+                    "find-bug",
+                    "multiple-choice",
+                    "design-choice",
+                  ].map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          }
+          return (
+            <div key={key} className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
+                {key}
+              </span>
+              <StructuredValueEditor
+                value={child}
+                path={`${path}.${key}`}
+                onChange={(next) => onChange({ ...value, [key]: next })}
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+  if (typeof value === "boolean") {
+    return (
+      <input
+        aria-label={path}
+        type="checkbox"
+        checked={value}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    );
+  }
+  if (typeof value === "number") {
+    return (
+      <input
+        aria-label={path}
+        className={fieldClass}
+        type="number"
+        step="any"
+        value={value}
+        onChange={(event) => onChange(event.target.valueAsNumber)}
+      />
+    );
+  }
+  if (value === null) {
+    return (
+      <textarea
+        aria-label={path}
+        className={`${fieldClass} resize-y`}
+        rows={2}
+        value=""
+        placeholder={t("authoring.structured.optionalEmpty")}
+        onChange={(event) => onChange(event.target.value || null)}
+      />
+    );
+  }
+  return (
+    <textarea
+      aria-label={path}
+      className={`${fieldClass} resize-y`}
+      rows={2}
+      value={String(value ?? "")}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+}
+
+function StructuredField({
   name,
   label,
   value,
-  rows = 4,
 }: {
   name: string;
   label: string;
   value: unknown;
-  rows?: number;
 }) {
-  const id = useId();
+  const [current, setCurrent] = useState(value as StructuredValue);
   return (
-    <label htmlFor={id} className={labelClass}>
-      {label}
-      <textarea
-        id={id}
-        name={name}
-        rows={rows}
-        className={`${fieldClass} resize-y font-mono text-xs leading-5`}
-        defaultValue={JSON.stringify(value, null, 2)}
-        spellCheck={false}
+    <fieldset className="grid gap-2 rounded-lg border border-border p-3">
+      <legend className="px-1 text-sm font-medium">{label}</legend>
+      <input type="hidden" name={name} value={JSON.stringify(current)} />
+      <StructuredValueEditor
+        value={current}
+        path={name}
+        onChange={setCurrent}
       />
-    </label>
+    </fieldset>
   );
 }
 
@@ -337,14 +736,18 @@ function ReorderControls({
   disabled: boolean;
   move: (direction: -1 | 1) => void;
 }) {
+  const { t } = useI18n();
   return (
-    <div className="flex gap-1" aria-label={`Порядок: ${label}`}>
+    <div
+      className="flex gap-1"
+      aria-label={t("authoring.reorder.group", { label })}
+    >
       <Button
         type="button"
         size="icon-sm"
         variant="ghost"
         disabled={disabled || index === 0}
-        aria-label={`Поднять ${label}`}
+        aria-label={t("authoring.reorder.up", { label })}
         onClick={() => move(-1)}
       >
         <ArrowUpIcon aria-hidden />
@@ -354,7 +757,7 @@ function ReorderControls({
         size="icon-sm"
         variant="ghost"
         disabled={disabled || index === count - 1}
-        aria-label={`Опустить ${label}`}
+        aria-label={t("authoring.reorder.down", { label })}
         onClick={() => move(1)}
       >
         <ArrowDownIcon aria-hidden />
@@ -374,6 +777,7 @@ function DeleteAction({
   busy: boolean;
   onConfirm: () => Promise<unknown>;
 }) {
+  const { t } = useI18n();
   const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!armed) {
@@ -382,7 +786,7 @@ function DeleteAction({
         type="button"
         variant="ghost"
         size="icon-sm"
-        aria-label={`Удалить ${label}`}
+        aria-label={t("authoring.delete.button", { label })}
         disabled={busy}
         onClick={() => setArmed(true)}
       >
@@ -394,7 +798,7 @@ function DeleteAction({
     <div
       className="basis-full rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm"
       role="group"
-      aria-label={`Подтверждение удаления: ${label}`}
+      aria-label={t("authoring.delete.confirmation", { label })}
     >
       <p className="text-destructive">{consequence}</p>
       <SubmitError message={error} />
@@ -408,10 +812,10 @@ function DeleteAction({
             setError(null);
             void onConfirm()
               .then(() => setArmed(false))
-              .catch((cause) => setError(errorMessage(cause)));
+              .catch((cause) => setError(errorMessage(cause, t)));
           }}
         >
-          Подтвердить удаление
+          {t("authoring.delete.confirm")}
         </Button>
         <Button
           type="button"
@@ -420,7 +824,7 @@ function DeleteAction({
           disabled={busy}
           onClick={() => setArmed(false)}
         >
-          Отмена
+          {t("authoring.common.cancel")}
         </Button>
       </div>
     </div>
@@ -435,11 +839,12 @@ type Mutate = (
 ) => Promise<unknown>;
 
 function CreateDraftPanel({ mutate, busy }: { mutate: Mutate; busy: boolean }) {
+  const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
   return (
     <details className={panelClass}>
       <summary className="cursor-pointer font-medium">
-        Создать новую редакцию
+        {t("authoring.createDraft.summary")}
       </summary>
       <form
         className="mt-5 grid gap-4 md:grid-cols-2"
@@ -465,11 +870,11 @@ function CreateDraftPanel({ mutate, busy }: { mutate: Mutate; busy: boolean }) {
               }),
             },
             z.object({ version: versionSchema }).strict(),
-          ).catch((cause) => setError(errorMessage(cause)));
+          ).catch((cause) => setError(errorMessage(cause, t)));
         }}
       >
         <label className={labelClass}>
-          ID программы
+          {t("authoring.field.curriculumId")}
           <input
             className={fieldClass}
             name="curriculumId"
@@ -478,7 +883,7 @@ function CreateDraftPanel({ mutate, busy }: { mutate: Mutate; busy: boolean }) {
           />
         </label>
         <label className={labelClass}>
-          Slug
+          {t("authoring.field.slug")}
           <input
             className={fieldClass}
             name="slug"
@@ -487,26 +892,26 @@ function CreateDraftPanel({ mutate, busy }: { mutate: Mutate; busy: boolean }) {
           />
         </label>
         <label className={labelClass}>
-          Название программы
+          {t("authoring.field.curriculumTitle")}
           <input className={fieldClass} name="curriculumTitle" required />
         </label>
         <label className={labelClass}>
-          Название ревизии
+          {t("authoring.field.revisionTitle")}
           <input className={fieldClass} name="title" required />
         </label>
         <label className={`${labelClass} md:col-span-2`}>
-          Описание программы
+          {t("authoring.field.curriculumDescription")}
           <textarea className={fieldClass} name="curriculumDescription" />
         </label>
         <label className={`${labelClass} md:col-span-2`}>
-          Описание ревизии
+          {t("authoring.field.revisionDescription")}
           <textarea className={fieldClass} name="description" />
         </label>
         <div className="flex flex-col items-start gap-3 md:col-span-2">
           <SubmitError message={error} />
           <Button disabled={busy} type="submit">
             <PlusIcon aria-hidden />
-            Создать черновик
+            {t("authoring.createDraft.submit")}
           </Button>
         </div>
       </form>
@@ -527,11 +932,14 @@ function WeekForm({
   busy: boolean;
   onClose?: () => void;
 }) {
+  const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
   return (
     <form
       aria-label={
-        initial ? `Редактировать неделю ${initial.title}` : "Добавить неделю"
+        initial
+          ? t("authoring.week.form.edit", { title: initial.title })
+          : t("authoring.week.form.add")
       }
       className="grid gap-3 rounded-lg border border-border bg-background p-4"
       onSubmit={(event) => {
@@ -555,12 +963,12 @@ function WeekForm({
             .strict(),
         )
           .then(() => onClose?.())
-          .catch((cause) => setError(errorMessage(cause)));
+          .catch((cause) => setError(errorMessage(cause, t)));
       }}
     >
       <div className="grid gap-3 md:grid-cols-2">
         <label className={labelClass}>
-          Стабильный ID
+          {t("authoring.field.stableId")}
           <input
             className={fieldClass}
             name="stableId"
@@ -569,7 +977,7 @@ function WeekForm({
           />
         </label>
         <label className={labelClass}>
-          Название
+          {t("authoring.field.title")}
           <input
             className={fieldClass}
             name="title"
@@ -579,7 +987,7 @@ function WeekForm({
         </label>
       </div>
       <label className={labelClass}>
-        Описание
+        {t("authoring.field.description")}
         <textarea
           className={fieldClass}
           name="description"
@@ -589,7 +997,7 @@ function WeekForm({
       <SubmitError message={error} />
       <div>
         <Button disabled={busy} type="submit">
-          {initial ? "Сохранить неделю" : "Добавить неделю"}
+          {t(initial ? "authoring.week.save" : "authoring.week.add")}
         </Button>
       </div>
     </form>
@@ -613,11 +1021,14 @@ function DayForm({
   busy: boolean;
   onClose?: () => void;
 }) {
+  const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
   return (
     <form
       aria-label={
-        initial ? `Редактировать день ${initial.title}` : "Добавить день"
+        initial
+          ? t("authoring.day.form.edit", { title: initial.title })
+          : t("authoring.day.form.add")
       }
       className="grid gap-4 rounded-lg border border-border bg-background p-4"
       onSubmit={(event) => {
@@ -634,21 +1045,29 @@ function DayForm({
             estimatedMinutes: Number(text(form, "estimatedMinutes")),
             depthLevel: DepthLevelSchema.parse(text(form, "depthLevel")),
             prerequisites: parseJson(
-              "Предпосылки",
+              t("authoring.field.prerequisites"),
               form.get("prerequisites"),
               stringArraySchema,
+              t,
             ),
             expectedOutcomes: parseJson(
-              "Результаты",
+              t("authoring.field.expectedOutcomes"),
               form.get("expectedOutcomes"),
               stringArraySchema,
+              t,
             ),
             outOfScope: parseJson(
-              "Вне рамок",
+              t("authoring.field.outOfScope"),
               form.get("outOfScope"),
               stringArraySchema,
+              t,
             ),
-            topics: parseJson("Темы", form.get("topics"), stringArraySchema),
+            topics: parseJson(
+              t("authoring.field.topics"),
+              form.get("topics"),
+              stringArraySchema,
+              t,
+            ),
           };
           const path = initial
             ? `/curriculum-editor/versions/${versionId}/days/${initial.id}`
@@ -661,15 +1080,15 @@ function DayForm({
               .strict(),
           )
             .then(() => onClose?.())
-            .catch((cause) => setError(errorMessage(cause)));
+            .catch((cause) => setError(errorMessage(cause, t)));
         } catch (cause) {
-          setError(errorMessage(cause));
+          setError(errorMessage(cause, t));
         }
       }}
     >
       <div className="grid gap-3 md:grid-cols-2">
         <label className={labelClass}>
-          Стабильный ID
+          {t("authoring.field.stableId")}
           <input
             className={fieldClass}
             name="stableId"
@@ -678,7 +1097,7 @@ function DayForm({
           />
         </label>
         <label className={labelClass}>
-          Название
+          {t("authoring.field.title")}
           <input
             className={fieldClass}
             name="title"
@@ -687,7 +1106,7 @@ function DayForm({
           />
         </label>
         <label className={labelClass}>
-          Минуты
+          {t("authoring.field.minutes")}
           <input
             className={fieldClass}
             name="estimatedMinutes"
@@ -698,7 +1117,7 @@ function DayForm({
           />
         </label>
         <label className={labelClass}>
-          Глубина
+          {t("authoring.field.depth")}
           <select
             className={fieldClass}
             name="depthLevel"
@@ -711,7 +1130,7 @@ function DayForm({
         </label>
       </div>
       <label className={labelClass}>
-        Цель
+        {t("authoring.field.goal")}
         <textarea
           className={fieldClass}
           name="goal"
@@ -720,7 +1139,7 @@ function DayForm({
         />
       </label>
       <label className={labelClass}>
-        Описание
+        {t("authoring.field.description")}
         <textarea
           className={fieldClass}
           name="description"
@@ -728,31 +1147,31 @@ function DayForm({
         />
       </label>
       <div className="grid gap-3 md:grid-cols-2">
-        <JsonField
+        <StructuredField
           name="prerequisites"
-          label="Предпосылки · JSON string[]"
+          label={t("authoring.field.prerequisitesJson")}
           value={initial?.prerequisites ?? []}
         />
-        <JsonField
+        <StructuredField
           name="expectedOutcomes"
-          label="Ожидаемые результаты · JSON string[]"
+          label={t("authoring.field.expectedOutcomesJson")}
           value={initial?.expectedOutcomes ?? []}
         />
-        <JsonField
+        <StructuredField
           name="outOfScope"
-          label="Вне рамок · JSON string[]"
+          label={t("authoring.field.outOfScopeJson")}
           value={initial?.outOfScope ?? []}
         />
-        <JsonField
+        <StructuredField
           name="topics"
-          label="Темы · JSON string[]"
+          label={t("authoring.field.topicsJson")}
           value={initial?.topics ?? []}
         />
       </div>
       <SubmitError message={error} />
       <div>
         <Button disabled={busy} type="submit">
-          {initial ? "Сохранить день" : "Добавить день"}
+          {t(initial ? "authoring.day.save" : "authoring.day.add")}
         </Button>
       </div>
     </form>
@@ -773,10 +1192,10 @@ function defaultPayload(type: z.infer<typeof UnitTypeSchema>): unknown {
   const values: Record<z.infer<typeof UnitTypeSchema>, unknown> = {
     briefing: { type, scope: [] },
     study: { type },
-    recall: { type, prompt: "Вспомните основные идеи" },
+    recall: { type, prompt: "Recall the main ideas" },
     "teacher-dialogue": {
       type,
-      openingPrompt: "Объясните тему своими словами",
+      openingPrompt: "Explain the topic in your own words",
       minimumTurns: 1,
       requiresRevision: true,
     },
@@ -785,17 +1204,17 @@ function defaultPayload(type: z.infer<typeof UnitTypeSchema>): unknown {
     exercise: {
       type,
       exerciseId: "exercise-1",
-      acceptanceCriteria: ["Проверки проходят"],
+      acceptanceCriteria: ["Checks pass"],
       constraints: [],
       template: "// TODO",
       testCommandId: "test",
-      hintPolicy: "По уровням",
+      hintPolicy: "Progressive levels",
       reviewPolicy: "Read-only",
     },
     review: { type, exerciseUnitId: "exercise-unit" },
-    interview: { type, topics: ["Тема"] },
+    interview: { type, topics: ["Topic"] },
     summary: { type, prompts: [] },
-    checkpoint: { type, label: "Контрольная точка" },
+    checkpoint: { type, label: "Checkpoint" },
     "spaced-review": { type, topicIds: ["topic-1"] },
   };
   return values[type];
@@ -816,6 +1235,7 @@ function UnitForm({
   busy: boolean;
   onClose?: () => void;
 }) {
+  const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
   const [type, setType] = useState<z.infer<typeof UnitTypeSchema>>(
     initial?.type ?? "briefing",
@@ -823,7 +1243,9 @@ function UnitForm({
   return (
     <form
       aria-label={
-        initial ? `Редактировать юнит ${initial.title}` : "Добавить юнит"
+        initial
+          ? t("authoring.unit.form.edit", { title: initial.title })
+          : t("authoring.unit.form.add")
       }
       className="grid gap-4 rounded-lg border border-border bg-background p-4"
       onSubmit={(event) => {
@@ -833,12 +1255,13 @@ function UnitForm({
           const form = new FormData(event.currentTarget);
           const unitType = UnitTypeSchema.parse(text(form, "type"));
           const payload = parseJson(
-            "Payload",
+            t("authoring.field.payload"),
             form.get("payload"),
             UnitPayloadSchema,
+            t,
           );
           if (payload.type !== unitType)
-            throw new Error("Payload: type должен совпадать с типом юнита.");
+            throw new Error(t("authoring.error.payloadTypeMismatch"));
           const minutes = text(form, "estimatedMinutes");
           const body = {
             operationId: operationId(),
@@ -848,40 +1271,47 @@ function UnitForm({
             description: optionalText(form, "description"),
             estimatedMinutes: minutes ? Number(minutes) : null,
             objectives: parseJson(
-              "Цели",
+              t("authoring.field.objectives"),
               form.get("objectives"),
               unitJsonSchemas.objectives,
+              t,
             ),
             checklist: parseJson(
-              "Чеклист",
+              t("authoring.field.checklist"),
               form.get("checklist"),
               unitJsonSchemas.checklist,
+              t,
             ),
             sources: parseJson(
-              "Источники",
+              t("authoring.field.sources"),
               form.get("sources"),
               unitJsonSchemas.sources,
+              t,
             ),
             questions: parseJson(
-              "Вопросы",
+              t("authoring.field.questions"),
               form.get("questions"),
               unitJsonSchemas.questions,
+              t,
             ),
             misconceptions: parseJson(
-              "Типичные ошибки",
+              t("authoring.field.misconceptions"),
               form.get("misconceptions"),
               unitJsonSchemas.misconceptions,
+              t,
             ),
             referenceAnswer: optionalText(form, "referenceAnswer"),
             completionCriteria: parseJson(
-              "Критерии завершения",
+              t("authoring.field.completionCriteria"),
               form.get("completionCriteria"),
               unitJsonSchemas.completionCriteria,
+              t,
             ),
             unlockRules: parseJson(
-              "Правила открытия",
+              t("authoring.field.unlockRules"),
               form.get("unlockRules"),
               unitJsonSchemas.unlockRules,
+              t,
             ),
             optional: form.get("optional") === "on",
             depthLevel: text(form, "depthLevel")
@@ -898,15 +1328,15 @@ function UnitForm({
             z.object({ unit: unitSchema.passthrough() }).strict(),
           )
             .then(() => onClose?.())
-            .catch((cause) => setError(errorMessage(cause)));
+            .catch((cause) => setError(errorMessage(cause, t)));
         } catch (cause) {
-          setError(errorMessage(cause));
+          setError(errorMessage(cause, t));
         }
       }}
     >
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <label className={labelClass}>
-          Стабильный ID
+          {t("authoring.field.stableId")}
           <input
             className={fieldClass}
             name="stableId"
@@ -915,7 +1345,7 @@ function UnitForm({
           />
         </label>
         <label className={labelClass}>
-          Название
+          {t("authoring.field.title")}
           <input
             className={fieldClass}
             name="title"
@@ -924,7 +1354,7 @@ function UnitForm({
           />
         </label>
         <label className={labelClass}>
-          Тип
+          {t("authoring.field.type")}
           <select
             className={fieldClass}
             name="type"
@@ -939,7 +1369,7 @@ function UnitForm({
           </select>
         </label>
         <label className={labelClass}>
-          Минуты
+          {t("authoring.field.minutes")}
           <input
             className={fieldClass}
             name="estimatedMinutes"
@@ -949,13 +1379,13 @@ function UnitForm({
           />
         </label>
         <label className={labelClass}>
-          Глубина
+          {t("authoring.field.depth")}
           <select
             className={fieldClass}
             name="depthLevel"
             defaultValue={initial?.depthLevel ?? ""}
           >
-            <option value="">Наследовать</option>
+            <option value="">{t("authoring.field.inherit")}</option>
             <option value="foundation">foundation</option>
             <option value="interview-ready">interview-ready</option>
             <option value="deep-dive">deep-dive</option>
@@ -967,11 +1397,11 @@ function UnitForm({
             type="checkbox"
             defaultChecked={initial?.optional}
           />
-          Необязательный юнит
+          {t("authoring.field.optionalUnit")}
         </label>
       </div>
       <label className={labelClass}>
-        Описание
+        {t("authoring.field.description")}
         <textarea
           className={fieldClass}
           name="description"
@@ -979,7 +1409,7 @@ function UnitForm({
         />
       </label>
       <label className={labelClass}>
-        Эталонный ответ · только для авторинга
+        {t("authoring.field.referenceAnswer")}
         <textarea
           className={fieldClass}
           name="referenceAnswer"
@@ -991,62 +1421,363 @@ function UnitForm({
         />
       </label>
       <div className="grid gap-3 lg:grid-cols-2">
-        <JsonField
+        <StructuredField
           name="objectives"
-          label="Цели · JSON"
+          label={t("authoring.field.objectivesJson")}
           value={initial?.objectives ?? []}
         />
-        <JsonField
+        <StructuredField
           name="checklist"
-          label="Чеклист · JSON"
+          label={t("authoring.field.checklistJson")}
           value={initial?.checklist ?? []}
         />
-        <JsonField
+        <StructuredField
           name="sources"
-          label="Источники · JSON"
+          label={t("authoring.field.sourcesJson")}
           value={initial?.sources ?? []}
-          rows={6}
         />
-        <JsonField
+        <StructuredField
           name="questions"
-          label="Вопросы и ключи · JSON"
+          label={t("authoring.field.questionsJson")}
           value={initial?.questions ?? []}
-          rows={8}
         />
-        <JsonField
+        <StructuredField
           name="misconceptions"
-          label="Типичные ошибки · JSON"
+          label={t("authoring.field.misconceptionsJson")}
           value={initial?.misconceptions ?? []}
         />
-        <JsonField
+        <StructuredField
           name="completionCriteria"
-          label="Критерии завершения · JSON"
+          label={t("authoring.field.completionCriteriaJson")}
           value={initial?.completionCriteria ?? [{ type: "acknowledgement" }]}
         />
-        <JsonField
+        <StructuredField
           name="unlockRules"
-          label="Правила открытия · JSON"
+          label={t("authoring.field.unlockRulesJson")}
           value={initial?.unlockRules ?? []}
         />
-        <JsonField
+        <StructuredField
           key={`${initial?.id ?? "new"}-${type}`}
           name="payload"
-          label="Payload · JSON"
+          label={t("authoring.field.payloadJson")}
           value={
             initial && initial.type === type
               ? initial.payload
               : defaultPayload(type)
           }
-          rows={8}
         />
       </div>
       <SubmitError message={error} />
       <div>
         <Button disabled={busy} type="submit">
-          {initial ? "Сохранить юнит" : "Добавить юнит"}
+          {t(initial ? "authoring.unit.save" : "authoring.unit.add")}
         </Button>
       </div>
     </form>
+  );
+}
+
+function CourseDesignerPanel({
+  graph,
+  mutate,
+  busy,
+}: {
+  graph: Graph;
+  mutate: Mutate;
+  busy: boolean;
+}) {
+  const { locale, t } = useI18n();
+  const queryClient = useQueryClient();
+  const [prompt, setPrompt] = useState("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingDisclosure, setPendingDisclosure] = useState<{
+    authoringOperationId: string;
+    prompt: string;
+    disclosure: z.infer<typeof AiDisclosureSchema>;
+  } | null>(null);
+  const proposals = useQuery({
+    queryKey: ["curriculum-editor", "designer-proposals", graph.version.id],
+    enabled: graph.version.status === "draft",
+    queryFn: () =>
+      checkedApi(
+        `/curriculum-editor/versions/${graph.version.id}/designer/proposals`,
+        courseProposalListSchema,
+        t,
+      ),
+  });
+
+  if (graph.version.status !== "draft") return null;
+
+  const generate = async (
+    authoringOperationId: string,
+    requestedPrompt: string,
+    disclosureOperationId?: string,
+  ) => {
+    await checkedApi(
+      `/curriculum-editor/versions/${graph.version.id}/designer/generate`,
+      courseProposalResponseSchema,
+      t,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          operationId: authoringOperationId,
+          prompt: requestedPrompt,
+          ...(disclosureOperationId ? { disclosureOperationId } : {}),
+        }),
+      },
+    );
+    await queryClient.invalidateQueries({
+      queryKey: ["curriculum-editor", "designer-proposals", graph.version.id],
+    });
+  };
+
+  const requestProposal = async () => {
+    const requestedPrompt = prompt.trim();
+    if (!requestedPrompt) return;
+    setWorking(true);
+    setError(null);
+    const authoringOperationId = operationId();
+    try {
+      const preparation = await checkedApi(
+        `/curriculum-editor/versions/${graph.version.id}/designer/disclosures`,
+        disclosurePreparationSchema,
+        t,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            operationId: authoringOperationId,
+            prompt: requestedPrompt,
+          }),
+        },
+      );
+      if (preparation.required) {
+        setPendingDisclosure({
+          authoringOperationId,
+          prompt: requestedPrompt,
+          disclosure: preparation.disclosure,
+        });
+        return;
+      }
+      await generate(authoringOperationId, requestedPrompt);
+      setPrompt("");
+    } catch (cause) {
+      setError(errorMessage(cause, t));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const finishDisclosure = async (approved: boolean) => {
+    if (!pendingDisclosure) return;
+    setWorking(true);
+    setError(null);
+    try {
+      await checkedApi(
+        `/ai/disclosures/${encodeURIComponent(pendingDisclosure.disclosure.operationId)}/${approved ? "approve" : "cancel"}`,
+        z.object({ disclosure: AiDisclosureSchema }).strict(),
+        t,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      if (approved) {
+        await generate(
+          pendingDisclosure.authoringOperationId,
+          pendingDisclosure.prompt,
+          pendingDisclosure.disclosure.operationId,
+        );
+        setPrompt("");
+      }
+      setPendingDisclosure(null);
+    } catch (cause) {
+      setError(errorMessage(cause, t));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const proposalRows = proposals.data?.proposals ?? [];
+  return (
+    <section className={panelClass} aria-labelledby="course-designer-heading">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t("authoring.designer.eyebrow")}
+          </p>
+          <h3 id="course-designer-heading" className="mt-1 font-medium">
+            {t("authoring.designer.title")}
+          </h3>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+            {t("authoring.designer.description")}
+          </p>
+        </div>
+        <Badge variant="outline">{t("authoring.designer.proposalOnly")}</Badge>
+      </div>
+      <label className={`${labelClass} mt-5`}>
+        {t("authoring.designer.prompt")}
+        <textarea
+          className={`${fieldClass} min-h-28`}
+          value={prompt}
+          maxLength={50_000}
+          placeholder={t("authoring.designer.promptPlaceholder")}
+          onChange={(event) => setPrompt(event.target.value)}
+        />
+      </label>
+      <div className="mt-3">
+        <Button
+          type="button"
+          disabled={busy || working || !prompt.trim()}
+          onClick={() => void requestProposal()}
+        >
+          {t(
+            working
+              ? "authoring.designer.generating"
+              : "authoring.designer.generate",
+          )}
+        </Button>
+      </div>
+
+      {pendingDisclosure ? (
+        <div
+          className="mt-5 rounded-lg border border-warning/40 bg-warning/5 p-4"
+          role="alert"
+        >
+          <h4 className="font-medium">
+            {t("authoring.designer.disclosureTitle")}
+          </h4>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("authoring.designer.disclosureDescription", {
+              destination: pendingDisclosure.disclosure.scope.destination,
+              bytes:
+                pendingDisclosure.disclosure.scope.byteCount.toLocaleString(
+                  locale,
+                ),
+            })}
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {pendingDisclosure.disclosure.scope.payloadCategories.join(", ")}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              disabled={working}
+              onClick={() => void finishDisclosure(true)}
+            >
+              {t("authoring.designer.disclosureApprove")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={working}
+              onClick={() => void finishDisclosure(false)}
+            >
+              {t("authoring.designer.disclosureCancel")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      <SubmitError message={error} />
+      {proposals.isError ? (
+        <div className="mt-5">
+          <QueryError
+            message={t("authoring.designer.proposalsUnavailable")}
+            retry={() => void proposals.refetch()}
+          />
+        </div>
+      ) : proposalRows.length > 0 ? (
+        <div className="mt-6 grid gap-3">
+          <h4 className="font-medium">
+            {t("authoring.designer.proposalsTitle")}
+          </h4>
+          {proposalRows.map((record) => (
+            <article
+              key={record.id}
+              className="rounded-lg border border-border bg-background p-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">{record.proposal.summary}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("authoring.designer.changeCount", {
+                      count:
+                        record.proposal.changes.length.toLocaleString(locale),
+                    })}
+                  </p>
+                </div>
+                <Badge
+                  variant={
+                    record.status === "applied"
+                      ? "success"
+                      : record.status === "rejected"
+                        ? "error"
+                        : "warning"
+                  }
+                >
+                  {t(`authoring.designer.status.${record.status}`)}
+                </Badge>
+              </div>
+              <ul className="mt-3 grid gap-2 text-sm">
+                {record.proposal.changes.map((change, index) => (
+                  <li
+                    key={`${record.id}:${index}`}
+                    className="rounded-md border border-border px-3 py-2"
+                  >
+                    <span className="font-medium">
+                      {t(`authoring.designer.change.${change.kind}`)}
+                    </span>{" "}
+                    · {change.title} · <code>{change.stableId}</code>
+                  </li>
+                ))}
+              </ul>
+              {record.status === "proposed" ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy || working}
+                    onClick={() => {
+                      setError(null);
+                      void mutate(
+                        `/curriculum-editor/versions/${graph.version.id}/designer/proposals/${encodeURIComponent(record.id)}/apply`,
+                        { method: "POST", body: JSON.stringify({}) },
+                        z
+                          .object({
+                            proposal: courseProposalRecordSchema,
+                            curriculum: graphSchema,
+                          })
+                          .strict(),
+                      ).catch((cause) => setError(errorMessage(cause, t)));
+                    }}
+                  >
+                    {t("authoring.designer.apply")}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || working}
+                    onClick={() => {
+                      setError(null);
+                      void mutate(
+                        `/curriculum-editor/versions/${graph.version.id}/designer/proposals/${encodeURIComponent(record.id)}/reject`,
+                        { method: "POST", body: JSON.stringify({}) },
+                        courseProposalResponseSchema,
+                      ).catch((cause) => setError(errorMessage(cause, t)));
+                    }}
+                  >
+                    {t("authoring.designer.reject")}
+                  </Button>
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-5 text-sm text-muted-foreground">
+          {t("authoring.designer.empty")}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -1059,49 +1790,221 @@ function PublishPanel({
   mutate: Mutate;
   busy: boolean;
 }) {
+  const { t } = useI18n();
   const [confirmed, setConfirmed] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [validation, setValidation] = useState<
+    z.infer<typeof validationReportSchema> | undefined
+  >();
+  const [preview, setPreview] = useState<
+    z.infer<typeof previewResponseSchema>["preview"] | undefined
+  >();
+  const [review, setReview] = useState<
+    z.infer<typeof changeReviewResponseSchema>["review"] | undefined
+  >();
+  useEffect(() => {
+    setConfirmed(false);
+    setValidation(undefined);
+    setPreview(undefined);
+    setReview(undefined);
+  }, [version.id, version.updatedAt]);
   if (version.status !== "draft") return null;
+
+  const inspect = async <T,>(
+    suffix: "validation" | "preview" | "change-review",
+    schema: z.ZodType<T>,
+  ): Promise<T> => {
+    setChecking(true);
+    setError(null);
+    try {
+      return await checkedApi(
+        `/curriculum-editor/versions/${version.id}/${suffix}`,
+        schema,
+        t,
+      );
+    } catch (cause) {
+      setError(errorMessage(cause, t));
+      throw cause;
+    } finally {
+      setChecking(false);
+    }
+  };
+  const releaseReady =
+    validation?.valid === true &&
+    preview?.draftHash === validation.draftHash &&
+    review?.ready === true &&
+    review.draftHash === validation.draftHash;
+
   return (
     <section
-      className={`${panelClass} grid gap-4`}
+      className={`${panelClass} grid gap-5`}
       aria-labelledby="publish-heading"
+      data-slot="adaptive-studio-release"
     >
       <div>
-        <h3 id="publish-heading" className="font-medium">
-          Публикация ревизии
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {t("authoring.release.eyebrow")}
+        </p>
+        <h3 id="publish-heading" className="mt-1 font-medium">
+          {t("authoring.publish.title")}
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          После публикации ревизия становится неизменяемой. Для следующих правок
-          клонируйте её в новый черновик.
+          {t("authoring.publish.description")}
         </p>
       </div>
+
+      <ol className="grid gap-3 lg:grid-cols-3">
+        <li className="rounded-lg border border-border bg-background p-4">
+          <p className="font-medium">{t("authoring.release.validateTitle")}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("authoring.release.validateDescription")}
+          </p>
+          <Button
+            className="mt-4"
+            type="button"
+            variant="outline"
+            disabled={busy || checking}
+            onClick={() => {
+              void inspect("validation", validationResponseSchema)
+                .then(({ report }) => setValidation(report))
+                .catch(() => undefined);
+            }}
+          >
+            {t("authoring.release.validateAction")}
+          </Button>
+          {validation ? (
+            <div className="mt-3 text-sm" role="status">
+              <Badge variant={validation.valid ? "success" : "error"}>
+                {validation.valid
+                  ? t("authoring.release.passed")
+                  : t("authoring.release.blocked")}
+              </Badge>
+              <p className="mt-2 text-muted-foreground">
+                {t("authoring.release.diagnosticCounts", {
+                  errors: validation.errors,
+                  warnings: validation.warnings,
+                })}
+              </p>
+              {validation.diagnostics.length ? (
+                <ul className="mt-2 grid gap-1">
+                  {validation.diagnostics.map((diagnostic) => (
+                    <li key={`${diagnostic.code}:${diagnostic.path}`}>
+                      <span className="font-medium">{diagnostic.path}</span>:{" "}
+                      {diagnostic.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </li>
+
+        <li className="rounded-lg border border-border bg-background p-4">
+          <p className="font-medium">{t("authoring.release.previewTitle")}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("authoring.release.previewDescription")}
+          </p>
+          <Button
+            className="mt-4"
+            type="button"
+            variant="outline"
+            disabled={busy || checking}
+            onClick={() => {
+              void inspect("preview", previewResponseSchema)
+                .then(({ preview: nextPreview }) => setPreview(nextPreview))
+                .catch(() => undefined);
+            }}
+          >
+            {t("authoring.release.previewAction")}
+          </Button>
+          {preview ? (
+            <details className="mt-3 text-sm" open>
+              <summary className="cursor-pointer font-medium">
+                {preview.title}
+              </summary>
+              <div className="mt-2 grid gap-2 text-muted-foreground">
+                {preview.weeks.map((week) => (
+                  <div key={week.stableId}>
+                    {week.title} ·{" "}
+                    {t("authoring.release.dayCount", {
+                      count: week.days.length,
+                    })}
+                  </div>
+                ))}
+              </div>
+            </details>
+          ) : null}
+        </li>
+
+        <li className="rounded-lg border border-border bg-background p-4">
+          <p className="font-medium">{t("authoring.release.reviewTitle")}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("authoring.release.reviewDescription")}
+          </p>
+          <Button
+            className="mt-4"
+            type="button"
+            variant="outline"
+            disabled={busy || checking}
+            onClick={() => {
+              void inspect("change-review", changeReviewResponseSchema)
+                .then(({ review: nextReview }) => setReview(nextReview))
+                .catch(() => undefined);
+            }}
+          >
+            {t("authoring.release.reviewAction")}
+          </Button>
+          {review ? (
+            <p className="mt-3 text-sm text-muted-foreground" role="status">
+              {t("authoring.release.changeCounts", {
+                added: review.added,
+                changed: review.changed,
+                removed: review.removed,
+              })}
+            </p>
+          ) : null}
+        </li>
+      </ol>
+
       <label className="flex items-start gap-3 text-sm">
         <input
           className="mt-1"
           type="checkbox"
           checked={confirmed}
+          disabled={!releaseReady}
           onChange={(event) => setConfirmed(event.target.checked)}
         />
-        Я понимаю, что опубликованную ревизию нельзя редактировать.
+        {t("authoring.publish.confirmation")}
       </label>
+      {!releaseReady ? (
+        <p className="text-sm text-muted-foreground">
+          {t("authoring.release.required")}
+        </p>
+      ) : null}
       <SubmitError message={error} />
       <div>
         <Button
-          disabled={busy || !confirmed}
+          disabled={busy || checking || !confirmed || !releaseReady}
           onClick={() => {
+            if (!validation || !preview || !review) return;
             setError(null);
             void mutate(
               `/curriculum-editor/versions/${version.id}/publish`,
               {
                 method: "POST",
-                body: JSON.stringify({ operationId: operationId() }),
+                body: JSON.stringify({
+                  operationId: operationId(),
+                  validationHash: validation.validationHash,
+                  previewHash: preview.draftHash,
+                  changeReviewHash: review.changeReviewHash,
+                }),
               },
               z.object({ version: versionSchema }).strict(),
-            ).catch((cause) => setError(errorMessage(cause)));
+            ).catch((cause) => setError(errorMessage(cause, t)));
           }}
         >
-          Опубликовать неизменяемую ревизию
+          {t("authoring.publish.submit")}
         </Button>
       </div>
     </section>
@@ -1117,6 +2020,7 @@ function GraphEditor({
   mutate: Mutate;
   busy: boolean;
 }) {
+  const { t } = useI18n();
   const [addWeek, setAddWeek] = useState(false);
   const editable = graph.version.status === "draft";
   const reorder = (
@@ -1152,14 +2056,14 @@ function GraphEditor({
     <div className="grid gap-5">
       {!editable ? (
         <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm">
-          <strong>Только чтение.</strong> Опубликованная ревизия защищена от
-          изменений.
+          <strong>{t("authoring.graph.readOnly.title")}</strong>{" "}
+          {t("authoring.graph.readOnly.description")}
         </div>
       ) : null}
       {graph.weeks.length === 0 ? (
         <EmptyState
-          title="В черновике пока нет недель"
-          description="Добавьте первую неделю, затем день и учебные юниты."
+          title={t("authoring.graph.empty.title")}
+          description={t("authoring.graph.empty.description")}
         />
       ) : null}
       {graph.weeks.map((week, weekIndex) => (
@@ -1188,7 +2092,7 @@ function GraphEditor({
           <div>
             <Button variant="outline" onClick={() => setAddWeek(true)}>
               <PlusIcon aria-hidden />
-              Добавить неделю
+              {t("authoring.week.add")}
             </Button>
           </div>
         )
@@ -1227,6 +2131,7 @@ function WeekEditor({
   reorder: Reorder;
   remove: Remove;
 }) {
+  const { locale, t } = useI18n();
   const [edit, setEdit] = useState(false);
   const [addDay, setAddDay] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1235,7 +2140,10 @@ function WeekEditor({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs text-muted-foreground">
-            Неделя {index + 1} · {week.stableId}
+            {t("authoring.week.meta", {
+              number: (index + 1).toLocaleString(locale),
+              id: week.stableId,
+            })}
           </p>
           <h3 className="mt-1 text-lg font-semibold">{week.title}</h3>
           {week.description ? (
@@ -1247,7 +2155,7 @@ function WeekEditor({
         {editable ? (
           <div className="flex flex-wrap items-center gap-1">
             <ReorderControls
-              label={`неделю ${week.title}`}
+              label={t("authoring.entity.week", { title: week.title })}
               index={index}
               count={siblings.length}
               disabled={busy}
@@ -1258,7 +2166,7 @@ function WeekEditor({
                   siblings.map(({ id }) => id),
                   index,
                   direction,
-                ).catch((cause) => setError(errorMessage(cause)));
+                ).catch((cause) => setError(errorMessage(cause, t)));
               }}
             />
             <Button
@@ -1266,11 +2174,11 @@ function WeekEditor({
               size="sm"
               onClick={() => setEdit((value) => !value)}
             >
-              Изменить
+              {t("authoring.common.edit")}
             </Button>
             <DeleteAction
-              label={`неделю ${week.title}`}
-              consequence="Неделя будет удалена вместе со всеми её днями и юнитами. Это действие нельзя отменить."
+              label={t("authoring.entity.week", { title: week.title })}
+              consequence={t("authoring.delete.weekConsequence")}
               busy={busy}
               onConfirm={() =>
                 remove(
@@ -1326,7 +2234,7 @@ function WeekEditor({
                 onClick={() => setAddDay(true)}
               >
                 <PlusIcon aria-hidden />
-                Добавить день
+                {t("authoring.day.add")}
               </Button>
             </div>
           )
@@ -1359,6 +2267,7 @@ function DayEditor({
   reorder: Reorder;
   remove: Remove;
 }) {
+  const { locale, t } = useI18n();
   const [edit, setEdit] = useState(false);
   const [addUnit, setAddUnit] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1370,7 +2279,11 @@ function DayEditor({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs text-muted-foreground">
-            День {index + 1} · {day.stableId} · {day.estimatedMinutes} мин
+            {t("authoring.day.meta", {
+              number: (index + 1).toLocaleString(locale),
+              id: day.stableId,
+              minutes: day.estimatedMinutes.toLocaleString(locale),
+            })}
           </p>
           <h4 className="mt-1 font-medium">{day.title}</h4>
           <p className="mt-1 text-sm text-muted-foreground">{day.goal}</p>
@@ -1378,7 +2291,7 @@ function DayEditor({
         {editable ? (
           <div className="flex flex-wrap items-center gap-1">
             <ReorderControls
-              label={`день ${day.title}`}
+              label={t("authoring.entity.day", { title: day.title })}
               index={index}
               count={siblings.length}
               disabled={busy}
@@ -1389,7 +2302,7 @@ function DayEditor({
                   siblings.map(({ id }) => id),
                   index,
                   direction,
-                ).catch((cause) => setError(errorMessage(cause)));
+                ).catch((cause) => setError(errorMessage(cause, t)));
               }}
             />
             <Button
@@ -1397,11 +2310,11 @@ function DayEditor({
               size="sm"
               onClick={() => setEdit((value) => !value)}
             >
-              Изменить
+              {t("authoring.common.edit")}
             </Button>
             <DeleteAction
-              label={`день ${day.title}`}
-              consequence="День будет удалён вместе со всеми его юнитами. Это действие нельзя отменить."
+              label={t("authoring.entity.day", { title: day.title })}
+              consequence={t("authoring.delete.dayConsequence")}
               busy={busy}
               onConfirm={() =>
                 remove(
@@ -1458,7 +2371,7 @@ function DayEditor({
                 onClick={() => setAddUnit(true)}
               >
                 <PlusIcon aria-hidden />
-                Добавить юнит
+                {t("authoring.unit.add")}
               </Button>
             </div>
           )
@@ -1491,6 +2404,7 @@ function UnitEditor({
   reorder: Reorder;
   remove: Remove;
 }) {
+  const { t } = useI18n();
   const [edit, setEdit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -1509,7 +2423,7 @@ function UnitEditor({
         {editable ? (
           <div className="flex flex-wrap items-center gap-1">
             <ReorderControls
-              label={`юнит ${unit.title}`}
+              label={t("authoring.entity.unit", { title: unit.title })}
               index={index}
               count={siblings.length}
               disabled={busy}
@@ -1520,7 +2434,7 @@ function UnitEditor({
                   siblings.map(({ id }) => id),
                   index,
                   direction,
-                ).catch((cause) => setError(errorMessage(cause)));
+                ).catch((cause) => setError(errorMessage(cause, t)));
               }}
             />
             <Button
@@ -1528,11 +2442,11 @@ function UnitEditor({
               size="sm"
               onClick={() => setEdit((value) => !value)}
             >
-              Изменить
+              {t("authoring.common.edit")}
             </Button>
             <DeleteAction
-              label={`юнит ${unit.title}`}
-              consequence="Юнит будет удалён из черновика. Это действие нельзя отменить."
+              label={t("authoring.entity.unit", { title: unit.title })}
+              consequence={t("authoring.delete.unitConsequence")}
               busy={busy}
               onConfirm={() =>
                 remove(
@@ -1560,20 +2474,302 @@ function UnitEditor({
   );
 }
 
-const versionStatusLabel: Record<string, string> = {
-  draft: "Черновик",
-  published: "Опубликована",
-  archived: "Архив",
+const versionStatusMessageKeys = {
+  draft: "authoring.status.draft",
+  published: "authoring.status.published",
+  archived: "authoring.status.archived",
+} satisfies Record<Version["status"], MessageKey>;
+
+type QuantityUnit = "week" | "day";
+type QuantityForm = "one" | "few" | "many" | "other";
+
+const quantityMessageKeys = {
+  week: {
+    one: "authoring.quantity.week.one",
+    few: "authoring.quantity.week.few",
+    many: "authoring.quantity.week.many",
+    other: "authoring.quantity.week.other",
+  },
+  day: {
+    one: "authoring.quantity.day.one",
+    few: "authoring.quantity.day.few",
+    many: "authoring.quantity.day.many",
+    other: "authoring.quantity.day.other",
+  },
+} satisfies Record<QuantityUnit, Record<QuantityForm, MessageKey>>;
+
+const pluralRules: Readonly<Record<UiLocale, Intl.PluralRules>> = {
+  "en-US": new Intl.PluralRules("en-US"),
+  "ru-RU": new Intl.PluralRules("ru-RU"),
+};
+const authoringDateOptions: Intl.DateTimeFormatOptions = {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
 };
 
+function formatQuantity(
+  unit: QuantityUnit,
+  count: number,
+  locale: UiLocale,
+  t: Translate,
+): string {
+  const selected = pluralRules[locale].select(count);
+  const form: QuantityForm =
+    selected === "one" ||
+    selected === "few" ||
+    selected === "many" ||
+    selected === "other"
+      ? selected
+      : "other";
+  return t(quantityMessageKeys[unit][form], {
+    count: count.toLocaleString(locale),
+  });
+}
+
 function versionBadgeVariant(
-  status: string,
+  status: Version["status"],
 ): "success" | "warning" | "secondary" {
   return status === "published"
     ? "success"
     : status === "draft"
       ? "warning"
       : "secondary";
+}
+
+function PersonalAdaptationPanel({
+  courseId,
+  mutate,
+  busy,
+  onSelect,
+}: {
+  courseId: string;
+  mutate: Mutate;
+  busy: boolean;
+  onSelect: (versionId: string) => void;
+}) {
+  const { locale, t } = useI18n();
+  const [strategy, setStrategy] = useState<
+    "use-upstream" | "keep-personal" | null
+  >(null);
+  const adaptation = useQuery({
+    queryKey: ["curriculum-editor", "adaptation", courseId],
+    queryFn: () =>
+      checkedApi(
+        `/curriculum-editor/courses/${courseId}/adaptation`,
+        adaptationResponseSchema,
+        t,
+      ),
+  });
+
+  if (adaptation.isLoading) {
+    return (
+      <section
+        className={panelClass}
+        aria-label={t("authoring.adaptation.title")}
+      >
+        <Skeleton className="h-32" />
+      </section>
+    );
+  }
+  if (adaptation.isError || !adaptation.data) {
+    return (
+      <QueryError
+        message={t("authoring.adaptation.unavailable")}
+        retry={() => void adaptation.refetch()}
+      />
+    );
+  }
+
+  const { branch, comparison, revisions } = adaptation.data;
+  const upstream = revisions.filter(
+    (revision) => revision.branchKind === "upstream",
+  );
+  const personal = revisions.filter(
+    (revision) => revision.branchKind === "personal",
+  );
+  const integrate = async () => {
+    if (!strategy) return;
+    await mutate(
+      `/curriculum-editor/courses/${courseId}/adaptation/integrate`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          strategy,
+          baseRevisionId: comparison.baseRevisionId,
+          upstreamRevisionId: comparison.upstreamRevisionId,
+          personalVersionId: comparison.personalVersionId,
+          baseDraftHash: comparison.baseDraftHash,
+          upstreamDraftHash: comparison.upstreamDraftHash,
+          personalDraftHash: comparison.personalDraftHash,
+        }),
+      },
+      adaptationIntegrationResponseSchema,
+    );
+    setStrategy(null);
+  };
+
+  return (
+    <section className={panelClass} data-slot="personal-adaptation">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {t("authoring.adaptation.eyebrow")}
+          </p>
+          <h2 className="mt-1 text-lg font-semibold">
+            {t("authoring.adaptation.title")}
+          </h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            {t("authoring.adaptation.description")}
+          </p>
+        </div>
+        <Badge
+          variant={
+            comparison.status === "conflict"
+              ? "error"
+              : comparison.status === "clean"
+                ? "warning"
+                : "success"
+          }
+        >
+          {t(`authoring.adaptation.status.${comparison.status}`)}
+        </Badge>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        {(
+          [
+            ["upstream", upstream],
+            ["personal", personal],
+          ] as const
+        ).map(([kind, items]) => (
+          <div key={kind} className="rounded-lg border border-border p-4">
+            <h3 className="font-medium">
+              {t(`authoring.adaptation.${kind}.title`)}
+            </h3>
+            {items.length === 0 ? (
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t(`authoring.adaptation.${kind}.empty`)}
+              </p>
+            ) : (
+              <ul className="mt-3 grid gap-2">
+                {items.map((revision) => (
+                  <li
+                    key={revision.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/45 px-3 py-2"
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 text-left text-sm font-medium hover:underline"
+                      onClick={() => onSelect(revision.id)}
+                    >
+                      {revision.title}
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                        {t("authoring.revision.short", {
+                          revision: revision.revision.toLocaleString(locale),
+                        })}
+                      </span>
+                    </button>
+                    <Badge
+                      variant={
+                        revision.status === "published"
+                          ? "success"
+                          : revision.status === "draft"
+                            ? "warning"
+                            : "secondary"
+                      }
+                    >
+                      {t(`authoring.status.${revision.status}`)}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {comparison.conflicts.length > 0 ? (
+        <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+          <p className="text-sm font-medium">
+            {t("authoring.adaptation.conflicts", {
+              count: comparison.conflicts.length.toLocaleString(locale),
+            })}
+          </p>
+          <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
+            {comparison.conflicts.map((conflict) => (
+              <li key={conflict}>
+                <code>{conflict}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div className="mt-5 flex flex-wrap gap-2 border-t border-border pt-4">
+        {!branch ? (
+          <Button
+            disabled={busy}
+            onClick={() => {
+              void mutate(
+                `/curriculum-editor/versions/${comparison.upstreamRevisionId}/adaptation`,
+                { method: "POST", body: "{}" },
+                adaptationMutationResponseSchema,
+              ).catch(() => undefined);
+            }}
+          >
+            {t("authoring.adaptation.create")}
+          </Button>
+        ) : comparison.status === "current" ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            {t("authoring.adaptation.currentDescription")}
+          </p>
+        ) : strategy ? (
+          <div className="w-full rounded-lg border border-border bg-muted/35 p-4">
+            <p className="text-sm font-medium">
+              {t(`authoring.adaptation.confirm.${strategy}`)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("authoring.adaptation.confirm.description")}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button disabled={busy} onClick={() => void integrate()}>
+                {t("authoring.adaptation.integrate")}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => setStrategy(null)}
+              >
+                {t("authoring.common.cancel")}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => setStrategy("use-upstream")}
+            >
+              {t("authoring.adaptation.useUpstream")}
+            </Button>
+            {comparison.personalVersionId ? (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => setStrategy("keep-personal")}
+              >
+                {t("authoring.adaptation.keepPersonal")}
+              </Button>
+            ) : null}
+          </>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function CurrentProgramCard({
@@ -1589,6 +2785,7 @@ function CurrentProgramCard({
   mutate: Mutate;
   busy: boolean;
 }) {
+  const { formatDate, locale, t } = useI18n();
   const weeksCount = graph?.weeks.length ?? 0;
   const daysCount =
     graph?.weeks.reduce((total, week) => total + week.days.length, 0) ?? 0;
@@ -1599,24 +2796,30 @@ function CurrentProgramCard({
     <section data-slot="current-program" className={panelClass}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">Текущая программа</p>
+          <p className="text-xs text-muted-foreground">
+            {t("authoring.current.label")}
+          </p>
           <h2 className="mt-1 text-xl font-semibold">
-            Версия {version.revision} · {version.title}
+            {t("authoring.revision.heading", {
+              revision: version.revision.toLocaleString(locale),
+              title: version.title,
+            })}
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {isPublished
-              ? `Опубликована ${formatDate(date)}`
-              : `Черновик создан ${formatDate(date)}`}
+            {t(
+              isPublished
+                ? "authoring.current.publishedAt"
+                : "authoring.current.draftCreatedAt",
+              { date: formatDate(date, authoringDateOptions) },
+            )}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {graph
-              ? `${weeksCount} ${plural(
-                  weeksCount,
-                  "неделя",
-                  "недели",
-                  "недель",
-                )} · ${daysCount} ${plural(daysCount, "день", "дня", "дней")}`
-              : "Недели и дни загружаются…"}
+              ? t("authoring.current.structure", {
+                  weeks: formatQuantity("week", weeksCount, locale, t),
+                  days: formatQuantity("day", daysCount, locale, t),
+                })
+              : t("authoring.current.structureLoading")}
           </p>
           {version.description ? (
             <p className="mt-2 text-sm text-muted-foreground">
@@ -1634,8 +2837,8 @@ function CurrentProgramCard({
           }
         >
           {isPublished
-            ? "Опубликована · read-only"
-            : versionStatusLabel[version.status]}
+            ? t("authoring.status.publishedReadOnly")
+            : t(versionStatusMessageKeys[version.status])}
         </Badge>
       </div>
       <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
@@ -1651,7 +2854,7 @@ function CurrentProgramCard({
                   method: "POST",
                   body: JSON.stringify({
                     operationId: operationId(),
-                    title: `${cloneTarget.title} — новая редакция`,
+                    title: `${cloneTarget.title} — new edition`,
                   }),
                 },
                 z.object({ version: versionSchema }).strict(),
@@ -1659,7 +2862,7 @@ function CurrentProgramCard({
             }}
           >
             <CopyIcon aria-hidden />
-            Клонировать в черновик
+            {t("authoring.clone.submit")}
           </Button>
         ) : null}
       </div>
@@ -1674,11 +2877,16 @@ function VersionHistory({
   versions: VersionListItem[];
   onSelect: (id: string) => void;
 }) {
+  const { formatDate, locale, t } = useI18n();
   return (
     <details className={panelClass} data-slot="version-history">
-      <summary className="cursor-pointer font-medium">История версий</summary>
+      <summary className="cursor-pointer font-medium">
+        {t("authoring.history.title")}
+      </summary>
       {versions.length === 0 ? (
-        <p className="mt-4 text-sm text-muted-foreground">Других версий нет.</p>
+        <p className="mt-4 text-sm text-muted-foreground">
+          {t("authoring.history.empty")}
+        </p>
       ) : (
         <ul className="mt-4 grid gap-2">
           {versions.map((version) => (
@@ -1694,7 +2902,9 @@ function VersionHistory({
                 >
                   <span className="flex flex-wrap items-baseline gap-x-2">
                     <strong className="text-sm">
-                      Версия {version.revision}
+                      {t("authoring.revision.label", {
+                        revision: version.revision.toLocaleString(locale),
+                      })}
                     </strong>
                     <span className="truncate font-mono text-xs text-muted-foreground">
                       r{version.revision} · {version.title}
@@ -1702,23 +2912,32 @@ function VersionHistory({
                   </span>
                 </button>
                 <Badge variant={versionBadgeVariant(version.status)}>
-                  {versionStatusLabel[version.status]}
+                  {t(versionStatusMessageKeys[version.status])}
                 </Badge>
               </div>
               <details className="mt-2">
                 <summary className="cursor-pointer text-xs text-muted-foreground">
-                  Даты и описание
+                  {t("authoring.history.details")}
                 </summary>
                 <dl className="mt-2 grid gap-1 text-xs leading-5 text-muted-foreground">
-                  <div>Создана: {formatDate(version.createdAt)}</div>
                   <div>
-                    Опубликована:{" "}
-                    {version.publishedAt
-                      ? formatDate(version.publishedAt)
-                      : "—"}
+                    {t("authoring.history.createdAt", {
+                      date: formatDate(version.createdAt, authoringDateOptions),
+                    })}
+                  </div>
+                  <div>
+                    {t("authoring.history.publishedAt", {
+                      date: version.publishedAt
+                        ? formatDate(version.publishedAt, authoringDateOptions)
+                        : "—",
+                    })}
                   </div>
                   {version.description ? (
-                    <div>Описание: {version.description}</div>
+                    <div>
+                      {t("authoring.history.description", {
+                        description: version.description,
+                      })}
+                    </div>
                   ) : null}
                 </dl>
               </details>
@@ -1737,21 +2956,21 @@ function AddWeekCard({
   onOpen: () => void;
   disabled: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <section
       data-slot="add-week"
       className={`${panelClass} flex flex-wrap items-center justify-between gap-4`}
     >
       <div className="min-w-0">
-        <h3 className="font-semibold">Добавить следующую неделю</h3>
+        <h3 className="font-semibold">{t("authoring.addWeek.title")}</h3>
         <p className="mt-1 max-w-[60ch] text-sm leading-6 text-muted-foreground">
-          Название, цель, темы и количество дней. Черновик-ревизия, неделя и дни
-          создадутся автоматически.
+          {t("authoring.addWeek.cardDescription")}
         </p>
       </div>
       <Button disabled={disabled} onClick={onOpen}>
         <PlusIcon aria-hidden />
-        Добавить следующую неделю
+        {t("authoring.addWeek.title")}
       </Button>
     </section>
   );
@@ -1774,6 +2993,7 @@ function AddWeekSheet({
   busy: boolean;
   selectVersion: (id: string) => void;
 }) {
+  const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
 
   async function submit(form: FormData) {
@@ -1810,7 +3030,7 @@ function AddWeekSheet({
                   slug: current.curriculumSlug,
                   title: current.title,
                 },
-                title: `${current.title} — новая редакция`,
+                title: `${current.title} — new edition`,
                 description: null,
               }),
             },
@@ -1845,7 +3065,7 @@ function AddWeekSheet({
             body: JSON.stringify({
               operationId: operationId(),
               stableId: `${weekBase}-day-${index}`,
-              title: `День ${index}`,
+              title: `Day ${index}`,
               description: null,
               goal,
               estimatedMinutes: 60,
@@ -1863,7 +3083,7 @@ function AddWeekSheet({
       }
       onOpenChange(false);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, t));
     }
   }
 
@@ -1871,15 +3091,14 @@ function AddWeekSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent data-slot="add-week-sheet">
         <SheetHeader>
-          <SheetTitle>Добавить следующую неделю</SheetTitle>
+          <SheetTitle>{t("authoring.addWeek.title")}</SheetTitle>
           <SheetDescription>
-            Черновик-ревизия (при необходимости), неделя и дни создаются
-            автоматически. Правки и публикация — вручную, как обычно.
+            {t("authoring.addWeek.sheetDescription")}
           </SheetDescription>
         </SheetHeader>
         <form
           className="flex min-h-0 flex-1 flex-col"
-          aria-label="Добавить следующую неделю"
+          aria-label={t("authoring.addWeek.title")}
           onSubmit={(event) => {
             event.preventDefault();
             void submit(new FormData(event.currentTarget));
@@ -1887,48 +3106,48 @@ function AddWeekSheet({
         >
           <div className="grid gap-4 overflow-y-auto px-5 py-4">
             <label className={labelClass}>
-              Название недели
+              {t("authoring.addWeek.weekTitle")}
               <input
                 className={fieldClass}
                 name="title"
                 required
-                placeholder="Например: Асинхронность в JavaScript"
+                placeholder={t("authoring.addWeek.titlePlaceholder")}
               />
             </label>
             <label className={labelClass}>
-              Цель недели
+              {t("authoring.addWeek.weekGoal")}
               <textarea
                 className={`${fieldClass} resize-y`}
                 name="goal"
                 rows={3}
                 required
-                placeholder="Чему научится ученик за эту неделю"
+                placeholder={t("authoring.addWeek.goalPlaceholder")}
               />
             </label>
             <label className={labelClass}>
-              Темы
+              {t("authoring.field.topics")}
               <input
                 className={fieldClass}
                 name="topics"
-                placeholder="Promise, async/await, Event Loop"
+                placeholder={t("authoring.addWeek.topicsPlaceholder")}
               />
               <span className="text-xs font-normal text-muted-foreground">
-                Через запятую.
+                {t("authoring.addWeek.commaSeparated")}
               </span>
             </label>
             <label className={labelClass}>
-              Ожидаемые результаты
+              {t("authoring.field.expectedOutcomes")}
               <input
                 className={fieldClass}
                 name="expectedOutcomes"
-                placeholder="Объяснить Event Loop, применить async/await"
+                placeholder={t("authoring.addWeek.outcomesPlaceholder")}
               />
               <span className="text-xs font-normal text-muted-foreground">
-                Через запятую.
+                {t("authoring.addWeek.commaSeparated")}
               </span>
             </label>
             <label className={labelClass}>
-              Количество дней
+              {t("authoring.addWeek.daysCount")}
               <input
                 className={`${fieldClass} max-w-32`}
                 name="daysCount"
@@ -1940,7 +3159,7 @@ function AddWeekSheet({
               />
             </label>
             <p className="text-xs leading-5 text-muted-foreground">
-              AI-генерация черновика — вне текущего среза.
+              {t("authoring.addWeek.aiUnavailable")}
             </p>
           </div>
           {error ? (
@@ -1950,7 +3169,11 @@ function AddWeekSheet({
           ) : null}
           <SheetFooter>
             <Button type="submit" disabled={busy}>
-              {busy ? "Создаю…" : "Создать неделю и дни"}
+              {t(
+                busy
+                  ? "authoring.addWeek.creating"
+                  : "authoring.addWeek.create",
+              )}
             </Button>
           </SheetFooter>
         </form>
@@ -1960,6 +3183,7 @@ function AddWeekSheet({
 }
 
 export function CurriculumEditorClient() {
+  const { locale, t } = useI18n();
   const queryClient = useQueryClient();
   const pendingOperations = usePendingOperations();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1977,6 +3201,7 @@ export function CurriculumEditorClient() {
       checkedApi(
         "/curriculum-editor/versions",
         z.object({ versions: z.array(versionListItemSchema) }).strict(),
+        t,
       ),
   });
   useEffect(() => {
@@ -1990,6 +3215,7 @@ export function CurriculumEditorClient() {
       checkedApi(
         `/curriculum-editor/versions/${selectedId ?? ""}`,
         z.object({ curriculum: graphSchema }).strict(),
+        t,
       ),
   });
   const mutate: Mutate = async (path, init, schema, selectId) => {
@@ -2000,7 +3226,7 @@ export function CurriculumEditorClient() {
     const requestBody = z.record(z.string(), z.unknown()).parse(rawBody);
     const operation = pendingOperations.id(operationKey);
     try {
-      const result = await checkedApi(path, schema, {
+      const result = await checkedApi(path, schema, t, {
         ...init,
         body: JSON.stringify({ ...requestBody, operationId: operation }),
       });
@@ -2011,7 +3237,7 @@ export function CurriculumEditorClient() {
       await queryClient.invalidateQueries({ queryKey: ["curriculum-editor"] });
       return result;
     } catch (cause) {
-      setActionError(errorMessage(cause));
+      setActionError(errorMessage(cause, t));
       throw cause;
     } finally {
       setBusy(false);
@@ -2020,14 +3246,14 @@ export function CurriculumEditorClient() {
 
   if (versions.isLoading)
     return (
-      <div role="status" aria-label="Загружаю ревизии">
+      <div role="status" aria-label={t("authoring.loading.versions")}>
         <Skeleton className="h-72" />
       </div>
     );
   if (versions.isError || !versions.data)
     return (
       <QueryError
-        message="Список ревизий недоступен."
+        message={t("authoring.error.versionsUnavailable")}
         retry={() => void versions.refetch()}
       />
     );
@@ -2047,9 +3273,11 @@ export function CurriculumEditorClient() {
       ) : null}
       {versions.data.versions.length === 0 ? (
         <section className={panelClass}>
-          <h2 className="text-lg font-semibold">Программа ещё не создана</h2>
+          <h2 className="text-lg font-semibold">
+            {t("authoring.emptyProgram.title")}
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Ревизий пока нет.
+            {t("authoring.emptyProgram.description")}
           </p>
           <div className="mt-5">
             <CreateDraftPanel mutate={mutate} busy={busy} />
@@ -2066,6 +3294,12 @@ export function CurriculumEditorClient() {
             mutate={mutate}
             busy={busy}
           />
+          <PersonalAdaptationPanel
+            courseId={selectedVersion.curriculumId}
+            mutate={mutate}
+            busy={busy}
+            onSelect={selectVersion}
+          />
           <AddWeekCard onOpen={() => setAddWeekOpen(true)} disabled={busy} />
           <VersionHistory
             versions={versions.data.versions.filter(
@@ -2073,19 +3307,22 @@ export function CurriculumEditorClient() {
             )}
             onSelect={selectVersion}
           />
-          <section className="min-w-0" aria-label="Граф выбранной ревизии">
+          <section
+            className="min-w-0"
+            aria-label={t("authoring.graph.selectedRevision")}
+          >
             {!selectedId ? (
               <EmptyState
-                title="Выберите ревизию"
-                description="Откройте существующую ревизию или создайте новый черновик."
+                title={t("authoring.selectRevision.title")}
+                description={t("authoring.selectRevision.description")}
               />
             ) : graph.isLoading ? (
-              <div role="status" aria-label="Загружаю граф программы">
+              <div role="status" aria-label={t("authoring.loading.graph")}>
                 <Skeleton className="h-96" />
               </div>
             ) : graph.isError || !graph.data ? (
               <QueryError
-                message="Граф ревизии недоступен или содержит небезопасные поля."
+                message={t("authoring.error.graphUnavailable")}
                 retry={() => void graph.refetch()}
               />
             ) : (
@@ -2093,7 +3330,12 @@ export function CurriculumEditorClient() {
                 <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-5">
                   <div>
                     <p className="text-sm text-muted-foreground">
-                      Ревизия {graph.data.curriculum.version.revision}
+                      {t("authoring.revision.label", {
+                        revision:
+                          graph.data.curriculum.version.revision.toLocaleString(
+                            locale,
+                          ),
+                      })}
                     </p>
                     <h2 className="mt-1 text-xl font-semibold">
                       {graph.data.curriculum.version.title}
@@ -2112,10 +3354,15 @@ export function CurriculumEditorClient() {
                     }
                   >
                     {graph.data.curriculum.version.status === "published"
-                      ? "Опубликована · read-only"
-                      : "Черновик"}
+                      ? t("authoring.status.publishedReadOnly")
+                      : t("authoring.status.draft")}
                   </Badge>
                 </header>
+                <CourseDesignerPanel
+                  graph={graph.data.curriculum}
+                  mutate={mutate}
+                  busy={busy}
+                />
                 <GraphEditor
                   graph={graph.data.curriculum}
                   mutate={mutate}

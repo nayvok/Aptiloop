@@ -3,13 +3,14 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 
-import { api } from "@/lib/api";
 import {
   PopoverContent,
   PopoverRoot,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
+import { api } from "@/lib/api";
+import { type MessageKey, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 type Connection = {
@@ -29,14 +30,15 @@ type Settings = {
     roleProfiles: RoleProfile[];
   };
 };
-const roleLabels: Readonly<Record<RoleProfile["role"], string>> = {
-  "course-designer": "Course Designer",
-  tutor: "Tutor",
-  evaluator: "Evaluator",
-  reviewer: "Reviewer",
+const roleLabels: Readonly<Record<RoleProfile["role"], MessageKey>> = {
+  "course-designer": "role.courseDesigner",
+  tutor: "role.tutor",
+  evaluator: "role.evaluator",
+  reviewer: "role.reviewer",
 };
 
 export function ProviderHealth() {
+  const { t } = useI18n();
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: () => api<Settings>("/settings"),
@@ -56,6 +58,8 @@ export function ProviderHealth() {
             : (connection?.state ?? "unavailable"),
       };
     }) ?? [];
+  const allOff =
+    roles.length > 0 && roles.every((role) => role.mode === "no-ai");
   const ready =
     roles.length > 0 &&
     roles.every((role) =>
@@ -68,12 +72,19 @@ export function ProviderHealth() {
       role.mode === "connection" &&
       !["connected", "degraded", "starting"].includes(role.status),
   );
+  const readyCount = roles.filter(
+    (role) => role.mode === "no-ai" || role.status === "connected",
+  ).length;
 
   if (settingsQuery.isLoading) {
     return (
-      <div data-slot="provider-health" role="status" aria-label="Проверяю AI">
+      <div
+        data-slot="provider-health"
+        role="status"
+        aria-label={t("provider.checking")}
+      >
         <Skeleton aria-hidden className="h-7 w-24 rounded-full" />
-        <span className="sr-only">Проверяю AI…</span>
+        <span className="sr-only">{t("provider.checking")}</span>
       </div>
     );
   }
@@ -86,10 +97,17 @@ export function ProviderHealth() {
         className="inline-flex h-7 items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-3 text-xs font-medium text-destructive"
       >
         <span aria-hidden className="size-1.5 rounded-full bg-current" />
-        Статус AI недоступен
+        {t("provider.statusUnavailable")}
       </span>
     );
   }
+
+  const state = allOff ? "off" : ready ? "ready" : "problem";
+  const stateLabel = allOff
+    ? t("provider.off")
+    : ready
+      ? t("provider.ready")
+      : t("provider.needsAttention");
 
   return (
     <PopoverRoot>
@@ -97,31 +115,30 @@ export function ProviderHealth() {
         <button
           type="button"
           data-slot="provider-health"
-          data-state={ready ? "ready" : "problem"}
-          aria-label="Статус AI: подробности в попапе"
+          data-state={state}
+          aria-label={`${t("provider.statusDetails")}: ${stateLabel}`}
           className={cn(
             "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring",
-            ready
+            state === "ready"
               ? "border-success/40 bg-success/10 text-success-foreground hover:bg-success/15"
-              : "border-warning/40 bg-warning/10 text-warning-foreground hover:bg-warning/15",
+              : state === "problem"
+                ? "border-warning/40 bg-warning/10 text-warning-foreground hover:bg-warning/15"
+                : "border-border bg-muted text-muted-foreground hover:bg-accent",
           )}
         >
           <span aria-hidden className="size-1.5 rounded-full bg-current" />
-          {ready ? "AI готов" : "AI недоступен"}
+          {stateLabel}
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72">
         <div className="flex flex-col gap-3">
           <div>
-            <p className="text-sm font-semibold">AI для обучения</p>
+            <p className="text-sm font-semibold">{t("provider.title")}</p>
             <p className="text-xs text-muted-foreground">
-              {
-                roles.filter(
-                  (role) =>
-                    role.mode === "no-ai" || role.status === "connected",
-                ).length
-              }{" "}
-              of {roles.length} roles ready
+              {t("provider.rolesReady", {
+                ready: readyCount,
+                total: roles.length,
+              })}
             </p>
           </div>
           <ul className="flex flex-col gap-2">
@@ -133,7 +150,7 @@ export function ProviderHealth() {
                 className="flex items-center justify-between gap-2 text-sm"
               >
                 <span className="min-w-0 truncate text-muted-foreground">
-                  {roleLabels[role.role]}
+                  {t(roleLabels[role.role])}
                 </span>
                 <span className="flex min-w-0 items-center gap-1.5 text-xs">
                   <span
@@ -147,8 +164,8 @@ export function ProviderHealth() {
                   />
                   <span className="truncate">
                     {role.mode === "no-ai"
-                      ? "AI Off"
-                      : `${role.connection?.displayName ?? "Unavailable"} · ${role.modelId ?? "No model"}`}
+                      ? t("provider.off")
+                      : `${role.connection?.displayName ?? t("provider.unavailable")} · ${role.modelId ?? t("provider.noModel")}`}
                   </span>
                 </span>
               </li>
@@ -156,7 +173,7 @@ export function ProviderHealth() {
           </ul>
           {hasProblem ? (
             <p className="rounded-md bg-warning/10 p-2 text-xs leading-5 text-warning-foreground">
-              Часть подключений требует настройки. Проверь статусы ниже.
+              {t("provider.problem")}
             </p>
           ) : null}
           <div className="border-t border-border pt-2">
@@ -164,7 +181,7 @@ export function ProviderHealth() {
               href="/settings/developer-tools"
               className="text-xs font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
             >
-              Полная диагностика → Инструменты разработчика
+              {t("provider.fullDiagnostics")}
             </Link>
           </div>
         </div>

@@ -1,5 +1,5 @@
-import { DashboardClient } from "@/components/dashboard-client";
+import { HomeClient } from "@/components/home-client";
 
-export default function DashboardPage() {
-  return <DashboardClient />;
+export default function HomePage() {
+  return <HomeClient />;
 }

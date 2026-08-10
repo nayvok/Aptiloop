@@ -16,16 +16,18 @@ import {
 } from "@phosphor-icons/react";
 import { z } from "zod";
 
+import { ActivityFrame } from "@/components/activity-frame";
 import { api, streamAgent } from "@/lib/api";
 import {
   activityBorderClass,
   activityColorClass,
   activitySurfaceClass,
-  depthLabel,
-  sourceKindLabel,
-  unitStatusLabels,
-  unitTypeLabels,
+  depthMessageKey,
+  sourceKindMessageKey,
+  unitStatusMessageKeys,
+  unitTypeMessageKeys,
 } from "@/lib/unit-labels";
+import { useI18n } from "@/lib/i18n";
 import { DayPlanSheet } from "@/components/day-plan";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -504,12 +506,11 @@ function operationId(): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Неизвестная ошибка";
+  return error instanceof Error ? error.message : "Unknown error";
 }
-const teacherStreamFailureMessage = "Преподаватель не ответил";
-const teacherStreamCancellationMessage = "Ответ преподавателя остановлен";
 
 export function SessionClient() {
+  const { t } = useI18n();
   const params = useSearchParams();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -610,9 +611,9 @@ export function SessionClient() {
         data-slot="session-loading"
         className="flex flex-col gap-4"
         role="status"
-        aria-label="Загружаю занятие…"
+        aria-label={t("session.loading")}
       >
-        <span className="sr-only">Загружаю занятие…</span>
+        <span className="sr-only">{t("session.loading")}</span>
         <Skeleton className="h-20" />
         <div className="grid gap-4 md:grid-cols-[14rem_minmax(0,1fr)]">
           <Skeleton className="h-72" />
@@ -634,9 +635,13 @@ export function SessionClient() {
   if (!session) {
     return (
       <EmptyState
-        title="Активного занятия нет"
-        description="Открой Path и начни доступный день — здесь появится сохранённый прогресс."
-        action={<Button onClick={() => router.push("/")}>Открыть Path</Button>}
+        title={t("session.empty.title")}
+        description={t("session.empty.description")}
+        action={
+          <Button onClick={() => router.push("/")}>
+            {t("session.openHome")}
+          </Button>
+        }
       />
     );
   }
@@ -656,11 +661,11 @@ export function SessionClient() {
       .find((unit) => progressByUnit.get(unit.id)?.status === "completed") ??
     session.snapshot.units[0];
   if (!focusedUnit) {
-    return <QueryError message="Snapshot занятия не содержит юнитов" />;
+    return <QueryError message={t("session.error.noActivities")} />;
   }
   const focusedProgress = progressByUnit.get(focusedUnit.id);
   if (!focusedProgress) {
-    return <QueryError message="Прогресс текущего юнита отсутствует" />;
+    return <QueryError message={t("session.error.noProgress")} />;
   }
   const completed = session.unitProgress.filter(
     (item) => item.status === "completed",
@@ -714,7 +719,7 @@ export function SessionClient() {
             size="sm"
             onClick={() => setMutationError(null)}
           >
-            Закрыть
+            {t("session.close")}
           </Button>
         </div>
       ) : null}
@@ -736,11 +741,12 @@ export function SessionClient() {
           className="mx-auto flex w-full max-w-xl flex-col items-start gap-4 rounded-xl border border-border bg-card p-6"
         >
           <div className="flex flex-col gap-1">
-            <Badge variant="outline">{unitTypeLabels[focusedUnit.type]}</Badge>
+            <Badge variant="outline">
+              {t(unitTypeMessageKeys[focusedUnit.type])}
+            </Badge>
             <h2 className="mt-2 text-xl font-semibold">{focusedUnit.title}</h2>
             <p className="mt-1 max-w-[60ch] text-sm leading-6 text-muted-foreground">
-              Шаг доступен. Начало будет сохранено, поэтому после перезапуска
-              занятие продолжится с этого места.
+              {t("session.ready.description")}
             </p>
           </div>
           <Button
@@ -750,15 +756,13 @@ export function SessionClient() {
             }
           >
             {pendingAction === `patch:${focusedUnit.id}`
-              ? "Начинаю…"
-              : "Начать шаг"}
+              ? t("session.starting")
+              : t("session.startActivity")}
             <ArrowRightIcon aria-hidden />
           </Button>
         </section>
       ) : focusedProgress.status === "locked" ? (
-        <p className="text-sm text-muted-foreground">
-          Сначала заверши предыдущий обязательный шаг.
-        </p>
+        <p className="text-sm text-muted-foreground">{t("session.locked")}</p>
       ) : (
         <UnitShell unit={focusedUnit} progress={focusedProgress}>
           <UnitBody
@@ -808,6 +812,7 @@ function SessionProgressHeader({
   activeBlockIndex: number;
   onContinueLater: () => void;
 }) {
+  const { locale, t } = useI18n();
   const { day } = session.snapshot;
   const total = session.snapshot.units.length;
   const overall = total ? Math.round((completed / total) * 100) : 0;
@@ -819,24 +824,31 @@ function SessionProgressHeader({
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            День {day.order} · {day.title}
+            {t("session.lessonTitle", { order: day.order, title: day.title })}
           </p>
           <p className="truncate text-sm font-semibold">
             {activeBlock ? (
               <>
-                Блок {activeBlockIndex + 1} из 3 · {activeBlock.label} · Шаг{" "}
-                {activeBlock.currentStepIndex ?? activeBlock.totalCount} из{" "}
-                {activeBlock.totalCount}
+                {t("session.phaseProgress", {
+                  phase: activeBlockIndex + 1,
+                  phaseTotal: 3,
+                  name: t(activeBlock.label),
+                  activity:
+                    activeBlock.currentStepIndex ?? activeBlock.totalCount,
+                  activityTotal: activeBlock.totalCount,
+                })}
               </>
             ) : (
-              "День завершён"
+              t("session.lessonComplete")
             )}
           </p>
         </div>
         {activeBlock ? (
           <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
             <ClockIcon aria-hidden className="size-4" />
-            Осталось в блоке: {formatDuration(activeBlock.remainingMinutes)}
+            {t("session.phaseRemaining", {
+              duration: formatDuration(activeBlock.remainingMinutes, locale),
+            })}
           </span>
         ) : null}
         <DayPlanSheet
@@ -844,7 +856,7 @@ function SessionProgressHeader({
           trigger={
             <Button type="button" variant="outline" size="sm">
               <ListIcon aria-hidden className="size-4" />
-              План дня
+              {t("session.plan")}
             </Button>
           }
         />
@@ -854,11 +866,11 @@ function SessionProgressHeader({
           size="sm"
           onClick={onContinueLater}
         >
-          Продолжить позже
+          {t("session.continueLater")}
         </Button>
       </div>
       <Progress
-        aria-label="Прогресс дня"
+        aria-label={t("session.progress")}
         value={overall}
         className="mt-2 h-1.5"
       />
@@ -881,6 +893,7 @@ function BlockTransition({
   onContinue: () => void;
   onLater: () => void;
 }) {
+  const { locale, t } = useI18n();
   const covered = previousBlocks.flatMap((previous) =>
     previous.units.map((unit) => unit.title),
   );
@@ -892,15 +905,18 @@ function BlockTransition({
     >
       <div className="text-center">
         <p className="text-sm text-muted-foreground">
-          Блок {blockNumber - 1} из 3 завершён
+          {t("session.transition.complete", {
+            phase: blockNumber - 1,
+            total: 3,
+          })}
         </p>
         <h2 id="block-transition-title" className="mt-1 text-xl font-semibold">
-          Переходим к блоку «{block.label}»
+          {t("session.transition.title", { name: t(block.label) })}
         </h2>
       </div>
       {covered.length ? (
         <div className="flex flex-col gap-1.5 text-sm leading-6">
-          <p className="font-medium">Ты разобрал:</p>
+          <p className="font-medium">{t("session.transition.covered")}</p>
           <ul className="flex flex-col gap-1 text-muted-foreground">
             {covered.map((title) => (
               <li key={title} className="flex items-start gap-2">
@@ -920,23 +936,26 @@ function BlockTransition({
           activityBorderClass(block.units[0]?.type ?? "study"),
         )}
       >
-        <p className="text-sm font-medium">Следующий блок</p>
+        <p className="text-sm font-medium">{t("session.transition.next")}</p>
         <p className="text-sm text-muted-foreground">
-          {block.label} · {block.totalCount} шагов ·{" "}
-          {formatDuration(block.remainingMinutes)}
+          {t("session.transition.meta", {
+            name: t(block.label),
+            count: block.totalCount,
+            duration: formatDuration(block.remainingMinutes, locale),
+          })}
         </p>
       </div>
       <div className="flex flex-col justify-center gap-2 sm:flex-row">
         <Button disabled={starting} onClick={onContinue}>
-          {starting ? "Начинаю…" : "Продолжить сейчас"}
+          {starting ? t("session.starting") : t("session.transition.continue")}
           <ArrowRightIcon aria-hidden />
         </Button>
         <Button variant="outline" onClick={onLater}>
-          Вернуться позже
+          {t("session.transition.back")}
         </Button>
       </div>
       <p className="text-center text-xs text-muted-foreground">
-        Прогресс уже сохранён — занятие продолжится с этого блока.
+        {t("session.transition.saved")}
       </p>
     </section>
   );
@@ -951,41 +970,34 @@ function UnitShell({
   progress: UnitProgress;
   children: React.ReactNode;
 }) {
+  const { locale, t } = useI18n();
   return (
-    <section
-      data-slot="unit-shell"
-      data-unit-type={unit.type}
-      className="min-w-0 rounded-lg border border-border bg-card"
-    >
-      <header
-        data-slot="unit-shell-header"
-        className="flex flex-col gap-4 border-b border-border p-4 md:flex-row md:items-start md:justify-between md:p-6"
-      >
-        <div className="flex min-w-0 flex-col gap-2">
+    <ActivityFrame
+      activityId={unit.id}
+      activityType={unit.type}
+      title={unit.title}
+      description={unit.description}
+      slots={{
+        context: (
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{unitTypeLabels[unit.type]}</Badge>
+            <Badge variant="outline">{t(unitTypeMessageKeys[unit.type])}</Badge>
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <ClockIcon aria-hidden />
-              {unit.estimatedMinutes} мин
+              {formatMinutesShort(unit.estimatedMinutes, locale)}
             </span>
           </div>
-          <h2 className="text-pretty text-xl font-semibold leading-7">
-            {unit.title}
-          </h2>
-          <p className="max-w-[70ch] text-sm leading-6 text-muted-foreground">
-            {unit.description}
-          </p>
-        </div>
-        <Badge
-          variant={progress.status === "completed" ? "success" : "secondary"}
-        >
-          {unitStatusLabels[progress.status]}
-        </Badge>
-      </header>
-      <div data-slot="unit-shell-content" className="p-4 md:p-6">
-        {children}
-      </div>
-    </section>
+        ),
+        status: (
+          <Badge
+            variant={progress.status === "completed" ? "success" : "secondary"}
+          >
+            {t(unitStatusMessageKeys[progress.status])}
+          </Badge>
+        ),
+      }}
+    >
+      {children}
+    </ActivityFrame>
   );
 }
 
@@ -1010,32 +1022,43 @@ type UnitBodyProps = {
   onInterview: () => void;
 };
 
+type ActivityRenderer = (props: UnitBodyProps) => React.ReactNode;
+
+export const activityRendererRegistry: Readonly<
+  Partial<Record<LearnerUnit["type"], ActivityRenderer>>
+> = Object.freeze({
+  briefing: BriefingUnit,
+  study: StudyUnit,
+  recall: RecallUnit,
+  "teacher-dialogue": TeacherDialogueUnit,
+  quiz: QuizUnit,
+  "code-reading": CodeReadingUnit,
+  exercise: ExerciseHandoffUnit,
+  review: ExerciseHandoffUnit,
+  interview: InterviewUnit,
+  summary: SummaryUnit,
+  checkpoint: CheckpointUnit,
+  "spaced-review": SpacedReviewUnit,
+});
+
 function UnitBody(props: UnitBodyProps) {
-  switch (props.unit.type) {
-    case "briefing":
-      return <BriefingUnit {...props} />;
-    case "study":
-      return <StudyUnit {...props} />;
-    case "recall":
-      return <RecallUnit {...props} />;
-    case "teacher-dialogue":
-      return <TeacherDialogueUnit {...props} />;
-    case "quiz":
-      return <QuizUnit {...props} />;
-    case "code-reading":
-      return <CodeReadingUnit {...props} />;
-    case "exercise":
-    case "review":
-      return <ExerciseHandoffUnit {...props} />;
-    case "interview":
-      return <InterviewUnit {...props} />;
-    case "summary":
-      return <SummaryUnit {...props} />;
-    case "checkpoint":
-      return <CheckpointUnit {...props} />;
-    case "spaced-review":
-      return <SpacedReviewUnit {...props} />;
+  const { t } = useI18n();
+  const Renderer = activityRendererRegistry[props.unit.type];
+  if (!Renderer) {
+    return (
+      <div
+        role="alert"
+        data-slot="unsupported-activity"
+        className="rounded-md border border-warning/40 bg-warning/10 p-4"
+      >
+        <p className="font-medium">{t("activity.unsupported.title")}</p>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          {t("activity.unsupported.description")}
+        </p>
+      </div>
+    );
   }
+  return <Renderer {...props} />;
 }
 
 function Checklist({
@@ -1049,14 +1072,17 @@ function Checklist({
   disabled?: boolean;
   onToggle: (id: string) => void;
 }) {
+  const { t } = useI18n();
   if (!items.length) return null;
   const requiredCount = items.filter((item) => item.required).length;
   return (
     <fieldset data-slot="unit-checklist" className="flex flex-col gap-2">
-      <legend className="pb-1 text-sm font-medium">Что нужно сделать</legend>
+      <legend className="pb-1 text-sm font-medium">
+        {t("session.checklist.title")}
+      </legend>
       <p className="pb-1 text-xs leading-5 text-muted-foreground">
-        Отмечай галочкой пункты, которые уже выполнил.
-        {requiredCount > 0 ? " Без обязательных пунктов шаг не завершить." : ""}
+        {t("session.checklist.help")}
+        {requiredCount > 0 ? t("session.checklist.requiredHelp") : ""}
       </p>
       {items.map((item) => (
         <label
@@ -1075,14 +1101,17 @@ function Checklist({
             {item.required ? (
               <span className="text-muted-foreground">
                 {" "}
-                · обязательно отметить
+                · {t("session.checklist.required")}
               </span>
             ) : null}
           </span>
         </label>
       ))}
       <p className="pt-1 text-xs text-muted-foreground">
-        Отмечено {checked.length} из {items.length}
+        {t("session.checklist.count", {
+          checked: checked.length,
+          total: items.length,
+        })}
       </p>
     </fieldset>
   );
@@ -1127,6 +1156,7 @@ function BriefingUnitImpl({
   pending,
   patchUnit,
 }: UnitBodyProps) {
+  const { locale, t } = useI18n();
   const router = useRouter();
   const day = session.snapshot.day;
   const progressByUnit = new Map(
@@ -1157,32 +1187,35 @@ function BriefingUnitImpl({
     <div data-slot="briefing" className="flex flex-col gap-6">
       <div className="grid gap-4 md:grid-cols-2">
         <BriefingSection
-          title="Сегодня разберём"
+          title={t("session.briefing.topics")}
           items={day.topics}
-          empty="Темы появятся в плане дня."
+          empty={t("session.briefing.topicsEmpty")}
         />
         <BriefingSection
-          title="После занятия сможешь"
+          title={t("session.briefing.outcomes")}
           items={day.expectedOutcomes}
-          empty="Результаты появятся в плане дня."
+          empty={t("session.briefing.outcomesEmpty")}
         />
         <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
-          <h3 className="text-sm font-medium">Уровень</h3>
-          <p className="text-lg font-semibold">{depthLabel(day.depthLevel)}</p>
+          <h3 className="text-sm font-medium">{t("session.briefing.level")}</h3>
+          <p className="text-lg font-semibold">
+            {depthMessageKey(day.depthLevel)
+              ? t(depthMessageKey(day.depthLevel)!)
+              : day.depthLevel}
+          </p>
           <p className="text-sm leading-6 text-muted-foreground">
-            Понять механизм, объяснить своими словами, увидеть типичные ошибки и
-            написать небольшой код.
+            {t("session.briefing.levelDescription")}
           </p>
         </div>
         <BriefingSection
-          title="Не углубляемся"
+          title={t("session.briefing.scope")}
           items={outOfScope}
-          empty="Границы дня описаны в плане."
+          empty={t("session.briefing.scopeEmpty")}
         />
       </div>
 
       <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
-        <h3 className="text-sm font-medium">План</h3>
+        <h3 className="text-sm font-medium">{t("session.briefing.plan")}</h3>
         <ol className="flex flex-col gap-1.5 text-sm">
           {blocks
             .filter((block) => block.totalCount > 0)
@@ -1197,10 +1230,17 @@ function BriefingUnitImpl({
                 >
                   {index + 1}
                 </span>
-                <span className="min-w-0 flex-1 truncate">{block.label}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {t(block.label)}
+                </span>
                 <span className="shrink-0 text-xs text-muted-foreground">
-                  {block.totalCount} шагов ·{" "}
-                  {formatMinutesShort(block.estimatedMinutes)}
+                  {t("session.activitiesCount", {
+                    count: block.totalCount,
+                    duration: formatMinutesShort(
+                      block.estimatedMinutes,
+                      locale,
+                    ),
+                  })}
                 </span>
               </li>
             ))}
@@ -1214,8 +1254,7 @@ function BriefingUnitImpl({
       ) : (
         <div className="flex flex-col items-start gap-3 rounded-lg bg-muted/60 p-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="max-w-[55ch] text-sm leading-6 text-muted-foreground">
-            Ничего отмечать не нужно — один клик, и можно переходить к
-            материалам.
+            {t("session.briefing.skipDescription")}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -1223,10 +1262,12 @@ function BriefingUnitImpl({
               variant="outline"
               onClick={() => router.push("/interview")}
             >
-              Пройти диагностику без изучения
+              {t("session.briefing.diagnostic")}
             </Button>
             <Button disabled={pending} onClick={finish}>
-              {pending ? "Открываю…" : "Перейти к изучению"}
+              {pending
+                ? t("session.briefing.opening")
+                : t("session.briefing.startStudy")}
               <ArrowRightIcon aria-hidden />
             </Button>
           </div>
@@ -1241,6 +1282,7 @@ function BriefingUnit(props: UnitBodyProps) {
 }
 
 function StudyUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
+  const { t } = useI18n();
   const payload =
     progress.payload.type === "study"
       ? progress.payload
@@ -1280,14 +1322,14 @@ function StudyUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
         className="flex flex-col gap-2 text-sm font-medium"
         htmlFor={`notes-${unit.id}`}
       >
-        Заметки
+        {t("session.study.notes")}
         <textarea
           id={`notes-${unit.id}`}
           rows={5}
           value={notes}
           disabled={complete || pending}
           onChange={(event) => setNotes(event.target.value)}
-          placeholder="Коротко зафиксируй механизм и вопросы…"
+          placeholder={t("session.study.placeholder")}
           className="min-h-28 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-70"
         />
       </label>
@@ -1300,7 +1342,7 @@ function StudyUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
               void patchUnit(unit, progress, "in_progress", nextPayload)
             }
           >
-            Сохранить заметки
+            {t("session.study.save")}
           </Button>
           <Button
             disabled={pending || !required.every((id) => checked.includes(id))}
@@ -1308,7 +1350,7 @@ function StudyUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
               void patchUnit(unit, progress, "completed", nextPayload)
             }
           >
-            Завершить изучение
+            {t("session.study.complete")}
             <CheckIcon aria-hidden />
           </Button>
         </div>
@@ -1327,6 +1369,7 @@ function RecallUnit({
   patchUnit,
   runAction,
 }: UnitBodyProps) {
+  const { t } = useI18n();
   const payload =
     progress.payload.type === "recall"
       ? progress.payload
@@ -1437,7 +1480,7 @@ function RecallUnit({
                   onClick={() => void submit(question.id)}
                 >
                   <PaperPlaneTiltIcon aria-hidden />
-                  Сохранить ответ {index + 1}
+                  {t("session.recall.saveAnswer", { number: index + 1 })}
                 </Button>
               </div>
             ) : null}
@@ -1448,8 +1491,7 @@ function RecallUnit({
         id={`recall-help-${unit.id}`}
         className="text-xs text-muted-foreground"
       >
-        Для каждого вопроса первая попытка сохраняется отдельно и не
-        перезаписывается.
+        {t("session.recall.firstAttempt")}
       </p>
       {progress.status === "completed" ? (
         <CompletedNote />
@@ -1461,14 +1503,16 @@ function RecallUnit({
               void patchUnit(unit, progress, "completed", completionPayload)
             }
           >
-            Завершить воспроизведение
+            {t("session.recall.complete")}
             <CheckIcon aria-hidden />
           </Button>
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Сохранено ответов: {persistedAnswers.size} из {unit.questions.length}.
-          Завершение станет доступно после ответа на каждый вопрос.
+          {t("session.recall.count", {
+            saved: persistedAnswers.size,
+            total: unit.questions.length,
+          })}
         </p>
       )}
     </div>
@@ -1483,6 +1527,9 @@ function TeacherDialogueUnit({
   patchUnit,
   acceptSession,
 }: UnitBodyProps) {
+  const { t } = useI18n();
+  const teacherStreamFailureMessage = t("session.tutor.unavailable");
+  const teacherStreamCancellationMessage = t("session.tutor.stopped");
   const queryClient = useQueryClient();
   const payload =
     progress.payload.type === "teacher-dialogue"
@@ -1529,7 +1576,7 @@ function TeacherDialogueUnit({
   const opening =
     unit.payload.type === "teacher-dialogue"
       ? unit.payload.openingPrompt
-      : "Уточни объяснение.";
+      : t("session.tutor.defaultPrompt");
   const recallDraft = session.unitProgress.find(
     (item) => item.payload.type === "recall",
   )?.payload;
@@ -1550,7 +1597,7 @@ function TeacherDialogueUnit({
     if (!text || streaming) return;
     setProviderError(null);
     setStreaming(true);
-    setStreamStatus("Преподаватель формулирует уточнение…");
+    setStreamStatus(t("session.tutor.generating"));
     const controller = new AbortController();
     abortRef.current = controller;
     const userMessage = {
@@ -1573,8 +1620,8 @@ function TeacherDialogueUnit({
           role: "teacher",
           sessionId: session.id,
           message: answeringFollowUp
-            ? `${opening}\n\nПервая попытка ученика:\n${firstDraft}\n\nОтвет ученика на уточнение Teacher:\n${text}`
-            : `${opening}\n\nПервая попытка ученика:\n${firstDraft}\n\nУточнённое объяснение ученика:\n${text}`,
+            ? `${opening}\n\nLearner first attempt:\n${firstDraft}\n\nLearner response to Tutor follow-up:\n${text}`
+            : `${opening}\n\nLearner first attempt:\n${firstDraft}\n\nLearner refined explanation:\n${text}`,
         },
         controller.signal,
       )) {
@@ -1628,7 +1675,7 @@ function TeacherDialogueUnit({
               : message,
           ),
         );
-        setStreamStatus("Ответ преподавателя остановлен");
+        setStreamStatus(t("session.tutor.stopped"));
         return;
       }
       if (
@@ -1645,11 +1692,11 @@ function TeacherDialogueUnit({
           ),
         );
         setProviderError(teacherStreamFailureMessage);
-        setStreamStatus("Преподаватель недоступен");
+        setStreamStatus(t("session.tutor.unavailable"));
         return;
       }
       if (!assistantContent.trim())
-        throw new Error("Преподаватель вернул пустой ответ");
+        throw new Error(t("session.tutor.emptyResponse"));
       const nextPayload = {
         ...payload,
         turnCount: payload.turnCount + 1,
@@ -1663,7 +1710,7 @@ function TeacherDialogueUnit({
       );
       if (updated) await acceptSession(updated);
       setRevision("");
-      setStreamStatus("Ответ преподавателя получен");
+      setStreamStatus(t("session.tutor.received"));
       await queryClient.invalidateQueries({
         queryKey: ["agent-history", "teacher", session.id],
         refetchType: "none",
@@ -1679,10 +1726,10 @@ function TeacherDialogueUnit({
             ),
           );
         }
-        setStreamStatus("Ответ преподавателя остановлен");
+        setStreamStatus(t("session.tutor.stopped"));
       } else {
         setProviderError(errorMessage(error));
-        setStreamStatus("Преподаватель недоступен");
+        setStreamStatus(t("session.tutor.unavailable"));
       }
     } finally {
       setStreaming(false);
@@ -1692,7 +1739,7 @@ function TeacherDialogueUnit({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1 rounded-md border border-border bg-background p-3 text-sm leading-6">
-        <p className="font-medium">Задача преподавателя</p>
+        <p className="font-medium">{t("session.tutor.task")}</p>
         <p className="text-muted-foreground">{opening}</p>
       </div>
       {history.isPending && !localMessages ? (
@@ -1705,7 +1752,7 @@ function TeacherDialogueUnit({
       ) : (
         <ol
           data-slot="teacher-transcript"
-          aria-label="История диалога с преподавателем"
+          aria-label={t("session.tutor.history")}
           className="flex max-h-96 flex-col gap-2 overflow-y-auto"
         >
           {messages.length ? (
@@ -1715,15 +1762,16 @@ function TeacherDialogueUnit({
                 className={`flex max-w-[90%] flex-col gap-1 rounded-md p-3 text-sm leading-6 ${message.role === "user" ? "self-end bg-primary text-primary-foreground" : "bg-muted"}`}
               >
                 <span className="block text-xs font-medium">
-                  {message.role === "user" ? "Ты" : "Преподаватель"}
+                  {message.role === "user"
+                    ? t("session.tutor.you")
+                    : t("session.tutor.name")}
                 </span>
                 {message.content || "…"}
               </li>
             ))
           ) : (
             <li className="text-sm text-muted-foreground">
-              История пуста. Отправь уточнённое объяснение — преподаватель
-              ответит без раскрытия эталона.
+              {t("session.tutor.emptyHistory")}
             </li>
           )}
         </ol>
@@ -1739,7 +1787,7 @@ function TeacherDialogueUnit({
             variant="outline"
             onClick={() => void sendRevision()}
           >
-            Повторить
+            {t("session.tutor.retry")}
           </Button>
         </div>
       ) : null}
@@ -1756,8 +1804,8 @@ function TeacherDialogueUnit({
               htmlFor={`teacher-revision-${unit.id}`}
             >
               {answeringFollowUp
-                ? "Ответ на уточнение преподавателя"
-                : "Уточнённое объяснение"}
+                ? t("session.tutor.followUpLabel")
+                : t("session.tutor.revisionLabel")}
               <textarea
                 id={`teacher-revision-${unit.id}`}
                 rows={5}
@@ -1766,8 +1814,8 @@ function TeacherDialogueUnit({
                 onChange={(event) => setRevision(event.target.value)}
                 placeholder={
                   answeringFollowUp
-                    ? "Ответь на последний вопрос преподавателя своими словами…"
-                    : "Перепиши механизм точнее — преподаватель задаст уточняющий вопрос…"
+                    ? t("session.tutor.followUpPlaceholder")
+                    : t("session.tutor.revisionPlaceholder")
                 }
                 className="min-h-28 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
@@ -1780,7 +1828,7 @@ function TeacherDialogueUnit({
                 onClick={() => abortRef.current?.abort()}
               >
                 <StopIcon aria-hidden />
-                Остановить преподавателя
+                {t("session.tutor.stop")}
               </Button>
             ) : canComplete ? (
               <Button
@@ -1789,7 +1837,7 @@ function TeacherDialogueUnit({
                   void patchUnit(unit, progress, "completed", payload)
                 }
               >
-                Завершить диалог
+                {t("session.tutor.complete")}
                 <CheckIcon aria-hidden />
               </Button>
             ) : (
@@ -1799,8 +1847,8 @@ function TeacherDialogueUnit({
               >
                 <PaperPlaneTiltIcon aria-hidden />
                 {answeringFollowUp
-                  ? "Ответить на уточнение"
-                  : "Отправить объяснение"}
+                  ? t("session.tutor.answer")
+                  : t("session.tutor.send")}
               </Button>
             )}
           </div>
@@ -1818,6 +1866,7 @@ function QuizUnit({
   patchUnit,
   runAction,
 }: UnitBodyProps) {
+  const { t } = useI18n();
   const payload =
     progress.payload.type === "quiz"
       ? progress.payload
@@ -1886,8 +1935,7 @@ function QuizUnit({
           role="alert"
           className="rounded-md border border-destructive/35 bg-destructive/10 p-4 text-sm text-destructive"
         >
-          Quiz настроен некорректно: у каждого вопроса должно быть минимум два
-          варианта ответа.
+          {t("session.quiz.invalid")}
         </p>
       ) : null}
       {unit.questions.map((question, index) => {
@@ -1928,7 +1976,9 @@ function QuizUnit({
               <p
                 className={`text-sm font-medium ${result.correct ? "text-success" : "text-destructive"}`}
               >
-                {result.correct ? "Верно" : "Нужно повторить"}
+                {result.correct
+                  ? t("session.quiz.correct")
+                  : t("session.quiz.retryNeeded")}
               </p>
             ) : null}
           </fieldset>
@@ -1936,8 +1986,10 @@ function QuizUnit({
       })}
       {payload.score !== null ? (
         <p role="status" className="text-sm font-medium">
-          Серверная оценка: {Math.round(payload.score * 100)}%. Порог:{" "}
-          {Math.round(minimumScore * 100)}%.
+          {t("session.quiz.score", {
+            score: Math.round(payload.score * 100),
+            minimum: Math.round(minimumScore * 100),
+          })}
         </p>
       ) : null}
       {progress.status === "completed" ? (
@@ -1948,15 +2000,14 @@ function QuizUnit({
             disabled={pending}
             onClick={() => void patchUnit(unit, progress, "completed", payload)}
           >
-            Завершить проверку
+            {t("session.quiz.complete")}
             <CheckIcon aria-hidden />
           </Button>
         </div>
       ) : scored && !retrying ? (
         <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="max-w-[60ch] text-sm leading-6 text-muted-foreground">
-            Первая попытка сохранена. Повторите материал и ответьте ещё раз —
-            для разблокировки учитывается последняя попытка.
+            {t("session.quiz.retryDescription")}
           </p>
           <Button
             type="button"
@@ -1968,7 +2019,7 @@ function QuizUnit({
               setRetrying(true);
             }}
           >
-            Пересдать квиз
+            {t("session.quiz.retry")}
           </Button>
         </div>
       ) : (
@@ -1977,7 +2028,9 @@ function QuizUnit({
             disabled={pending || !allAnswered || invalidQuestions.length > 0}
             onClick={() => void submit()}
           >
-            {retrying ? "Проверить повторно" : "Проверить ответы"}
+            {retrying
+              ? t("session.quiz.submitAgain")
+              : t("session.quiz.submit")}
           </Button>
         </div>
       )}
@@ -1993,6 +2046,7 @@ function CodeReadingUnit({
   patchUnit,
   runAction,
 }: UnitBodyProps) {
+  const { t } = useI18n();
   const payload =
     progress.payload.type === "code-reading"
       ? progress.payload
@@ -2043,9 +2097,9 @@ function CodeReadingUnit({
       ))}
       {(
         [
-          ["prediction", "Предсказание"],
-          ["explanation", "Объяснение механизма"],
-          ["verbalFix", "Исправление словами"],
+          ["prediction", t("session.code.prediction")],
+          ["explanation", t("session.code.explanation")],
+          ["verbalFix", t("session.code.verbalFix")],
         ] as const
       ).map(([field, label]) => (
         <label
@@ -2077,7 +2131,7 @@ function CodeReadingUnit({
             disabled={pending}
             onClick={() => void patchUnit(unit, progress, "completed", payload)}
           >
-            Завершить чтение кода
+            {t("session.code.complete")}
             <CheckIcon aria-hidden />
           </Button>
         </div>
@@ -2092,7 +2146,7 @@ function CodeReadingUnit({
             }
             onClick={() => void submit()}
           >
-            Сохранить разбор
+            {t("session.code.save")}
           </Button>
         </div>
       )}
@@ -2101,6 +2155,7 @@ function CodeReadingUnit({
 }
 
 function ExerciseHandoffUnit({ unit, progress, onExercise }: UnitBodyProps) {
+  const { t } = useI18n();
   const criteria =
     unit.payload.type === "exercise"
       ? unit.payload.acceptanceCriteria
@@ -2110,17 +2165,19 @@ function ExerciseHandoffUnit({ unit, progress, onExercise }: UnitBodyProps) {
       <InfoList
         title={
           unit.type === "review"
-            ? "Условия проверки решения"
-            : "Критерии приёмки"
+            ? t("session.practice.reviewCriteria")
+            : t("session.practice.acceptance")
         }
         items={criteria}
       />
       {unit.payload.type === "exercise" && unit.payload.constraints.length ? (
-        <InfoList title="Ограничения" items={unit.payload.constraints} />
+        <InfoList
+          title={t("session.practice.constraints")}
+          items={unit.payload.constraints}
+        />
       ) : null}
       <p className="text-sm leading-6 text-muted-foreground">
-        Код редактируется только во внешнем Zed. Diff, allowlisted tests и
-        read-only Reviewer открываются в Practice.
+        {t("session.practice.description")}
       </p>
       {progress.status === "completed" ? (
         <CompletedNote />
@@ -2128,8 +2185,8 @@ function ExerciseHandoffUnit({ unit, progress, onExercise }: UnitBodyProps) {
         <div className="flex justify-end">
           <Button onClick={onExercise}>
             {unit.type === "review"
-              ? "Открыть проверку решения"
-              : "Открыть практику"}
+              ? t("session.practice.openReview")
+              : t("session.practice.open")}
             <ArrowRightIcon aria-hidden />
           </Button>
         </div>
@@ -2145,24 +2202,28 @@ function InterviewUnit({
   patchUnit,
   onInterview,
 }: UnitBodyProps) {
+  const { t } = useI18n();
   const payload =
     progress.payload.type === "interview" ? progress.payload : null;
   const hasReport = Boolean(payload?.reportId);
   return (
     <div className="flex flex-col gap-6">
       {unit.payload.type === "interview" ? (
-        <InfoList title="Темы" items={unit.payload.topics} />
+        <InfoList
+          title={t("session.interview.topics")}
+          items={unit.payload.topics}
+        />
       ) : null}
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : hasReport ? (
         <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="max-w-[60ch] text-sm leading-6 text-muted-foreground">
-            Отчёт по интервью сохранён. Открой его, затем заверши юнит.
+            {t("session.interview.reportReady")}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={onInterview}>
-              Открыть отчёт
+              {t("session.interview.openReport")}
               <ArrowRightIcon aria-hidden />
             </Button>
             <Button
@@ -2175,7 +2236,7 @@ function InterviewUnit({
                 })
               }
             >
-              Завершить шаг
+              {t("session.interview.complete")}
               <CheckIcon aria-hidden />
             </Button>
           </div>
@@ -2183,7 +2244,7 @@ function InterviewUnit({
       ) : (
         <div className="flex justify-end">
           <Button onClick={onInterview}>
-            Открыть интервью
+            {t("session.interview.open")}
             <ArrowRightIcon aria-hidden />
           </Button>
         </div>
@@ -2200,6 +2261,7 @@ function SummaryUnit({
   patchUnit,
   runAction,
 }: UnitBodyProps) {
+  const { t } = useI18n();
   const summaryId =
     progress.payload.type === "summary" ? progress.payload.summaryId : null;
   const [created, setCreated] = useState<z.infer<
@@ -2248,7 +2310,10 @@ function SummaryUnit({
   return (
     <div className="flex flex-col gap-6">
       {unit.payload.type === "summary" && unit.payload.prompts.length ? (
-        <InfoList title="Итоговые вопросы" items={unit.payload.prompts} />
+        <InfoList
+          title={t("session.summary.prompts")}
+          items={unit.payload.prompts}
+        />
       ) : null}
       {result ? (
         <div data-slot="day-summary" className="flex flex-col gap-5">
@@ -2257,47 +2322,50 @@ function SummaryUnit({
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <SummaryMetric
-              label="Квиз"
+              label={t("session.summary.quiz")}
               value={`${Math.round(result.summary.metrics.quizScore * 100)}%`}
             />
             <SummaryMetric
-              label="Подтверждения навыка"
+              label={t("session.summary.evidence")}
               value={String(result.summary.metrics.evidenceCount)}
             />
             <SummaryMetric
-              label="Подсказки"
+              label={t("session.summary.hints")}
               value={`${result.summary.metrics.maxHintLevel} / 5`}
             />
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <InfoList
-              title="Что уже получается"
+              title={t("session.summary.strengths")}
               items={
                 result.summary.strengths.length
                   ? result.summary.strengths
-                  : ["Пока недостаточно подтверждений навыка"]
+                  : [t("session.summary.noStrengths")]
               }
             />
             <InfoList
-              title="Что закрепить"
+              title={t("session.summary.gaps")}
               items={
                 result.summary.gaps.length
                   ? result.summary.gaps
-                  : ["Новых пробелов не зафиксировано"]
+                  : [t("session.summary.noGaps")]
               }
             />
           </div>
           <p className="text-sm text-muted-foreground">
-            В журнал добавлено ошибок: {result.summary.mistakeCandidates.length}
-            . Кандидатов в карточки: {result.summary.flashcardCandidates.length}
-            .
+            {t("session.summary.counts", {
+              mistakes: result.summary.mistakeCandidates.length,
+              cards: result.summary.flashcardCandidates.length,
+            })}
           </p>
           {progress.status === "completed" ? (
             <CompletedNote />
           ) : (
             <div className="flex justify-end">
               <Button disabled={pending} onClick={() => void completeSummary()}>
-                {pending ? "Завершаю…" : "Завершить день"}
+                {pending
+                  ? t("session.summary.completing")
+                  : t("session.summary.complete")}
                 <CheckIcon aria-hidden />
               </Button>
             </div>
@@ -2306,28 +2374,29 @@ function SummaryUnit({
       ) : persisted.isError ? (
         <div className="flex flex-col items-start gap-3" role="alert">
           <p className="text-sm text-destructive">
-            Не удалось восстановить сохранённый итог:{" "}
-            {errorMessage(persisted.error)}
+            {t("session.summary.restoreError", {
+              error: errorMessage(persisted.error),
+            })}
           </p>
           <Button variant="outline" onClick={() => void persisted.refetch()}>
-            Повторить загрузку
+            {t("session.summary.retry")}
           </Button>
         </div>
       ) : persisted.isPending && summaryId ? (
         <div className="flex flex-col gap-3" role="status">
-          <span className="sr-only">Загружаю итог…</span>
+          <span className="sr-only">{t("session.summary.loading")}</span>
           <Skeleton className="h-20" />
           <Skeleton className="h-16" />
         </div>
       ) : (
         <div className="flex flex-col items-start gap-2">
           <Button disabled={pending} onClick={() => void createSummary()}>
-            {pending ? "Формирую итог…" : "Сформировать итог"}
+            {pending
+              ? t("session.summary.generating")
+              : t("session.summary.generate")}
           </Button>
           <p className="text-xs text-muted-foreground">
-            Итог строится только из сохранённых ответов, тестов и проверки
-            решения. Браузер не выставляет оценку мастерства и не придумывает
-            подтверждения навыка.
+            {t("session.summary.description")}
           </p>
         </div>
       )}
@@ -2345,6 +2414,7 @@ function SummaryMetric({ label, value }: { label: string; value: string }) {
 }
 
 function CheckpointUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
+  const { t } = useI18n();
   const payload =
     progress.payload.type === "checkpoint"
       ? progress.payload
@@ -2369,7 +2439,7 @@ function CheckpointUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
               })
             }
           >
-            Подтвердить checkpoint
+            {t("session.checkpoint.confirm")}
             <CheckIcon aria-hidden />
           </Button>
         </div>
@@ -2379,25 +2449,29 @@ function CheckpointUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
 }
 
 function SpacedReviewUnit({ unit, progress }: UnitBodyProps) {
+  const { t } = useI18n();
   return (
     <div className="flex flex-col gap-6">
       {unit.payload.type === "spaced-review" ? (
-        <InfoList title="Темы повторения" items={unit.payload.topicIds} />
+        <InfoList
+          title={t("session.spaced.topics")}
+          items={unit.payload.topicIds}
+        />
       ) : null}
       <p className="text-sm text-muted-foreground">
-        Повторение будет доступно в Практике после появления серверных
-        подтверждений навыка.
+        {t("session.spaced.description")}
       </p>
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : (
-        <Button disabled>Начать серверное повторение</Button>
+        <Button disabled>{t("session.spaced.start")}</Button>
       )}
     </div>
   );
 }
 
 function Sources({ unit }: { unit: LearnerUnit }) {
+  const { locale, t } = useI18n();
   if (!unit.sources.length) {
     return (
       <div
@@ -2405,18 +2479,19 @@ function Sources({ unit }: { unit: LearnerUnit }) {
         className="flex flex-col gap-3 rounded-lg border border-dashed border-border p-4"
       >
         <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">Источники</h3>
+          <h3 className="text-sm font-medium">{t("session.sources.title")}</h3>
           <p className="text-sm leading-6 text-muted-foreground">
-            Для этого шага источник ещё не назначен.
+            {t("session.sources.empty")}
           </p>
         </div>
         <p className="text-sm leading-6 text-muted-foreground">
-          Используй свой источник: открой его рядом и отметь пункты чек-листа,
-          когда найдёшь ответы.
+          {t("session.sources.own")}
         </p>
         <div>
           <Button asChild variant="outline" size="sm">
-            <Link href="/settings/curriculum">Открыть редактор программы</Link>
+            <Link href="/settings/curriculum">
+              {t("session.sources.openEditor")}
+            </Link>
           </Button>
         </div>
       </div>
@@ -2424,7 +2499,7 @@ function Sources({ unit }: { unit: LearnerUnit }) {
   }
   return (
     <div data-slot="unit-sources" className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">Источники</h3>
+      <h3 className="text-sm font-medium">{t("session.sources.title")}</h3>
       <ul className="grid gap-3 md:grid-cols-2">
         {unit.sources.map((source) => (
           <li
@@ -2436,18 +2511,22 @@ function Sources({ unit }: { unit: LearnerUnit }) {
               <div className="min-w-0">
                 <p className="font-medium leading-5">{source.title}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {sourceKindLabel(source.kind)} ·{" "}
-                  {formatMinutesShort(source.estimatedMinutes)}
+                  {sourceKindMessageKey(source.kind)
+                    ? t(sourceKindMessageKey(source.kind)!)
+                    : source.kind}{" "}
+                  · {formatMinutesShort(source.estimatedMinutes, locale)}
                 </p>
               </div>
               <Badge variant={source.required ? "default" : "outline"}>
-                {source.required ? "Основной" : "Дополнительный"}
+                {source.required
+                  ? t("session.sources.primary")
+                  : t("session.sources.additional")}
               </Badge>
             </div>
             {source.learningGoal ? (
               <div className="flex flex-col gap-1">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Обрати внимание
+                  {t("session.sources.focus")}
                 </p>
                 <p className="text-sm leading-6 text-muted-foreground">
                   {source.learningGoal}
@@ -2466,7 +2545,7 @@ function Sources({ unit }: { unit: LearnerUnit }) {
                 rel="noreferrer"
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
               >
-                Открыть материал
+                {t("session.sources.open")}
                 <ArrowUpRightIcon aria-hidden className="size-4" />
               </a>
             ) : null}
@@ -2505,10 +2584,11 @@ function InfoList({
 }
 
 function CompletedNote() {
+  const { t } = useI18n();
   return (
     <p className="inline-flex items-center gap-2 text-sm font-medium text-success">
       <CheckIcon aria-hidden />
-      Шаг завершён и сохранён
+      {t("session.completed")}
     </p>
   );
 }

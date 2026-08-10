@@ -22,6 +22,13 @@ import {
 } from "@dlh/shared";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
+import { authoringDraftHash } from "./authoring-draft-hash.js";
+import {
+  isPersonalAdaptation,
+  publishPersonalAdaptation,
+} from "./personal-adaptations.js";
+
+export { authoringDraftHash } from "./authoring-draft-hash.js";
 
 export interface CurriculumEditorState {
   connection: DatabaseConnection;
@@ -198,6 +205,42 @@ const reorderSchema = z
   });
 
 const mutationSchema = z.object({ operationId: operationIdSchema }).strict();
+const publishSchema = mutationSchema
+  .extend({
+    validationHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+    changeReviewHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+    previewHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+  })
+  .strict();
+
+interface AuthoringDiagnostic {
+  readonly code: string;
+  readonly severity: "error" | "warning";
+  readonly path: string;
+  readonly message: string;
+}
+
+interface AuthoringValidationReport {
+  readonly validatorVersion: "m9-v1";
+  readonly versionId: string;
+  readonly draftHash: string;
+  readonly validationHash: string;
+  readonly valid: boolean;
+  readonly errors: number;
+  readonly warnings: number;
+  readonly diagnostics: readonly AuthoringDiagnostic[];
+}
+
+interface AuthoringChangeReview {
+  readonly versionId: string;
+  readonly parentVersionId: string | null;
+  readonly draftHash: string;
+  readonly changeReviewHash: string;
+  readonly added: number;
+  readonly changed: number;
+  readonly removed: number;
+  readonly ready: boolean;
+}
 
 class EditorError extends Error {
   constructor(
@@ -442,6 +485,218 @@ function toEditorDto<T>(value: T): T {
       .map(([key, nested]) => [key, toEditorDto(nested)]),
   ) as T;
 }
+function sha256(value: string): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function authoringValidationReport(
+  graph: CurriculumVersionGraph,
+): AuthoringValidationReport {
+  const diagnostics: AuthoringDiagnostic[] = [];
+  if (graph.version.status !== "draft") {
+    diagnostics.push({
+      code: "immutable_revision",
+      severity: "error",
+      path: "version.status",
+      message: "Only a draft revision can enter the release pipeline",
+    });
+  }
+  if (graph.weeks.length === 0) {
+    diagnostics.push({
+      code: "missing_week",
+      severity: "error",
+      path: "weeks",
+      message: "At least one week is required",
+    });
+  }
+  graph.weeks.forEach((week, weekIndex) => {
+    if (week.days.length === 0) {
+      diagnostics.push({
+        code: "missing_day",
+        severity: "error",
+        path: `weeks[${weekIndex}].days`,
+        message: "Every week requires at least one day",
+      });
+    }
+    week.days.forEach((day, dayIndex) => {
+      const path = `weeks[${weekIndex}].days[${dayIndex}]`;
+      if (day.units.length === 0) {
+        diagnostics.push({
+          code: "missing_activity",
+          severity: "error",
+          path: `${path}.units`,
+          message: "Every day requires at least one activity",
+        });
+      }
+      if (day.expectedOutcomes.length === 0) {
+        diagnostics.push({
+          code: "missing_expected_outcome",
+          severity: "warning",
+          path: `${path}.expectedOutcomes`,
+          message: "No learner outcome is declared",
+        });
+      }
+      day.units.forEach((unit, unitIndex) => {
+        if (unit.completionCriteria.length === 0) {
+          diagnostics.push({
+            code: "missing_completion_criterion",
+            severity: "error",
+            path: `${path}.units[${unitIndex}].completionCriteria`,
+            message: "Every activity requires a completion criterion",
+          });
+        }
+      });
+    });
+  });
+  try {
+    assertGraphContracts(graph);
+  } catch (error) {
+    diagnostics.push({
+      code: "invalid_activity_graph",
+      severity: "error",
+      path: "weeks",
+      message:
+        error instanceof Error ? error.message : "Activity graph is invalid",
+    });
+  }
+  const draftHash = authoringDraftHash(graph);
+  const errors = diagnostics.filter(
+    ({ severity }) => severity === "error",
+  ).length;
+  const warnings = diagnostics.length - errors;
+  const reportBody = {
+    validatorVersion: "m9-v1" as const,
+    versionId: graph.version.id,
+    draftHash,
+    valid: errors === 0,
+    errors,
+    warnings,
+    diagnostics,
+  };
+  return {
+    ...reportBody,
+    validationHash: sha256(JSON.stringify(reportBody)),
+  };
+}
+
+function comparableAuthoringEntities(
+  graph: CurriculumVersionGraph,
+): ReadonlyMap<string, string> {
+  const entities = new Map<string, string>();
+  for (const week of graph.weeks) {
+    entities.set(
+      `week:${week.stableId}`,
+      JSON.stringify({ title: week.title, description: week.description }),
+    );
+    for (const day of week.days) {
+      entities.set(
+        `day:${day.stableId}`,
+        JSON.stringify({
+          title: day.title,
+          description: day.description,
+          goal: day.goal,
+          estimatedMinutes: day.estimatedMinutes,
+          prerequisites: day.prerequisites,
+          expectedOutcomes: day.expectedOutcomes,
+          depthLevel: day.depthLevel,
+          outOfScope: day.outOfScope,
+          topics: day.topics,
+        }),
+      );
+      for (const unit of day.units) {
+        entities.set(
+          `unit:${unit.stableId}`,
+          JSON.stringify({
+            type: unit.type,
+            title: unit.title,
+            description: unit.description,
+            estimatedMinutes: unit.estimatedMinutes,
+            objectives: unit.objectives,
+            checklist: unit.checklist,
+            sources: unit.sources,
+            questions: unit.questions,
+            misconceptions: unit.misconceptions,
+            referenceAnswer: unit.referenceAnswer,
+            completionCriteria: unit.completionCriteria,
+            unlockRules: unit.unlockRules,
+            optional: unit.optional,
+            depthLevel: unit.depthLevel,
+            payload: unit.payload,
+          }),
+        );
+      }
+    }
+  }
+  return entities;
+}
+
+async function authoringChangeReview(
+  repository: CurriculumAuthoringRepository,
+  graph: CurriculumVersionGraph,
+): Promise<AuthoringChangeReview> {
+  const current = comparableAuthoringEntities(graph);
+  const parent = graph.version.parentVersionId
+    ? comparableAuthoringEntities(
+        await repository.getVersionGraph(graph.version.parentVersionId),
+      )
+    : new Map<string, string>();
+  let added = 0;
+  let changed = 0;
+  let removed = 0;
+  for (const [key, value] of current) {
+    if (!parent.has(key)) added += 1;
+    else if (parent.get(key) !== value) changed += 1;
+  }
+  for (const key of parent.keys()) if (!current.has(key)) removed += 1;
+  const draftHash = authoringDraftHash(graph);
+  const reviewBody = {
+    versionId: graph.version.id,
+    parentVersionId: graph.version.parentVersionId,
+    draftHash,
+    added,
+    changed,
+    removed,
+    ready: authoringValidationReport(graph).valid,
+  };
+  return {
+    ...reviewBody,
+    changeReviewHash: sha256(JSON.stringify(reviewBody)),
+  };
+}
+
+function learnerSafePreview(graph: CurriculumVersionGraph) {
+  return {
+    versionId: graph.version.id,
+    title: graph.version.title,
+    description: graph.version.description,
+    draftHash: authoringDraftHash(graph),
+    weeks: graph.weeks.map((week) => ({
+      stableId: week.stableId,
+      title: week.title,
+      description: week.description,
+      days: week.days.map((day) => ({
+        stableId: day.stableId,
+        title: day.title,
+        description: day.description,
+        goal: day.goal,
+        estimatedMinutes: day.estimatedMinutes,
+        expectedOutcomes: day.expectedOutcomes,
+        topics: day.topics,
+        activities: day.units.map((unit) => ({
+          stableId: unit.stableId,
+          type: unit.type,
+          title: unit.title,
+          description: unit.description,
+          estimatedMinutes: unit.estimatedMinutes,
+          objectives: unit.objectives,
+          checklist: unit.checklist,
+          sources: unit.sources,
+          optional: unit.optional,
+        })),
+      })),
+    })),
+  };
+}
 
 function valuesFrom<T extends object>(
   input: T,
@@ -631,9 +886,44 @@ export function registerCurriculumEditorRoutes(
     }),
   );
 
+  app.get("/api/curriculum-editor/versions/:versionId/validation", (context) =>
+    handle(context, async () => {
+      const graph = await graphOrNotFound(
+        editorRepository(state),
+        routeId(context, "versionId"),
+      );
+      return context.json({ report: authoringValidationReport(graph) });
+    }),
+  );
+
+  app.get("/api/curriculum-editor/versions/:versionId/preview", (context) =>
+    handle(context, async () => {
+      const graph = await graphOrNotFound(
+        editorRepository(state),
+        routeId(context, "versionId"),
+      );
+      return context.json({ preview: learnerSafePreview(graph) });
+    }),
+  );
+
+  app.get(
+    "/api/curriculum-editor/versions/:versionId/change-review",
+    (context) =>
+      handle(context, async () => {
+        const repository = editorRepository(state);
+        const graph = await graphOrNotFound(
+          repository,
+          routeId(context, "versionId"),
+        );
+        return context.json({
+          review: await authoringChangeReview(repository, graph),
+        });
+      }),
+  );
+
   app.post("/api/curriculum-editor/versions/:versionId/publish", (context) =>
     handle(context, async () => {
-      await readBody(context, mutationSchema);
+      const input = await readBody(context, publishSchema);
       const versionId = routeId(context, "versionId");
       const repository = editorRepository(state);
       const status = versionStatus(state.connection, versionId);
@@ -644,11 +934,32 @@ export function registerCurriculumEditorRoutes(
           "Curriculum version was not found",
         );
       const graph = await repository.getVersionGraph(versionId);
-      assertGraphContracts(graph);
+      const validation = authoringValidationReport(graph);
+      const review = await authoringChangeReview(repository, graph);
+      if (!validation.valid) {
+        throw new EditorError(
+          409,
+          "validation_failed",
+          "Draft validation must pass before publication",
+        );
+      }
+      if (
+        input.validationHash !== validation.validationHash ||
+        input.changeReviewHash !== review.changeReviewHash ||
+        input.previewHash !== validation.draftHash
+      ) {
+        throw new EditorError(
+          409,
+          "release_evidence_stale",
+          "Validation and change review must match the current draft",
+        );
+      }
       const version =
         status === "published"
           ? graph.version
-          : await repository.publishVersion(versionId);
+          : isPersonalAdaptation(state.connection, versionId)
+            ? await publishPersonalAdaptation(state.connection, versionId)
+            : await repository.publishVersion(versionId);
       return context.json({ version });
     }),
   );

@@ -1,6 +1,6 @@
 # Provider Hub
 
-**Document status:** Approved Core Alpha target with an implementation-complete evidenced **Implemented baseline**; authenticated external smoke remains an acceptance blocker.
+**Document status:** Approved Core Alpha target with an accepted evidenced **Implemented baseline**.
 **Purpose:** separate provider connections from Aptiloop roles, resolve models/capabilities centrally, support explicit no-AI mode, and make every failure visible without silent fallback.
 
 ## Implemented baseline
@@ -9,7 +9,7 @@
 
 **Implemented baseline.** Additive migration `0014_provider_hub` and `ProviderHubRepository` persist secret-free connections, role profiles, tool policies, immutable disclosure operations/events, and terminal provider-turn provenance. Disclosure approval is payload-hash, destination, provider, model, role, entity-scope, and expiry specific; one-time consumption is append-only.
 
-**Implemented baseline.** Active learning chat, interview, and evidence-only review resolve through persisted `RoleProfile` records and `ProviderHub`; flattened browser role selections and the legacy provider-status route are retired. The UI previews exact external disclosure scope and consumes an immutable approval once. The common runner enforces cumulative input/output/event/tool/deadline budgets, explicit cancellation, minimized persistence, and structured failures without fallback. Private environment/context sentinels and all four finite role matrices are covered. The remaining M6 acceptance blocker is one authenticated external provider/model smoke with cancellation and persisted provenance; no credential or external request is present on this workstation.
+**Implemented baseline.** Active learning chat, interview, and evidence-only review resolve through persisted `RoleProfile` records and `ProviderHub`; flattened browser role selections and the legacy provider-status route are retired. The UI previews exact external disclosure scope and consumes an immutable approval once. The common runner enforces cumulative input/output/event/tool/deadline budgets, explicit cancellation, minimized persistence, and structured failures without fallback. Private environment/context sentinels and all four finite role matrices are covered. The exact authenticated OpenCode Zen `deepseek-v4-flash-free` smoke completed through constrained Pi with synthetic text in a disposable database, exact disclosure consumption, persisted minimal provenance, and observed cancellation. This closes M6 acceptance without asserting general production provider readiness.
 
 ## Separate concepts
 

@@ -11,6 +11,7 @@ import { ArrowDownIcon } from "@phosphor-icons/react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n";
 
 function MessageScrollerProvider(
   props: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>,
@@ -88,6 +89,7 @@ function MessageScrollerButton({
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Button> &
   Pick<React.ComponentProps<typeof Button>, "variant" | "size">) {
+  const { t } = useI18n();
   return (
     <MessageScrollerPrimitive.Button
       data-slot="message-scroller-button"
@@ -104,7 +106,11 @@ function MessageScrollerButton({
         <>
           <ArrowDownIcon />
           <span className="sr-only">
-            {direction === "end" ? "К последнему сообщению" : "К началу"}
+            {t(
+              direction === "end"
+                ? "ui.messageScroller.toLast"
+                : "ui.messageScroller.toStart",
+            )}
           </span>
         </>
       )}

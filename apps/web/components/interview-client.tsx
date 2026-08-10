@@ -30,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Markdown } from "@/components/ui/markdown";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { type MessageKey, useI18n } from "@/lib/i18n";
 import { formatMinutesShort } from "@/lib/time";
 
 const protectedFields = new Set([
@@ -182,33 +183,32 @@ const learningPathSchema = z.object({
     .nullable(),
 });
 
-const scopeOptions: Array<{
-  value: ScopeMode;
-  label: string;
-  description: string;
-}> = [
+const scopeOptions = [
   {
     value: "studied",
-    label: "Только изученные",
-    description: "Темы дней, где уже есть начатые или завершённые шаги.",
+    label: "interview.scope.studied.label",
+    description: "interview.scope.studied.description",
   },
   {
     value: "current-week",
-    label: "Текущая неделя",
-    description:
-      "Темы недели с текущим или ближайшим доступным днём (по умолчанию — неделя 1).",
+    label: "interview.scope.currentWeek.label",
+    description: "interview.scope.currentWeek.description",
   },
   {
     value: "manual",
-    label: "Выбрать вручную",
-    description: "Свои темы через запятую.",
+    label: "interview.scope.manual.label",
+    description: "interview.scope.manual.description",
   },
   {
     value: "all",
-    label: "Полная диагностика",
-    description: "Все темы всех дней маршрута.",
+    label: "interview.scope.all.label",
+    description: "interview.scope.all.description",
   },
-];
+] as const satisfies ReadonlyArray<{
+  value: ScopeMode;
+  label: MessageKey;
+  description: MessageKey;
+}>;
 
 const startDraftKey = "dlh-interview-v2-start";
 const pendingAnswerKey = "dlh-interview-v2-pending-answer";
@@ -295,19 +295,11 @@ async function readCurrentInterview(): Promise<Interview | null> {
 const fieldClassName =
   "min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
 
-function questionNoun(count: number): string {
-  const abs = count % 100;
-  const last = abs % 10;
-  if (abs > 10 && abs < 20) return "вопросов";
-  if (last > 1 && last < 5) return "вопроса";
-  if (last === 1) return "вопрос";
-  return "вопросов";
-}
-
 export function InterviewClient() {
   const params = useSearchParams();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { locale, t } = useI18n();
   const requestedInterviewId = params.get("id")?.trim() || null;
   const sessionId = params.get("sessionId")?.trim() || null;
   const queryKey = requestedInterviewId
@@ -432,9 +424,9 @@ export function InterviewClient() {
       setActionError(
         topics.length === 0
           ? scopeMode === "manual"
-            ? "Укажите хотя бы одну тему через запятую."
-            : "Для этого режима пока нет тем — выберите «Выбрать вручную»."
-          : "Проверьте темы, сложность и количество вопросов.",
+            ? t("interview.error.validation.manualTopics")
+            : t("interview.error.validation.emptyScope")
+          : t("interview.error.validation.setup"),
       );
       return;
     }
@@ -463,7 +455,7 @@ export function InterviewClient() {
       queryClient.setQueryData(queryKey, next);
     } catch (error) {
       setActionError(
-        error instanceof Error ? error.message : "Не удалось начать интервью.",
+        error instanceof Error ? error.message : t("interview.error.start"),
       );
       await interviewQuery.refetch();
     } finally {
@@ -504,8 +496,8 @@ export function InterviewClient() {
     } catch (error) {
       setActionError(
         error instanceof Error
-          ? `${error.message} Ответ сохранён в форме — можно повторить запрос.`
-          : "Следующий вопрос не получен. Ответ сохранён в форме.",
+          ? t("interview.error.answerRetry", { error: error.message })
+          : t("interview.error.answer"),
       );
     } finally {
       setAction(null);
@@ -546,9 +538,7 @@ export function InterviewClient() {
       queryClient.setQueryData(queryKey, response.interview);
     } catch (error) {
       setActionError(
-        error instanceof Error
-          ? error.message
-          : "Не удалось завершить интервью.",
+        error instanceof Error ? error.message : t("interview.error.finish"),
       );
     } finally {
       setAction(null);
@@ -578,7 +568,7 @@ export function InterviewClient() {
       setActionError(
         error instanceof Error
           ? error.message
-          : "Не удалось подтвердить отправку данных.",
+          : t("interview.error.disclosureApprove"),
       );
     }
   }
@@ -590,7 +580,7 @@ export function InterviewClient() {
     await api(`/ai/disclosures/${pending.disclosure.operationId}`, {
       method: "DELETE",
     }).catch(() => undefined);
-    setActionError("Данные не отправлены. Интервью можно продолжить позже.");
+    setActionError(t("interview.error.disclosureCanceled"));
   }
 
   function startNewInterview() {
@@ -611,37 +601,44 @@ export function InterviewClient() {
       }
     >
       <ArrowLeftIcon aria-hidden className="size-4" />
-      Вернуться к занятию
+      {t("interview.returnToSession")}
     </Button>
   ) : null;
   const disclosureDialog = (
     <AlertDialog open={pendingDisclosure !== null}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Отправить данные внешнему AI?</AlertDialogTitle>
+          <AlertDialogTitle>{t("interview.disclosure.title")}</AlertDialogTitle>
           <AlertDialogDescription>
-            Разрешение действует один раз для следующего вопроса интервью.
+            {t("interview.disclosure.description")}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {pendingDisclosure ? (
           <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 text-sm">
             <div>
-              <dt className="font-medium">Получатель</dt>
+              <dt className="font-medium">
+                {t("interview.disclosure.recipient")}
+              </dt>
               <dd className="text-muted-foreground">
                 {pendingDisclosure.disclosure.scope.destination}
               </dd>
             </div>
             <div>
-              <dt className="font-medium">Данные</dt>
+              <dt className="font-medium">{t("interview.disclosure.data")}</dt>
               <dd className="text-muted-foreground">
-                {pendingDisclosure.disclosure.scope.payloadCategories.join(
-                  ", ",
-                )}{" "}
-                · {pendingDisclosure.disclosure.scope.byteCount} bytes
+                {t("interview.disclosure.payload", {
+                  categories:
+                    pendingDisclosure.disclosure.scope.payloadCategories.join(
+                      ", ",
+                    ),
+                  bytes: pendingDisclosure.disclosure.scope.byteCount,
+                })}
               </dd>
             </div>
             <div>
-              <dt className="font-medium">Не отправляется</dt>
+              <dt className="font-medium">
+                {t("interview.disclosure.exclusions")}
+              </dt>
               <dd className="text-muted-foreground">
                 {pendingDisclosure.disclosure.scope.exclusions.join(", ")}
               </dd>
@@ -653,13 +650,13 @@ export function InterviewClient() {
             disabled={action !== null}
             onClick={() => void cancelDisclosure()}
           >
-            Не отправлять
+            {t("interview.disclosure.decline")}
           </AlertDialogCancel>
           <AlertDialogAction
             disabled={action !== null}
             onClick={() => void approveDisclosure()}
           >
-            Разрешить один раз
+            {t("interview.disclosure.approve")}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -672,7 +669,7 @@ export function InterviewClient() {
         data-slot="interview-loading"
         className="flex flex-col gap-6"
         role="status"
-        aria-label="Загружаю интервью…"
+        aria-label={t("interview.loading")}
       >
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-80 w-full" />
@@ -686,7 +683,7 @@ export function InterviewClient() {
         message={
           interviewQuery.error instanceof Error
             ? interviewQuery.error.message
-            : "Неизвестная ошибка"
+            : t("interview.error.unknown")
         }
         retry={() => void interviewQuery.refetch()}
       />
@@ -698,9 +695,11 @@ export function InterviewClient() {
       <div data-slot="interview-setup" className="flex flex-col gap-6">
         {returnToSession}
         <PageHeader
-          title="Техническое интервью"
-          description="Настрой темы и формат. Интервьюер задаёт по одному вопросу; отчёт фиксирует подтверждения навыка, но не выдумывает техническую оценку."
-          actions={<Badge variant="outline">Отдельный workflow</Badge>}
+          title={t("interview.title")}
+          description={t("interview.setup.description")}
+          actions={
+            <Badge variant="outline">{t("interview.setup.workflow")}</Badge>
+          }
         />
         <section
           className="rounded-lg border border-border bg-card p-4 sm:p-6"
@@ -709,15 +708,16 @@ export function InterviewClient() {
           <div className="flex max-w-2xl flex-col gap-6">
             <div>
               <h3 id="interview-setup-title" className="text-lg font-semibold">
-                Настройка интервью
+                {t("interview.setup.title")}
               </h3>
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                Здесь задаётся только учебная рамка: область тем, сложность и
-                количество вопросов.
+                {t("interview.setup.help")}
               </p>
             </div>
             <fieldset className="grid gap-2" disabled={action !== null}>
-              <legend className="text-sm font-medium">Область тем</legend>
+              <legend className="text-sm font-medium">
+                {t("interview.setup.scope")}
+              </legend>
               <div className="flex flex-col gap-1.5">
                 {scopeOptions.map((option) => (
                   <label
@@ -733,9 +733,9 @@ export function InterviewClient() {
                       className="mt-0.5 size-4 accent-primary"
                     />
                     <span className="grid gap-0.5">
-                      <span className="font-medium">{option.label}</span>
+                      <span className="font-medium">{t(option.label)}</span>
                       <span className="text-muted-foreground">
-                        {option.description}
+                        {t(option.description)}
                       </span>
                     </span>
                   </label>
@@ -744,7 +744,7 @@ export function InterviewClient() {
             </fieldset>
             {scopeMode === "manual" ? (
               <label className="grid gap-2 text-sm font-medium">
-                Темы через запятую
+                {t("interview.setup.manualTopics")}
                 <input
                   className={fieldClassName}
                   value={topicsInput}
@@ -756,10 +756,12 @@ export function InterviewClient() {
               </label>
             ) : (
               <div className="grid gap-2">
-                <p className="text-sm font-medium">Темы для интервью</p>
+                <p className="text-sm font-medium">
+                  {t("interview.setup.topics")}
+                </p>
                 {selectedTopics.length > 0 ? (
                   <div
-                    aria-label="Темы выбранного режима"
+                    aria-label={t("interview.setup.selectedTopicsAria")}
                     className="flex flex-wrap gap-2"
                   >
                     {selectedTopics.map((topic) => (
@@ -770,13 +772,12 @@ export function InterviewClient() {
                   </div>
                 ) : pathQuery.isLoading ? (
                   <p role="status" className="text-sm text-muted-foreground">
-                    Загружаю темы учебного маршрута…
+                    {t("interview.setup.loadingTopics")}
                   </p>
                 ) : pathQuery.isError ? (
                   <div className="flex flex-col gap-3 rounded-md border border-border bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm leading-6 text-muted-foreground">
-                      Не удалось загрузить темы маршрута. Можно повторить или
-                      выбрать темы вручную.
+                      {t("interview.setup.topicsLoadError")}
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <Button
@@ -784,50 +785,49 @@ export function InterviewClient() {
                         size="sm"
                         onClick={() => void pathQuery.refetch()}
                       >
-                        Повторить
+                        {t("interview.setup.retryTopics")}
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => setScopeMode("manual")}
                       >
-                        Выбрать вручную
+                        {t("interview.setup.chooseManual")}
                       </Button>
                     </div>
                   </div>
                 ) : scopeMode === "studied" ? (
                   <div className="flex flex-col gap-3 rounded-md border border-border bg-muted/40 p-4">
                     <p className="text-sm leading-6 text-muted-foreground">
-                      Пока нет изученных тем: в маршруте нет дней с начатыми или
-                      завершёнными шагами. Начни занятие на учебном пути или
-                      выбери темы вручную.
+                      {t("interview.setup.noStudiedTopics")}
                     </p>
                     <Button
                       variant="outline"
                       className="self-start"
                       onClick={() => setScopeMode("manual")}
                     >
-                      Выбрать вручную
+                      {t("interview.setup.chooseManual")}
                     </Button>
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    В маршруте пока нет тем для этого режима.
+                    {t("interview.setup.noTopics")}
                   </p>
                 )}
               </div>
             )}
             <p className="text-sm text-muted-foreground">
-              Оценка длительности: {formatMinutesShort(questionCount * 5)} ·{" "}
-              {questionCount} {questionNoun(questionCount)} × ~5 мин
+              {t("interview.setup.durationEstimate", {
+                duration: formatMinutesShort(questionCount * 5, locale),
+                count: questionCount,
+              })}
             </p>
             <p className="text-sm text-muted-foreground">
-              Отчёт оценивает структуру и полноту ответа, а не техническую
-              корректность.
+              {t("interview.setup.reportLimit")}
             </p>
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="grid gap-2 text-sm font-medium">
-                Сложность
+                {t("interview.setup.difficulty")}
                 <select
                   className={fieldClassName}
                   value={difficulty}
@@ -836,13 +836,19 @@ export function InterviewClient() {
                   }
                   disabled={action !== null}
                 >
-                  <option value="foundation">Фундамент</option>
-                  <option value="interview-ready">Готовность к интервью</option>
-                  <option value="deep-dive">Глубокий разбор</option>
+                  <option value="foundation">
+                    {t("interview.setup.difficulty.foundation")}
+                  </option>
+                  <option value="interview-ready">
+                    {t("interview.setup.difficulty.interviewReady")}
+                  </option>
+                  <option value="deep-dive">
+                    {t("interview.setup.difficulty.deepDive")}
+                  </option>
                 </select>
               </label>
               <label className="grid gap-2 text-sm font-medium">
-                Количество вопросов
+                {t("interview.setup.questionCount")}
                 <select
                   className={fieldClassName}
                   value={questionCount}
@@ -871,12 +877,12 @@ export function InterviewClient() {
               {action === "start" ? (
                 <>
                   <Spinner />
-                  Формирую первый вопрос…
+                  {t("interview.setup.starting")}
                 </>
               ) : (
                 <>
                   <ChatCircleDotsIcon aria-hidden className="size-4" />
-                  Начать интервью
+                  {t("interview.setup.start")}
                 </>
               )}
             </Button>
@@ -903,15 +909,18 @@ export function InterviewClient() {
       <div data-slot="interview-opening-retry" className="flex flex-col gap-6">
         {returnToSession}
         <PageHeader
-          title="Техническое интервью"
-          description="Настройка сохранена, но первый вопрос ещё не получен."
-          actions={<Badge variant="warning">Ожидает запуска</Badge>}
+          title={t("interview.title")}
+          description={t("interview.opening.description")}
+          actions={
+            <Badge variant="warning">{t("interview.opening.status")}</Badge>
+          }
         />
         <section className="rounded-lg border border-border bg-card p-6">
-          <h3 className="font-semibold">Не удалось получить первый вопрос</h3>
+          <h3 className="font-semibold">{t("interview.opening.errorTitle")}</h3>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Темы: {interview.setup.topics.join(", ")}. Повтор использует тот же
-            operation ID и не создаёт дубликат.
+            {t("interview.opening.retryDescription", {
+              topics: interview.setup.topics.join(", "),
+            })}
           </p>
           {actionError ? (
             <p role="alert" className="mt-3 text-sm text-destructive">
@@ -926,12 +935,12 @@ export function InterviewClient() {
             {action === "start" ? (
               <>
                 <Spinner />
-                Повторяю…
+                {t("interview.opening.retrying")}
               </>
             ) : (
               <>
                 <ArrowClockwiseIcon aria-hidden className="size-4" />
-                Повторить запуск
+                {t("interview.opening.retry")}
               </>
             )}
           </Button>
@@ -950,8 +959,8 @@ export function InterviewClient() {
     <div data-slot="interview-session" className="flex flex-col gap-6">
       {returnToSession}
       <PageHeader
-        title="Техническое интервью"
-        description="Отвечай на текущий вопрос. Transcript и прогресс сохраняются сервером после каждого шага."
+        title={t("interview.title")}
+        description={t("interview.session.description")}
         actions={
           <Badge variant="outline">
             {interview.progress.questionsAnswered} /{" "}
@@ -964,11 +973,16 @@ export function InterviewClient() {
         className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2"
       >
         <p className="text-sm font-medium">
-          Вопрос {currentQuestion} из {interview.setup.questionCount}
+          {t("interview.session.questionProgress", {
+            current: currentQuestion,
+            total: interview.setup.questionCount,
+          })}
         </p>
         <span className="text-xs text-muted-foreground">
-          Отвечено: {interview.progress.questionsAnswered} из{" "}
-          {interview.setup.questionCount}
+          {t("interview.session.answeredProgress", {
+            answered: interview.progress.questionsAnswered,
+            total: interview.setup.questionCount,
+          })}
         </span>
       </div>
       <InterviewChatView
@@ -995,30 +1009,33 @@ function InterviewReportView({
   onNew(): void;
   returnToSession?: ReactNode;
 }) {
+  const { locale, t } = useI18n();
   const report = interview.report;
   if (!report) return null;
-  const completionPercent = Math.round(report.metrics.completionRate * 100);
+  const completionPercent = new Intl.NumberFormat(locale, {
+    style: "percent",
+    maximumFractionDigits: 0,
+  }).format(report.metrics.completionRate);
   return (
     <div data-slot="interview-report" className="flex flex-col gap-6">
       {returnToSession}
       <PageHeader
-        title="Отчёт по интервью"
-        description="Что получилось и что стоит повторить. Оценка структуры и полноты ответов."
+        title={t("interview.report.title")}
+        description={t("interview.report.description")}
         actions={
           <Badge variant="success">
             <CheckCircleIcon aria-hidden className="size-3.5" />
-            Завершено
+            {t("interview.report.completed")}
           </Badge>
         }
       />
       <section
         data-slot="report-limits"
-        aria-label="Границы оценки"
+        aria-label={t("interview.report.limitsAria")}
         className="rounded-lg border border-primary/30 bg-primary/5 p-4 sm:p-5"
       >
         <p className="text-sm font-medium leading-6">
-          Оценена структура и полнота ответа. Техническая корректность не
-          проверялась.
+          {t("interview.report.limits")}
         </p>
       </section>
       <section
@@ -1026,31 +1043,43 @@ function InterviewReportView({
         className="rounded-lg border border-border bg-card p-4 sm:p-6"
       >
         <h3 id="report-summary-title" className="font-semibold">
-          Общая оценка
+          {t("interview.report.summary")}
         </h3>
         <Markdown className="mt-3">{report.summary}</Markdown>
       </section>
       <section
         className="grid gap-4 sm:grid-cols-3"
-        aria-label="Метрики интервью"
+        aria-label={t("interview.report.metricsAria")}
       >
-        <Metric label="Задано" value={String(report.metrics.questionsAsked)} />
         <Metric
-          label="Отвечено"
+          label={t("interview.report.metric.asked")}
+          value={String(report.metrics.questionsAsked)}
+        />
+        <Metric
+          label={t("interview.report.metric.answered")}
           value={String(report.metrics.questionsAnswered)}
         />
-        <Metric label="Полнота" value={`${completionPercent}%`} />
+        <Metric
+          label={t("interview.report.metric.completion")}
+          value={completionPercent}
+        />
       </section>
       <div className="grid gap-6 lg:grid-cols-2">
-        <ReportList title="Сильные стороны" items={report.strengths} />
-        <ReportList title="Зоны роста" items={report.growthAreas} />
+        <ReportList
+          title={t("interview.report.strengths")}
+          items={report.strengths}
+        />
+        <ReportList
+          title={t("interview.report.growthAreas")}
+          items={report.growthAreas}
+        />
       </div>
       <section
         className="rounded-lg border border-border bg-card p-4 sm:p-6"
         aria-labelledby="evidence-title"
       >
         <h3 id="evidence-title" className="font-semibold">
-          Подтверждения навыка
+          {t("interview.report.evidence")}
         </h3>
         <ol className="mt-4 divide-y divide-border">
           {report.evidence.map((item) => (
@@ -1059,11 +1088,17 @@ function InterviewReportView({
               className="py-4 first:pt-0 last:pb-0"
             >
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">Вопрос {item.questionNumber}</Badge>
+                <Badge variant="outline">
+                  {t("interview.report.question", {
+                    number: item.questionNumber,
+                  })}
+                </Badge>
                 <span className="text-sm font-medium">{item.topic}</span>
               </div>
               <blockquote className="mt-3 text-sm leading-6 text-muted-foreground">
-                «{item.answerExcerpt}»
+                {t("interview.report.answerExcerpt", {
+                  excerpt: item.answerExcerpt,
+                })}
               </blockquote>
               <Markdown className="mt-2">{item.observation}</Markdown>
             </li>
@@ -1071,7 +1106,7 @@ function InterviewReportView({
         </ol>
       </section>
       <Button variant="outline" className="self-start" onClick={onNew}>
-        Новое интервью
+        {t("interview.report.new")}
       </Button>
     </div>
   );

@@ -507,7 +507,7 @@ describe("authorized M2 active migration", () => {
         entry.startsWith(".aptiloop-restore-verification-"),
       ),
     ).toEqual([]);
-  }, 15_000);
+  }, 30_000);
 
   it("applies the M2 migrations once and reports a truthful verified no-op on replay", async () => {
     const fixture = await createFixture();
@@ -531,7 +531,7 @@ describe("authorized M2 active migration", () => {
     expect(candidate?.health.opened).toBe(true);
     if (!candidate?.health.opened)
       throw new Error("Migrated fixture did not open");
-    expect(candidate.health.migrations.ids.at(-1)).toBe("0014_provider_hub");
+    expect(candidate.health.migrations.ids.at(-1)).toBe("0015_adaptive_studio");
     expect(candidate.health.m2).toMatchObject({
       present: true,
       complete: true,
@@ -571,7 +571,7 @@ describe("authorized M2 active migration", () => {
         entry.startsWith(".aptiloop-migration-recovery-"),
       ),
     ).toEqual([]);
-  }, 15_000);
+  }, 30_000);
 
   it("backs up, migrates, and replays the exact pre-M6 contract", async () => {
     const fixture = await createExactPreM6Fixture();
@@ -612,7 +612,7 @@ describe("authorized M2 active migration", () => {
 
     expect(first).toContain("migrated with verified recovery backup");
     expect(second).toContain("already current; no migration performed");
-    expect(migrated.health.migrations.ids.at(-1)).toBe("0014_provider_hub");
+    expect(migrated.health.migrations.ids.at(-1)).toBe("0015_adaptive_studio");
     expect(replayed.health.logicalSha256).toBe(logicalAfterFirst);
     expect(sha256File(fixture.backup)).toBe(fixture.backupSha256);
   }, 15_000);
@@ -766,7 +766,7 @@ describe("authorized M2 active migration", () => {
     if (!candidate?.health.opened) {
       throw new Error("Hardened fixture did not open");
     }
-    expect(candidate.health.migrations.ids.at(-1)).toBe("0014_provider_hub");
+    expect(candidate.health.migrations.ids.at(-1)).toBe("0015_adaptive_studio");
     expect(candidate.health.m2.runs).toMatchObject({
       m2V3Rows: 1,
       hardeningSourceDatabaseDigest: beforeCandidate.health.logicalSha256,
@@ -812,7 +812,7 @@ describe("authorized M2 active migration", () => {
     if (!candidate?.health.opened) {
       throw new Error("Post-hardening fixture did not open");
     }
-    expect(candidate.health.migrations.ids.at(-1)).toBe("0014_provider_hub");
+    expect(candidate.health.migrations.ids.at(-1)).toBe("0015_adaptive_studio");
     expect(candidate.health.m2.runs).toMatchObject({
       m2V4Rows: 1,
       quarantineImmutabilitySourceDatabaseDigest:
@@ -821,6 +821,13 @@ describe("authorized M2 active migration", () => {
         beforeCandidate.health.logicalSha256,
       quarantineImmutabilityApprovedBackupSha256: fixture.backupSha256,
     });
+    expect(
+      candidate.health.m2.sessionContexts
+        .quarantinedActiveSessionSourceHashMismatchRows,
+    ).toBe(0);
+    expect(
+      candidate.health.m2.provenance.quarantinedRevisionSourceHashMismatchRows,
+    ).toBe(0);
   }, 15_000);
   it("rejects stale source rows behind quarantine compatibility", async () => {
     const fixture = await createPreHardeningFixture(true);

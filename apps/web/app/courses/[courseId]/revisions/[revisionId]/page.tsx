@@ -1,4 +1,4 @@
-import { DashboardClient } from "@/components/dashboard-client";
+import { HomeClient } from "@/components/home-client";
 
 export default async function CourseRevisionPage({
   params,
@@ -9,7 +9,7 @@ export default async function CourseRevisionPage({
   const apiCourseId = encodeURIComponent(decodeURIComponent(courseId));
   const apiRevisionId = encodeURIComponent(decodeURIComponent(revisionId));
   return (
-    <DashboardClient
+    <HomeClient
       pathEndpoint={`/learning/courses/${apiCourseId}/revisions/${apiRevisionId}/path`}
     />
   );

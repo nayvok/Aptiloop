@@ -139,7 +139,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M7 — Product identity, localization, and primary information architecture
 
-**Status:** Approved Core Alpha target; Calm Workshop is the selected visual direction. Implementation is unblocked by accepted M6 evidence.
+**Status:** Implemented baseline. Accepted locally on 2026-08-10 with complete `en-US`/`ru-RU` catalogs, locale-independent Course content, Calm Workshop application identity, and the five-destination primary navigation verified on desktop and mobile.
 
 - **Objective:** Present Aptiloop as a coherent local learning product with English-first UI and complete Russian UI support.
 - **Scope:** Primary navigation **Home / Courses / Review / Skills / Settings**; Aptiloop naming; UI locale catalogs for `en-US` and `ru-RU`; language selection; one primary course locale independent of UI locale; compatibility redirects; mobile navigation; honest Core/SQLite/AI/runtime states.
@@ -154,7 +154,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M8 — Stable Activity Frame and renderer registry
 
-**Status:** Approved Core Alpha target. Implementation remains gated by M7 acceptance.
+**Status:** Implemented baseline. Accepted locally on 2026-08-10 after every Core Alpha activity type moved behind the closed `ActivityFrame` renderer registry while the deterministic Learning Kernel retained transition authority.
 
 - **Objective:** Migrate the monolithic unit UI to a stable activity contract without changing Kernel semantics.
 - **Scope:** `ActivityFrame`; declarative renderer registry; context/status/accessibility/runtime/evidence/action slots; one-by-one migration of briefing, study, sources, recall, Tutor, quiz, code reading, practice, review, interview, and summary; contained code/output behavior.
@@ -169,7 +169,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M9 — Adaptive Studio manual editorial workflow
 
-**Status:** Approved Core Alpha target. Implementation remains gated by M8 acceptance.
+**Status:** Implemented baseline. Accepted locally on 2026-08-10 with AI Off manual authoring, immutable Publish/clone history, a separate Personal Adaptation Branch, and explicit upstream integration into a new personal Draft.
 
 - **Objective:** Deliver the complete manual 70% editorial portion of Adaptive Studio before AI assistance.
 - **Scope:** Pack overview; finite outline/graph; schema-driven activity editing; locale/provenance/source panels; learner Preview; validation; release history; explicit Validate → Preview → Change review → immutable Publish; parity with the Authoring Kit schemas and validators; personal Adaptation overview, branch creation/edit, divergence/impact validation, personal Publish, and explicit upstream comparison/conflict resolution into a new personal Draft.
@@ -178,6 +178,7 @@ The order reduces the highest observed risks before expanding capability: provid
 - **Tests:** Draft CRUD/reorder; graph validation; locale/provenance/runtime requirements; Preview parity; published read-only; clone; Publish confirmation; snapshot preservation; Authoring Kit schema/validator parity; source/personal branch isolation; upstream clean/conflict/stale-hash/cancel/merge-failure flows; proof integration creates a new personal Draft and never rewrites source/history; mobile single-pane Studio; no-AI completeness.
 - **Docs:** Adaptive Studio, Course authoring, Course Pack, activity renderer, information architecture, accessibility, personal adaptation/upstream integration, and language policy.
 - **Demo:** Create/open a local Draft, edit activities and translations, validate, Preview, review changes, Publish immutably, create and Publish a separate personal adaptation, install a newer upstream revision, inspect a conflict, Cancel without change, then explicitly integrate into a new personal Draft—all with AI Off.
+- **Acceptance evidence:** focused shared/database/orchestrator/web suites cover branch isolation, stale hashes, conflicts, cancellation, idempotency, source immutability, schema-safe proposals, and the manual editor workflow. The valuable active database was backed up without overwrite, migrated additively through `0015_adaptive_studio`, admitted as current, and the connected desktop UI rendered the upstream/personal comparison with AI Off.
 - **Acceptance:** A complete valid Pack can be authored and published manually; zero-error validation and explicit immutable confirmation are required; Publish never follows an AI/edit action implicitly; source revisions and historical evidence remain unchanged through branch edit, personal Publish, and explicit upstream integration.
 - **Known limitations:** Single-user local editing only. No collaborative merge. No production courses are included or certified.
 - **Rollback/compatibility:** Current editor API remains as a bounded compatibility layer until each surface migrates. Published revisions and learner snapshots are never rolled back in place; a new revision corrects content.

@@ -305,16 +305,28 @@ describe("orchestrator vertical flow", () => {
     expect(historyBody.messages[1]?.role).toBe("assistant");
   });
 
-  it("configures a fresh OpenCode provider with the loopback default", async () => {
-    const previousEndpoint = process.env.OPENCODE_ENDPOINT;
-    delete process.env.OPENCODE_ENDPOINT;
+  it("registers the pinned OpenCode Zen Pi provider", async () => {
+    const previousApiKey = process.env.OPENCODE_API_KEY;
+    delete process.env.OPENCODE_API_KEY;
     try {
       const { state } = runtime();
       const status = await state.providers.opencode.getStatus();
-      expect(status.state).not.toBe("misconfigured");
+      expect(status).toMatchObject({
+        providerId: "opencode",
+        state: "authentication-required",
+      });
+      await expect(
+        state.providers.opencode.listModels(),
+      ).resolves.toContainEqual(
+        expect.objectContaining({
+          id: "deepseek-v4-flash-free",
+          providerId: "opencode",
+          available: false,
+        }),
+      );
     } finally {
-      if (previousEndpoint === undefined) delete process.env.OPENCODE_ENDPOINT;
-      else process.env.OPENCODE_ENDPOINT = previousEndpoint;
+      if (previousApiKey === undefined) delete process.env.OPENCODE_API_KEY;
+      else process.env.OPENCODE_API_KEY = previousApiKey;
     }
   });
 

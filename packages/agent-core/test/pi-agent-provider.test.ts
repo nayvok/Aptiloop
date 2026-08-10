@@ -6,7 +6,10 @@ import {
   type Models,
 } from "@earendil-works/pi-ai";
 
-import { PiAgentProvider } from "../src/pi-agent-provider.js";
+import {
+  createOpenCodeZenPiAgentProvider,
+  PiAgentProvider,
+} from "../src/pi-agent-provider.js";
 
 const model: Model<"openai-responses"> = {
   id: "gpt-test",
@@ -91,6 +94,28 @@ async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
 }
 
 describe("PiAgentProvider", () => {
+  it("exposes the pinned OpenCode Zen catalog without probing the network", async () => {
+    const previousApiKey = process.env.OPENCODE_API_KEY;
+    delete process.env.OPENCODE_API_KEY;
+    try {
+      const provider = createOpenCodeZenPiAgentProvider();
+      await expect(provider.getStatus()).resolves.toMatchObject({
+        providerId: "opencode",
+        state: "authentication-required",
+      });
+      await expect(provider.listModels()).resolves.toContainEqual(
+        expect.objectContaining({
+          id: "deepseek-v4-flash-free",
+          providerId: "opencode",
+          available: false,
+        }),
+      );
+    } finally {
+      if (previousApiKey === undefined) delete process.env.OPENCODE_API_KEY;
+      else process.env.OPENCODE_API_KEY = previousApiKey;
+    }
+  });
+
   it("normalizes a Pi turn and only reports connected after an observed request", async () => {
     const provider = new PiAgentProvider({
       models: fakeModels(),

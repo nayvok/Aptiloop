@@ -45,6 +45,7 @@ import {
   getCurrentDatabaseMigrationContract,
   openDatabase,
   learningKernelMigrationContract,
+  providerHubMigrationContract,
   type CurrentDatabaseMigrationContract,
 } from "./database.js";
 import {
@@ -551,6 +552,7 @@ export function verifyApprovedM2MigrationBackup(
       coursePackContract,
       learningKernelMigrationContract,
       executionFabricMigrationContract,
+      providerHubMigrationContract,
     ].some((contract) => sameMigrationContract(sourceContract, contract));
   const correctionPending =
     sourceAdmission.kind === "legacy-compatible" &&

@@ -544,6 +544,25 @@ export class ProviderRuntime {
         lastCheckedAt: null,
       });
     }
+    if (
+      !existingConnections.some(
+        ({ connectionId }) => connectionId === "conn:pi:opencode-zen",
+      )
+    ) {
+      this.#repository.saveConnection({
+        connectionId: "conn:pi:opencode-zen",
+        adapterId: "opencode",
+        providerType: "opencode",
+        displayName: "OpenCode Zen via Pi",
+        credentialRef: "credential:opencode:provider-owned",
+        endpointProfileId: null,
+        enabled: true,
+        external: true,
+        state: "degraded",
+        observedCapabilities: null,
+        lastCheckedAt: null,
+      });
+    }
     const existingProfiles = new Set(
       this.#repository.listRoleProfiles().map(({ role }) => role),
     );

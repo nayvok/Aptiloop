@@ -7,6 +7,7 @@ import { AppShell } from "@/components/app-shell";
 import { KnowledgeClient } from "@/components/knowledge-client";
 import { ProviderHealth } from "@/components/provider-health";
 import { Textarea } from "@/components/ui/textarea";
+import { LocaleProvider } from "@/lib/i18n";
 
 const { apiMock, pathnameState, setThemeMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -31,7 +32,11 @@ function renderWithQuery(children: ReactNode) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
+        {children}
+      </LocaleProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -70,22 +75,24 @@ describe("UI foundation", () => {
       screen.getByRole("link", { name: "К основному содержимому" }),
     ).toHaveAttribute("href", "#main-content");
     expect(screen.getByRole("main")).toHaveAttribute("id", "main-content");
-    expect(screen.getAllByRole("link", { name: "Путь" })).not.toHaveLength(0);
+    expect(screen.getAllByRole("link", { name: "Главная" })).not.toHaveLength(
+      0,
+    );
     expect(
       screen.queryByRole("link", { name: "Агенты" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Инструменты разработчика" }),
-    ).toHaveAttribute("href", "/settings/developer-tools");
+      screen.queryByRole("link", { name: "Инструменты разработчика" }),
+    ).not.toBeInTheDocument();
     for (const current of document.querySelectorAll('[aria-current="page"]')) {
       expect(current).toHaveAttribute("href", "/");
     }
 
-    expect(
-      screen.getByRole("link", { name: "Редактор программы" }),
-    ).toHaveAttribute("href", "/settings/curriculum");
+    expect(screen.getAllByRole("link", { name: "Настройки" })).not.toHaveLength(
+      0,
+    );
     fireEvent.click(
-      screen.getByRole("button", { name: "Включить светлую тему" }),
+      screen.getByRole("button", { name: "Включить тему: светлая" }),
     );
     expect(setThemeMock).toHaveBeenCalledWith("light");
   });
@@ -137,16 +144,18 @@ describe("UI foundation", () => {
     expect(status).toHaveAttribute("data-state", "ready");
 
     fireEvent.click(status);
-    expect(await screen.findByText("AI для обучения")).toBeInTheDocument();
-    expect(screen.getByText(/4 of 4 roles ready/u)).toBeInTheDocument();
-    expect(screen.getByText("Course Designer")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Необязательная AI-помощь"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Готово ролей: 4 из 4/u)).toBeInTheDocument();
+    expect(screen.getByText("Дизайнер курса")).toBeInTheDocument();
     expect(
       screen.getAllByText(/Deterministic Mock · mock-deterministic/u),
     ).toHaveLength(2);
     expect(screen.getByText(/OpenAI via Pi · gpt-5.2/u)).toBeInTheDocument();
     expect(
       screen.getByRole("link", {
-        name: /Полная диагностика/u,
+        name: /Открыть диагностику разработчика/u,
       }),
     ).toHaveAttribute("href", "/settings/developer-tools");
   });
@@ -174,11 +183,14 @@ describe("UI foundation", () => {
 
     renderWithQuery(<KnowledgeClient />);
 
-    const progress = await screen.findByRole("progressbar", {
+    const progress = await screen.findAllByRole("progressbar", {
       name: "Lexical scope: Понимание",
     });
-    expect(progress).toHaveAttribute("aria-valuenow", "1.2");
-    expect(progress).toHaveAttribute("aria-valuemax", "5");
-    expect(progress).toHaveAttribute("aria-valuetext", "1.2 из 5");
+    expect(progress).toHaveLength(2);
+    for (const bar of progress) {
+      expect(bar).toHaveAttribute("aria-valuenow", "1.2");
+      expect(bar).toHaveAttribute("aria-valuemax", "5");
+      expect(bar).toHaveAttribute("aria-valuetext", "1.2 из 5");
+    }
   });
 });

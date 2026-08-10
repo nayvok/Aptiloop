@@ -1,13 +1,14 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, DownloadSimpleIcon, XIcon } from "@phosphor-icons/react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
+import { EmptyState, QueryError } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { EmptyState, QueryError } from "@/components/query-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { api } from "@/lib/api";
+import { type MessageKey, useI18n } from "@/lib/i18n";
 
 type Flashcard = {
   id: string;
@@ -17,14 +18,9 @@ type Flashcard = {
   status: "candidate" | "approved" | "rejected";
 };
 
-const statusLabels: Record<Flashcard["status"], string> = {
-  candidate: "На проверке",
-  approved: "Подтверждена",
-  rejected: "Отклонена",
-};
-
 export function FlashcardsClient() {
   const client = useQueryClient();
+  const { t } = useI18n();
   const query = useQuery({
     queryKey: ["flashcards"],
     queryFn: () => api<{ flashcards: Flashcard[] }>("/flashcards"),
@@ -37,27 +33,30 @@ export function FlashcardsClient() {
       }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["flashcards"] }),
   });
-  if (query.isLoading)
+  if (query.isLoading) {
     return (
-      <div role="status" aria-label="Загружаю карточки">
+      <div role="status" aria-label={t("cards.loading")}>
         <Skeleton aria-hidden className="h-80" />
-        <span className="sr-only">Загружаю карточки…</span>
+        <span className="sr-only">{t("cards.loading")}</span>
       </div>
     );
-  if (query.isError || !query.data)
+  }
+  if (query.isError || !query.data) {
     return (
       <QueryError
-        message="Карточки недоступны"
+        message={t("cards.unavailable")}
         retry={() => void query.refetch()}
       />
     );
-  if (!query.data.flashcards.length)
+  }
+  if (!query.data.flashcards.length) {
     return (
       <EmptyState
-        title="Кандидатов пока нет"
-        description="Карточки появятся после завершения дня. Ни одна из них не подтверждается автоматически."
+        title={t("cards.empty.title")}
+        description={t("cards.empty.description")}
       />
     );
+  }
   return (
     <div className="flex flex-col gap-4">
       {update.isError ? (
@@ -67,7 +66,7 @@ export function FlashcardsClient() {
         >
           {update.error instanceof Error
             ? update.error.message
-            : "Не удалось сохранить статус карточки."}
+            : t("cards.saveError")}
         </p>
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
@@ -80,11 +79,11 @@ export function FlashcardsClient() {
           </Button>
         ))}
       </div>
-      <div className="divide-y divide-border rounded-xl border border-border bg-card">
+      <div className="divide-y divide-border border-y border-border">
         {query.data.flashcards.map((card) => (
           <article
             key={card.id}
-            className="grid gap-4 p-5 lg:grid-cols-[160px_1fr_1fr_auto]"
+            className="grid gap-4 py-5 lg:grid-cols-[160px_1fr_1fr_auto]"
           >
             <div>
               <Badge
@@ -96,23 +95,25 @@ export function FlashcardsClient() {
                       : "warning"
                 }
               >
-                {statusLabels[card.status]}
+                {t(`cards.status.${card.status}` as MessageKey)}
               </Badge>
               <p className="mt-2 text-xs text-muted-foreground">{card.topic}</p>
             </div>
             <div>
-              <p className="text-xs font-medium text-muted-foreground">
-                ВОПРОС
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t("cards.question")}
               </p>
               <p className="mt-2 text-sm leading-6">{card.question}</p>
             </div>
             <div>
-              <p className="text-xs font-medium text-muted-foreground">ОТВЕТ</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t("cards.answer")}
+              </p>
               <p className="mt-2 text-sm leading-6">{card.answer}</p>
             </div>
             <div className="flex gap-1">
               <Button
-                aria-label="Подтвердить карточку"
+                aria-label={t("cards.approve")}
                 aria-busy={update.isPending && update.variables?.id === card.id}
                 size="icon"
                 variant="outline"
@@ -124,7 +125,7 @@ export function FlashcardsClient() {
                 <CheckIcon aria-hidden />
               </Button>
               <Button
-                aria-label="Отклонить карточку"
+                aria-label={t("cards.reject")}
                 aria-busy={update.isPending && update.variables?.id === card.id}
                 size="icon"
                 variant="ghost"

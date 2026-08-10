@@ -31,7 +31,7 @@ describe("shared contracts", () => {
   });
 
   it("exposes all supported agent roles", () => {
-    expect(AgentRoleSchema.options).toHaveLength(8);
+    expect(AgentRoleSchema.options).toHaveLength(9);
   });
 
   it("keeps quiz options public and validates the protected answer key", () => {

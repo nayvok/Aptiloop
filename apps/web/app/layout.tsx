@@ -3,25 +3,36 @@ import "geist/font/mono";
 import "./globals.css";
 
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
+
+import type { UiLocale } from "@/lib/i18n";
 
 import { AppShell } from "@/components/app-shell";
+import { LocaleProvider } from "@/lib/i18n";
 import { QueryProvider } from "@/components/query-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "Dev Learning Harness",
-  description: "Локальная система самостоятельной подготовки JS-разработчика",
+  title: {
+    default: "Aptiloop",
+    template: "%s · Aptiloop",
+  },
+  description: "Local-first deliberate learning with deterministic evidence.",
 };
-
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const storedLocale = (await cookies()).get("aptiloop.ui-locale")?.value;
+  const initialLocale: UiLocale = storedLocale === "ru-RU" ? "ru-RU" : "en-US";
+
   return (
-    <html lang="ru" suppressHydrationWarning>
+    <html lang={initialLocale} suppressHydrationWarning>
       <body>
         <ThemeProvider>
           <QueryProvider>
-            <AppShell>{children}</AppShell>
+            <LocaleProvider initialLocale={initialLocale}>
+              <AppShell>{children}</AppShell>
+            </LocaleProvider>
           </QueryProvider>
         </ThemeProvider>
       </body>

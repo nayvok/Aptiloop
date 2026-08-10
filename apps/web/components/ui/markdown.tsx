@@ -13,7 +13,7 @@ export interface MarkdownProps {
 const paragraphClassName = "my-1.5 leading-6 first:mt-0 last:mb-0";
 const headingClassName = "mb-2 mt-3 font-semibold first:mt-0 last:mb-0";
 
-/** Markdown-рендер для контента интервью и отчётов: prose-стили без анимаций. */
+/** Markdown renderer for interview content and reports: prose styles without animation. */
 export function Markdown({ className, children }: MarkdownProps) {
   return (
     <div className={cn("text-sm leading-6", className)}>

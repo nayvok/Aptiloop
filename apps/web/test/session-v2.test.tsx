@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SessionClient } from "@/components/session-client";
+import { LocaleProvider } from "@/lib/i18n";
 
 const { apiMock, pushMock, searchState, streamAgentMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -476,7 +477,11 @@ function renderWithQuery(children: ReactNode) {
   return {
     client,
     ...render(
-      <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+      <QueryClientProvider client={client}>
+        <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
+          {children}
+        </LocaleProvider>
+      </QueryClientProvider>,
     ),
   };
 }
@@ -527,7 +532,7 @@ describe("guided versioned session", () => {
     apiMock.mockResolvedValue({ session: makeSession("briefing") });
     renderWithQuery(<SessionClient />);
 
-    const trigger = await screen.findByRole("button", { name: /План дня/u });
+    const trigger = await screen.findByRole("button", { name: /План урока/u });
     expect(trigger).toBeVisible();
     // План не вытесняет активную работу: drawer закрыт, unit в фокусе.
     expect(document.querySelector('[data-slot="day-plan-sheet"]')).toBeNull();
@@ -537,11 +542,11 @@ describe("guided versioned session", () => {
     fireEvent.click(trigger);
     await screen.findByRole("dialog");
     const plan = document.querySelector('[data-slot="day-plan-sheet"]');
-    expect(plan).toHaveTextContent("Учебные блоки");
+    expect(plan).toHaveTextContent("Этапы обучения");
     expect(plan).toHaveTextContent("Построить точную причинную модель");
     expect(plan).toHaveTextContent("Темы");
     expect(plan).toHaveTextContent("Ожидаемые результаты");
-    expect(plan).toHaveTextContent("Вне дня");
+    expect(plan).toHaveTextContent("Вне занятия");
     expect(plan).toHaveTextContent("Брифинг");
   });
 
@@ -549,14 +554,14 @@ describe("guided versioned session", () => {
     apiMock.mockResolvedValue({ session: makeSession("briefing", "ready") });
     renderWithQuery(<SessionClient />);
 
-    await screen.findByRole("button", { name: /Начать шаг/u });
+    await screen.findByRole("button", { name: /Начать активность/u });
     const header = document.querySelector(
       '[data-slot="session-progress-header"]',
     );
-    expect(header).toHaveTextContent("День 1 · Значения, типы и объекты");
-    expect(header).toHaveTextContent("Блок 1 из 3 · Изучение");
-    expect(header).toHaveTextContent("Шаг 1 из 1");
-    expect(header).toHaveTextContent("Осталось в блоке:");
+    expect(header).toHaveTextContent("Урок 1 · Значения, типы и объекты");
+    expect(header).toHaveTextContent("Этап 1 из 3 · Понять");
+    expect(header).toHaveTextContent("Активность 1 из 1");
+    expect(header).toHaveTextContent("Осталось на этапе:");
 
     fireEvent.click(screen.getByRole("button", { name: "Продолжить позже" }));
     expect(pushMock).toHaveBeenCalledWith("/");
@@ -591,7 +596,9 @@ describe("guided versioned session", () => {
     );
     expect(pushMock).toHaveBeenCalledWith("/interview?id=interview-1");
 
-    fireEvent.click(screen.getByRole("button", { name: "Завершить шаг" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Завершить активность" }),
+    );
     await vi.waitFor(() => {
       expect(apiMock).toHaveBeenLastCalledWith(
         "/learning/sessions/v2/session-v2/units/unit-interview",
@@ -606,7 +613,7 @@ describe("guided versioned session", () => {
       );
     });
     expect(
-      await screen.findByText("Шаг завершён и сохранён"),
+      await screen.findByText("Активность завершена и сохранена"),
     ).toBeInTheDocument();
   });
 
@@ -619,7 +626,7 @@ describe("guided versioned session", () => {
       await screen.findByText("Активного занятия нет"),
     ).toBeInTheDocument();
     expect(apiMock).toHaveBeenCalledWith("/learning/sessions/current");
-    fireEvent.click(screen.getByRole("button", { name: "Открыть Path" }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть Главную" }));
     expect(pushMock).toHaveBeenCalledWith("/");
   });
 
@@ -642,11 +649,13 @@ describe("guided versioned session", () => {
       .mockResolvedValueOnce({ session: completed });
     renderWithQuery(<SessionClient />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Начать шаг" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Начать активность" }),
+    );
     expect(await screen.findByText("Сегодня разберём")).toBeInTheDocument();
-    expect(screen.getByText("После занятия сможешь")).toBeInTheDocument();
-    expect(screen.getByText("Уровень")).toBeInTheDocument();
-    expect(screen.getByText("Не углубляемся")).toBeInTheDocument();
+    expect(screen.getByText("После занятия сможете")).toBeInTheDocument();
+    expect(screen.getByText("Глубина")).toBeInTheDocument();
+    expect(screen.getByText("Не рассматриваем")).toBeInTheDocument();
     expect(screen.getByText("План")).toBeInTheDocument();
     expect(
       screen.queryByLabelText("Подтверждаю: цели и границы дня понятны"),
@@ -671,7 +680,7 @@ describe("guided versioned session", () => {
       );
     });
     expect(
-      await screen.findByText("Шаг завершён и сохранён"),
+      await screen.findByText("Активность завершена и сохранена"),
     ).toBeInTheDocument();
   });
 
@@ -683,13 +692,11 @@ describe("guided versioned session", () => {
     apiMock.mockResolvedValue({ session });
     renderWithQuery(<SessionClient />);
 
-    expect(await screen.findByText("Блок 1 из 3 завершён")).toBeVisible();
-    expect(
-      screen.getByText(/Переходим к блоку «Проверка понимания»/u),
-    ).toBeVisible();
-    expect(screen.getByText("Ты разобрал:")).toBeVisible();
+    expect(await screen.findByText("Этап 1 из 3 завершён")).toBeVisible();
+    expect(screen.getByText("Далее: Подтвердить")).toBeVisible();
+    expect(screen.getByText("Вы разобрали:")).toBeVisible();
     expect(screen.getByText("Юнит study")).toBeVisible();
-    expect(screen.getByText(/Проверка понимания · 1 шаг/u)).toBeVisible();
+    expect(screen.getByText(/Подтвердить · Активностей: 1/u)).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Продолжить сейчас" }),
     ).toBeEnabled();
@@ -766,11 +773,11 @@ describe("guided versioned session", () => {
     renderWithQuery(<SessionClient />);
 
     expect(
-      await screen.findByText("Для этого шага источник ещё не назначен."),
+      await screen.findByText("Для этой активности источник ещё не назначен."),
     ).toBeVisible();
-    expect(screen.getByText(/Используй свой источник/u)).toBeVisible();
+    expect(screen.getByText(/Используйте свой источник/u)).toBeVisible();
     expect(
-      screen.getByRole("link", { name: "Открыть редактор программы" }),
+      screen.getByRole("link", { name: "Открыть редактор курса" }),
     ).toHaveAttribute("href", "/settings/curriculum");
   });
 
@@ -1043,7 +1050,7 @@ describe("guided versioned session", () => {
     expect(streamAgentMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
         message: expect.stringContaining(
-          `Ответ ученика на уточнение Teacher:\n${followUp}`,
+          `Learner response to Tutor follow-up:\n${followUp}`,
         ),
       }),
       expect.any(AbortSignal),
@@ -1147,7 +1154,7 @@ describe("guided versioned session", () => {
           reason: "failed",
         },
       ],
-      expected: "Преподаватель не ответил",
+      expected: "Преподаватель недоступен",
     },
     {
       reason: "cancelled",
@@ -1406,9 +1413,7 @@ describe("guided versioned session", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("50%")).toBeInTheDocument();
-    expect(
-      screen.getByText(/В журнал добавлено ошибок: 1/u),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Добавлено исправлений: 1/u)).toBeInTheDocument();
     expect(apiMock).toHaveBeenNthCalledWith(
       2,
       "/learning/sessions/v2/session-v2/units/unit-summary/summary",
@@ -1418,7 +1423,7 @@ describe("guided versioned session", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Завершить день" }));
+    fireEvent.click(screen.getByRole("button", { name: "Завершить урок" }));
     await vi.waitFor(() => {
       expect(apiMock).toHaveBeenLastCalledWith(
         "/learning/sessions/v2/session-v2/units/unit-summary",

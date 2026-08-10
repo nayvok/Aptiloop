@@ -11,6 +11,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CurriculumEditorClient } from "@/components/curriculum-editor-client";
+import { LocaleProvider } from "@/lib/i18n";
 
 const { apiMock, fetchMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -124,7 +125,11 @@ function renderEditor(children: ReactNode = <CurriculumEditorClient />) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
+        {children}
+      </LocaleProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -181,6 +186,69 @@ describe("CurriculumEditorClient", () => {
       );
       if (graphMatch && !init)
         return { curriculum: structuredClone(graphs.get(graphMatch[1]!)!) };
+      const draftHash = `sha256:${"1".repeat(64)}`;
+      if (path.endsWith("/validation") && !init)
+        return {
+          report: {
+            validatorVersion: "m9-v1",
+            versionId: "draft-1",
+            draftHash,
+            validationHash: `sha256:${"2".repeat(64)}`,
+            valid: true,
+            errors: 0,
+            warnings: 0,
+            diagnostics: [],
+          },
+        };
+      if (path.endsWith("/preview") && !init) {
+        const graph = graphs.get("draft-1")!;
+        return {
+          preview: {
+            versionId: "draft-1",
+            title: graph.version.title,
+            description: graph.version.description,
+            draftHash,
+            weeks: graph.weeks.map((item) => ({
+              stableId: item.stableId,
+              title: item.title,
+              description: item.description,
+              days: item.days.map((lesson) => ({
+                stableId: lesson.stableId,
+                title: lesson.title,
+                description: lesson.description,
+                goal: lesson.goal,
+                estimatedMinutes: lesson.estimatedMinutes,
+                expectedOutcomes: lesson.expectedOutcomes,
+                topics: lesson.topics,
+                activities: lesson.units.map((activity) => ({
+                  stableId: activity.stableId,
+                  type: activity.type,
+                  title: activity.title,
+                  description: activity.description,
+                  estimatedMinutes: activity.estimatedMinutes,
+                  objectives: activity.objectives,
+                  checklist: activity.checklist,
+                  sources: activity.sources,
+                  optional: activity.optional,
+                })),
+              })),
+            })),
+          },
+        };
+      }
+      if (path.endsWith("/change-review") && !init)
+        return {
+          review: {
+            versionId: "draft-1",
+            parentVersionId: null,
+            draftHash,
+            changeReviewHash: `sha256:${"3".repeat(64)}`,
+            added: 4,
+            changed: 0,
+            removed: 0,
+            ready: true,
+          },
+        };
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       if (path.endsWith("/weeks") && init?.method === "POST") {
         const graph = graphs.get("draft-1")!;
@@ -312,6 +380,22 @@ describe("CurriculumEditorClient", () => {
       name: "Опубликовать неизменяемую ревизию",
     });
     expect(publish).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Запустить проверку" }));
+    expect(await screen.findByText("Проверка пройдена")).toBeInTheDocument();
+    const previewAction = screen.getByRole("button", {
+      name: "Открыть предпросмотр",
+    });
+    await waitFor(() => expect(previewAction).toBeEnabled());
+    fireEvent.click(previewAction);
+    expect(await screen.findByText(/Дней: 1/u)).toBeInTheDocument();
+    const reviewAction = screen.getByRole("button", {
+      name: "Проверить изменения",
+    });
+    await waitFor(() => expect(reviewAction).toBeEnabled());
+    fireEvent.click(reviewAction);
+    expect(
+      await screen.findByText("Добавлено: 4 · Изменено: 0 · Удалено: 0"),
+    ).toBeInTheDocument();
     fireEvent.click(
       screen.getByLabelText(
         "Я понимаю, что опубликованную ревизию нельзя редактировать.",
@@ -319,7 +403,7 @@ describe("CurriculumEditorClient", () => {
     );
     fireEvent.click(publish);
     expect(
-      (await screen.findAllByText("Опубликована · read-only")).length,
+      (await screen.findAllByText("Опубликована · только чтение")).length,
     ).toBeGreaterThan(0);
     expect(apiMock).toHaveBeenCalledWith(
       expect.stringContaining("/publish"),
@@ -648,7 +732,7 @@ describe("CurriculumEditorClient", () => {
       unknown
     >;
     expect(firstDay).toMatchObject({
-      title: "День 1",
+      title: "Day 1",
       goal: "Понять event loop",
       topics: ["Promise", "async/await"],
       expectedOutcomes: ["Объяснить Event Loop"],
@@ -659,7 +743,7 @@ describe("CurriculumEditorClient", () => {
       string,
       unknown
     >;
-    expect(secondDay).toMatchObject({ title: "День 2" });
+    expect(secondDay).toMatchObject({ title: "Day 2" });
     expect(await screen.findByText("Асинхронность")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -737,5 +821,341 @@ describe("CurriculumEditorClient", () => {
     expect(weekPosts).toHaveLength(1);
     expect(String(weekPosts[0]?.[0])).toContain("/draft-reuse/weeks");
     expect(await screen.findByText("Новая неделя")).toBeInTheDocument();
+  });
+
+  it("reviews a disclosed Course Designer proposal before applying it", async () => {
+    const draft = version("draft-designer", 1, "draft");
+    const graph = { version: draft, weeks: [] as ReturnType<typeof week>[] };
+    const draftHash = `sha256:${"a".repeat(64)}`;
+    const disclosure = {
+      operationId: "disclosure:designer-test",
+      scope: {
+        role: "course-designer",
+        connectionId: "conn:pi:openai",
+        providerType: "openai",
+        modelId: "gpt-5.2",
+        destination:
+          "OpenAI via Pi: optional Course draft authoring assistance",
+        payloadCategories: ["course-content", "learner-message"],
+        entityIds: { "course-revision": draft.id },
+        exclusions: ["credentials", "environment variables"],
+        byteCount: 1_024,
+        payloadSha256: draftHash,
+      },
+      status: "pending",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      approvedAt: null,
+      consumedAt: null,
+      expiresAt: "2026-08-10T00:05:00.000Z",
+    };
+    const proposal = {
+      id: "course-proposal:designer-test",
+      versionId: draft.id,
+      baseDraftHash: draftHash,
+      prompt: "Добавь вводную неделю",
+      proposal: {
+        summary: "Добавить вводную неделю",
+        changes: [
+          {
+            kind: "add-week",
+            stableId: "week-foundations",
+            title: "Вводная неделя",
+            description: "Основы курса",
+          },
+        ],
+      },
+      status: "proposed" as "proposed" | "applied",
+      authoringOperationId: "operation-designer",
+      providerOperationId: "provider-operation-designer",
+      createdAt: now,
+      reviewedAt: null as number | null,
+    };
+    let generated = false;
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) {
+        return { versions: [listItem(draft)] };
+      }
+      if (path === `/curriculum-editor/versions/${draft.id}` && !init) {
+        return { curriculum: structuredClone(graph) };
+      }
+      if (path.endsWith("/designer/proposals") && !init) {
+        return { proposals: generated ? [structuredClone(proposal)] : [] };
+      }
+      if (path.endsWith("/designer/disclosures") && init?.method === "POST") {
+        return { required: true, disclosure };
+      }
+      if (
+        path === "/ai/disclosures/disclosure%3Adesigner-test/approve" &&
+        init?.method === "POST"
+      ) {
+        return {
+          disclosure: {
+            ...disclosure,
+            status: "approved",
+            approvedAt: "2026-08-10T00:01:00.000Z",
+          },
+        };
+      }
+      if (path.endsWith("/designer/generate") && init?.method === "POST") {
+        generated = true;
+        return { proposal: structuredClone(proposal) };
+      }
+      if (path.endsWith("/apply") && init?.method === "POST") {
+        proposal.status = "applied";
+        proposal.reviewedAt = now + 1;
+        graph.weeks.push(week("week-generated", draft.id, "Вводная неделя"));
+        return {
+          proposal: structuredClone(proposal),
+          curriculum: structuredClone(graph),
+        };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor();
+    fireEvent.change(await screen.findByLabelText("Запрос на авторинг"), {
+      target: { value: "Добавь вводную неделю" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сгенерировать предложение" }),
+    );
+
+    expect(
+      await screen.findByText("Передача внешнему провайдеру"),
+    ).toBeInTheDocument();
+    expect(generated).toBe(false);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Разрешить и сгенерировать" }),
+    );
+
+    expect(
+      await screen.findByText("Добавить вводную неделю"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Применить предложение" }),
+    );
+    expect(await screen.findByText("Применено")).toBeInTheDocument();
+    expect(graph.weeks).toHaveLength(1);
+  });
+
+  it("creates a personal adaptation without replacing upstream", async () => {
+    const upstream = version("upstream-1", 1, "published");
+    const personal = {
+      ...version("personal-2", 2, "draft", upstream.id),
+      title: "Моя адаптация",
+    };
+    const versions = [listItem(upstream)];
+    const graphs = new Map([
+      [
+        upstream.id,
+        { version: upstream, weeks: [] as ReturnType<typeof week>[] },
+      ],
+      [
+        personal.id,
+        { version: personal, weeks: [] as ReturnType<typeof week>[] },
+      ],
+    ]);
+    let branch: Record<string, unknown> | null = null;
+    let created = false;
+    const revisionDto = (
+      value: ReturnType<typeof version>,
+      branchKind: "upstream" | "personal",
+    ) => ({
+      ...value,
+      branchKind,
+      basedOnContentHash:
+        branchKind === "personal" ? upstream.contentHash : null,
+      adaptationBranchId: branchKind === "personal" ? "curriculum-js" : null,
+    });
+    const adaptation = () => ({
+      branch,
+      revisions: [
+        revisionDto(upstream, "upstream"),
+        ...(created ? [revisionDto(personal, "personal")] : []),
+      ],
+      comparison: {
+        status: "current" as const,
+        baseRevisionId: upstream.id,
+        upstreamRevisionId: upstream.id,
+        personalVersionId: created ? personal.id : null,
+        baseDraftHash: `sha256:${"a".repeat(64)}`,
+        upstreamDraftHash: `sha256:${"a".repeat(64)}`,
+        personalDraftHash: created ? `sha256:${"b".repeat(64)}` : null,
+        conflicts: [],
+      },
+    });
+
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) return { versions };
+      if (path.startsWith("/curriculum-editor/versions/") && !init) {
+        const id = path.split("/").at(-1)!;
+        return { curriculum: structuredClone(graphs.get(id)!) };
+      }
+      if (
+        path === "/curriculum-editor/courses/curriculum-js/adaptation" &&
+        !init
+      ) {
+        return adaptation();
+      }
+      if (
+        path === "/curriculum-editor/versions/upstream-1/adaptation" &&
+        init?.method === "POST"
+      ) {
+        created = true;
+        versions.unshift(listItem(personal));
+        branch = {
+          id: "curriculum-js",
+          courseId: "curriculum-js",
+          owner: "local",
+          baseRevisionId: upstream.id,
+          headRevisionId: null,
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+        };
+        return {
+          version: revisionDto(personal, "personal"),
+          branch,
+        };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Создать личную адаптацию" }),
+    );
+
+    expect(await screen.findByText("Моя адаптация")).toBeInTheDocument();
+    expect(created).toBe(true);
+    expect(
+      apiMock.mock.calls.some(
+        ([path, init]) =>
+          path === "/curriculum-editor/versions/upstream-1/adaptation" &&
+          init?.method === "POST",
+      ),
+    ).toBe(true);
+  });
+
+  it("requires review before integrating an upstream conflict", async () => {
+    const upstream = {
+      ...version("upstream-2", 2, "published", "upstream-1"),
+      title: "Исходная ревизия 2",
+    };
+    const personal = {
+      ...version("personal-3", 3, "published", "upstream-1"),
+      title: "Личная ревизия",
+    };
+    const integrated = {
+      ...version("personal-4", 4, "draft", upstream.id),
+      title: "Интеграция",
+    };
+    const versions = [listItem(upstream), listItem(personal)];
+    const graphs = new Map([
+      [
+        upstream.id,
+        { version: upstream, weeks: [] as ReturnType<typeof week>[] },
+      ],
+      [
+        personal.id,
+        { version: personal, weeks: [] as ReturnType<typeof week>[] },
+      ],
+      [
+        integrated.id,
+        { version: integrated, weeks: [] as ReturnType<typeof week>[] },
+      ],
+    ]);
+    const branch = {
+      id: "curriculum-js",
+      courseId: "curriculum-js",
+      owner: "local" as const,
+      baseRevisionId: "upstream-1",
+      headRevisionId: personal.id,
+      status: "active" as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const dto = (
+      value: ReturnType<typeof version>,
+      branchKind: "upstream" | "personal",
+    ) => ({
+      ...value,
+      branchKind,
+      basedOnContentHash: branchKind === "personal" ? "hash-1" : null,
+      adaptationBranchId: branchKind === "personal" ? branch.id : null,
+    });
+    const comparison = {
+      status: "conflict" as const,
+      baseRevisionId: "upstream-1",
+      upstreamRevisionId: upstream.id,
+      personalVersionId: personal.id,
+      baseDraftHash: `sha256:${"a".repeat(64)}`,
+      upstreamDraftHash: `sha256:${"b".repeat(64)}`,
+      personalDraftHash: `sha256:${"c".repeat(64)}`,
+      conflicts: ["unit:unit-core"],
+    };
+    const integrationBodies: Array<Record<string, unknown>> = [];
+
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) return { versions };
+      if (path.startsWith("/curriculum-editor/versions/") && !init) {
+        const id = path.split("/").at(-1)!;
+        return { curriculum: structuredClone(graphs.get(id)!) };
+      }
+      if (
+        path === "/curriculum-editor/courses/curriculum-js/adaptation" &&
+        !init
+      ) {
+        return {
+          branch,
+          revisions: [dto(upstream, "upstream"), dto(personal, "personal")],
+          comparison,
+        };
+      }
+      if (
+        path ===
+          "/curriculum-editor/courses/curriculum-js/adaptation/integrate" &&
+        init?.method === "POST"
+      ) {
+        integrationBodies.push(JSON.parse(String(init.body)));
+        versions.unshift(listItem(integrated));
+        return {
+          version: dto(integrated, "personal"),
+          strategy: "keep-personal",
+          priorConflicts: comparison.conflicts,
+        };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor();
+    expect(await screen.findByText("unit:unit-core")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Использовать исходную версию" }),
+    );
+    expect(
+      await screen.findByText(
+        "Начать следующий личный черновик с материала новой исходной ревизии?",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    expect(integrationBodies).toHaveLength(0);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Сохранить личную версию" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Создать черновик интеграции",
+      }),
+    );
+    await waitFor(() => expect(integrationBodies).toHaveLength(1));
+    expect(integrationBodies[0]).toMatchObject({
+      strategy: "keep-personal",
+      baseRevisionId: comparison.baseRevisionId,
+      upstreamRevisionId: comparison.upstreamRevisionId,
+      personalVersionId: comparison.personalVersionId,
+      operationId: expect.any(String),
+    });
   });
 });

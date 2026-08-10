@@ -42,6 +42,30 @@ function canonicalizeSnapshotValue(value: unknown): unknown {
 }
 type QuarantinedSessionSourceTable =
   "curriculum_versions" | "curriculum_days_v2" | "session_snapshots";
+const m2CurriculumVersionSourceColumns = [
+  "id",
+  "curriculum_id",
+  "revision",
+  "parent_version_id",
+  "status",
+  "title",
+  "description",
+  "content_hash",
+  "created_at",
+  "published_at",
+  "archived_at",
+  "updated_at",
+] as const;
+
+function m2SourceRowForHash(
+  table: QuarantinedSessionSourceTable,
+  row: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  if (table !== "curriculum_versions") return row;
+  return Object.fromEntries(
+    m2CurriculumVersionSourceColumns.map((column) => [column, row[column]]),
+  );
+}
 
 function matchesCurrentSourceRowHash(
   sqlite: DatabaseSync,
@@ -59,7 +83,9 @@ function matchesCurrentSourceRowHash(
     Record<string, unknown> | undefined;
   if (row === undefined) return false;
   const hash = createHash("sha256")
-    .update(JSON.stringify(canonicalizeSnapshotValue(row)))
+    .update(
+      JSON.stringify(canonicalizeSnapshotValue(m2SourceRowForHash(table, row))),
+    )
     .digest("hex");
   return hash === expectedHash;
 }

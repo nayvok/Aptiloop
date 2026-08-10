@@ -1,3 +1,5 @@
+import type { MessageKey } from "@/lib/i18n";
+
 export type UnitType =
   | "briefing"
   | "study"
@@ -15,58 +17,59 @@ export type UnitType =
 export type UnitStatus =
   "locked" | "ready" | "in_progress" | "completed" | "skipped";
 
-export const unitTypeLabels: Record<UnitType, string> = {
-  briefing: "Брифинг",
-  study: "Изучение",
-  recall: "Воспроизведение по памяти",
-  "teacher-dialogue": "Разбор с преподавателем",
-  quiz: "Короткая проверка",
-  "code-reading": "Чтение кода",
-  exercise: "Практическое задание",
-  review: "Проверка решения",
-  interview: "Интервью",
-  summary: "Итоги дня",
-  checkpoint: "Контрольная точка",
-  "spaced-review": "Интервальное повторение",
+export const unitTypeMessageKeys: Readonly<Record<UnitType, MessageKey>> = {
+  briefing: "unit.type.briefing",
+  study: "unit.type.study",
+  recall: "unit.type.recall",
+  "teacher-dialogue": "unit.type.teacherDialogue",
+  quiz: "unit.type.quiz",
+  "code-reading": "unit.type.codeReading",
+  exercise: "unit.type.exercise",
+  review: "unit.type.review",
+  interview: "unit.type.interview",
+  summary: "unit.type.summary",
+  checkpoint: "unit.type.checkpoint",
+  "spaced-review": "unit.type.spacedReview",
 };
 
-export const unitStatusLabels: Record<UnitStatus, string> = {
-  locked: "Заблокировано",
-  ready: "Доступно",
-  in_progress: "Сейчас",
-  completed: "Готово",
-  skipped: "Пропущено",
+export const unitStatusMessageKeys: Readonly<Record<UnitStatus, MessageKey>> = {
+  locked: "unit.status.locked",
+  ready: "unit.status.ready",
+  in_progress: "unit.status.inProgress",
+  completed: "unit.status.completed",
+  skipped: "unit.status.skipped",
 };
 
-export type UnitTypeLabel = keyof typeof unitTypeLabels;
+export type UnitTypeLabel = keyof typeof unitTypeMessageKeys;
 
 export type DepthLevel = "foundation" | "interview-ready" | "deep-dive";
 
-export const depthLabels: Record<DepthLevel, string> = {
-  foundation: "Фундамент",
-  "interview-ready": "Для собеседования",
-  "deep-dive": "Углублённо",
+export const depthMessageKeys: Readonly<Record<DepthLevel, MessageKey>> = {
+  foundation: "unit.depth.foundation",
+  "interview-ready": "unit.depth.interviewReady",
+  "deep-dive": "unit.depth.deepDive",
 };
 
-export function depthLabel(depth: DepthLevel | string): string {
-  if (depth in depthLabels) return depthLabels[depth as DepthLevel];
-  return depth;
+export function depthMessageKey(depth: DepthLevel | string): MessageKey | null {
+  return depth in depthMessageKeys
+    ? depthMessageKeys[depth as DepthLevel]
+    : null;
 }
 
-export const sourceKindLabels: Record<string, string> = {
-  book: "Книга",
-  documentation: "Документация",
-  docs: "Документация",
-  video: "Видео",
-  article: "Статья",
-  note: "Локальная заметка",
-  "local-note": "Локальная заметка",
-  course: "Курс",
-  podcast: "Подкаст",
+const sourceKindMessageKeys: Readonly<Record<string, MessageKey>> = {
+  book: "source.book",
+  documentation: "source.documentation",
+  docs: "source.documentation",
+  video: "source.video",
+  article: "source.article",
+  note: "source.note",
+  "local-note": "source.note",
+  course: "source.course",
+  podcast: "source.podcast",
 };
 
-export function sourceKindLabel(kind: string): string {
-  return sourceKindLabels[kind] ?? kind;
+export function sourceKindMessageKey(kind: string): MessageKey | null {
+  return sourceKindMessageKeys[kind] ?? null;
 }
 
 export const activityTone: Record<UnitType, string> = {
@@ -95,7 +98,3 @@ export function activitySurfaceClass(type: UnitType): string {
 export function activityBorderClass(type: UnitType): string {
   return `border-activity-${activityTone[type]}/40`;
 }
-
-export const evidenceLabel = "Подтверждения навыка";
-export const aiReadyLabel = "AI готов";
-export const teacherReadyLabel = "Преподаватель готов";

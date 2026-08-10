@@ -14,19 +14,21 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { groupDayIntoBlocks } from "@/lib/learning-blocks";
 import { formatMinutesShort } from "@/lib/time";
+import { type MessageKey, useI18n } from "@/lib/i18n";
 import {
   activityColorClass,
-  depthLabel,
-  unitStatusLabels,
-  unitTypeLabels,
+  depthMessageKey,
+  unitStatusMessageKeys,
+  unitTypeMessageKeys,
 } from "@/lib/unit-labels";
 import { cn } from "@/lib/utils";
 
-const blockStatusLabels: Record<string, string> = {
-  completed: "Завершён",
-  in_progress: "Сейчас",
-  ready: "Доступен",
-  locked: "Заблокирован",
+const phaseMessageKeys: Readonly<
+  Record<"study" | "check" | "practice", MessageKey>
+> = {
+  study: "home.phase.study",
+  check: "home.phase.check",
+  practice: "home.phase.practice",
 };
 
 export function DayPlanSheet({
@@ -36,6 +38,7 @@ export function DayPlanSheet({
   session: LearnerSession;
   trigger: ReactNode;
 }) {
+  const { locale, t } = useI18n();
   const { day } = session.snapshot;
   const progressByUnit = new Map(
     session.unitProgress.map((item) => [item.unitId, item]),
@@ -56,17 +59,21 @@ export function DayPlanSheet({
       <SheetContent data-slot="day-plan-sheet">
         <SheetHeader>
           <SheetTitle>
-            День {day.order} · {day.title}
+            {t("dayPlan.title", { order: day.order, title: day.title })}
           </SheetTitle>
           <SheetDescription>
-            {formatMinutesShort(day.estimatedMinutes)} · Глубина:{" "}
-            {depthLabel(day.depthLevel)}
+            {t("dayPlan.meta", {
+              duration: formatMinutesShort(day.estimatedMinutes, locale),
+              depth: depthMessageKey(day.depthLevel)
+                ? t(depthMessageKey(day.depthLevel)!)
+                : day.depthLevel,
+            })}
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
           <div className="flex flex-col gap-2">
-            <h3 className="text-sm font-medium">Учебные блоки</h3>
+            <h3 className="text-sm font-medium">{t("dayPlan.phases")}</h3>
             <ol className="flex flex-col gap-2">
               {blocks
                 .filter((block) => block.totalCount > 0)
@@ -85,13 +92,16 @@ export function DayPlanSheet({
                             activityColorClass(block.units[0]?.type ?? "study"),
                           )}
                         >
-                          Блок {index + 1} из 3
+                          {t("dayPlan.phaseIndex", {
+                            current: index + 1,
+                            total: 3,
+                          })}
                         </span>
-                        {block.label}
+                        {t(phaseMessageKeys[block.id])}
                       </p>
                       <span className="shrink-0 text-xs text-muted-foreground">
-                        {blockStatusLabels[block.status]} ·{" "}
-                        {formatMinutesShort(block.estimatedMinutes)}
+                        {t(unitStatusMessageKeys[block.status])} ·{" "}
+                        {formatMinutesShort(block.estimatedMinutes, locale)}
                       </span>
                     </div>
                     <ol className="mt-2 flex flex-col gap-1">
@@ -108,12 +118,15 @@ export function DayPlanSheet({
                             <span className="min-w-0 truncate">
                               <span className="font-medium">{unit.title}</span>
                               <span className="ml-2 text-xs text-muted-foreground">
-                                {unitTypeLabels[unit.type]} ·{" "}
-                                {formatMinutesShort(unit.estimatedMinutes)}
+                                {t(unitTypeMessageKeys[unit.type])} ·{" "}
+                                {formatMinutesShort(
+                                  unit.estimatedMinutes,
+                                  locale,
+                                )}
                               </span>
                             </span>
                             <span className="shrink-0 text-xs text-muted-foreground">
-                              {unitStatusLabels[status]}
+                              {t(unitStatusMessageKeys[status])}
                             </span>
                           </li>
                         );
@@ -125,7 +138,7 @@ export function DayPlanSheet({
           </div>
 
           <div className="flex flex-col gap-2">
-            <h3 className="text-sm font-medium">Цель</h3>
+            <h3 className="text-sm font-medium">{t("dayPlan.goal")}</h3>
             <p className="text-sm leading-6 text-muted-foreground">
               {day.goal}
             </p>
@@ -133,7 +146,7 @@ export function DayPlanSheet({
 
           {day.topics.length ? (
             <div className="flex flex-col gap-2">
-              <h3 className="text-sm font-medium">Темы</h3>
+              <h3 className="text-sm font-medium">{t("dayPlan.topics")}</h3>
               <div className="flex flex-wrap gap-2">
                 {day.topics.map((topic) => (
                   <Badge key={topic} variant="outline">
@@ -146,7 +159,7 @@ export function DayPlanSheet({
 
           {day.expectedOutcomes.length ? (
             <div className="flex flex-col gap-2">
-              <h3 className="text-sm font-medium">Ожидаемые результаты</h3>
+              <h3 className="text-sm font-medium">{t("dayPlan.outcomes")}</h3>
               <ul className="flex flex-col gap-1.5 text-sm leading-6 text-muted-foreground">
                 {day.expectedOutcomes.map((outcome) => (
                   <li key={outcome} className="flex gap-2">
@@ -163,7 +176,7 @@ export function DayPlanSheet({
 
           {day.outOfScope.length ? (
             <div className="flex flex-col gap-2">
-              <h3 className="text-sm font-medium">Вне дня</h3>
+              <h3 className="text-sm font-medium">{t("dayPlan.outOfScope")}</h3>
               <p className="text-sm leading-6 text-muted-foreground">
                 {day.outOfScope.join(" · ")}
               </p>

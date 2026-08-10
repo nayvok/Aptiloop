@@ -1,6 +1,9 @@
+"use client";
+
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/ssr";
 
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n";
 
 export function QueryError({
   message,
@@ -9,6 +12,7 @@ export function QueryError({
   message: string;
   retry?: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div
       data-slot="query-error"
@@ -17,14 +21,14 @@ export function QueryError({
     >
       <WarningCircleIcon aria-hidden className="size-6 text-destructive" />
       <div>
-        <p className="font-medium">Не удалось получить данные</p>
+        <p className="font-medium">{t("query.failed")}</p>
         <p className="mt-1 max-w-[65ch] text-sm text-muted-foreground">
           {message}
         </p>
       </div>
       {retry ? (
         <Button variant="outline" onClick={retry}>
-          Повторить
+          {t("query.retry")}
         </Button>
       ) : null}
     </div>

@@ -11,6 +11,7 @@ import {
   type Models,
 } from "@earendil-works/pi-ai";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { opencodeProvider } from "@earendil-works/pi-ai/providers/opencode";
 import {
   AgentSessionSchema,
   AptiloopToolNameSchema,
@@ -18,6 +19,7 @@ import {
   type AgentModel,
   type AgentSession,
   type CreateAgentSessionInput,
+  type ProviderId,
   type ProviderStatus,
   type StreamAgentMessageInput,
 } from "@dlh/shared";
@@ -36,6 +38,7 @@ interface PiSession {
 export interface PiAgentProviderOptions {
   readonly models: Models;
   readonly providerType: string;
+  readonly id?: ProviderId;
   readonly adapterVersion?: string;
   readonly now?: () => Date;
   readonly toolsForRole?: (
@@ -45,7 +48,7 @@ export interface PiAgentProviderOptions {
 }
 
 export class PiAgentProvider implements AgentProvider {
-  readonly id = "pi" as const;
+  readonly id: ProviderId;
   readonly providerType: string;
   readonly adapterVersion: string;
   readonly #models: Models;
@@ -56,6 +59,7 @@ export class PiAgentProvider implements AgentProvider {
 
   constructor(options: PiAgentProviderOptions) {
     this.#models = options.models;
+    this.id = options.id ?? "pi";
     this.providerType = options.providerType;
     this.adapterVersion = options.adapterVersion ?? "0.84.1";
     this.#now = options.now ?? (() => new Date());
@@ -324,13 +328,30 @@ export class PiAgentProvider implements AgentProvider {
   }
 }
 
-export function createOpenAiPiAgentProvider(): PiAgentProvider {
+export function createOpenAiPiAgentProvider(
+  options: Pick<PiAgentProviderOptions, "toolsForRole"> = {},
+): PiAgentProvider {
   const models = createModels();
   models.setProvider(openaiProvider());
   return new PiAgentProvider({
     models,
     providerType: "openai",
     adapterVersion: "0.84.1",
+    ...options,
+  });
+}
+
+export function createOpenCodeZenPiAgentProvider(
+  options: Pick<PiAgentProviderOptions, "toolsForRole"> = {},
+): PiAgentProvider {
+  const models = createModels();
+  models.setProvider(opencodeProvider());
+  return new PiAgentProvider({
+    id: "opencode",
+    models,
+    providerType: "opencode",
+    adapterVersion: "0.84.1",
+    ...options,
   });
 }
 

@@ -2,13 +2,13 @@
 
 ## Document status
 
-**Approved Core Alpha target** overall. The external Course Pack V1 path and version-matched Authoring Kit are an **Implemented baseline**; Adaptive Studio, target manual authoring, guided AI proposals, and production publication are not claimed implemented.
+**Approved Core Alpha target** overall. The external Course Pack V1 path, version-matched Authoring Kit, and M9 Adaptive Studio manual editorial workflow are an **Implemented baseline**; guided AI proposals and production Course publication are not claimed implemented.
 
 ## Implemented baseline
 
-The current Dev Learning Harness has a draft Curriculum Editor backed by versioned curriculum tables. It can create or clone a draft revision, edit/reorder week/day/unit records, validate type-specific payloads, preview some data, and explicitly publish an immutable revision with a content hash. M2 adds target Course/revision/section/lesson/Activity, personal Adaptation Branch, Source Snapshot, and Knowledge Capsule contracts and persistence. M3 adds the strict external Course Pack V1 validator, Preview/install/open-as-draft/export/uninstall lifecycle, and version-matched Authoring Kit. M5 validates runtime requirements against the finite app-owned Environment Pack/check registry.
+The current Dev Learning Harness has an AI-Off Adaptive Studio workflow backed by versioned curriculum tables. It can create or clone a draft revision, edit/reorder week/day/unit records through typed forms, validate, Preview, review changes, and explicitly publish an immutable revision with a content hash. M2 adds target Course/revision/section/lesson/Activity, personal Adaptation Branch, Source Snapshot, and Knowledge Capsule contracts and persistence. M3 adds the strict external Course Pack V1 validator, Preview/install/open-as-draft/export/uninstall lifecycle, and version-matched Authoring Kit. M5 validates runtime requirements against the finite app-owned Environment Pack/check registry. M9 adds upstream/personal revision comparison, isolated branch creation and personal Publish, deterministic conflict/impact reporting, and explicit upstream integration into a new personal Draft.
 
-The active curriculum and Authoring Kit fixture are development content, not production Courses. Source Snapshot/Capsule tables contain no approved production material, and the current UI cannot yet create/apply a personal adaptation through Adaptive Studio. Complete target locale resources, guided typed AI proposals, and Adaptive Studio remain **Approved Core Alpha target** work. Existing hardcoded Russian content and retained legacy authoring routes are compatibility surfaces, not evidence that localization or target Studio authoring is complete.
+The active curriculum and Authoring Kit fixture are development content, not production Courses. Source Snapshot/Capsule tables contain no approved production material. Complete production Course locale resources and guided typed AI proposals remain **Approved Core Alpha target** work. Existing hardcoded Russian Course content and retained legacy authoring routes are compatibility surfaces, not evidence that Course localization or the M11 cutover is complete.
 
 ## Authoring principles
 
@@ -72,7 +72,7 @@ A finite set of typed Activities and explicit prerequisite edges. It has at leas
 
 ### Embedded: Adaptive Studio
 
-**Approved Core Alpha target**
+**Implemented baseline** for the M9 AI-Off manual editorial and Personal Adaptation workflows; **Approved Core Alpha target** for the guided AI designer and production Course authoring gates.
 
 Adaptive Studio is 70% editorial workspace and 30% developer instrument. It is not an IDE and must not expose a general terminal.
 
@@ -250,7 +250,7 @@ AI has no filesystem, shell, network, credential, general edit, install, environ
 
 ## Validation
 
-**Implemented baseline for Course Pack V1 validation/install; Approved Core Alpha target for complete Adaptive Studio publication.**
+**Implemented baseline for Course Pack V1 validation/install and M9 Adaptive Studio manual validation/publication; Approved Core Alpha target for AI-assisted authoring and production Course approval.**
 
 Publication and installation require zero errors across:
 
@@ -272,7 +272,7 @@ Warnings may cover optional translation completeness, unavailable optional AI, u
 
 ## Publish, install, and export
 
-**Implemented baseline for external Pack Install/Export and legacy draft Publish; Approved Core Alpha target for unified Adaptive Studio publication/export.**
+**Implemented baseline for external Pack Install/Export and M9 Adaptive Studio manual Publish/clone/personal integration; Approved Core Alpha target for AI-assisted and production publication gates.**
 
 - **Publish** converts a local Draft into an immutable revision after Validate, Preview, change review, and explicit confirmation.
 - **Install** atomically records a validated external immutable revision after Preview and explicit confirmation.

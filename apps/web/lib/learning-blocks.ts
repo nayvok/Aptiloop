@@ -1,8 +1,4 @@
-/**
- * Presentation grouping: units дня группируются в три понятных учебных блока.
- * Модель данных unit-ов не меняется — это чисто клиентский слой.
- */
-
+import type { MessageKey } from "@/lib/i18n";
 import type { UnitStatus, UnitType } from "@/lib/unit-labels";
 
 export type LearningBlockId = "study" | "check" | "practice";
@@ -12,7 +8,7 @@ export interface BlockUnit {
   type: UnitType;
   title: string;
   estimatedMinutes: number;
-  /** Статус есть в path DTO; в session вычисляется из unitProgress. */
+  /** Status comes from the path DTO or is derived from session progress. */
   status?: UnitStatus;
 }
 
@@ -20,26 +16,22 @@ export type BlockStatus = "completed" | "in_progress" | "ready" | "locked";
 
 export interface LearningBlock {
   id: LearningBlockId;
-  label: string;
-  shortLabel: string;
+  label: MessageKey;
   units: BlockUnit[];
   status: BlockStatus;
   completedCount: number;
   totalCount: number;
-  /** 1-based индекс текущего шага внутри блока; null когда блок завершён. */
+  /** One-based current step index; null after the block is complete. */
   currentStepIndex: number | null;
   currentUnit: BlockUnit | null;
   estimatedMinutes: number;
   remainingMinutes: number;
 }
 
-const BLOCK_LABELS: Record<
-  LearningBlockId,
-  { label: string; shortLabel: string }
-> = {
-  study: { label: "Изучение", shortLabel: "Изучение" },
-  check: { label: "Проверка понимания", shortLabel: "Проверка" },
-  practice: { label: "Практика", shortLabel: "Практика" },
+const BLOCK_LABELS: Readonly<Record<LearningBlockId, MessageKey>> = {
+  study: "home.phase.study",
+  check: "home.phase.check",
+  practice: "home.phase.practice",
 };
 
 const BLOCK_UNIT_TYPES: Record<LearningBlockId, ReadonlySet<UnitType>> = {
@@ -125,7 +117,7 @@ export function groupDayIntoBlocks(
       .reduce((sum, unit) => sum + unit.estimatedMinutes, 0);
     return {
       id: blockId,
-      ...BLOCK_LABELS[blockId],
+      label: BLOCK_LABELS[blockId],
       units: blockUnits,
       status,
       completedCount,
@@ -139,8 +131,8 @@ export function groupDayIntoBlocks(
 }
 
 /**
- * Текущий unit дня: in_progress → первый ready → последний completed → первый.
- * Та же логика, что и в session-client, вынесенная для Path и Session.
+ * Current unit for the day: in_progress → first ready → last completed → first.
+ * Same logic as session-client, shared by Path and Session.
  */
 export function focusedUnit(
   units: readonly BlockUnit[],

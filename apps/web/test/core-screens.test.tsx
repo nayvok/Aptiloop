@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExerciseClient } from "@/components/exercise-client";
 import { KnowledgeClient } from "@/components/knowledge-client";
 import { ProviderHealth } from "@/components/provider-health";
+import { LocaleProvider } from "@/lib/i18n";
 
 const { apiMock, pushMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -30,7 +31,11 @@ function renderWithQuery(children: ReactNode) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
+        {children}
+      </LocaleProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -104,9 +109,9 @@ describe("core learning screens", () => {
     });
 
     renderWithQuery(<KnowledgeClient />);
-    expect(await screen.findByText("Lexical scope")).toBeInTheDocument();
-    expect(screen.getByText("повторить")).toBeInTheDocument();
-    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(await screen.findAllByText("Lexical scope")).toHaveLength(2);
+    expect(screen.getAllByText(/повторить/u)).not.toHaveLength(0);
+    expect(screen.getAllByText(/Подтверждений: 3/u)).not.toHaveLength(0);
   });
 
   it("restores persisted practice evidence after mounting", async () => {

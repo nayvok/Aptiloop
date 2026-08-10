@@ -15,6 +15,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { LocaleProvider } from "@/lib/i18n";
 
 import { SettingsForm } from "@/components/settings-form";
 
@@ -101,7 +102,9 @@ function renderForm() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <SettingsForm />
+      <LocaleProvider initialLocale="en-US" syncSettings={false}>
+        <SettingsForm />
+      </LocaleProvider>
     </QueryClientProvider>,
   );
 }
@@ -137,12 +140,15 @@ describe("SettingsForm", () => {
     renderForm();
 
     expect(
-      await screen.findByRole("heading", { name: "General" }),
+      await screen.findByRole("heading", { name: "Interface" }),
     ).toBeVisible();
     expect(screen.getByRole("heading", { name: "AI roles" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Connections" })).toBeVisible();
     for (const label of ["Course Designer", "Tutor", "Evaluator", "Reviewer"]) {
-      expect(screen.getByLabelText(label)).toHaveAttribute("role", "combobox");
+      expect(await screen.findByLabelText(label)).toHaveAttribute(
+        "role",
+        "combobox",
+      );
     }
     expect(screen.getByText("Deterministic Mock")).toBeVisible();
     expect(screen.getByText("OpenAI via Pi")).toBeVisible();
@@ -152,14 +158,16 @@ describe("SettingsForm", () => {
 
   it("applies theme only after user input and submits theme alone", async () => {
     renderForm();
-    await screen.findByRole("heading", { name: "General" });
+    await screen.findByRole("heading", { name: "Interface" });
     expect(setThemeMock).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText("Theme"), {
       target: { value: "dark" },
     });
     expect(setThemeMock).toHaveBeenCalledWith("dark");
-    fireEvent.click(screen.getByRole("button", { name: "Save theme" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save interface settings" }),
+    );
 
     await waitFor(() => {
       const mutation = apiMock.mock.calls.find(

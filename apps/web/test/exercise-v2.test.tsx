@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ExerciseClient } from "@/components/exercise-client";
+import { LocaleProvider } from "@/lib/i18n";
 
 const { apiMock, pushMock, searchState } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -22,7 +23,11 @@ function renderWithQuery(children: ReactNode) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
+        {children}
+      </LocaleProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -363,7 +368,7 @@ describe("restart-safe v2 practice", () => {
     renderWithQuery(<ExerciseClient />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Protected curriculum field received",
+      "Получено защищённое поле учебного материала",
     );
     expect(
       screen.queryByText("secret provider payload"),

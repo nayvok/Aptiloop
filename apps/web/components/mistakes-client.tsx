@@ -1,15 +1,16 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import {
   ArrowCounterClockwiseIcon,
   CalendarBlankIcon,
 } from "@phosphor-icons/react";
+import { useQuery } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
 import { EmptyState, QueryError } from "@/components/query-state";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { api } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 
 type Mistake = {
   id: string;
@@ -22,31 +23,35 @@ type Mistake = {
 };
 
 export function MistakesClient() {
+  const { formatDate, t } = useI18n();
   const query = useQuery({
     queryKey: ["mistakes"],
     queryFn: () => api<{ mistakes: Mistake[] }>("/mistakes"),
   });
-  if (query.isLoading)
+  if (query.isLoading) {
     return (
-      <div role="status" aria-label="Загружаю журнал ошибок">
+      <div role="status" aria-label={t("mistakes.loading")}>
         <Skeleton aria-hidden className="h-80" />
-        <span className="sr-only">Загружаю журнал ошибок…</span>
+        <span className="sr-only">{t("mistakes.loading")}</span>
       </div>
     );
-  if (query.isError || !query.data)
+  }
+  if (query.isError || !query.data) {
     return (
       <QueryError
-        message="Журнал ошибок недоступен"
+        message={t("mistakes.unavailable")}
         retry={() => void query.refetch()}
       />
     );
-  if (!query.data.mistakes.length)
+  }
+  if (!query.data.mistakes.length) {
     return (
       <EmptyState
-        title="Ошибки ещё не зафиксированы"
-        description="После объяснений, квиза и проверки решения здесь появится контекст ошибки и дата повторения."
+        title={t("mistakes.empty.title")}
+        description={t("mistakes.empty.description")}
       />
     );
+  }
   return (
     <div className="divide-y divide-border border-y border-border">
       {query.data.mistakes.map((mistake) => (
@@ -59,26 +64,26 @@ export function MistakesClient() {
             {mistake.repeated ? (
               <Badge variant="warning">
                 <ArrowCounterClockwiseIcon aria-hidden />
-                Повторилась
+                {t("mistakes.repeated")}
               </Badge>
             ) : null}
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <CalendarBlankIcon aria-hidden />
-              {new Date(mistake.reviewAt).toLocaleDateString("ru-RU")}
+              {formatDate(mistake.reviewAt)}
             </span>
           </div>
           <div>
-            <h3 className="text-xs font-medium text-muted-foreground">
-              КАК Я ДУМАЛ
+            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t("mistakes.previous")}
             </h3>
             <p className="mt-2 text-sm leading-6">{mistake.thought}</p>
             <p className="mt-3 text-xs leading-5 text-muted-foreground">
-              Причина: {mistake.cause}
+              {t("mistakes.cause", { cause: mistake.cause })}
             </p>
           </div>
           <div>
-            <h3 className="text-xs font-medium text-muted-foreground">
-              ТОЧНЕЕ
+            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t("mistakes.correction")}
             </h3>
             <p className="mt-2 text-sm leading-6">{mistake.correction}</p>
           </div>

@@ -1,6 +1,6 @@
 # Secrets, Private Sources, and Local Data Lifecycle
 
-**Document status:** Approved Core Alpha target. **Implemented baseline:** M1 adds external-provider containment, raw/tool no-store persistence, read-only SQLite-family inventory, and approved quarantine/backup disposition. M6 additionally stores only opaque credential references, exact hash-scoped immutable disclosure decisions, minimized provider-turn provenance, and exact one-time disclosure UI for active chat/interview/review callers; environment and unrelated private-context sentinels are verified absent from provider inputs. Authenticated external provider smoke remains an acceptance blocker and no production real-provider readiness is claimed.
+**Document status:** Approved Core Alpha target. **Implemented baseline:** M1 adds external-provider containment, raw/tool no-store persistence, read-only SQLite-family inventory, and approved quarantine/backup disposition. M6 additionally stores only opaque credential references, exact hash-scoped immutable disclosure decisions, minimized provider-turn provenance, and exact one-time disclosure UI for active chat/interview/review callers; environment and unrelated private-context sentinels are verified absent from provider inputs. The accepted authenticated OpenCode Zen smoke used synthetic text and a disposable database, printed no credential or provider payload, and verified only the reviewed adapter path—not general production provider readiness.
 
 ## 1. Data classes
 

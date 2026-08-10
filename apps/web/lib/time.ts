@@ -1,38 +1,44 @@
-/** Форматирование учебного времени для learner UI. */
+import type { UiLocale } from "@/lib/i18n";
 
-function plural(value: number, one: string, few: string, many: string): string {
-  const abs = Math.abs(value) % 100;
-  const last = abs % 10;
-  if (abs > 10 && abs < 20) return many;
-  if (last > 1 && last < 5) return few;
-  if (last === 1) return one;
-  return many;
+function formatUnit(
+  value: number,
+  unit: "hour" | "minute",
+  locale: UiLocale,
+  unitDisplay: "long" | "short",
+): string {
+  return new Intl.NumberFormat(locale, {
+    style: "unit",
+    unit,
+    unitDisplay,
+  }).format(value);
 }
 
-/** «18 мин», «2 ч 48 мин» — компактный формат для бейджей и планов. */
-export function formatMinutesShort(minutes: number): string {
+export function formatMinutesShort(
+  minutes: number,
+  locale: UiLocale = "en-US",
+): string {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  if (hours === 0) return `${rest} мин`;
-  if (rest === 0) return `${hours} ч`;
-  return `${hours} ч ${rest} мин`;
+  if (hours === 0) return formatUnit(rest, "minute", locale, "short");
+  if (rest === 0) return formatUnit(hours, "hour", locale, "short");
+  return `${formatUnit(hours, "hour", locale, "short")} ${formatUnit(rest, "minute", locale, "short")}`;
 }
 
-/** «около 18 минут», «около 2 ч 48 мин» — для hero-текстов. */
-export function formatDuration(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  if (hours === 0) {
-    return `около ${rest} ${plural(rest, "минуты", "минут", "минут")}`;
-  }
-  if (rest === 0) {
-    return `около ${hours} ${plural(hours, "часа", "часов", "часов")}`;
-  }
-  return `около ${hours} ${plural(hours, "часа", "часов", "часов")} ${rest} мин`;
+export function formatDuration(
+  minutes: number,
+  locale: UiLocale = "en-US",
+): string {
+  return `≈ ${formatMinutesShort(minutes, locale)}`;
 }
 
-/** «примерно 2 часа» — для интервью и настроек. */
-export function formatHoursHuman(minutes: number): string {
-  const hours = Math.max(1, Math.round(minutes / 60));
-  return `${hours} ${plural(hours, "час", "часа", "часов")}`;
+export function formatHoursHuman(
+  minutes: number,
+  locale: UiLocale = "en-US",
+): string {
+  return formatUnit(
+    Math.max(1, Math.round(minutes / 60)),
+    "hour",
+    locale,
+    "long",
+  );
 }

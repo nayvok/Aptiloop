@@ -21,6 +21,7 @@ import {
   courseFoundationsPostHardeningMigrationContract,
   getCurrentDatabaseMigrationContract,
   learningKernelMigrationContract,
+  providerHubMigrationContract,
   legacyCompatibleMigrationContract,
   openDatabaseWithWritableTargetGuard,
   type CurrentDatabaseMigrationContract,
@@ -539,6 +540,30 @@ export function assertM1DatabaseMigrationAdmission(
       kind: "current",
       contract: currentContract,
       logicalSha256: candidate.health.logicalSha256,
+    };
+  }
+
+  if (
+    allowLegacyCompatibility &&
+    candidate.health.legacyCompatibility.coherent &&
+    matchesMigrationIds(
+      candidate.health.migrations.ids,
+      providerHubMigrationContract,
+    ) &&
+    candidate.health.schemaSha256 ===
+      providerHubMigrationContract.schemaSha256 &&
+    hasCurrentDatabaseHealth(candidate.health)
+  ) {
+    const migrationCapability: DatabaseMigrationAdmissionCapability = {
+      kind: "legacy-compatible-noop",
+      contract: providerHubMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+    };
+    return {
+      kind: "legacy-compatible",
+      contract: providerHubMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+      migrationCapability,
     };
   }
 

@@ -24,6 +24,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import { useI18n } from "@/lib/i18n";
 
 export interface InterviewChatViewProps {
   interview: Interview;
@@ -46,6 +47,7 @@ export function InterviewChatView({
   onRetry,
   onFinish,
 }: InterviewChatViewProps) {
+  const { t } = useI18n();
   const hasPendingQuestion =
     interview.progress.questionsAsked ===
     interview.progress.questionsAnswered + 1;
@@ -76,7 +78,11 @@ export function InterviewChatView({
                     <Message align={assistant ? "start" : "end"}>
                       <MessageContent>
                         <MessageHeader>
-                          {assistant ? "Интервьюер" : "Вы"}
+                          {t(
+                            assistant
+                              ? "interview.chat.interviewer"
+                              : "interview.chat.you",
+                          )}
                         </MessageHeader>
                         <Bubble
                           align={assistant ? "start" : "end"}
@@ -99,7 +105,9 @@ export function InterviewChatView({
                 <MessageScrollerItem>
                   <Message align="start">
                     <MessageContent>
-                      <MessageHeader>Интервьюер</MessageHeader>
+                      <MessageHeader>
+                        {t("interview.chat.interviewer")}
+                      </MessageHeader>
                       <Bubble align="start" variant="muted">
                         <BubbleContent
                           role="status"
@@ -111,7 +119,7 @@ export function InterviewChatView({
                               aria-hidden
                               className="size-2 animate-pulse rounded-full bg-primary"
                             />
-                            Интервьюер печатает…
+                            {t("interview.chat.typing")}
                           </span>
                         </BubbleContent>
                       </Bubble>
@@ -134,20 +142,19 @@ export function InterviewChatView({
         {ready ? (
           <div className="flex flex-col gap-3">
             <p className="text-sm leading-6 text-muted-foreground">
-              Сервер сформирует честный отчёт по сохранённому transcript.
-              Техническая корректность без review не будет считаться доказанной.
+              {t("interview.chat.readyDescription")}
             </p>
             <div className="flex justify-end">
               <Button onClick={onFinish} disabled={action !== null}>
                 {action === "finish" ? (
                   <>
                     <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                    Формирую отчёт…
+                    {t("interview.chat.finishing")}
                   </>
                 ) : (
                   <>
                     <CheckCircleIcon aria-hidden className="size-4" />
-                    Завершить и открыть отчёт
+                    {t("interview.chat.finish")}
                   </>
                 )}
               </Button>
@@ -156,7 +163,7 @@ export function InterviewChatView({
         ) : (
           <div className="flex items-end gap-2">
             <label htmlFor="interview-message" className="sr-only">
-              Сообщение
+              {t("interview.chat.messageLabel")}
             </label>
             <Textarea
               id="interview-message"
@@ -172,13 +179,13 @@ export function InterviewChatView({
                 }
               }}
               className="max-h-40 min-h-12 flex-1 resize-none"
-              placeholder="Напиши ответ на вопрос интервьюера…"
+              placeholder={t("interview.chat.placeholder")}
             />
             {hasPendingQuestion && !waitingForQuestion ? (
               <Button
                 onClick={onSend}
                 disabled={!answer.trim() || action !== null}
-                aria-label="Отправить ответ"
+                aria-label={t("interview.chat.sendAria")}
               >
                 <PaperPlaneTiltIcon aria-hidden className="size-4" />
               </Button>
@@ -187,7 +194,7 @@ export function InterviewChatView({
                 variant="outline"
                 onClick={onRetry}
                 disabled={action !== null}
-                aria-label="Повторить запрос"
+                aria-label={t("interview.chat.retryAria")}
               >
                 <ArrowClockwiseIcon aria-hidden className="size-4" />
               </Button>

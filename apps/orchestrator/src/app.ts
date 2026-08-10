@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   createOpenAiPiAgentProvider,
+  createOpenCodeZenPiAgentProvider,
   MockAgentProvider,
   parseReviewResult,
   ProviderHubError,
@@ -46,10 +47,7 @@ import {
   type TrustedExecutionFabric,
 } from "@dlh/exercise-core";
 import { exportFlashcards } from "@dlh/learning-core";
-import {
-  OpenCodeAgentProvider,
-  validateOpenCodeEndpoint,
-} from "@dlh/opencode-provider";
+import { validateOpenCodeEndpoint } from "@dlh/opencode-provider";
 import { getLatestPrompt } from "@dlh/prompt-library";
 import {
   AgentRoleSchema,
@@ -62,8 +60,13 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 
 import { registerVersionedLearningRoutes } from "./learning-v2.js";
+import {
+  createCourseDesignerTools,
+  registerCourseDesignerRoutes,
+} from "./course-designer.js";
 import { registerCurriculumEditorRoutes } from "./curriculum-editor.js";
 import { registerCoursePackRoutes } from "./course-packs.js";
+import { registerPersonalAdaptationRoutes } from "./personal-adaptations.js";
 import { registerInterviewV2Routes } from "./interview-v2.js";
 import {
   apiRequestBoundaryError,
@@ -260,11 +263,17 @@ const settingsSchema = z
     zedExecutable: z.string().min(1),
     opencodeBaseUrl: z.string().url(),
     theme: z.enum(["system", "light", "dark"]),
+    uiLocale: z.enum(["en-US", "ru-RU"]).nullable(),
   })
   .strict();
 const settingsMutationSchema = z
   .object({
     theme: z.enum(["system", "light", "dark"]),
+  })
+  .strict();
+const localeMutationSchema = z
+  .object({
+    uiLocale: z.enum(["en-US", "ru-RU"]),
   })
   .strict();
 const aiSettingsMutationSchema = z
@@ -379,17 +388,14 @@ export function createApp(options: AppOptions = {}) {
     startupConfig,
     allowedWebOrigin,
   );
-  const opencodeEndpoint = validateOpenCodeEndpoint(
-    process.env.OPENCODE_ENDPOINT ?? defaultOpenCodeEndpoint,
-  );
+  const courseDesignerTools = createCourseDesignerTools(connection);
   const defaultProviders: Record<ProviderId, AgentProvider> = {
     mock: new MockAgentProvider(),
     codex: new CodexProvider({ cwd: projectRoot }),
-    opencode: new OpenCodeAgentProvider({
-      directory: projectRoot,
-      endpoint: opencodeEndpoint,
+    opencode: createOpenCodeZenPiAgentProvider({
+      toolsForRole: courseDesignerTools,
     }),
-    pi: createOpenAiPiAgentProvider(),
+    pi: createOpenAiPiAgentProvider({ toolsForRole: courseDesignerTools }),
   };
   const providers = { ...defaultProviders, ...options.providers };
   const providerRuntime = new ProviderRuntime({
@@ -605,6 +611,8 @@ export function createApp(options: AppOptions = {}) {
   registerVersionedLearningRoutes(app, state);
   registerCoursePackRoutes(app, createCoursePackRepository(connection));
   registerCurriculumEditorRoutes(app, state);
+  registerPersonalAdaptationRoutes(app, state);
+  registerCourseDesignerRoutes(app, state);
   registerInterviewV2Routes(app, state);
 
   app.post("/api/learning/sessions", (context) =>
@@ -1901,6 +1909,11 @@ export function createApp(options: AppOptions = {}) {
     await state.repository.setSetting("theme", settings.theme);
     return context.json({ saved: true });
   });
+  app.put("/api/settings/locale", async (context) => {
+    const settings = localeMutationSchema.parse(await context.req.json());
+    await state.repository.setSetting("uiLocale", settings.uiLocale);
+    return context.json({ saved: true, uiLocale: settings.uiLocale });
+  });
   app.put("/api/settings/ai", async (context) => {
     const settings = aiSettingsMutationSchema.parse(await context.req.json());
     const roleProfiles = await state.providerRuntime.saveRoleProfiles(
@@ -2408,6 +2421,7 @@ async function readSettings(state: AppState) {
       process.env.OPENCODE_ENDPOINT ?? defaultOpenCodeEndpoint,
     ),
     theme: "system" as const,
+    uiLocale: null as "en-US" | "ru-RU" | null,
   };
   const entries = await Promise.all(
     Object.keys(defaults).map(async (key) => {

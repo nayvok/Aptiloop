@@ -9,6 +9,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { ApiError, api } from "@/lib/api";
+import { type MessageKey, type UiLocale, useI18n } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +32,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 
 const settingsMutationSchema = z
-  .object({ theme: z.enum(["system", "light", "dark"]) })
+  .object({
+    theme: z.enum(["system", "light", "dark"]),
+    uiLocale: z.enum(["en-US", "ru-RU"]),
+  })
   .strict();
 type SettingsMutation = z.infer<typeof settingsMutationSchema>;
 type AiRole = "course-designer" | "tutor" | "evaluator" | "reviewer";
@@ -66,7 +70,8 @@ type Connection = {
     }>;
   } | null;
 };
-type SettingsQuery = SettingsMutation & {
+type SettingsQuery = Omit<SettingsMutation, "uiLocale"> & {
+  uiLocale: UiLocale | null;
   workspaceRoot: string;
   zedExecutable: string;
   opencodeBaseUrl: string;
@@ -78,40 +83,36 @@ type SettingsQuery = SettingsMutation & {
 
 const roleMeta: ReadonlyArray<{
   role: AiRole;
-  label: string;
-  help: string;
+  label: MessageKey;
+  help: MessageKey;
 }> = [
   {
     role: "course-designer",
-    label: "Course Designer",
-    help: "Draft-only proposals. Apply and Publish remain separate actions.",
+    label: "role.courseDesigner",
+    help: "role.courseDesigner.help",
   },
-  {
-    role: "tutor",
-    label: "Tutor",
-    help: "Learner-safe explanation and Socratic guidance.",
-  },
+  { role: "tutor", label: "role.tutor", help: "role.tutor.help" },
   {
     role: "evaluator",
-    label: "Evaluator",
-    help: "Bounded interview and evaluation output; no mastery writes.",
+    label: "role.evaluator",
+    help: "role.evaluator.help",
   },
   {
     role: "reviewer",
-    label: "Reviewer",
-    help: "Evidence-only review with no patch or local file authority.",
+    label: "role.reviewer",
+    help: "role.reviewer.help",
   },
 ];
 
-const statusLabels: Readonly<Record<string, string>> = {
-  disabled: "Off",
-  starting: "Starting",
-  connected: "Connected",
-  degraded: "Needs canary",
-  "authentication-required": "Authentication required",
-  unavailable: "Unavailable",
-  misconfigured: "Configuration required",
-  error: "Error",
+const statusLabels: Readonly<Record<string, MessageKey>> = {
+  disabled: "settings.status.off",
+  starting: "settings.status.starting",
+  connected: "settings.status.connected",
+  degraded: "settings.status.degraded",
+  "authentication-required": "settings.status.authentication",
+  unavailable: "settings.status.unavailable",
+  misconfigured: "settings.status.misconfigured",
+  error: "settings.status.error",
 };
 const sectionClass =
   "min-w-0 rounded-xl border border-border bg-card p-5 sm:p-6";
@@ -127,6 +128,7 @@ function selectionValue(profile: RoleProfile): string {
 export function SettingsForm() {
   const queryClient = useQueryClient();
   const { setTheme } = useTheme();
+  const { locale, setLocale, t } = useI18n();
   const [roleProfiles, setRoleProfiles] = useState<RoleProfile[]>([]);
   const query = useQuery({
     queryKey: ["settings"],
@@ -136,15 +138,24 @@ export function SettingsForm() {
     if (query.data) setRoleProfiles(query.data.ai.roleProfiles);
   }, [query.data]);
 
-  const saveTheme = useMutation({
-    mutationFn: (values: SettingsMutation) =>
-      api<{ saved: true }>("/settings", {
-        method: "PUT",
-        body: JSON.stringify(values),
-      }),
+  const saveSettings = useMutation({
+    mutationFn: async (values: SettingsMutation) => {
+      await Promise.all([
+        api<{ saved: true }>("/settings", {
+          method: "PUT",
+          body: JSON.stringify({ theme: values.theme }),
+        }),
+        api<{ saved: true; uiLocale: UiLocale }>("/settings/locale", {
+          method: "PUT",
+          body: JSON.stringify({ uiLocale: values.uiLocale }),
+        }),
+      ]);
+      return { saved: true as const };
+    },
     onSuccess: (_result, submitted) => {
+      setLocale(submitted.uiLocale);
       queryClient.setQueryData<SettingsQuery>(["settings"], (current) =>
-        current ? { ...current, theme: submitted.theme } : current,
+        current ? { ...current, ...submitted } : current,
       );
     },
   });
@@ -177,28 +188,32 @@ export function SettingsForm() {
   });
   const form = useForm<SettingsMutation>({
     resolver: zodResolver(settingsMutationSchema),
-    values: { theme: query.data?.theme ?? "system" },
+    values: {
+      theme: query.data?.theme ?? "system",
+      uiLocale: query.data?.uiLocale ?? locale,
+    },
     mode: "onChange",
   });
 
   if (query.isLoading) {
     return (
-      <div role="status" aria-label="Loading settings">
+      <div role="status" aria-label={t("query.loadingSettings")}>
         <Skeleton aria-hidden className="h-96" />
-        <span className="sr-only">Loading settings…</span>
+        <span className="sr-only">{t("query.loadingSettings")}</span>
       </div>
     );
   }
   if (query.isError || !query.data) {
     return (
       <QueryError
-        message="Settings are unavailable"
+        message={t("query.settingsUnavailable")}
         retry={() => void query.refetch()}
       />
     );
   }
 
   const themeRegistration = form.register("theme");
+  const localeRegistration = form.register("uiLocale");
   const connectionOptions = query.data.ai.connections.flatMap((connection) =>
     (connection.observedCapabilities?.models ?? [])
       .filter((model) => model.available)
@@ -209,27 +224,27 @@ export function SettingsForm() {
     <form
       data-slot="settings-form"
       className="grid gap-6"
-      onSubmit={form.handleSubmit((submitted) => saveTheme.mutate(submitted))}
+      onSubmit={form.handleSubmit((submitted) =>
+        saveSettings.mutate(submitted),
+      )}
     >
       <section
-        aria-labelledby="settings-general-title"
+        aria-labelledby="settings-interface-title"
         className={sectionClass}
       >
         <div className="mb-5">
-          <h3 id="settings-general-title" className="font-semibold">
-            General
+          <h3 id="settings-interface-title" className="font-semibold">
+            {t("settings.section.interface")}
           </h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Appearance and server-owned local paths.
+            {t("settings.section.interfaceDescription")}
           </p>
         </div>
         <FieldGroup>
           <Field orientation="responsive">
             <FieldContent>
-              <FieldLabel htmlFor="theme">Theme</FieldLabel>
-              <FieldDescription>
-                Applied immediately and saved locally.
-              </FieldDescription>
+              <FieldLabel htmlFor="theme">{t("settings.theme")}</FieldLabel>
+              <FieldDescription>{t("settings.theme.help")}</FieldDescription>
             </FieldContent>
             <select
               id="theme"
@@ -238,24 +253,44 @@ export function SettingsForm() {
                 themeRegistration.onChange(event);
                 setTheme(event.target.value);
               }}
-              className="h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-11 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
+              <option value="system">{t("shell.theme.system")}</option>
+              <option value="light">{t("shell.theme.light")}</option>
+              <option value="dark">{t("shell.theme.dark")}</option>
             </select>
           </Field>
           <Field orientation="responsive">
             <FieldContent>
-              <FieldTitle>Local paths</FieldTitle>
+              <FieldLabel htmlFor="ui-locale">
+                {t("settings.locale")}
+              </FieldLabel>
+              <FieldDescription>{t("settings.locale.help")}</FieldDescription>
+            </FieldContent>
+            <select
+              id="ui-locale"
+              {...localeRegistration}
+              onChange={(event) => {
+                localeRegistration.onChange(event);
+                setLocale(event.target.value as UiLocale);
+              }}
+              className="h-11 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="en-US">{t("locale.option.english")}</option>
+              <option value="ru-RU">{t("locale.option.russian")}</option>
+            </select>
+          </Field>
+          <Field orientation="responsive">
+            <FieldContent>
+              <FieldTitle>{t("settings.section.local")}</FieldTitle>
               <FieldDescription>
-                Diagnostic only; never sent by the browser.
+                {t("settings.section.localDescription")}
               </FieldDescription>
             </FieldContent>
             <dl className="grid min-w-0 gap-2 text-sm">
               <div className="min-w-0 rounded-lg border border-border bg-muted/20 p-3">
                 <dt className="text-xs text-muted-foreground">
-                  Exercise workspace
+                  {t("settings.workspace")}
                 </dt>
                 <dd
                   className="mt-1 truncate font-mono"
@@ -266,7 +301,7 @@ export function SettingsForm() {
               </div>
               <div className="min-w-0 rounded-lg border border-border bg-muted/20 p-3">
                 <dt className="text-xs text-muted-foreground">
-                  Editor executable
+                  {t("settings.editor")}
                 </dt>
                 <dd
                   className="mt-1 truncate font-mono"
@@ -284,13 +319,13 @@ export function SettingsForm() {
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 id="settings-ai-title" className="font-semibold">
-              AI roles
+              {t("settings.section.ai")}
             </h3>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Exact connection and model resolution. No fallback to Mock.
+              {t("settings.section.aiDescription")}
             </p>
           </div>
-          <Badge variant="outline">Server-owned policy</Badge>
+          <Badge variant="outline">{t("settings.serverPolicy")}</Badge>
         </div>
         <FieldGroup>
           {roleMeta.map((meta) => {
@@ -302,9 +337,9 @@ export function SettingsForm() {
               <Field key={meta.role} orientation="responsive">
                 <FieldContent>
                   <FieldLabel htmlFor={`role-${meta.role}`}>
-                    {meta.label}
+                    {t(meta.label)}
                   </FieldLabel>
-                  <FieldDescription>{meta.help}</FieldDescription>
+                  <FieldDescription>{t(meta.help)}</FieldDescription>
                 </FieldContent>
                 <Select
                   value={selectionValue(profile)}
@@ -339,7 +374,7 @@ export function SettingsForm() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      <SelectItem value="off">AI Off</SelectItem>
+                      <SelectItem value="off">{t("settings.aiOff")}</SelectItem>
                       {connectionOptions.map(({ connection, modelId }) => (
                         <SelectItem
                           key={`${connection.connectionId}:${modelId}`}
@@ -362,12 +397,12 @@ export function SettingsForm() {
             className="text-xs text-muted-foreground"
           >
             {saveAi.isSuccess
-              ? "AI role profiles saved"
+              ? t("settings.aiSaved")
               : saveAi.isError
                 ? saveAi.error instanceof ApiError
                   ? saveAi.error.message
-                  : "Could not save AI role profiles"
-                : "External turns require one-time disclosure approval"}
+                  : t("settings.aiSaveError")
+                : t("settings.externalDisclosure")}
           </span>
           <Button
             type="button"
@@ -375,7 +410,7 @@ export function SettingsForm() {
             disabled={saveAi.isPending}
             onClick={() => saveAi.mutate(roleProfiles)}
           >
-            {saveAi.isPending ? "Saving…" : "Save AI roles"}
+            {t(saveAi.isPending ? "settings.saving" : "settings.saveAi")}
           </Button>
         </div>
       </section>
@@ -386,11 +421,10 @@ export function SettingsForm() {
       >
         <div className="mb-5">
           <h3 id="settings-connections-title" className="font-semibold">
-            Connections
+            {t("settings.section.connections")}
           </h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Readiness is observed and time-scoped. Credentials stay in
-            provider-owned storage.
+            {t("settings.section.connectionsDescription")}
           </p>
         </div>
         <ul className="grid gap-3 md:grid-cols-2">
@@ -410,12 +444,21 @@ export function SettingsForm() {
                         : "outline"
                   }
                 >
-                  {statusLabels[connection.state] ?? connection.state}
+                  {statusLabels[connection.state]
+                    ? t(statusLabels[connection.state]!)
+                    : connection.state}
                 </Badge>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                {connection.external ? "External" : "Local development"} ·{" "}
-                {connection.observedCapabilities?.models.length ?? 0} models
+                {t(
+                  connection.external
+                    ? "settings.external"
+                    : "settings.localDevelopment",
+                )}{" "}
+                ·{" "}
+                {t("settings.models", {
+                  count: connection.observedCapabilities?.models.length ?? 0,
+                })}
               </p>
               <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
                 {connection.connectionId}
@@ -425,7 +468,9 @@ export function SettingsForm() {
         </ul>
         <div className="mt-5 flex justify-end">
           <Button asChild variant="outline">
-            <Link href="/settings/developer-tools">Developer diagnostics</Link>
+            <Link href="/settings/developer-tools">
+              {t("settings.developerDiagnostics")}
+            </Link>
           </Button>
         </div>
       </section>
@@ -436,16 +481,16 @@ export function SettingsForm() {
           aria-live="polite"
           className="text-xs text-muted-foreground"
         >
-          {saveTheme.isSuccess
-            ? "Theme saved"
-            : saveTheme.isError
-              ? saveTheme.error instanceof ApiError
-                ? saveTheme.error.message
-                : "Could not save theme"
-              : "Settings remain local"}
+          {saveSettings.isSuccess
+            ? t("settings.saved")
+            : saveSettings.isError
+              ? saveSettings.error instanceof ApiError
+                ? saveSettings.error.message
+                : t("settings.saveError")
+              : t("settings.localOnly")}
         </span>
-        <Button type="submit" disabled={saveTheme.isPending}>
-          {saveTheme.isPending ? "Saving…" : "Save theme"}
+        <Button type="submit" disabled={saveSettings.isPending}>
+          {t(saveSettings.isPending ? "settings.saving" : "settings.save")}
         </Button>
       </div>
     </form>

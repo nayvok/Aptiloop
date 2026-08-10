@@ -430,7 +430,7 @@ function resolveGraphPrerequisites(
   return { lessonIdsByLessonId, activityIdsByActivityId };
 }
 
-function publicationContent(graph: CurriculumVersionGraph): unknown {
+export function publicationContent(graph: CurriculumVersionGraph): unknown {
   return {
     curriculumId: graph.version.curriculumId,
     revision: graph.version.revision,
@@ -647,6 +647,23 @@ export function publishDraftCurriculumVersionWithinTransaction(
   if (graph.version.status !== "draft") {
     throw new Error("Only a draft curriculum version can be published");
   }
+  const hasPersonalAdaptationColumns = Boolean(
+    connection.sqlite
+      .prepare(
+        "SELECT 1 FROM pragma_table_info('curriculum_versions') WHERE name = 'branch_kind'",
+      )
+      .get(),
+  );
+  if (hasPersonalAdaptationColumns) {
+    const branch = connection.sqlite
+      .prepare("SELECT branch_kind FROM curriculum_versions WHERE id = ?")
+      .get(input.versionId) as { branch_kind: string } | undefined;
+    if (branch?.branch_kind !== "upstream") {
+      throw new Error(
+        "Personal revisions require the personal Publish workflow",
+      );
+    }
+  }
   if (!graph.weeks.length || graph.weeks.some((week) => !week.days.length)) {
     throw new Error(
       "Published curriculum requires a non-empty week and day graph",
@@ -664,18 +681,24 @@ export function publishDraftCurriculumVersionWithinTransaction(
   if (hasCourseProjection) {
     synchronizeDraftCourseProjectionWithinTransaction(connection, graph);
   }
-  connection.sqlite
-    .prepare(
-      `UPDATE curriculum_versions
-       SET status = 'archived', archived_at = ?, updated_at = ?
-       WHERE curriculum_id = ? AND status = 'published' AND id != ?`,
-    )
-    .run(
-      input.publishedAt,
-      input.publishedAt,
-      graph.version.curriculumId,
-      input.versionId,
-    );
+  const archivePublished = hasPersonalAdaptationColumns
+    ? connection.sqlite.prepare(
+        `UPDATE curriculum_versions
+         SET status = 'archived', archived_at = ?, updated_at = ?
+         WHERE curriculum_id = ? AND branch_kind = 'upstream'
+           AND status = 'published' AND id != ?`,
+      )
+    : connection.sqlite.prepare(
+        `UPDATE curriculum_versions
+         SET status = 'archived', archived_at = ?, updated_at = ?
+         WHERE curriculum_id = ? AND status = 'published' AND id != ?`,
+      );
+  archivePublished.run(
+    input.publishedAt,
+    input.publishedAt,
+    graph.version.curriculumId,
+    input.versionId,
+  );
   const result = connection.sqlite
     .prepare(
       `UPDATE curriculum_versions

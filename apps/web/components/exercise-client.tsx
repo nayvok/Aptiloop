@@ -17,6 +17,8 @@ import {
 import { z } from "zod";
 
 import { api } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
+import { formatMinutesShort } from "@/lib/time";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -213,34 +215,42 @@ type Diff = z.infer<typeof diffSchema>;
 type TestRun = z.infer<typeof testRunSchema>;
 type Review = z.infer<typeof reviewSchema>;
 
-function assertNoProtectedFields(value: unknown): void {
+function assertNoProtectedFields(value: unknown, errorMessage: string): void {
   if (Array.isArray(value)) {
-    value.forEach(assertNoProtectedFields);
+    value.forEach((nested) => assertNoProtectedFields(nested, errorMessage));
     return;
   }
   if (!value || typeof value !== "object") return;
   for (const [key, nested] of Object.entries(value)) {
     if (protectedKeys.has(key)) {
-      throw new Error("Protected curriculum field received");
+      throw new Error(errorMessage);
     }
-    assertNoProtectedFields(nested);
+    assertNoProtectedFields(nested, errorMessage);
   }
 }
 
-function parseSafe<T>(schema: z.ZodType<T>, value: unknown): T {
-  assertNoProtectedFields(value);
+function parseSafe<T>(
+  schema: z.ZodType<T>,
+  value: unknown,
+  protectedFieldError: string,
+): T {
+  assertNoProtectedFields(value, protectedFieldError);
   return schema.parse(value);
 }
 
-async function resolveSessionId(requestedSessionId: string | null) {
+async function resolveSessionId(
+  requestedSessionId: string | null,
+  noActiveSessionError: string,
+  protectedFieldError: string,
+) {
   if (requestedSessionId) return requestedSessionId;
   const value = await api<unknown>("/learning/sessions/current");
-  assertNoProtectedFields(value);
+  assertNoProtectedFields(value, protectedFieldError);
   const envelope = z
     .object({ session: z.object({ id: idSchema }).loose().nullable() })
     .strict()
     .parse(value);
-  if (!envelope.session) throw new Error("Активного занятия нет");
+  if (!envelope.session) throw new Error(noActiveSessionError);
   return envelope.session.id;
 }
 
@@ -249,6 +259,8 @@ export function ExerciseClient() {
   const requestedSessionId = params.get("sessionId");
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { locale, t } = useI18n();
+  const protectedFieldError = t("practice.error.protectedField");
   const [localDiff, setLocalDiff] = useState<Diff | null>(null);
   const [localTest, setLocalTest] = useState<TestRun | null>(null);
   const [localReview, setLocalReview] = useState<Review | null>(null);
@@ -260,11 +272,15 @@ export function ExerciseClient() {
   const query = useQuery({
     queryKey: ["exercise", requestedSessionId ?? "current"],
     queryFn: async () => {
-      const sessionId = await resolveSessionId(requestedSessionId);
+      const sessionId = await resolveSessionId(
+        requestedSessionId,
+        t("practice.error.noActiveSession"),
+        protectedFieldError,
+      );
       const value = await api<unknown>(
         `/exercises/current?sessionId=${encodeURIComponent(sessionId)}`,
       );
-      return parseSafe(exerciseSchema, value);
+      return parseSafe(exerciseSchema, value, protectedFieldError);
     },
   });
 
@@ -293,7 +309,7 @@ export function ExerciseClient() {
   const attempt = useMutation({
     mutationFn: async () => {
       const exercise = query.data;
-      if (!exercise) throw new Error("Упражнение ещё не загружено");
+      if (!exercise) throw new Error(t("practice.error.exerciseNotLoaded"));
       if (
         exercise.exerciseUnitId &&
         exercise.exerciseUnitProgress?.status === "ready"
@@ -306,7 +322,7 @@ export function ExerciseClient() {
         method: "POST",
         body: JSON.stringify({ sessionId: exercise.sessionId }),
       });
-      return parseSafe(attemptResponseSchema, value);
+      return parseSafe(attemptResponseSchema, value, protectedFieldError);
     },
     onSuccess: async () => {
       setLocalDiff(null);
@@ -318,7 +334,7 @@ export function ExerciseClient() {
 
   const getAttemptId = () => {
     const attemptId = query.data?.attempt?.id;
-    if (!attemptId) throw new Error("Сначала создайте попытку");
+    if (!attemptId) throw new Error(t("practice.error.attemptRequired"));
     return attemptId;
   };
 
@@ -327,7 +343,7 @@ export function ExerciseClient() {
       const value = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(getAttemptId())}/diff`,
       );
-      const parsed = parseSafe(diffResponseSchema, value);
+      const parsed = parseSafe(diffResponseSchema, value, protectedFieldError);
       return {
         patch: parsed.diff,
         changed: parsed.changed,
@@ -360,11 +376,19 @@ export function ExerciseClient() {
           }),
         },
       );
-      const test = parseSafe(checkResponseSchema, testValue);
+      const test = parseSafe(
+        checkResponseSchema,
+        testValue,
+        protectedFieldError,
+      );
       const diffValue = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/diff`,
       );
-      const parsedDiff = parseSafe(diffResponseSchema, diffValue);
+      const parsedDiff = parseSafe(
+        diffResponseSchema,
+        diffValue,
+        protectedFieldError,
+      );
       return {
         test: { ...test, workspaceCurrent: true } satisfies TestRun,
         diff: {
@@ -391,13 +415,15 @@ export function ExerciseClient() {
       const currentDiffValue = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/diff`,
       );
-      const currentDiff = parseSafe(diffResponseSchema, currentDiffValue);
+      const currentDiff = parseSafe(
+        diffResponseSchema,
+        currentDiffValue,
+        protectedFieldError,
+      );
       const visiblePatch =
         localDiff?.patch ?? query.data?.attempt?.diff.patch ?? "";
       if (currentDiff.diff !== visiblePatch) {
-        throw new Error(
-          "Файлы изменились после последнего diff. Обновите diff и снова запустите тесты.",
-        );
+        throw new Error(t("practice.error.diffChanged"));
       }
       const reviewOperationId = input?.reviewOperationId ?? crypto.randomUUID();
       const value = await api<unknown>(
@@ -420,7 +446,11 @@ export function ExerciseClient() {
           disclosure: disclosure.data.disclosure,
         };
       }
-      const parsed = parseSafe(reviewResponseSchema, value);
+      const parsed = parseSafe(
+        reviewResponseSchema,
+        value,
+        protectedFieldError,
+      );
       return {
         kind: "review" as const,
         review: reviewSchema.parse({
@@ -452,13 +482,13 @@ export function ExerciseClient() {
         `/exercise-attempts/${encodeURIComponent(getAttemptId())}/open`,
         { method: "POST" },
       );
-      return parseSafe(openResponseSchema, value);
+      return parseSafe(openResponseSchema, value, protectedFieldError);
     },
     onSuccess: (data) => {
       setZedFallback(
         data.opened
           ? null
-          : (data.message ?? "Zed недоступен для этой рабочей области."),
+          : (data.message ?? t("practice.error.zedUnavailable")),
       );
     },
   });
@@ -482,9 +512,7 @@ export function ExerciseClient() {
         test.status !== "passed" ||
         !test.workspaceCurrent
       ) {
-        throw new Error(
-          "Серверные подтверждения навыка для завершения ещё не готовы",
-        );
+        throw new Error(t("practice.error.completionEvidenceUnavailable"));
       }
 
       const exerciseStatus = exercise.exerciseUnitProgress?.status;
@@ -535,7 +563,7 @@ export function ExerciseClient() {
       <div
         className="flex flex-col gap-5"
         role="status"
-        aria-label="Загружаю практику…"
+        aria-label={t("practice.loading")}
       >
         <Skeleton className="h-20" />
         <Skeleton className="h-96" />
@@ -548,7 +576,7 @@ export function ExerciseClient() {
         message={
           query.error instanceof Error
             ? query.error.message
-            : "Упражнение недоступно"
+            : t("practice.error.unavailable")
         }
         retry={() => void query.refetch()}
       />
@@ -564,12 +592,12 @@ export function ExerciseClient() {
     return (
       <div data-slot="exercise-locked" className="flex flex-col gap-6">
         <PageHeader
-          title="Практика откроется по ходу занятия"
-          description="Сначала завершите обязательные объяснения, recall, квиз и чтение кода. Условие упражнения появится только на своём шаге."
+          title={t("practice.locked.title")}
+          description={t("practice.locked.description")}
         />
         <EmptyState
-          title="Текущий шаг ещё не практика"
-          description="Вернитесь в занятие: там уже отмечен один следующий доступный шаг."
+          title={t("practice.locked.emptyTitle")}
+          description={t("practice.locked.emptyDescription")}
           action={
             <Button
               type="button"
@@ -580,7 +608,7 @@ export function ExerciseClient() {
               }
             >
               <LockKeyIcon aria-hidden />
-              Вернуться к занятию
+              {t("practice.backToLesson")}
             </Button>
           }
         />
@@ -598,21 +626,23 @@ export function ExerciseClient() {
     latestTest.workspaceCurrent &&
     !review,
   );
-  const nextAction = !attemptId
-    ? "Создайте изолированную попытку."
-    : !diff?.changed
-      ? "Внесите самостоятельную правку в Zed, затем обновите Git diff."
-      : !latestTest
-        ? "Запустите разрешённые тесты на текущем diff."
-        : latestTest.status !== "passed"
-          ? "Исправьте код и снова запустите тесты."
-          : !latestTest.workspaceCurrent
-            ? "Код изменился после теста — запустите тесты повторно."
-            : !review
-              ? "Тесты прошли. Теперь запросите проверку решения."
-              : review.status === "changes_requested"
-                ? "Примените замечания самостоятельно и повторите diff → тесты → проверку решения."
-                : "Проверка решения принята — сохраните подтверждения навыка и вернитесь к занятию.";
+  const nextAction = t(
+    !attemptId
+      ? "practice.nextAction.createAttempt"
+      : !diff?.changed
+        ? "practice.nextAction.editAndRefreshDiff"
+        : !latestTest
+          ? "practice.nextAction.runTests"
+          : latestTest.status !== "passed"
+            ? "practice.nextAction.fixAndRetest"
+            : !latestTest.workspaceCurrent
+              ? "practice.nextAction.retestChangedWorkspace"
+              : !review
+                ? "practice.nextAction.requestReview"
+                : review.status === "changes_requested"
+                  ? "practice.nextAction.applyFindings"
+                  : "practice.nextAction.accepted",
+  );
   const error =
     attempt.error ??
     loadDiff.error ??
@@ -625,9 +655,9 @@ export function ExerciseClient() {
     if (!exercise.workspace) return;
     try {
       await navigator.clipboard.writeText(exercise.workspace.id);
-      setWorkspaceNotice("Идентификатор рабочей области скопирован.");
+      setWorkspaceNotice(t("practice.workspace.copied"));
     } catch {
-      setWorkspaceNotice("Не удалось скопировать идентификатор.");
+      setWorkspaceNotice(t("practice.workspace.copyFailed"));
     }
   }
   async function approveReviewDisclosure() {
@@ -647,7 +677,7 @@ export function ExerciseClient() {
       setWorkspaceNotice(
         error instanceof Error
           ? error.message
-          : "Не удалось подтвердить отправку данных.",
+          : t("practice.error.disclosureApprovalFailed"),
       );
     }
   }
@@ -659,7 +689,7 @@ export function ExerciseClient() {
     await api(`/ai/disclosures/${pending.disclosure.operationId}`, {
       method: "DELETE",
     }).catch(() => undefined);
-    setWorkspaceNotice("Данные не отправлены. Проверку можно запросить позже.");
+    setWorkspaceNotice(t("practice.disclosure.cancelled"));
   }
 
   return (
@@ -670,7 +700,11 @@ export function ExerciseClient() {
         actions={
           <>
             <Badge variant="outline">{exercise.difficulty}</Badge>
-            <Badge variant="outline">≈ {exercise.estimatedMinutes} мин</Badge>
+            <Badge variant="outline">
+              {t("practice.duration", {
+                duration: formatMinutesShort(exercise.estimatedMinutes, locale),
+              })}
+            </Badge>
           </>
         }
       />
@@ -691,14 +725,16 @@ export function ExerciseClient() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section
           className="flex min-w-0 flex-col gap-6"
-          aria-label="Работа над упражнением"
+          aria-label={t("practice.work.label")}
         >
           <div
             data-slot="exercise-criteria"
             className="grid gap-6 rounded-xl border border-border bg-card p-6 md:grid-cols-2"
           >
             <div className="flex flex-col gap-4">
-              <h2 className="font-semibold">Готово, когда</h2>
+              <h2 className="font-semibold">
+                {t("practice.completionCriteria")}
+              </h2>
               <ul className="flex flex-col gap-2">
                 {exercise.criteria.map((criterion) => (
                   <li
@@ -715,7 +751,7 @@ export function ExerciseClient() {
               </ul>
             </div>
             <div className="flex flex-col gap-4">
-              <h2 className="font-semibold">Ограничения</h2>
+              <h2 className="font-semibold">{t("practice.constraints")}</h2>
               <ul className="flex flex-col gap-2">
                 {exercise.constraints.map((constraint) => (
                   <li
@@ -739,18 +775,23 @@ export function ExerciseClient() {
           >
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="min-w-0">
-                <h2 className="font-semibold">Изолированная рабочая область</h2>
+                <h2 className="font-semibold">
+                  {t("practice.workspace.title")}
+                </h2>
                 <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
                   {exercise.workspace
-                    ? `${exercise.workspace.id} · поколение ${exercise.workspace.generation}`
-                    : "Будет создана сервером после начала попытки."}
+                    ? t("practice.workspace.identity", {
+                        id: exercise.workspace.id,
+                        generation: exercise.workspace.generation,
+                      })
+                    : t("practice.workspace.pending")}
                 </p>
               </div>
               {attemptId ? (
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" onClick={copyWorkspaceId}>
                     <CopyIcon aria-hidden />
-                    Скопировать ID
+                    {t("practice.workspace.copyId")}
                   </Button>
                   <Button
                     variant="outline"
@@ -758,7 +799,11 @@ export function ExerciseClient() {
                     disabled={openZed.isPending}
                   >
                     <ArrowSquareOutIcon aria-hidden />
-                    {openZed.isPending ? "Открываю…" : "Открыть в Zed"}
+                    {t(
+                      openZed.isPending
+                        ? "practice.workspace.opening"
+                        : "practice.workspace.open",
+                    )}
                   </Button>
                 </div>
               ) : (
@@ -767,7 +812,11 @@ export function ExerciseClient() {
                   disabled={attempt.isPending}
                 >
                   <CodeIcon aria-hidden />
-                  {attempt.isPending ? "Создаю…" : "Создать попытку"}
+                  {t(
+                    attempt.isPending
+                      ? "practice.workspace.creating"
+                      : "practice.workspace.create",
+                  )}
                 </Button>
               )}
             </div>
@@ -788,7 +837,9 @@ export function ExerciseClient() {
             className="overflow-hidden rounded-xl border border-border bg-card"
           >
             <div className="border-b border-border bg-muted/35 px-4 py-3 text-sm">
-              <span className="font-medium">Следующий шаг: </span>
+              <span className="font-medium">
+                {t("practice.nextAction.label")}{" "}
+              </span>
               <span className="text-muted-foreground">{nextAction}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
@@ -799,7 +850,11 @@ export function ExerciseClient() {
                 onClick={() => loadDiff.mutate()}
               >
                 <ClipboardTextIcon aria-hidden />
-                {loadDiff.isPending ? "Обновляю diff…" : "Обновить Git diff"}
+                {t(
+                  loadDiff.isPending
+                    ? "practice.diff.refreshing"
+                    : "practice.diff.refresh",
+                )}
               </Button>
               <Button
                 size="sm"
@@ -808,7 +863,11 @@ export function ExerciseClient() {
                 onClick={() => runTests.mutate()}
               >
                 <PlayIcon aria-hidden />
-                {runTests.isPending ? "Тестирую…" : "Запустить тесты"}
+                {t(
+                  runTests.isPending
+                    ? "practice.tests.running"
+                    : "practice.tests.run",
+                )}
               </Button>
               <Button
                 size="sm"
@@ -816,37 +875,41 @@ export function ExerciseClient() {
                 onClick={() => runReview.mutate(undefined)}
               >
                 <FlaskIcon aria-hidden />
-                {runReview.isPending
-                  ? "Проверка читает…"
-                  : "Запросить проверку"}
+                {t(
+                  runReview.isPending
+                    ? "practice.review.running"
+                    : "practice.review.request",
+                )}
               </Button>
             </div>
             <div className="grid min-h-72 gap-px bg-border lg:grid-cols-2">
               <div className="min-w-0 bg-background p-4">
                 <p className="mb-3 text-xs font-medium text-muted-foreground">
-                  Diff от baseline
+                  {t("practice.diff.title")}
                 </p>
                 <pre
                   data-testid="exercise-diff"
                   className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5"
                 >
-                  {diff?.patch ||
-                    "Diff появится после первой самостоятельной правки."}
+                  {diff?.patch || t("practice.diff.empty")}
                 </pre>
                 {diff?.truncated ? (
                   <p className="mt-3 text-xs text-warning-foreground">
-                    Diff обрезан серверным лимитом.
+                    {t("practice.diff.truncated")}
                   </p>
                 ) : null}
               </div>
               <div className="min-w-0 bg-background p-4">
                 <p className="mb-3 text-xs font-medium text-muted-foreground">
-                  Последний test run
+                  {t("practice.testRun.title")}
                 </p>
                 <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5">
                   {latestTest
-                    ? `${latestTest.output}\n\nexit code: ${latestTest.exitCode}`
-                    : "Тесты ещё не запускались."}
+                    ? t("practice.testRun.output", {
+                        output: latestTest.output,
+                        exitCode: latestTest.exitCode,
+                      })
+                    : t("practice.testRun.empty")}
                 </pre>
                 {latestTest ? (
                   <Badge
@@ -858,12 +921,14 @@ export function ExerciseClient() {
                         : "warning"
                     }
                   >
-                    {latestTest.status === "passed" &&
-                    latestTest.workspaceCurrent
-                      ? "Тесты прошли на текущем diff"
-                      : latestTest.status === "failed"
-                        ? "Тесты не прошли"
-                        : "Код изменён после теста"}
+                    {t(
+                      latestTest.status === "passed" &&
+                        latestTest.workspaceCurrent
+                        ? "practice.testRun.status.passed"
+                        : latestTest.status === "failed"
+                          ? "practice.testRun.status.failed"
+                          : "practice.testRun.status.stale",
+                    )}
                   </Badge>
                 ) : null}
               </div>
@@ -871,12 +936,15 @@ export function ExerciseClient() {
           </div>
         </section>
 
-        <aside className="flex flex-col gap-4" aria-label="Проверка и темы">
+        <aside
+          className="flex flex-col gap-4"
+          aria-label={t("practice.sidebar.label")}
+        >
           <div
             data-slot="exercise-topics"
             className="rounded-xl border border-border bg-card p-6"
           >
-            <h2 className="font-semibold">Тренируемые темы</h2>
+            <h2 className="font-semibold">{t("practice.topics.title")}</h2>
             <div className="mt-3 flex flex-wrap gap-2">
               {exercise.topics.map((topic) => (
                 <Badge key={topic} variant="secondary">
@@ -890,7 +958,7 @@ export function ExerciseClient() {
             className="rounded-xl border border-border bg-card p-6"
           >
             <div className="flex items-center justify-between gap-4">
-              <h2 className="font-semibold">Reviewer</h2>
+              <h2 className="font-semibold">{t("practice.reviewer.title")}</h2>
               <Badge
                 variant={
                   review?.status === "passed"
@@ -900,11 +968,13 @@ export function ExerciseClient() {
                       : "secondary"
                 }
               >
-                {review?.status === "passed"
-                  ? "Принято"
-                  : review
-                    ? "Нужны изменения"
-                    : "Не запускался"}
+                {t(
+                  review?.status === "passed"
+                    ? "practice.reviewer.status.accepted"
+                    : review
+                      ? "practice.reviewer.status.changesRequested"
+                      : "practice.reviewer.status.notRun",
+                )}
               </Badge>
             </div>
             {review ? (
@@ -912,12 +982,16 @@ export function ExerciseClient() {
                 <p className="text-sm leading-6">{review.summary}</p>
                 {review.evidenceBundle ? (
                   <div className="rounded-lg border border-border bg-muted/40 p-3">
-                    <p className="text-xs font-medium">Капсула доказательств</p>
+                    <p className="text-xs font-medium">
+                      {t("practice.evidenceBundle.title")}
+                    </p>
                     <p className="mt-1 break-all font-mono text-[11px] leading-5 text-muted-foreground">
                       {review.evidenceBundle.sha256}
                     </p>
                     <p className="mt-1 break-all font-mono text-[11px] leading-5 text-muted-foreground">
-                      snapshot {review.evidenceBundle.workspaceSnapshotHash}
+                      {t("practice.evidenceBundle.snapshot", {
+                        hash: review.evidenceBundle.workspaceSnapshotHash,
+                      })}
                     </p>
                   </div>
                 ) : null}
@@ -937,7 +1011,9 @@ export function ExerciseClient() {
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-medium">{finding.category}</span>
                         <span className="font-mono text-xs text-muted-foreground">
-                          hint {finding.hintLevel}
+                          {t("practice.reviewer.hint", {
+                            level: finding.hintLevel,
+                          })}
                         </span>
                       </div>
                       <p className="mt-2 leading-5 text-muted-foreground">
@@ -949,8 +1025,7 @@ export function ExerciseClient() {
               </div>
             ) : (
               <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                Review становится доступен после изменённого diff и успешного
-                теста на текущих файлах. Он остаётся read-only.
+                {t("practice.reviewer.empty")}
               </p>
             )}
           </div>
@@ -959,9 +1034,11 @@ export function ExerciseClient() {
               onClick={() => acceptReview.mutate()}
               disabled={acceptReview.isPending}
             >
-              {acceptReview.isPending
-                ? "Сохраняю подтверждения навыка…"
-                : "Принять проверку и продолжить"}
+              {t(
+                acceptReview.isPending
+                  ? "practice.reviewer.accepting"
+                  : "practice.reviewer.accept",
+              )}
             </Button>
           ) : null}
           {review?.status === "changes_requested" ? (
@@ -969,8 +1046,7 @@ export function ExerciseClient() {
               role="status"
               className="rounded-lg bg-muted p-4 text-sm leading-6 text-muted-foreground"
             >
-              Исправьте код в Zed, снова запустите тесты и запросите новое
-              review. Текущее review не завершает юнит.
+              {t("practice.reviewer.changesRequested")}
             </p>
           ) : null}
         </aside>
@@ -978,31 +1054,39 @@ export function ExerciseClient() {
       <AlertDialog open={pendingReviewDisclosure !== null}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Отправить evidence внешнему AI?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t("practice.disclosure.title")}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Reviewer получит только зафиксированный bundle. Разрешение
-              действует один раз.
+              {t("practice.disclosure.description")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {pendingReviewDisclosure ? (
             <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 text-sm">
               <div>
-                <dt className="font-medium">Получатель</dt>
+                <dt className="font-medium">
+                  {t("practice.disclosure.destination")}
+                </dt>
                 <dd className="text-muted-foreground">
                   {pendingReviewDisclosure.disclosure.scope.destination}
                 </dd>
               </div>
               <div>
-                <dt className="font-medium">Данные</dt>
+                <dt className="font-medium">{t("practice.disclosure.data")}</dt>
                 <dd className="text-muted-foreground">
-                  {pendingReviewDisclosure.disclosure.scope.payloadCategories.join(
-                    ", ",
-                  )}{" "}
-                  · {pendingReviewDisclosure.disclosure.scope.byteCount} bytes
+                  {t("practice.disclosure.dataSummary", {
+                    categories:
+                      pendingReviewDisclosure.disclosure.scope.payloadCategories.join(
+                        ", ",
+                      ),
+                    bytes: pendingReviewDisclosure.disclosure.scope.byteCount,
+                  })}
                 </dd>
               </div>
               <div>
-                <dt className="font-medium">Не отправляется</dt>
+                <dt className="font-medium">
+                  {t("practice.disclosure.exclusions")}
+                </dt>
                 <dd className="text-muted-foreground">
                   {pendingReviewDisclosure.disclosure.scope.exclusions.join(
                     ", ",
@@ -1016,13 +1100,13 @@ export function ExerciseClient() {
               disabled={runReview.isPending}
               onClick={() => void cancelReviewDisclosure()}
             >
-              Не отправлять
+              {t("practice.disclosure.cancel")}
             </AlertDialogCancel>
             <AlertDialogAction
               disabled={runReview.isPending}
               onClick={() => void approveReviewDisclosure()}
             >
-              Разрешить один раз
+              {t("practice.disclosure.approveOnce")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -12,7 +12,7 @@ import {
 
 describe("versioned prompt contracts", () => {
   it("contains one agent prompt per role plus the required workflow prompts", () => {
-    expect(promptDefinitions).toHaveLength(10);
+    expect(promptDefinitions).toHaveLength(11);
     expect(new Set(promptDefinitions.map((prompt) => prompt.role))).toEqual(
       new Set(AgentRoleSchema.options),
     );
@@ -60,6 +60,9 @@ describe("versioned prompt contracts", () => {
     expect(
       getLatestWorkflowPrompt("curriculum-reviewer").systemPrompt,
     ).toContain("Do not publish");
+    expect(getLatestPrompt("course-designer").systemPrompt).toContain(
+      "Do not apply, publish, install",
+    );
   });
 
   it("keeps reviewer read-only", () => {

@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PaperPlaneTiltIcon, StopIcon } from "@phosphor-icons/react";
 
 import { api, streamAgent } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -72,10 +73,11 @@ type Disclosure = {
   };
   expiresAt: string;
 };
-const agentFailureMessage = "Не удалось получить ответ.";
-const agentCancellationMessage = "Ответ остановлен.";
 
 export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
+  const { t } = useI18n();
+  const agentFailureMessage = t("chat.error.response");
+  const agentCancellationMessage = t("chat.status.cancelled");
   const queryClient = useQueryClient();
   const [role, setRole] = useState<Role>(initialRole);
   const [input, setInput] = useState("");
@@ -116,10 +118,10 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
     setMessages(
       history.data.messages.map((message) => ({
         ...message,
-        label: message.role === "user" ? "Ты" : role,
+        label: message.role === "user" ? t("chat.label.you") : role,
       })),
     );
-  }, [history.data, role, streaming]);
+  }, [history.data, role, streaming, t]);
 
   async function send() {
     const message = input.trim();
@@ -141,7 +143,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
     } catch (error) {
       setStreamError(
         error instanceof Error
-          ? `Не удалось подготовить запрос: ${error.message}`
+          ? t("chat.error.prepare", { error: error.message })
           : agentFailureMessage,
       );
     } finally {
@@ -164,7 +166,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
     } catch (error) {
       setStreamError(
         error instanceof Error
-          ? `Не удалось отправить запрос: ${error.message}`
+          ? t("chat.error.send", { error: error.message })
           : agentFailureMessage,
       );
     } finally {
@@ -200,7 +202,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
       {
         id: userId,
         role: "user",
-        label: "Ты",
+        label: t("chat.label.you"),
         content: message,
       },
       { id: assistantId, role: "assistant", label: role, content: "" },
@@ -277,7 +279,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
       assistantContent = controller.signal.aborted
         ? agentCancellationMessage
         : error instanceof Error
-          ? `Не удалось получить ответ: ${error.message}`
+          ? t("chat.error.responseDetail", { error: error.message })
           : agentFailureMessage;
       if (!controller.signal.aborted) setStreamError(assistantContent);
       setMessages((current) =>
@@ -293,7 +295,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
         (controller.signal.aborted || terminalReason === "cancelled"
           ? agentCancellationMessage
           : terminalReason === "completed"
-            ? "Агент завершил ответ без текста."
+            ? t("chat.error.emptyResponse")
             : agentFailureMessage);
       queryClient.setQueryData(["agent-history", role], {
         messages: [
@@ -341,7 +343,10 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
       className="flex min-h-[650px] flex-col overflow-hidden rounded-xl border border-border bg-card"
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-3">
-        <div className="flex flex-wrap gap-1" aria-label="Роль агента">
+        <div
+          className="flex flex-wrap gap-1"
+          aria-label={t("chat.a11y.roleSelector")}
+        >
           {roles.map((item) => (
             <Button
               key={item}
@@ -373,10 +378,10 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
           <span>
             {streamError ??
               (history.error instanceof Error
-                ? `История недоступна: ${history.error.message}`
+                ? t("chat.error.history", { error: history.error.message })
                 : settings.error instanceof Error
-                  ? `Настройки провайдера недоступны: ${settings.error.message}`
-                  : "Данные агента временно недоступны.")}
+                  ? t("chat.error.settings", { error: settings.error.message })
+                  : t("chat.error.dataUnavailable"))}
           </span>
           {!streamError ? (
             <Button
@@ -388,18 +393,18 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
                 void settings.refetch();
               }}
             >
-              Повторить
+              {t("chat.retry")}
             </Button>
           ) : null}
         </div>
       ) : null}
       <p className="sr-only" role="status" aria-live="polite">
         {streaming
-          ? "Агент формирует ответ"
+          ? t("chat.status.generating")
           : streamError
-            ? "Ответ не получен"
+            ? t("chat.status.failed")
             : messages.length
-              ? "Ответ готов"
+              ? t("chat.status.ready")
               : ""}
       </p>
       <MessageScrollerProvider>
@@ -408,12 +413,9 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
             <MessageScrollerContent className="gap-4">
               {messages.length === 0 ? (
                 <div className="m-auto max-w-md text-center">
-                  <p className="font-medium">
-                    Сначала сформулируй свой вопрос или ответ
-                  </p>
+                  <p className="font-medium">{t("chat.empty.title")}</p>
                   <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                    Агент не будет писать практическое решение вместо тебя.
-                    Проверка решения работает только с зафиксированным diff.
+                    {t("chat.empty.description")}
                   </p>
                 </div>
               ) : (
@@ -434,7 +436,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
                           <BubbleContent>
                             {message.content || (
                               <span
-                                aria-label="Агент печатает"
+                                aria-label={t("chat.a11y.typing")}
                                 className="inline-block h-4 w-1 animate-pulse bg-primary"
                               />
                             )}
@@ -469,7 +471,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
       </MessageScrollerProvider>
       <div className="border-t border-border p-3 md:p-4">
         <label className="sr-only" htmlFor="agent-message">
-          Сообщение агенту
+          {t("chat.composer.label")}
         </label>
         <div className="flex items-end gap-2 rounded-lg border border-input bg-background p-2 focus-within:ring-2 focus-within:ring-ring">
           <textarea
@@ -483,14 +485,14 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
                 void send();
               }
             }}
-            placeholder="Напиши свой ответ или попроси уточняющий вопрос…"
+            placeholder={t("chat.composer.placeholder")}
             className="max-h-40 min-h-10 flex-1 resize-none bg-transparent px-2 py-1 text-sm leading-6 outline-none placeholder:text-muted-foreground"
           />
           {streaming ? (
             <Button
               size="icon"
               variant="outline"
-              aria-label="Остановить ответ"
+              aria-label={t("chat.composer.stop")}
               onClick={() => abortRef.current?.abort()}
             >
               <StopIcon aria-hidden />
@@ -498,7 +500,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
           ) : (
             <Button
               size="icon"
-              aria-label="Отправить"
+              aria-label={t("chat.composer.send")}
               disabled={!input.trim()}
               onClick={() => void send()}
             >
@@ -515,21 +517,23 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Отправить данные внешнему AI?</AlertDialogTitle>
+            <AlertDialogTitle>{t("chat.disclosure.title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Разрешение действует один раз только для указанного запроса.
+              {t("chat.disclosure.description")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {pendingDisclosure ? (
             <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 text-sm">
               <div>
-                <dt className="font-medium">Получатель</dt>
+                <dt className="font-medium">
+                  {t("chat.disclosure.destination")}
+                </dt>
                 <dd className="text-muted-foreground">
                   {pendingDisclosure.disclosure.scope.destination}
                 </dd>
               </div>
               <div>
-                <dt className="font-medium">Данные</dt>
+                <dt className="font-medium">{t("chat.disclosure.data")}</dt>
                 <dd className="text-muted-foreground">
                   {pendingDisclosure.disclosure.scope.payloadCategories.join(
                     ", ",
@@ -538,7 +542,9 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
                 </dd>
               </div>
               <div>
-                <dt className="font-medium">Не отправляется</dt>
+                <dt className="font-medium">
+                  {t("chat.disclosure.exclusions")}
+                </dt>
                 <dd className="text-muted-foreground">
                   {pendingDisclosure.disclosure.scope.exclusions.join(", ")}
                 </dd>
@@ -547,10 +553,10 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => void cancelDisclosure()}>
-              Не отправлять
+              {t("chat.disclosure.cancel")}
             </AlertDialogCancel>
             <AlertDialogAction onClick={() => void approveDisclosure()}>
-              Разрешить один раз
+              {t("chat.disclosure.approve")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

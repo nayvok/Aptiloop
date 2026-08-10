@@ -358,11 +358,84 @@ describe("curriculum editor routes", () => {
     );
     expect(reorder.status).toBe(200);
 
+    const validation = await body<{
+      report: {
+        valid: boolean;
+        errors: number;
+        validationHash: string;
+        draftHash: string;
+      };
+    }>(
+      await request(
+        app,
+        `/api/curriculum-editor/versions/${draft.version.id}/validation`,
+      ),
+    );
+    expect(validation.report).toMatchObject({ valid: true, errors: 0 });
+    expect(validation.report.validationHash).toMatch(/^sha256:[a-f0-9]{64}$/u);
+
+    const preview = await body<{
+      preview: { title: string; draftHash: string; weeks: unknown[] };
+    }>(
+      await request(
+        app,
+        `/api/curriculum-editor/versions/${draft.version.id}/preview`,
+      ),
+    );
+    expect(preview.preview).toMatchObject({
+      title: "JavaScript revision 1",
+      draftHash: validation.report.draftHash,
+    });
+    expect(JSON.stringify(preview)).not.toContain("referenceAnswer");
+    expect(JSON.stringify(preview)).not.toContain("correctIndex");
+
+    const review = await body<{
+      review: {
+        ready: boolean;
+        added: number;
+        changed: number;
+        removed: number;
+        changeReviewHash: string;
+      };
+    }>(
+      await request(
+        app,
+        `/api/curriculum-editor/versions/${draft.version.id}/change-review`,
+      ),
+    );
+    expect(review.review).toMatchObject({
+      ready: true,
+      added: 5,
+      changed: 0,
+      removed: 0,
+    });
+
+    const stalePublish = await request(
+      app,
+      `/api/curriculum-editor/versions/${draft.version.id}/publish`,
+      "POST",
+      {
+        operationId: "publish-with-stale-evidence",
+        previewHash: preview.preview.draftHash,
+        validationHash: `sha256:${"0".repeat(64)}`,
+        changeReviewHash: review.review.changeReviewHash,
+      },
+    );
+    expect(stalePublish.status).toBe(409);
+    expect(await stalePublish.json()).toMatchObject({
+      error: { code: "release_evidence_stale" },
+    });
+
     const publishResponse = await request(
       app,
       `/api/curriculum-editor/versions/${draft.version.id}/publish`,
       "POST",
-      { operationId: "publish-revision-one" },
+      {
+        operationId: "publish-revision-one",
+        validationHash: validation.report.validationHash,
+        changeReviewHash: review.review.changeReviewHash,
+        previewHash: preview.preview.draftHash,
+      },
     );
     expect(publishResponse.status).toBe(200);
     const published = await body<{
@@ -575,11 +648,34 @@ describe("curriculum editor routes", () => {
       },
     );
     const draft = await body<{ version: { id: string } }>(draftResponse);
+    const invalidValidation = await body<{
+      report: { validationHash: string; valid: boolean };
+    }>(
+      await request(
+        app,
+        `/api/curriculum-editor/versions/${draft.version.id}/validation`,
+      ),
+    );
+    const invalidReview = await body<{
+      review: { changeReviewHash: string };
+    }>(
+      await request(
+        app,
+        `/api/curriculum-editor/versions/${draft.version.id}/change-review`,
+      ),
+    );
+    expect(invalidValidation.report.valid).toBe(false);
+
     const publish = await request(
       app,
       `/api/curriculum-editor/versions/${draft.version.id}/publish`,
       "POST",
-      { operationId: "publish-empty" },
+      {
+        operationId: "publish-empty",
+        validationHash: invalidValidation.report.validationHash,
+        changeReviewHash: invalidReview.review.changeReviewHash,
+        previewHash: invalidValidation.report.validationHash,
+      },
     );
     expect(publish.status).toBe(409);
     expect(await publish.json()).toMatchObject({

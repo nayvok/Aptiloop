@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InterviewClient } from "@/components/interview-client";
+import { LocaleProvider } from "@/lib/i18n";
 
 const { apiMock, pushMock, searchState } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -220,7 +221,11 @@ function renderWithQuery(children: ReactNode) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
+        {children}
+      </LocaleProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -340,7 +345,7 @@ describe("versioned interview workflow", () => {
       screen.getByText("Добавлять минимальный пример."),
     ).toBeInTheDocument();
     expect(screen.getByText(/Lexical scope определяется/u)).toBeInTheDocument();
-    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.getByText(/100\s%/u)).toBeInTheDocument();
     expect(apiMock).toHaveBeenLastCalledWith(
       "/interviews/v2/interview-1/finish",
       expect.objectContaining({

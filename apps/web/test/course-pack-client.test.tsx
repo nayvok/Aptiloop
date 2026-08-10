@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CoursePackClient } from "@/components/course-pack-client";
+import { LocaleProvider } from "@/lib/i18n";
 
 const { apiMock, pushMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -36,7 +37,11 @@ function renderWithQuery(children: ReactNode) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
+        {children}
+      </LocaleProvider>
+    </QueryClientProvider>,
   );
 }
 

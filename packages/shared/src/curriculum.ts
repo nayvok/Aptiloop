@@ -592,3 +592,81 @@ export const UnitProgressSchema = z
     }
   });
 export type UnitProgress = z.infer<typeof UnitProgressSchema>;
+
+const CourseDraftAddWeekChangeSchema = z
+  .object({
+    kind: z.literal("add-week"),
+    stableId: IdSchema,
+    title: ShortTextSchema,
+    description: TextSchema.nullable().optional(),
+    orderIndex: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+const CourseDraftAddDayChangeSchema = z
+  .object({
+    kind: z.literal("add-day"),
+    parentStableId: IdSchema,
+    stableId: IdSchema,
+    title: ShortTextSchema,
+    description: TextSchema.nullable().optional(),
+    goal: TextSchema,
+    estimatedMinutes: z.number().int().min(1).max(10_000),
+    prerequisites: StringListSchema.optional(),
+    expectedOutcomes: StringListSchema.optional(),
+    depthLevel: DepthLevelSchema,
+    outOfScope: StringListSchema.optional(),
+    topics: StringListSchema.optional(),
+    orderIndex: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+const CourseDraftAddUnitChangeSchema = z
+  .object({
+    kind: z.literal("add-unit"),
+    parentStableId: IdSchema,
+    stableId: IdSchema,
+    type: UnitTypeSchema,
+    title: ShortTextSchema,
+    description: TextSchema.nullable().optional(),
+    estimatedMinutes: z.number().int().min(1).max(10_000).nullable().optional(),
+    objectives: StringListSchema.optional(),
+    checklist: z.array(UnitChecklistItemSchema).max(500).optional(),
+    sources: z.array(CurriculumSourceSchema).max(500).optional(),
+    questions: z.array(UnitQuestionSchema).max(500).optional(),
+    misconceptions: StringListSchema.optional(),
+    referenceAnswer: TextSchema.nullable().optional(),
+    completionCriteria: z.array(UnitCompletionCriterionSchema).min(1).max(50),
+    unlockRules: z.array(UnitUnlockRuleSchema).max(500).optional(),
+    optional: z.boolean().optional(),
+    depthLevel: DepthLevelSchema.nullable().optional(),
+    payload: UnitPayloadSchema,
+    orderIndex: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.type !== input.payload.type) {
+      context.addIssue({
+        code: "custom",
+        path: ["payload", "type"],
+        message: "Unit payload type must match unit type",
+      });
+    }
+  });
+
+export const CourseDraftProposalChangeSchema = z.discriminatedUnion("kind", [
+  CourseDraftAddWeekChangeSchema,
+  CourseDraftAddDayChangeSchema,
+  CourseDraftAddUnitChangeSchema,
+]);
+export type CourseDraftProposalChange = z.infer<
+  typeof CourseDraftProposalChangeSchema
+>;
+
+export const CourseDraftProposalSchema = z
+  .object({
+    summary: TextSchema,
+    changes: z.array(CourseDraftProposalChangeSchema).min(1).max(50),
+  })
+  .strict();
+export type CourseDraftProposal = z.infer<typeof CourseDraftProposalSchema>;

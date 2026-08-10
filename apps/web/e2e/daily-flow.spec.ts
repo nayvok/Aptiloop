@@ -55,6 +55,11 @@ test("hydrates stored light and dark themes without an icon mismatch", async ({
   );
   await expect(page.locator("html")).toHaveClass(/dark/u);
   await expect(
+    page.getByRole("heading", { name: "Choose interface language" }),
+  ).toBeVisible();
+  await page.getByLabel("Interface language").selectOption("ru-RU");
+  await page.getByRole("button", { name: "Использовать этот язык" }).click();
+  await expect(
     page.getByRole("button", { name: "Включить системную тему" }),
   ).toBeVisible();
   expect(hydrationErrors).toEqual([]);

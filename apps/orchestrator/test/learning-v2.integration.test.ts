@@ -32,6 +32,15 @@ const RevisionGraphIdentitySchema = z.object({
     ),
   }),
 });
+const ValidationResponseSchema = z.object({
+  report: z.object({
+    validationHash: z.string(),
+    draftHash: z.string(),
+  }),
+});
+const ChangeReviewResponseSchema = z.object({
+  review: z.object({ changeReviewHash: z.string() }),
+});
 
 afterEach(async () => {
   for (const runtime of runtimes.splice(0)) await runtime.close();
@@ -116,12 +125,33 @@ async function cloneAndPublishActiveRevision(
       throw new Error(`Revision activity change failed: ${changed.status}`);
     }
   }
+  const validation = ValidationResponseSchema.parse(
+    await (
+      await request(
+        app,
+        `/api/curriculum-editor/versions/${clone.version.id}/validation`,
+      )
+    ).json(),
+  );
+  const review = ChangeReviewResponseSchema.parse(
+    await (
+      await request(
+        app,
+        `/api/curriculum-editor/versions/${clone.version.id}/change-review`,
+      )
+    ).json(),
+  );
   const published = await request(
     app,
     `/api/curriculum-editor/versions/${clone.version.id}/publish`,
     {
       method: "POST",
-      body: JSON.stringify({ operationId: `${operationPrefix}-publish` }),
+      body: JSON.stringify({
+        operationId: `${operationPrefix}-publish`,
+        validationHash: validation.report.validationHash,
+        changeReviewHash: review.review.changeReviewHash,
+        previewHash: validation.report.draftHash,
+      }),
     },
   );
   if (published.status !== 200) {
