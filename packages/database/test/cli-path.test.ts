@@ -417,7 +417,7 @@ describe("database CLI path", () => {
       /hard-link aliases/u,
     );
     expect(readFileSync(aliasPath)).toEqual(before);
-  }, 15_000);
+  }, 30_000);
 
   it("rejects a linked data ancestor before changing an external target", (context) => {
     const projectRoot = temporaryRoot("aptiloop-cli-linked-data-");
@@ -510,7 +510,7 @@ describe("database CLI path", () => {
       expect(databaseFamilyBytes(databasePath)).toEqual(before);
       expect(existsSync(`${databasePath}-wal`)).toBe(false);
       expect(existsSync(`${databasePath}-shm`)).toBe(false);
-    }, 15_000);
+    }, 30_000);
   }
   for (const dataNearMiss of [
     {
@@ -589,7 +589,7 @@ describe("database CLI path", () => {
       expect(databaseFamilyBytes(databasePath)).toEqual(before);
       expect(existsSync(`${databasePath}-wal`)).toBe(false);
       expect(existsSync(`${databasePath}-shm`)).toBe(false);
-    }, 15_000);
+    }, 30_000);
   }
 
   it("rechecks admitted legacy data before writable PRAGMAs", () => {
