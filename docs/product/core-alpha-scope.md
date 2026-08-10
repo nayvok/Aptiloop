@@ -11,15 +11,15 @@ Status labels used throughout the specification set:
 - **Proposed pending owner approval**
 - **Future**
 
-## M0 boundary
+## Implemented baseline boundary
 
 **Implemented baseline**
 
-M0 is documentation, audit, and approval preparation on `docs/core-alpha-audit`. The runnable code remains Dev Learning Harness. Current package names, hardcoded Russian UI, legacy routes, bundled curriculum, Curriculum Editor, provider adapters, and data model have not been renamed or migrated to Aptiloop.
+The runnable code remains Dev Learning Harness. M1–M5 are implemented around that vertical slice. The baseline includes safety containment; strict Course/revision/section/lesson/finite-Activity/source/capsule/adaptation/session-context/evidence/review contracts; bounded declarative Course Pack V1 validation and lifecycle; replay-complete deterministic Learning Kernel facts/projections; and a trusted local Execution Fabric with app-owned Node/Python environment/check contracts. Current package/UI identity, hardcoded Russian content, incomplete target navigation/localization, legacy tables/routes, and bundled development curriculum remain visible compatibility surfaces.
 
-The current baseline has valuable seams to preserve incrementally: Next.js → Hono boundaries, strict shared contracts, SQLite repositories and migrations, versioned curriculum revisions, immutable learning-session snapshots, deterministic learning-core rules, typed unit evidence, isolated exercise attempts, allowlisted tests, Git-diff freshness, read-only review, and restart-safe flows.
+The current baseline has valuable seams to preserve incrementally: Next.js → Hono boundaries, strict shared contracts, SQLite repositories and forward-only migrations, immutable Course and Pack revisions, M2-guarded session snapshots and quarantine compatibility, M4 append-only kernel facts and canonical projections, M5 trusted environment/check IDs, isolated exercise attempts, bounded process execution, Git-diff freshness, read-only review, and restart-safe flows.
 
-The baseline is not Core Alpha-compliant merely because a similar workflow exists. In particular, Course Packs, a Course top entity, personal adaptations, Source Snapshots, Knowledge Capsules, Pi typed-tool policy, general Execution Fabric, Node/Python environment contracts, complete locale separation, target navigation, and Adaptive Studio do not yet exist.
+The baseline is not the complete Core Alpha product merely because M1–M5 exist. Production Course content and approved Source Snapshots/Knowledge Capsules, applying personal adaptations in Adaptive Studio, Pi typed-tool/provider policy, complete locale separation, target navigation/identity, independently isolated untrusted execution, and Adaptive Studio remain **Approved Core Alpha target** or **Future** work as classified elsewhere. The 526 unresolved migration quarantine rows remain preserved history, not valid target facts.
 
 ## Objective
 
@@ -171,20 +171,20 @@ The companion [User journeys](user-journeys.md) defines normal, recovery, author
 
 Core Alpha is not approved until evidence closes all of these gates:
 
-| Gate | Required evidence |
-| --- | --- |
-| Product | Scope, terminology, journeys, non-goals, and privacy are approved and internally consistent. |
-| Course model | Course/revision/adaptation/activity/source/capsule contracts and invariants are implemented and replayable. |
-| Pack safety | Hostile and malformed inputs fail closed; no executable authority or secrets cross the pack boundary. |
-| Learning Kernel | Deterministic replay reproduces state, mastery, mistakes, and review schedule from complete evidence. |
-| Migration | Candidate DB inventory, verified backup, additive migration, quarantine, reconciliation, rollback, and representative-data rehearsal pass. |
-| Execution | Node and Python contracts, trusted check registry, workspace isolation, bounds, cleanup, and fingerprinted evidence pass. |
-| Runtime/provider | Typed Pi tools, role policy, auth resolution, secret redaction, cancellation, and explicit no-fallback behavior pass. |
-| Security/privacy | Threat controls, private-data disclosure consent, origin/path/process/provider boundaries, and dependency policy pass. |
-| Studio | Manual authoring is complete; typed AI proposals are optional; validate/preview/apply/publish are separate gates. |
-| Localization | `en-US` and `ru-RU` UI plus independent Course locale behavior pass on desktop and mobile. |
-| Quality | Fast verification, E2E, migration rehearsal, and required local/provider/editor smokes pass. |
-| Legal | Project/content/package license boundaries, provenance, notices/SBOM, trademarks, and counsel review are approved. |
+| Gate             | Required evidence                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Product          | Scope, terminology, journeys, non-goals, and privacy are approved and internally consistent.                                               |
+| Course model     | Course/revision/adaptation/activity/source/capsule contracts and invariants are implemented and replayable.                                |
+| Pack safety      | Hostile and malformed inputs fail closed; no executable authority or secrets cross the pack boundary.                                      |
+| Learning Kernel  | Deterministic replay reproduces state, mastery, mistakes, and review schedule from complete evidence.                                      |
+| Migration        | Candidate DB inventory, verified backup, additive migration, quarantine, reconciliation, rollback, and representative-data rehearsal pass. |
+| Execution        | Node and Python contracts, trusted check registry, workspace isolation, bounds, cleanup, and fingerprinted evidence pass.                  |
+| Runtime/provider | Typed Pi tools, role policy, auth resolution, secret redaction, cancellation, and explicit no-fallback behavior pass.                      |
+| Security/privacy | Threat controls, private-data disclosure consent, origin/path/process/provider boundaries, and dependency policy pass.                     |
+| Studio           | Manual authoring is complete; typed AI proposals are optional; validate/preview/apply/publish are separate gates.                          |
+| Localization     | `en-US` and `ru-RU` UI plus independent Course locale behavior pass on desktop and mobile.                                                 |
+| Quality          | Fast verification, E2E, migration rehearsal, and required local/provider/editor smokes pass.                                               |
+| Legal            | Project/content/package license boundaries, provenance, notices/SBOM, trademarks, and counsel review are approved.                         |
 
 ## Core Alpha release matrix
 
@@ -192,63 +192,63 @@ Core Alpha is not approved until evidence closes all of these gates:
 
 All 50 gates below are release-blocking and are fixed before implementation approval. M12 must attach observed evidence to every row. A missing, failed, stale, inferred, or mock-only result does not close a gate. A proposed deferral changes the approved release scope and therefore requires a new explicit owner decision; it is not an implicit waiver.
 
-| # | Release gate | Milestone | Required closing evidence |
-| ---: | --- | --- | --- |
-| 1 | Application launches without critical errors. | M12 | Clean local-process and loopback-Compose launch smoke with no critical browser/Core/runtime errors. |
-| 2 | English UI works. | M7/M12 | Complete `en-US` catalog and required journeys verified without missing/mixed system strings. |
-| 3 | Russian UI works. | M7/M12 | Complete `ru-RU` catalog and required journeys verified without missing/mixed system strings. |
-| 4 | Mobile layouts work. | M7–M10/M12 | Required screens and supported workflows pass at 320px and representative 390×844 viewports without horizontal overflow. |
-| 5 | Theme modes work. | M7–M10/M12 | Light, dark, and system modes preserve hierarchy, contrast, state, and persistence. |
-| 6 | Type checking, linting, formatting, and builds pass. | M1/M12 | Committed CI and clean candidate run pass the documented quality commands. |
-| 7 | E2E tests pass. | M1/M12 | Every supported end-to-end scenario passes on the release candidate. |
-| 8 | Migrations pass on old local data. | M2/M11/M12 | Inventory, verified backup, additive upgrade, reconciliation, rollback/restore, and representative old-data rehearsal pass. |
-| 9 | Lesson flow works. | M4/M8 | Finite graph start/resume/next/complete path passes with kernel-owned transitions. |
-| 10 | First attempt is preserved. | M4 | Replay and DTO tests prove immutable unaided first-attempt capture before protected help. |
-| 11 | Tutor works. | M6/M8 | Bounded Tutor dialogue plus manual fallback passes; model output cannot complete or mutate learning state. |
-| 12 | Quiz works. | M4/M8 | Protected scoring, retry history, criteria, and evidence transitions pass. |
-| 13 | Code reading works. | M4/M8 | Prediction/explanation response, protected feedback, and typed evidence pass. |
-| 14 | Recall works. | M4/M8 | Unaided response, delayed protected answer, revision evidence, and deterministic transition pass. |
-| 15 | Explanation works. | M4/M8 | Learner-authored explanation and deterministic/manual completion evidence pass. |
-| 16 | Summary works. | M4/M8 | Summary is reproduced from persisted facts and distinguishes observations from authority. |
-| 17 | Checkpoint works. | M4/M8 | Visible criteria, locked/failed links, and kernel-owned gate transition pass. |
-| 18 | Spaced review works. | M4/M8 | Due reason, prior evidence, completion, and deterministic rescheduling pass. |
-| 19 | Code workspace works. | M5/M8 | Opaque attempt workspace, embedded/external editor mode, bounded documents, save, diff, and resume pass. |
-| 20 | External editor flow works. | M5/M8 | App-owned launch/argv plus copy/manual fallback passes without browser-controlled executable or path authority. |
-| 21 | Trusted checks run. | M5 | Known immutable check IDs resolve to exact app-owned process plans; unknown/forged IDs fail closed. |
-| 22 | Test output is visible. | M5/M8 | Bounded stdout/stderr and structured results render with truncation/status semantics and no secret leakage. |
-| 23 | Full diff is captured. | M5 | Complete baseline/current diff and digest pass changed-content/same-mtime and truncation-negative tests. |
-| 24 | Reviewer receives correct context. | M5/M6 | Exact revision/activity/capsule, full diff, fresh check, provider/model, and evidence fingerprint are recorded. |
-| 25 | Reviewer never edits code. | M5/M6 | Tool-policy and before/after workspace hashes prove zero patch/write/process authority. |
-| 26 | Correction cycle works. | M4/M8 | Changes-requested keeps activity open; learner edit → fresh check → fresh review → completion passes. |
-| 27 | Corrections are rechecked. | M4/M5 | Stale prior check/review is rejected after any edit; new fingerprints are required. |
-| 28 | Node.js environment works. | M5 | Versioned Node Environment Pack happy/failure/limit/cleanup contract suite passes on supported systems. |
-| 29 | Python environment works. | M5 | Versioned Python Environment Pack happy/failure/limit/cleanup contract suite passes on supported systems. |
-| 30 | Multiple environment types coexist. | M5 | Node and Python packs resolve independently without ID, cache, workspace, or result collisions. |
-| 31 | Missing runtime errors are understandable. | M5/M7 | UI names exact environment/version/capability, reason, safe setup action, and retained learner state. |
-| 32 | Broken execution fails gracefully. | M5/M8 | Spawn failure, timeout, cancellation, result corruption, output cap, and cleanup retain deterministic recoverable state. |
-| 33 | Evidence is stored. | M2/M4 | Typed append-only evidence has operation ID, provenance, revision/activity linkage, clock, and idempotency. |
-| 34 | Mastery updates deterministically. | M4 | Same immutable revision/snapshot/prior facts/clock produce byte-equivalent mastery output. |
-| 35 | Skills show evidence basis. | M4/M7 | Topic dimensions link to source activities/evidence and never count unvalidated interview observations. |
-| 36 | Mistakes are extracted. | M4 | Mistake projection is replayable from accepted evidence with repeated-error facts preserved. |
-| 37 | Review schedule is created. | M4 | Due items and dates replay deterministically from complete evidence and observed clock. |
-| 38 | Flashcards are generated. | M4 | Candidate cards derive from approved facts, require learner approval where specified, and export explicitly. |
-| 39 | Real provider works. | M6/M12 | At least one explicitly configured supported real provider completes an authenticated typed role smoke with provenance and no fallback. |
-| 40 | Mock is not used silently. | M1/M6 | Failure tests prove real-provider/auth/model/tool errors remain explicit and never select Mock. |
-| 41 | No-AI mode works. | M6/M9/M12 | Clean run completes required authoring and learning paths with AI Off. |
-| 42 | Model failure is understandable. | M6/M7 | UI names role/tool/provider/model/failure layer, preserves input, and offers only explicit safe choices. |
-| 43 | Provider auth is understandable. | M6/M7 | Missing/invalid credential and ownership source are explained without exposing secrets or borrowing other credentials. |
-| 44 | Runtime setup guidance works. | M5/M7 | Settings diagnostics and exact non-secret recovery actions pass for Node, Python, editor, Core, and storage states. |
-| 45 | Course can be created manually. | M9 | AI-Off typed authoring reaches valid Preview, Change review, explicit Publish, immutable history, and clone. |
-| 46 | Course can be imported. | M3 | Version-matched Authoring Kit JSON passes non-executing validation, Preview, explicit Install/Open-as-draft, canonical hash, and atomic rollback tests. |
-| 47 | Published revisions are immutable. | M2/M9 | Database guards, APIs, Studio read-only state, clone, and negative mutation tests pass. |
-| 48 | Personal adaptation remains separate. | M2/M9 | Source revision/evidence hashes remain unchanged through branch edit, personal publish, and explicit upstream integration. |
-| 49 | Security boundary checks pass. | M1–M6/M12 | AI/tool, secret, pack, path, process, loopback, privacy, dependency, and disclosure control suites pass with no unresolved High finding. |
-| 50 | Self-hosted security check is completed. | M12 | The exact supported loopback local-process/Compose topology passes bind, data-volume, secret, backup/restore, execution-label, and operator-runbook review; public/LAN deployment remains unsupported. |
+|   # | Release gate                                         | Milestone  | Required closing evidence                                                                                                                                                                              |
+| --: | ---------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+|   1 | Application launches without critical errors.        | M12        | Clean local-process and loopback-Compose launch smoke with no critical browser/Core/runtime errors.                                                                                                    |
+|   2 | English UI works.                                    | M7/M12     | Complete `en-US` catalog and required journeys verified without missing/mixed system strings.                                                                                                          |
+|   3 | Russian UI works.                                    | M7/M12     | Complete `ru-RU` catalog and required journeys verified without missing/mixed system strings.                                                                                                          |
+|   4 | Mobile layouts work.                                 | M7–M10/M12 | Required screens and supported workflows pass at 320px and representative 390×844 viewports without horizontal overflow.                                                                               |
+|   5 | Theme modes work.                                    | M7–M10/M12 | Light, dark, and system modes preserve hierarchy, contrast, state, and persistence.                                                                                                                    |
+|   6 | Type checking, linting, formatting, and builds pass. | M1/M12     | Committed CI and clean candidate run pass the documented quality commands.                                                                                                                             |
+|   7 | E2E tests pass.                                      | M1/M12     | Every supported end-to-end scenario passes on the release candidate.                                                                                                                                   |
+|   8 | Migrations pass on old local data.                   | M2/M11/M12 | Inventory, verified backup, additive upgrade, reconciliation, rollback/restore, and representative old-data rehearsal pass.                                                                            |
+|   9 | Lesson flow works.                                   | M4/M8      | Finite graph start/resume/next/complete path passes with kernel-owned transitions.                                                                                                                     |
+|  10 | First attempt is preserved.                          | M4         | Replay and DTO tests prove immutable unaided first-attempt capture before protected help.                                                                                                              |
+|  11 | Tutor works.                                         | M6/M8      | Bounded Tutor dialogue plus manual fallback passes; model output cannot complete or mutate learning state.                                                                                             |
+|  12 | Quiz works.                                          | M4/M8      | Protected scoring, retry history, criteria, and evidence transitions pass.                                                                                                                             |
+|  13 | Code reading works.                                  | M4/M8      | Prediction/explanation response, protected feedback, and typed evidence pass.                                                                                                                          |
+|  14 | Recall works.                                        | M4/M8      | Unaided response, delayed protected answer, revision evidence, and deterministic transition pass.                                                                                                      |
+|  15 | Explanation works.                                   | M4/M8      | Learner-authored explanation and deterministic/manual completion evidence pass.                                                                                                                        |
+|  16 | Summary works.                                       | M4/M8      | Summary is reproduced from persisted facts and distinguishes observations from authority.                                                                                                              |
+|  17 | Checkpoint works.                                    | M4/M8      | Visible criteria, locked/failed links, and kernel-owned gate transition pass.                                                                                                                          |
+|  18 | Spaced review works.                                 | M4/M8      | Due reason, prior evidence, completion, and deterministic rescheduling pass.                                                                                                                           |
+|  19 | Code workspace works.                                | M5/M8      | Opaque attempt workspace, embedded/external editor mode, bounded documents, save, diff, and resume pass.                                                                                               |
+|  20 | External editor flow works.                          | M5/M8      | App-owned launch/argv plus copy/manual fallback passes without browser-controlled executable or path authority.                                                                                        |
+|  21 | Trusted checks run.                                  | M5         | Known immutable check IDs resolve to exact app-owned process plans; unknown/forged IDs fail closed.                                                                                                    |
+|  22 | Test output is visible.                              | M5/M8      | Bounded stdout/stderr and structured results render with truncation/status semantics and no secret leakage.                                                                                            |
+|  23 | Full diff is captured.                               | M5         | Complete baseline/current diff and digest pass changed-content/same-mtime and truncation-negative tests.                                                                                               |
+|  24 | Reviewer receives correct context.                   | M5/M6      | Exact revision/activity/capsule, full diff, fresh check, provider/model, and evidence fingerprint are recorded.                                                                                        |
+|  25 | Reviewer never edits code.                           | M5/M6      | Tool-policy and before/after workspace hashes prove zero patch/write/process authority.                                                                                                                |
+|  26 | Correction cycle works.                              | M4/M8      | Changes-requested keeps activity open; learner edit → fresh check → fresh review → completion passes.                                                                                                  |
+|  27 | Corrections are rechecked.                           | M4/M5      | Stale prior check/review is rejected after any edit; new fingerprints are required.                                                                                                                    |
+|  28 | Node.js environment works.                           | M5         | Versioned Node Environment Pack happy/failure/limit/cleanup contract suite passes on supported systems.                                                                                                |
+|  29 | Python environment works.                            | M5         | Versioned Python Environment Pack happy/failure/limit/cleanup contract suite passes on supported systems.                                                                                              |
+|  30 | Multiple environment types coexist.                  | M5         | Node and Python packs resolve independently without ID, cache, workspace, or result collisions.                                                                                                        |
+|  31 | Missing runtime errors are understandable.           | M5/M7      | UI names exact environment/version/capability, reason, safe setup action, and retained learner state.                                                                                                  |
+|  32 | Broken execution fails gracefully.                   | M5/M8      | Spawn failure, timeout, cancellation, result corruption, output cap, and cleanup retain deterministic recoverable state.                                                                               |
+|  33 | Evidence is stored.                                  | M2/M4      | Typed append-only evidence has operation ID, provenance, revision/activity linkage, clock, and idempotency.                                                                                            |
+|  34 | Mastery updates deterministically.                   | M4         | Same immutable revision/snapshot/prior facts/clock produce byte-equivalent mastery output.                                                                                                             |
+|  35 | Skills show evidence basis.                          | M4/M7      | Topic dimensions link to source activities/evidence and never count unvalidated interview observations.                                                                                                |
+|  36 | Mistakes are extracted.                              | M4         | Mistake projection is replayable from accepted evidence with repeated-error facts preserved.                                                                                                           |
+|  37 | Review schedule is created.                          | M4         | Due items and dates replay deterministically from complete evidence and observed clock.                                                                                                                |
+|  38 | Flashcards are generated.                            | M4         | Candidate cards derive from approved facts, require learner approval where specified, and export explicitly.                                                                                           |
+|  39 | Real provider works.                                 | M6/M12     | At least one explicitly configured supported real provider completes an authenticated typed role smoke with provenance and no fallback.                                                                |
+|  40 | Mock is not used silently.                           | M1/M6      | Failure tests prove real-provider/auth/model/tool errors remain explicit and never select Mock.                                                                                                        |
+|  41 | No-AI mode works.                                    | M6/M9/M12  | Clean run completes required authoring and learning paths with AI Off.                                                                                                                                 |
+|  42 | Model failure is understandable.                     | M6/M7      | UI names role/tool/provider/model/failure layer, preserves input, and offers only explicit safe choices.                                                                                               |
+|  43 | Provider auth is understandable.                     | M6/M7      | Missing/invalid credential and ownership source are explained without exposing secrets or borrowing other credentials.                                                                                 |
+|  44 | Runtime setup guidance works.                        | M5/M7      | Settings diagnostics and exact non-secret recovery actions pass for Node, Python, editor, Core, and storage states.                                                                                    |
+|  45 | Course can be created manually.                      | M9         | AI-Off typed authoring reaches valid Preview, Change review, explicit Publish, immutable history, and clone.                                                                                           |
+|  46 | Course can be imported.                              | M3         | Version-matched Authoring Kit JSON passes non-executing validation, Preview, explicit Install/Open-as-draft, canonical hash, and atomic rollback tests.                                                |
+|  47 | Published revisions are immutable.                   | M2/M9      | Database guards, APIs, Studio read-only state, clone, and negative mutation tests pass.                                                                                                                |
+|  48 | Personal adaptation remains separate.                | M2/M9      | Source revision/evidence hashes remain unchanged through branch edit, personal publish, and explicit upstream integration.                                                                             |
+|  49 | Security boundary checks pass.                       | M1–M6/M12  | AI/tool, secret, pack, path, process, loopback, privacy, dependency, and disclosure control suites pass with no unresolved High finding.                                                               |
+|  50 | Self-hosted security check is completed.             | M12        | The exact supported loopback local-process/Compose topology passes bind, data-volume, secret, backup/restore, execution-label, and operator-runbook review; public/LAN deployment remains unsupported. |
 
 ## Current gate evidence
 
 **Implemented baseline**
 
-`npm run verify` passed during M0, but `npm run test:e2e` did not: 1 passed, 3 failed. The dependency audit reported 4 high, 1 moderate, and 1 low vulnerability. No CI workflow is committed. Current licensing is unresolved. Therefore M0 is not a Core Alpha release or implementation approval.
+At M0, `npm run verify` passed but `npm run test:e2e` was 1/4, the dependency audit reported 4 high, 1 moderate, and 1 low vulnerability, and no CI workflow was committed. Those became M1/M12 findings rather than M0 release evidence. M1 containment was accepted locally on 2026-08-09 after remediation, independent review, and refreshed verification; M12 release evidence and a hosted workflow run remain open.
 
-**Proposed pending owner approval:** visual direction A, Calm Workshop. Licensing recommendations remain pending owner approval and legal review.
+**Approved Core Alpha target:** visual direction A, Calm Workshop. The engineering licensing direction is approved, while license application and public distribution remain deferred pending professional legal review.

@@ -1,7 +1,58 @@
+import { z } from "zod";
+
+export const BrowserAgentEventSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("message.delta"),
+      turnId: z.string().min(1),
+      content: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("message.completed"),
+      turnId: z.string().min(1),
+      content: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("error"),
+      turnId: z.string().min(1),
+      message: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("session.completed"),
+      turnId: z.string().min(1),
+      reason: z.enum(["completed", "failed", "cancelled"]),
+    })
+    .strict(),
+]);
+
+export type BrowserAgentEvent = z.infer<typeof BrowserAgentEventSchema>;
+
+export function parseBrowserAgentEvent(data: string): BrowserAgentEvent | null {
+  try {
+    const result = BrowserAgentEventSchema.safeParse(JSON.parse(data));
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly failure?: {
+      code: string;
+      retryable: boolean;
+      messageKey: string;
+      diagnosticId: string;
+      recoveryAction: string | null;
+    },
   ) {
     super(message);
     this.name = "ApiError";
@@ -21,10 +72,12 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       error?: string;
+      failure?: ConstructorParameters<typeof ApiError>[2];
     } | null;
     throw new ApiError(
       body?.error ?? `Request failed (${response.status})`,
       response.status,
+      body?.failure,
     );
   }
 
@@ -34,12 +87,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export async function* streamAgent(
   body: Record<string, unknown>,
   signal?: AbortSignal,
-): AsyncGenerator<{
-  type: string;
-  content?: string;
-  message?: string;
-  name?: string;
-}> {
+): AsyncGenerator<BrowserAgentEvent> {
   const response = await fetch("/api/agent/stream", {
     method: "POST",
     headers: {
@@ -51,7 +99,15 @@ export async function* streamAgent(
   });
 
   if (!response.ok || !response.body) {
-    throw new ApiError(`Stream failed (${response.status})`, response.status);
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+      failure?: ConstructorParameters<typeof ApiError>[2];
+    } | null;
+    throw new ApiError(
+      body?.error ?? `Stream failed (${response.status})`,
+      response.status,
+      body?.failure,
+    );
   }
 
   const reader = response.body.getReader();
@@ -69,12 +125,11 @@ export async function* streamAgent(
         .split("\n")
         .find((candidate) => candidate.startsWith("data:"));
       if (line) {
-        yield JSON.parse(line.slice(5).trim()) as {
-          type: string;
-          content?: string;
-          message?: string;
-          name?: string;
-        };
+        const event = parseBrowserAgentEvent(line.slice(5).trim());
+        if (!event) {
+          throw new ApiError("Agent stream returned an invalid event", 502);
+        }
+        yield event;
       }
     }
 

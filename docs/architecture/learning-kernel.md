@@ -1,6 +1,6 @@
 # Learning Kernel
 
-**Document status:** Approved Core Alpha target with an evidenced Implemented baseline.
+**Document status:** M4 deterministic fact acceptance, replay, and projections are an **Implemented baseline**. Later model versions, additional evaluators, PostgreSQL, and federated behavior retain their labels below.
 **Definition:** the Learning Kernel is the deterministic authority for accepted learning facts, lesson state, evidence, mastery, mistakes, review items, and summaries. It is not an AI agent.
 
 ## Non-negotiable authority boundary
@@ -18,20 +18,22 @@ A browser may submit learner actions. A model may produce a typed proposal throu
 
 ## Implemented baseline
 
-**Implemented baseline.** `learning-core` has no runtime dependencies and exports pure rules (`packages/learning-core/package.json:1-24`). Its progression reducer validates graph definitions and legal transitions (`packages/learning-core/src/unit-progression.ts:47-113,177-238`). Its mastery reducer uses a closed six-dimension, six-evidence-type model; applies deterministic outcome weights, hint multipliers, repeated-error penalties, a 0..5 clamp, and a two-successful-types/two-UTC-days gate above score 4 (`packages/learning-core/src/mastery.ts:3-69,87-170`). Batch ordering is timestamp then evidence ID (`packages/learning-core/src/mastery.ts:157-169`).
+**Implemented baseline.** `packages/learning-core/src/kernel.ts` exports the pure, runtime-dependency-free `reduceLearningKernel` and `projectLearningKernel` contracts. Closed facts carry scope, operation identity, explicit observed time, typed provenance, and one of `evidence | progress | correction | review`. The reducer validates authority and links, sorts without locale/row-order dependence, preserves superseded history, and produces canonical SHA-256-bound progression, mastery, mistake, review, next-action, and summary projections under model/scheduler version `baseline-1`.
 
-**Implemented baseline.** Day summary derives conservative evidence, mistakes, cards, metrics, and narrative from persisted booleans/scores/IDs rather than answer or reference-answer text (`packages/learning-core/src/day-summary.ts:9-22,84-122`). Orchestrator reconstructs summary inputs from persisted evidence/progress/test/review/hints and persists summary/mastery/mistake/card artifacts in a transaction (`apps/orchestrator/src/learning-v2.ts:899-975,977-1045`).
+**Implemented baseline.** Migration `0012_learning_kernel` persists append-only facts, immutable projection history, the current rebuildable projection cache, and immutable migration quarantine/provenance. `LearningKernelRepository.accept` atomically inserts one fact and its projection, rejects conflicting operation replay, rolls both back on persistence failure, and replays stored facts to the same canonical bytes/hash. Stable Course/revision/branch/session/lesson/activity ownership is enforced by repository validation and composite foreign keys.
 
-**Implemented baseline.** Gaps: persisted mastery reconstruction retains only score, evidence types, and one last day; it resets repeated-error counts and loses earlier successful UTC days (`apps/orchestrator/src/learning-v2.ts:1175-1224`). Recall, Teacher revision, and code reading are deliberately partial evidence without objective correctness in the summary (`packages/learning-core/src/day-summary.ts:124-186,228-269`). Current interview report measures completion/form, not technical correctness, so it must not be described as mastery evidence. Legacy completion routes inject fixed mastery and bypass the reducer (`apps/orchestrator/src/app.ts:409-451`).
+**Implemented baseline.** Versioned learner routes adapt recall, Teacher, quiz, code reading, exercise/trusted-check, review, interview, summary, and progress operations into kernel facts. Objective correctness requires deterministic evaluator or trusted-check provenance; learner/model narrative remains `unverified`. The compatibility unit PATCH may request a target state, but the kernel validates the legal transition and owns the resulting terminal state/next action. Summary artifacts are derived from accepted server facts and persist idempotently.
+
+**Implemented baseline limitations.** Legacy rows are backfilled only where their meaning is provable; ambiguous/non-authoritative summaries remain immutable quarantine records and older projections stay readable. Interview completion/form remains non-technical evidence and cannot change mastery without a separately approved typed evaluator. Git-ignored exercise state remains outside trusted-check/review freshness.
 
 ## Kernel inputs
 
-**Approved Core Alpha target.** The kernel receives explicit values; it never calls `Date.now()` itself.
+**Implemented baseline.** The kernel receives explicit values; it never calls `Date.now()` itself.
 
 ```ts
 type KernelCommand = {
   commandId: string;
-  occurredAt: string;          // observed app clock, ISO instant
+  occurredAt: string; // observed app clock, ISO instant
   actor: "learner" | "author" | "system";
   sessionId: string;
   activityId: string;
@@ -69,23 +71,23 @@ Required invariants:
 
 ## Deterministic evaluation
 
-| Evidence source | Kernel treatment |
-|---|---|
-| First learner recall | Attempt evidence. Correctness remains `unverified` unless a registered deterministic/typed evaluator evaluates it after persistence. |
-| Quiz/objective question | Server evaluator compares stable option IDs to protected answer keys; emits objective correctness. |
-| Code reading | Structured attempt; correctness only when a registered evaluator emits a validated result. |
-| Trusted check | Execution Fabric emits immutable check ID/version, status, and content/diff hash. Browser/model cannot forge it. |
-| Reviewer | Typed finding/review result bound to the same complete diff and trusted check. Reviewer is read-only and cannot apply changes. |
-| Teacher/Tutor conversation | Learning interaction/revision evidence, not correctness merely because a model responded. |
-| Interview | Completion/form evidence unless a separate typed technical evaluator with rubric/citations emits validated evidence. |
-| Source/Capsule use | Provenance/context evidence, not proof of learner mastery. |
-| Migrated legacy row | Retained with migration provenance and confidence limits; never silently upgraded to stronger evidence. |
+| Evidence source            | Kernel treatment                                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First learner recall       | Attempt evidence. Correctness remains `unverified` unless a registered deterministic/typed evaluator evaluates it after persistence.                            |
+| Quiz/objective question    | Server evaluator compares stable option IDs to protected answer keys; emits objective correctness.                                                              |
+| Code reading               | Structured attempt; correctness only when a registered evaluator emits a validated result.                                                                      |
+| Trusted check              | Execution Fabric emits immutable check ID/version, status, and canonical allowed-workspace manifest/content hash. Browser/model cannot forge it.                |
+| Reviewer                   | Typed finding/review result bound to the same workspace hash, bounded review patch, and trusted check. Reviewer is evidence-only and cannot read/apply changes. |
+| Teacher/Tutor conversation | Learning interaction/revision evidence, not correctness merely because a model responded.                                                                       |
+| Interview                  | Completion/form evidence unless a separate typed technical evaluator with rubric/citations emits validated evidence.                                            |
+| Source/Capsule use         | Provenance/context evidence, not proof of learner mastery.                                                                                                      |
+| Migrated legacy row        | Retained with migration provenance and confidence limits; never silently upgraded to stronger evidence.                                                         |
 
 A provider/tool failure emits no learning success fact. A malformed or oversized result is a typed failure, not partial credit. Every required/terminal Core Alpha Activity has a deterministic/manual evaluator path; unknown app-owned non-AI evaluation contracts block validation, while missing optional AI only withholds the optional observation.
 
 ## Mastery model
 
-**Approved Core Alpha target.** Preserve the useful current dimensions unless a versioned Course Pack declares a supported subset:
+**Implemented baseline** under model version `baseline-1`. The kernel preserves the six current dimensions:
 
 - understanding;
 - explanation;
@@ -119,7 +121,7 @@ Current weights/hint penalties may be retained as kernel model version `baseline
 
 ## Mistakes and ReviewItems
 
-**Approved Core Alpha target.** `Mistake` is a deduplicated observation keyed by a stable fingerprint of Course branch + knowledge node + error family, with occurrence facts and correction status. `ReviewItem` is a scheduled action derived from gaps/mistakes/recency and contains:
+**Implemented baseline.** `Mistake` is a deduplicated observation keyed by a stable fingerprint of Course branch + knowledge node + error family, with occurrence facts and correction status. `ReviewItem` is a scheduled action derived from gaps/mistakes/recency and contains:
 
 - stable item ID and source fact IDs;
 - Course branch and knowledge-node scope;
@@ -135,11 +137,11 @@ Scheduling is deterministic from facts plus an explicit observed clock. A model 
 
 A summary is a projection, not a new source of truth. It references the exact fact IDs used, kernel model version, projection hash, strengths/gaps reason codes, mistake/review candidates, and localized presentation keys. Narrative text may be rendered deterministically or generated as an optional non-authoritative supplement. Re-running a summary operation returns the same projection for the same fact frontier.
 
-**Implemented baseline.** Current summary operation reuses an existing operation ID, derives from persisted facts when absent, then transactionally persists artifacts (`apps/orchestrator/src/learning-v2.ts:620-687`). Preserve the idempotent/transactional behavior while removing the unobserved `new Date()` from the derivation path (`apps/orchestrator/src/learning-v2.ts:961-974`).
+**Implemented baseline.** Summary is part of the canonical kernel projection and references the exact fact frontier/projection hash. The versioned summary route reconstructs inputs from persisted facts, reuses an existing operation ID, and transactionally persists summary/mastery/mistake/card artifacts without allowing browser or model narrative to assert mastery.
 
 ## Storage boundary
 
-**Approved Core Alpha target.** Repositories persist accepted facts and projections in one application transaction. The domain depends on repository ports, not Drizzle/SQLite. PostgreSQL compatibility requires:
+**Implemented baseline for SQLite; Approved Core Alpha target for a future PostgreSQL adapter.** Repositories persist accepted facts and projections in one application transaction. The domain depends on repository ports, not SQLite row shapes. PostgreSQL compatibility requires:
 
 - explicit string/UUID identity, never implicit row order;
 - integer or exact decimal score representation with specified rounding;
@@ -153,11 +155,6 @@ SQLite remains the Core Alpha implementation. A database transaction rollback ha
 
 ## Migration and cutover
 
-1. Define versioned target fact schemas and adapters for current `versioned_unit_evidence`, exercise/test/review, hints, Teacher, and interview records.
-2. Backfill with source table/row provenance. Quarantine untyped/orphaned records; never default an unknown activity/evidence type.
-3. Persist full mastery replay state, including successful days and error occurrence counts.
-4. Dual-project target mastery/summary against current reducers and explain every mismatch.
-5. Make kernel output the only source for new mastery/mistakes/review items.
-6. Remove fixed legacy completion writes only after their callers are gone and their historical rows remain readable.
+**Implemented baseline.** Migration `0012_learning_kernel` creates the target fact/projection/quarantine/run tables and adds knowledge-node ownership to Course activities. Repository reconciliation backfills provable legacy progress with source-table/row provenance, quarantines ambiguous summaries, and is idempotent. New versioned learner operations write kernel facts before their derived projections; old evidence/projection tables remain readable compatibility history. Rollback switches readers or restores an explicitly approved whole-file backup; it never edits or deletes accepted fact history.
 
 **Future.** Federated profiles, probabilistic/ML mastery models, cloud synchronization, cohort analytics, and model-controlled adaptive state machines are outside Core Alpha.

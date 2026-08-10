@@ -15,8 +15,19 @@ const { apiMock, pushMock, searchState, streamAgentMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
   pushMock: vi.fn(),
   searchState: { value: "id=session-v2" },
-  streamAgentMock: vi.fn(async function* () {
-    yield { type: "message.delta", content: "Уточняющий вопрос Teacher" };
+  streamAgentMock: vi.fn(async function* (): AsyncGenerator<
+    Record<string, unknown>
+  > {
+    yield {
+      type: "message.delta",
+      turnId: "turn-1",
+      content: "Уточняющий вопрос Teacher",
+    };
+    yield {
+      type: "session.completed",
+      turnId: "turn-1",
+      reason: "completed",
+    };
   }),
 }));
 
@@ -468,6 +479,30 @@ function renderWithQuery(children: ReactNode) {
       <QueryClientProvider client={client}>{children}</QueryClientProvider>,
     ),
   };
+}
+
+function mockTeacherDialogueApi() {
+  const session = makeSession("teacher-dialogue");
+  const revised = replaceProgress(session, "in_progress", {
+    type: "teacher-dialogue",
+    conversationId: null,
+    turnCount: 1,
+    revisionAttemptIds: ["operation-1"],
+  });
+  apiMock.mockImplementation((path: string) => {
+    if (path === "/learning/sessions/v2/session-v2") {
+      return Promise.resolve({ session });
+    }
+    if (path === "/learning/sessions/v2/session-v2/teacher-transcript") {
+      return Promise.resolve({ messages: [] });
+    }
+    if (
+      path === "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue"
+    ) {
+      return Promise.resolve({ session: revised });
+    }
+    throw new Error(`Unexpected API path: ${path}`);
+  });
 }
 
 beforeEach(() => {
@@ -1029,6 +1064,136 @@ describe("guided versioned session", () => {
       await screen.findByRole("button", { name: /Завершить диалог/u }),
     ).toBeEnabled();
   });
+
+  it.each([
+    {
+      name: "completion-only content",
+      events: [
+        {
+          type: "message.completed",
+          turnId: "turn-1",
+          content: "Финальный вопрос без дельт",
+        },
+        {
+          type: "session.completed",
+          turnId: "turn-1",
+          reason: "completed",
+        },
+      ],
+      expected: "Финальный вопрос без дельт",
+      replaced: null,
+    },
+    {
+      name: "authoritative completed content",
+      events: [
+        {
+          type: "message.delta",
+          turnId: "turn-1",
+          content: "Черновой вопрос",
+        },
+        {
+          type: "message.completed",
+          turnId: "turn-1",
+          content: "Авторитетный финальный вопрос",
+        },
+        {
+          type: "session.completed",
+          turnId: "turn-1",
+          reason: "completed",
+        },
+      ],
+      expected: "Авторитетный финальный вопрос",
+      replaced: "Черновой вопрос",
+    },
+  ])("uses Teacher $name", async ({ events, expected, replaced }) => {
+    mockTeacherDialogueApi();
+    streamAgentMock.mockImplementationOnce(async function* () {
+      for (const event of events) yield event;
+    });
+    renderWithQuery(<SessionClient />);
+
+    const revision = await screen.findByLabelText("Уточнённое объяснение");
+    fireEvent.change(revision, {
+      target: {
+        value: "Подробное самостоятельное объяснение механизма учеником.",
+      },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Отправить объяснение" }),
+    );
+
+    expect(await screen.findByText(expected)).toBeVisible();
+    if (replaced) expect(screen.queryByText(replaced)).not.toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith(
+        "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue",
+        expect.anything(),
+      ),
+    );
+  });
+
+  it.each([
+    {
+      reason: "failed",
+      events: [
+        {
+          type: "error",
+          turnId: "turn-1",
+          message: "untrusted provider failure",
+        },
+        {
+          type: "session.completed",
+          turnId: "turn-1",
+          reason: "failed",
+        },
+      ],
+      expected: "Преподаватель не ответил",
+    },
+    {
+      reason: "cancelled",
+      events: [
+        {
+          type: "session.completed",
+          turnId: "turn-1",
+          reason: "cancelled",
+        },
+      ],
+      expected: "Ответ преподавателя остановлен",
+    },
+  ])(
+    "does not persist a Teacher turn that ends $reason",
+    async ({ events, expected }) => {
+      mockTeacherDialogueApi();
+      streamAgentMock.mockImplementationOnce(async function* () {
+        for (const event of events) yield event;
+      });
+      renderWithQuery(<SessionClient />);
+
+      const revision = await screen.findByLabelText("Уточнённое объяснение");
+      fireEvent.change(revision, {
+        target: {
+          value: "Подробное самостоятельное объяснение механизма учеником.",
+        },
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Отправить объяснение" }),
+      );
+
+      expect((await screen.findAllByText(expected)).length).toBeGreaterThan(0);
+      await vi.waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Отправить объяснение" }),
+        ).toBeEnabled(),
+      );
+      expect(apiMock).not.toHaveBeenCalledWith(
+        "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue",
+        expect.anything(),
+      );
+      expect(
+        screen.queryByText("untrusted provider failure"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("renders every public quiz option and trusts the server score without exposing an answer key", async () => {
     const session = makeSession("quiz");

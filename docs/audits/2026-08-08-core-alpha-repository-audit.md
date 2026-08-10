@@ -1,9 +1,9 @@
 # Aptiloop Core Alpha Repository Audit and Approval Gate
 
 **Date:** 2026-08-08
-**Branch:** `docs/core-alpha-audit`
-**Status:** Approved Core Alpha target; M0 decisions recorded and M1 authorized on 2026-08-08
-**Scope:** M0 audit/specification evidence and recorded owner decisions; target behavior is not claimed as implemented
+**Branch:** `main`
+**Status:** Approved Core Alpha target; M0 owner decision recorded 2026-08-08
+**Scope:** M0 audit/specification evidence and approval package only; target behavior is not claimed as implemented
 
 Status language in this audit is normative:
 
@@ -20,18 +20,18 @@ This audit supersedes historical acceptance claims as approval evidence. It does
 
 The current repository contains a materially working versioned learner slice:
 
-- authored versioned curriculum and immutable session snapshots;
+- authored versioned curriculum and session-time hashed snapshots whose older bytes can still be rewritten by current migration repair hooks;
 - stable unit IDs and server-owned progression transitions;
 - protected answer redaction from learner DTOs;
 - append-only recall, quiz, and code-reading evidence with operation IDs;
-- isolated exercise attempt workspaces, allowlisted tests, full-diff fingerprint freshness, and read-only Reviewer checks;
+- isolated exercise attempt workspaces, allowlisted tests, Git-visible-change fingerprint freshness, and read-only Reviewer checks; Git-ignored workspace files are not covered;
 - deterministic summary persistence, mastery/mistake/flashcard artifacts, and restart/resume;
 - a restart-safe interview flow whose report measures completion and answer form, not technical correctness or mastery;
 - a local Curriculum Editor with draft/clone/validate/publish and immutable published revisions.
 
 This baseline is not Core Alpha compliance. It remains Russian-first and hard-coded, exposes a subsystem-oriented navigation, carries live v1 compatibility routes/data, lacks Course Packs and Source Snapshot/Knowledge Capsule contracts, has no Provider Hub or constrained Pi integration, and has no committed CI workflow.
 
-Repository history evidence supplied for this audit is exact: clean local `old` and `main` both preserve commit `053dcd0`; documentation work occurs on `docs/core-alpha-audit`.
+Repository history evidence is exact: local `main`, `old`, and `docs/core-alpha-audit` were consolidated at `0ba8dee`; `origin/main` remained at `053dcd0` when this audit began. `old` is an immutable local preservation branch and receives no work for the new goal.
 
 ## 2. Current architecture
 
@@ -68,17 +68,17 @@ The migration rule is therefore incremental preservation, not a rewrite: retain 
 
 **Implemented baseline evidence.** The following results are the approval baseline; older green claims do not replace them.
 
-| Check                    | Exact result                                                                                                                                                                                                                   |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Repository state         | Clean local `old` and `main` both preserve commit `053dcd0`; work is on `docs/core-alpha-audit`.                                                                                                                               |
-| Install                  | `npm install` succeeded and left Git clean.                                                                                                                                                                                    |
-| Disposable SQLite        | Migrate plus seed twice succeeded; resulting seed reported 7 days and 14 topics.                                                                                                                                               |
-| `npm run verify`         | Passed format; 12/12 lint tasks; 12/12 typecheck tasks; 21/21 fast-test tasks totaling 352 tests; 12/12 build tasks; 12 static Next routes.                                                                                    |
-| `npm run test:e2e`       | **Failed: 1 passed, 3 failed.** Day 1 could not find `Plan day`; Curriculum Editor timed out waiting for create revision amid repeated navigation; Interview could not find the default studied-scope radio. E2E is not green. |
-| Desktop browser smoke    | At 1440×900, Home loaded, a session started, and the plan drawer opened; no console errors were observed.                                                                                                                      |
-| Mobile browser smoke     | At 390×844, no horizontal overflow was observed, but Home was 3534 px tall and the mobile navigation was overfull/dense.                                                                                                       |
-| Dependency audit         | `npm audit` reported **6 vulnerabilities: 4 high, 1 moderate, 1 low**. Relevant locked versions: Hono 4.12.33, Next 16.2.12, nested PostCSS 8.4.31, sharp 0.34.5, nanoid 3.3.16, and tsup esbuild 0.27.7.                      |
-| Collaboration/automation | GitHub API reported zero issues and zero pull requests. No CI workflow is committed.                                                                                                                                           |
+| Check                    | Exact result                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository state         | Local `main`, immutable `old`, and `docs/core-alpha-audit` point to consolidated baseline `0ba8dee`; `origin/main` remains at `053dcd0`; current M0 refinements are uncommitted on local `main`.                                                                                                                                                  |
+| Install                  | `npm install` succeeded and left the then-current baseline clean.                                                                                                                                                                                                                                                                                 |
+| Disposable SQLite        | Migrate plus seed twice succeeded with 7 days, 14 topics, 5 curriculum versions, and 324 units; integrity and foreign-key checks passed; backup was non-overwriting and integrity-checked.                                                                                                                                                        |
+| `npm run verify`         | Passed format; 12/12 lint tasks; 12/12 typecheck tasks; 21/21 fast-test tasks totaling 352 tests; 12/12 build tasks; 12 static Next routes.                                                                                                                                                                                                       |
+| `npm run test:e2e`       | **Failed: 1 passed, 3 failed.** The web server repeatedly emitted fatal Turbopack `Next.js package not found` errors while writing `/session/page`, `/settings/curriculum/page`, and `/interview/page`; missing `План дня` and Interview controls plus repeated Curriculum Editor navigation were downstream observed symptoms. E2E is not green. |
+| Desktop browser smoke    | At 1440×900, Home loaded, a session started, and the plan drawer opened; no console errors were observed.                                                                                                                                                                                                                                         |
+| Mobile browser smoke     | At 390×844, no horizontal overflow was observed, but Home was 3414 px tall and the mobile navigation was overfull/dense.                                                                                                                                                                                                                          |
+| Dependency audit         | `npm audit` reported **6 vulnerabilities: 4 high, 1 moderate, 1 low**. Relevant locked versions: Hono 4.12.33, Next 16.2.12, nested PostCSS 8.4.31, sharp 0.34.5, nanoid 3.3.16, and tsup esbuild 0.27.7.                                                                                                                                         |
+| Collaboration/automation | GitHub API reported zero issues and zero pull requests. No CI workflow is committed.                                                                                                                                                                                                                                                              |
 
 Consequences:
 
@@ -92,11 +92,11 @@ Consequences:
 **Implemented baseline.** The following mechanisms are useful inputs to Core Alpha and should be migrated incrementally:
 
 - strict shared validation at HTTP/provider/DB boundaries and protected learner DTOs;
-- immutable authored revisions, full-graph validation, clone-to-draft, content hashes, and immutable session snapshots;
+- immutable authored revisions, full-graph validation, clone-to-draft, content hashes, and session-time hashed snapshots; current migration repair hooks can still rewrite older snapshot bytes;
 - stable IDs, append-only typed unit evidence, canonical JSON, operation-id idempotency, and first-attempt recall pinning;
 - pure prerequisite/status progression, deterministic day summary, and transactional summary artifacts;
-- isolated attempt workspaces, canonical containment/reparse checks, private Git baseline, full non-truncated diff SHA-256 freshness, fixed `shell: false` process plans, caps/timeouts/cleanup, and external editor fallback;
-- Reviewer read-only/deny-write policy plus before/after diff invariant; Reviewer remains advisory and never supplies patches;
+- isolated attempt workspaces, canonical containment/reparse checks, private Git baseline, Git-visible-change SHA-256 freshness, fixed `shell: false` process plans, caps/timeouts/cleanup, and external editor fallback; Git-ignored files remain outside the current fingerprint;
+- Reviewer deny-write/no-patch policy plus before/after Git-visible patch invariant; Codex local-read authority and ignored workspace state remain High findings;
 - loopback defaults, exact Origin and JSON enforcement, browser suppression of raw provider protocol, and server-side quiz scoring;
 - SQLite WAL/foreign keys, ordered transactions, non-overwriting `VACUUM INTO` backups, integrity/foreign-key checks, and candidate discovery without automatic merge/delete;
 - Today/start/resume, sequential activity flow, knowledge/mistake/card behavior, theme tokens, reduced motion, landmarks, and immutable publish confirmation;
@@ -126,24 +126,29 @@ Preservation does not mean freezing current names or shapes. `curricula` can bec
 
 ## 6. Security findings and required boundaries
 
-**Implemented baseline findings; Approved Core Alpha target controls.** Five present high-severity findings must be addressed before capability expansion:
+**Implemented baseline findings; Approved Core Alpha target controls.** Eleven present high-severity findings must be addressed before capability expansion:
 
-1. **Non-review AI roles have repository write/general tool authority.** Browser-controlled learner text can reach Codex workspace-write or default OpenCode tools rooted at the project. Reviewer-only restrictions do not protect Tutor/Interviewer/other roles.
-2. **Codex inherits the complete orchestrator environment.** Root `.env` values, including cross-provider secrets, are passed to the child process; output redaction cannot undo access.
-3. **OpenCode tool inputs/outputs are persisted raw.** Full JSON can enter `agent_messages.tool_events_json` and backups even though the browser receives a minimized event.
-4. **A non-loopback bind exposes an unauthenticated control plane.** The fixed client header and Origin check are not authentication for non-browser clients.
-5. **Legacy v1 writes bypass deterministic learning integrity.** Remaining legacy session/answer/completion paths can apply fixed mastery, mistakes, and cards outside versioned append-only evidence and server-owned Kernel transitions.
+1. **Non-review AI roles have repository write/general tool authority.** Browser-controlled learner text can reach Codex workspace-write or default OpenCode tools rooted at the project.
+2. **Codex Reviewer has general read authority beyond its evidence bundle.** Learner-controlled diff/test text can prompt project-root read tools to disclose private local files to a provider and persistence.
+3. **Codex inherits the complete orchestrator environment.** Root `.env` values, including cross-provider secrets, are passed to the child process; output redaction cannot undo access.
+4. **OpenCode tool inputs/outputs are persisted raw.** Full JSON can enter `agent_messages.tool_events_json` and backups even though the browser receives a minimized event.
+5. **A non-loopback publication exposes an unauthenticated control plane.** Client headers and Origin are not authentication; process mode must reject non-loopback binds, while local Compose requires verified private networking and loopback-only host publication.
+6. **Browser requests bypass server-owned provider/model policy.** `/api/agent/stream` accepts role, provider, and model overrides, can select Mock or a higher-authority adapter, and chooses the first model after a provider switch.
+7. **Mock/model review verdicts can become authoritative learning evidence.** Mock defaults every role; a persisted `passed` review can satisfy exercise completion and influence deterministic summary/mastery despite the test/dev-only target.
+8. **Legacy v1 writes bypass deterministic learning integrity.** Remaining legacy session/answer/completion paths can apply fixed mastery, mistakes, and cards outside versioned append-only evidence and server-owned Kernel transitions.
+9. **Generic v2 Teacher/Interview evidence relationships are caller-controlled or insufficiently linked.** Cross-session/interview IDs and forged Teacher revision arrays can satisfy progression and influence summary/mastery without proving Activity ownership.
+10. **The exercise fingerprint excludes Git-ignored workspace files.** Ignored executable, dependency, or config state can change after a passing test or during review without invalidating the current patch hash.
+11. **Normal startup migration repair can rewrite historical learning evidence without a required backup.** Snapshot JSON/hashes, malformed progress, and missing unit types may be normalized or defaulted before any operator-approved reconciliation.
 
-Additional present risks are unbounded cumulative AI stream/tool/review output (medium), external-resource Markdown privacy leakage (low), plaintext private-data lifecycle/permissions gaps (low/medium confidence), unresolved dependency advisories (approval-gate risk), and obsolete mtime text in security/architecture docs (implementation already uses the stronger full-diff hash).
+Additional present risks are unbounded cumulative AI stream/tool/review output and incomplete Codex turn cancellation/process-tree cleanup (medium), incomplete HTTP size/rate/client-header/strict-schema guards (low), external-resource Markdown privacy leakage (low), plaintext private-data lifecycle/permissions gaps (low/medium confidence), unresolved dependency advisories (approval-gate risk), and obsolete mtime text in historical security/architecture docs. The detailed [threat model and remediation register](../security/threat-model.md) defines source fixes, rejection tests, and release gates.
 
 Course Pack import is not currently implemented, so pack execution is a target-design hazard rather than a present import vulnerability. Course Pack V1 accepts one UTF-8 JSON document and must enforce private staging, strict duplicate-key/encoding parsing, JSON/path-value rejection, byte/count/depth/string/time limits, closed schemas, finite graphs, provenance, canonical hashing, learner Preview, transactional Install/Open-as-draft, and **zero content-defined execution**. Archive/directory transport and extraction controls are Future.
 
 Core Alpha security invariants are:
 
-- every AI role is tool-free/read-only by default;
-- Aptiloop exposes only app-owned typed tools with strict per-role allowlists and validated results;
+- every AI role begins with no capabilities; any capability is an Aptiloop-owned typed tool granted by a strict per-role allowlist;
 - no arbitrary AI filesystem, shell, network, edit, credential, or process tools;
-- Reviewer receives an immutable evidence bundle, is read-only, and never emits/applies patches;
+- Reviewer receives only a bounded immutable evidence capsule, has no local-read/write or patch capability, and never emits/applies patches;
 - Course Packs contain no commands, scripts, secrets, plugins, executable hooks, or credentials;
 - real-provider failure remains explicit; no silent fallback to Mock;
 - private learner/source data never leaves the machine without an explicit user action at the disclosure boundary;
@@ -160,8 +165,10 @@ Core Alpha security invariants are:
 - legacy sessions can read live curriculum content, unlike immutable versioned snapshots;
 - migration 0001 globally rewrites older active sessions to abandoned;
 - TypeScript repair hooks rebuild/normalize tables, can default a missing unit type to `study`, and can replace malformed progress JSON, which is logically irreversible after commit;
+- current migration repair hooks rewrite older `session_snapshots.snapshot_json`/hashes and compatibility progress; snapshot immutability is a runtime creation invariant, not a true migration invariant today;
 - migration and backup are separate commands; a direct migration caller can change a file without first creating a verified backup;
 - multiple local candidate databases and WAL/SHM files exist; none may be silently chosen, merged, distributed, or deleted;
+- read-only inventory found five active candidate families plus ten historical backup files. `.data/dev-learning-harness.sqlite` has two active sessions and lacks the expected global-active index despite all six migration markers; marker presence alone does not prove schema identity;
 - SQLite and backups contain learner answers, paths, test output, reviews, interviews, transcripts, and tool events in plaintext;
 - current fixtures do not fully represent persisted old schemas, WAL states, multi-course collisions, or malformed data.
 
@@ -217,11 +224,11 @@ Domain invariants:
 - Reviewer is read-only and returns validated findings, never patches;
 - Adaptive Studio is approximately 70% editorial workflow and 30% developer instrument; manual authoring remains complete with AI Off.
 
-Pi integration must use current official evidence, not tutorial projects or historical scopes. The researched revision is `@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`, and `@earendil-works/pi-coding-agent` 0.84.1 at commit [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328). Pi states that it has [no built-in permission system](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/README.md#L35-L41). Its [AgentHarness implementation](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/agent/src/harness/agent-harness.ts#L342-L357) is partial/stubbed, and the [SQLite backend changelog](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/session-backends/sqlite-node/CHANGELOG.md#L8-L19) says old WIP databases are not migrated to the v4 contract. Aptiloop must not design around unimplemented durability or treat that backend as transparently pluggable into coding-agent `AgentSession`.
+Pi integration must use current official evidence, not tutorial projects or historical scopes. The published package release is v0.84.1 at [tag commit `53fa77ccd8a279eb87e92294ef3687b03ff80112`](https://github.com/earendil-works/pi/tree/53fa77ccd8a279eb87e92294ef3687b03ff80112); post-release upstream source was separately inspected at [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328), whose manifests still report 0.84.1. Pi has [no built-in permission system](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/README.md#L35-L41); its tool schemas validate arguments but do not authorize capability or make output safe. AgentHarness restore and major operations remain unimplemented, coding-agent uses a separate JSONL session format, and the v4 SQLite SessionRepo is not a transparent durable replacement.
 
 ## 10. Core Alpha specification set
 
-**Approved Core Alpha target documents; their implementation claims remain subject to each document's status.** This audit links the complete new set.
+**Current Core Alpha specification and approval documents; each document's own status governs.** This audit links the complete new set.
 
 ### Repository and product
 
@@ -282,11 +289,11 @@ Pi integration must use current official evidence, not tutorial projects or hist
 - [ADR-0008: Adaptive Studio](../adr/0008-adaptive-studio.md)
 - [ADR-0009: Licensing model](../adr/0009-licensing-model.md)
 
-Historical lowercase `docs/architecture.md`, `docs/security.md`, the 2026-08-02 acceptance audit, product specification v2, implementation plans, guided-learning design records, `.superpowers`, and `docs/superpowers` remain baseline evidence only. They must later receive explicit historical status or be archived/migrated without deleting history.
+Historical top-level documents—`docs/architecture.md`, `docs/security.md`, `docs/product-specification-v2.md`, `docs/acceptance-audit.md`, both implementation plans, `docs/guided-learning-ux.md`, `docs/design-system.md`, `docs/troubleshooting.md`, `docs/development.md`, `docs/learning-methodology.md`, `docs/curriculum-authoring.md`, and `docs/providers.md`—plus `.superpowers` and `docs/superpowers` remain non-authoritative baseline/history only. Generated `apps/web/test-results/**` and `.data/**` Markdown are runtime evidence, not documentation. `workspaces/exercises/**/README.md` files are trusted development fixtures, not production Courses or Core Alpha specifications. Preserve history, but never use these files as current approval evidence.
 
 ## 11. Roadmap and execution order
 
-**Proposed pending owner approval.** The detailed [M0–M12 roadmap](../../ROADMAP.md) is ordered to retain runnable vertical slices:
+**Approved Core Alpha target.** The detailed [M0–M12 roadmap](../../ROADMAP.md) is ordered to retain runnable vertical slices:
 
 | Milestone | Outcome                                                                                                                         |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -319,7 +326,7 @@ The UX migration process is:
 3. Extract all UI strings and locale-sensitive formatting before large composition changes.
 4. Introduce explicit browser offline, Core stopped, SQLite problem, AI Off, provider unavailable, and provider failed states. Missing optional AI must not masquerade as Core failure.
 5. Wrap the current unit renderer in a stable Activity Frame, then migrate activity types one by one without changing Kernel authority.
-6. Evolve Curriculum Editor into manual-first Adaptive Studio: Create/Open/Import → Pack overview → outline/finite graph → typed editor → learner Preview → Validate → Change review → explicit immutable Publish, including a separate personal-adaptation/upstream-integration flow.
+6. Evolve Curriculum Editor into manual-first Adaptive Studio: Create/Open/Import → Pack overview → outline/finite graph → typed editor → current Validate → reviewed learner Preview of that validated Draft → Change review → explicit immutable Publish, including a separate personal-adaptation/upstream-integration flow.
 7. Supply the version-matched Authoring Kit for external manual/AI authoring and require schema, validator-code, canonical-hash, no-execution, and fixture parity with Adaptive Studio/import.
 8. Only after manual Studio is complete, add the restart-safe guided Course Designer state machine and typed AI proposals with provenance, stable target IDs, structured before/after, validation, and Apply/Reject. Compilation/Apply changes a Draft only; publishing is always a separate confirmation.
 9. Verify each slice at desktop/mobile, light/dark, en-US/ru-RU, keyboard/screen-reader semantics, and loading/empty/error/offline/no-AI/missing-Core states.
@@ -328,7 +335,7 @@ The target composition is approximately 70% calm editorial workflow and 30% deve
 
 ## 13. Three visual directions
 
-The owner selected **A. Calm Workshop** on 2026-08-08. B and C remain decision evidence and unselected **Future** alternatives.
+The owner selected **A. Calm Workshop** on 2026-08-08. B and C remain documented as **Future** alternatives and are not Core Alpha implementation choices.
 
 ### A. Calm Workshop
 
@@ -342,11 +349,11 @@ Warm paper/editorial surfaces, ruled separators, margin evidence, serif learning
 
 Slate/navy technical workbench, cobalt selection, amber validation, explicit graph/evidence rails, and a dense Studio-first grid. It expresses finite dependencies and validation well, especially in dark mode, but risks becoming an IDE/control plane and exposing implementation structure to learners.
 
-These are product-system directions, not cosmetic themes. A is the approved target direction; B and C are not authorized redesign targets.
+These are product-system directions, not cosmetic themes. None authorizes redesign work before the owner selects a direction.
 
 ## 14. Recommendation
 
-**Approved Core Alpha target:** the owner selected **A. Calm Workshop** on 2026-08-08.
+**Approved Core Alpha target:** use **A. Calm Workshop**.
 
 Reasons:
 
@@ -356,9 +363,9 @@ Reasons:
 - one visual language can support a calm 720–800 px lesson surface and a dense outline/editor/inspector Studio without making the learner UI resemble an IDE;
 - it best supports the required incremental Activity Frame and renderer migration.
 
-Approval covers the direction, not every token. Detailed design remains subject to the accessibility, language, activity, Studio, and milestone acceptance contracts.
+The owner selected the direction, not every token. Detailed design remains subject to the accessibility, language, activity, Studio, and milestone acceptance contracts.
 
-The owner deferred every licensing/distribution artifact and channel pending professional legal review. No license text, new source/npm/standalone/desktop/container/hosted distribution artifact, future Apache SDK, redistributable production/sample Course, contribution policy, or trademark policy is authorized. The repository remains under no license grant; the earlier AGPL/Apache direction remains an unapproved engineering recommendation only.
+The owner separately approved the engineering licensing direction on 2026-08-08, subject to professional legal review. No license text, new source/npm/standalone/desktop/container/hosted distribution artifact, future Apache SDK, redistributable production/sample Course, contribution policy, or trademark policy is authorized. The repository remains under no license grant.
 
 ## 15. Licensing inventory and owner questions
 
@@ -366,7 +373,7 @@ The owner deferred every licensing/distribution artifact and channel pending pro
 
 The repository mixes own code, curriculum prose and code examples, exercise templates/tests, Russian translations, docs, screenshots, Geist fonts, provider/trademark names, and local learner/runtime artifacts. Package directories alone do not prove legal separability because the orchestrator imports nearly every internal package. `.data` databases, backups, attempts, and local captures must never enter a release by accident.
 
-The following owner/business decisions remain unresolved under the owner-approved 2026-08-08 deferral. The deferral keeps every affected artifact, content set, mark, contribution model, and distribution channel out of scope until the owner and professional counsel approve it:
+The following owner/business decisions remain unresolved. Every affected artifact, content set, mark, contribution model, and distribution channel stays out of scope until the owner and professional counsel approve it:
 
 1. **Ownership and contributors:** identify the person/legal entity controlling each code, curriculum, translation, fixture/test, document, screenshot, font/asset, and contribution; record assignment/DCO/CLA/employment/contractor evidence and the policy for AI-assisted provenance.
 2. **Code license and boundary:** choose the exact AGPL variant and path matrix for the integrated surface; identify any future Apache SDK candidates and required separation; decide whether dual licensing is intended and whether authority exists.
@@ -377,22 +384,34 @@ The following owner/business decisions remain unresolved under the owner-approve
 
 Professional counsel must determine verified rights, license compatibility, combined-work/separability, exact obligations, content/asset terms, and trademark/contribution consequences. Engineering must supply the path/dependency/provenance inventory, SBOM/notices, artifact scan, and private-data exclusion evidence. No document here substitutes one class of decision for another or applies a license.
 
-## 16. Recorded owner decisions
+### Owner disposition recorded 2026-08-08
 
-On 2026-08-08, the repository owner explicitly:
+The owner approved the AGPL-3.0-only integrated application plus future genuinely separated Apache-2.0 SDK direction and explicitly deferred every unresolved legal/business category pending professional counsel:
 
-1. approved the Core Alpha product and architecture contract, including the fixed 50-item release matrix;
-2. approved the M0–M12 order and incremental/no-big-bang migration rule;
-3. selected **A. Calm Workshop**;
-4. deferred every licensing and distribution decision in Section 15, keeping all affected artifacts and channels out of scope pending professional legal review; and
-5. authorized implementation of M1.
+1. ownership, contributor authority, and AI-assisted provenance remain release-blocking;
+2. no license text, path matrix, future Apache SDK classification, dual license, or relicensing is authorized;
+3. no production or redistributable sample Course, Pack, curriculum, fixture, translation, screenshot, or generated documentation ships;
+4. no new public source, npm, standalone/desktop, container, or hosted distribution channel is authorized;
+5. no artifact ships without approved dependency/license/notice/SBOM evidence; and
+6. no public contribution launch, trademark policy, or provider/project-mark marketing use is authorized.
 
-The failed E2E scenarios, six baseline dependency vulnerabilities, five present high-severity security findings, missing CI, data ambiguities, and incomplete mechanisms are M1 work with acceptance tests in the roadmap. They are not owner design decisions.
+These explicit out-of-scope deferrals close the M0 decision requirement while remaining release-blocking. They do not substitute for professional legal review.
+
+## 16. Owner decision record
+
+The owner approved the six M0 decisions on 2026-08-08:
+
+1. the product scope, terminology, user journeys, locale model, privacy rules, and fixed release matrix;
+2. the target architecture boundaries, authority model, and incremental preservation strategy;
+3. the additive Course/session/data migration strategy, including inventory, verified backup, quarantine, dual-read/write, cutover, and rollback limits;
+4. the M0–M12 roadmap order and milestone acceptance contracts;
+5. **A. Calm Workshop** as the product-system visual direction for the learner UI and Adaptive Studio; and
+6. the AGPL-3.0-only integrated application plus future genuinely separated Apache-2.0 SDK engineering direction, with no license application or public distribution pending professional counsel.
+
+Licensing ownership, contributor authority, content/fixture terms, artifact distribution scope, dependency notices/SBOM, and trademark/contribution policy carry the explicit out-of-scope dispositions in Section 15. They remain release-blocking but do not block implementation through the approved roadmap.
 
 ## 17. Approval gate result
 
-**Implemented baseline:** the M0 approval gate was satisfied on 2026-08-08. The approved documents authorize milestone execution in the recorded order; they do not claim that target behavior exists.
+**Approved Core Alpha target:** the M0 owner gate closed on 2026-08-08. M1 implementation may proceed through its approved scope, non-goals, rollback boundary, and acceptance evidence; later milestones remain ordered behind their predecessor gates.
 
-M1 may implement only safety, provenance, and repeatable-quality scope. Product redesign, Pi integration, Course Pack rollout, production Course work, public/new artifact distribution, and every license or trademark/contribution change remain outside M1. Later milestones begin only after the preceding milestone's acceptance evidence is recorded.
-
-The implemented application remains Dev Learning Harness until each approved migration slice is delivered and verified. E2E and dependency findings remain red until M1 runtime evidence proves otherwise.
+The implemented application remains Dev Learning Harness. Current E2E, dependency, security, data, localization, provider, and execution findings remain open until runtime evidence proves otherwise. The M0 decision does not authorize license text, public distribution, destructive data migration, or bypassing any milestone gate.

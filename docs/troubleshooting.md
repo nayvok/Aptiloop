@@ -13,33 +13,35 @@ git status --short
 
 ## SQLite открывается не из корня проекта
 
-Canonical default — `<repo>/.data/dev-learning-harness.sqlite`. Database CLI учитывает `DATABASE_PROJECT_ROOT`, поэтому workspace cwd не должен создавать `packages/database/.data`.
+Canonical writable target is `<repo>/.data/dev-learning-harness.sqlite`. Runtime and writable database CLIs resolve from the repository root and reject `DATABASE_PROJECT_ROOT`, alternate candidates, `:memory:`, and arbitrary absolute paths before opening them.
 
 ```powershell
-$env:DATABASE_PROJECT_ROOT = (Get-Location).Path
 $env:DATABASE_URL = ".data/dev-learning-harness.sqlite"
-npm run db:backup
+npm run db:inventory -- --root .data --root data --root packages/database/.data
+npm run db:inventory -- --db .data/dev-learning-harness.sqlite
+npm run db:backup -- --source .data/dev-learning-harness.sqlite --destination .data/approved-backups/pre-migration-2026-08-08T120000Z.sqlite
 npm run db:migrate
 npm run db:seed
 ```
 
-Если ранее prototype уже создал другую DB под package directory, не удаляйте её вслепую. `db:backup` обнаруживает configured/canonical/legacy `data/` candidates, создаёт отдельные timestamped copies и печатает их absolute paths. Сравните содержимое осознанно.
+If a prototype created another database under a package/data directory, do not move, merge, migrate, back up as approved, or delete it. M1 designates only `.data/dev-learning-harness.sqlite` active and enforces that target in runtime and writable CLIs; five alternate families and all eleven old backups remain quarantined unchanged until M2 reconciliation.
 
 ## Backup не создаётся
 
-`db:backup` ожидает существующую file DB и не работает с `:memory:`. Он откажется от source с ошибкой `integrity_check`/foreign keys и не перезапишет existing destination. Исправьте путь/права; не обходите проверку обычным копированием активного WAL-файла.
+`db:backup` requires one explicit active `--source` and one new `.sqlite` `--destination` directly under `.data/approved-backups/`. It fails on `:memory:`, a non-active source, an existing destination, unstable source hashes, health/migration errors, or logical raw/tool/review payload rows. Do not bypass it by copying an active main/WAL file manually.
 
 ## Старая DB не открывает current session
 
-В ранних prototype schema migration 0002 могла быть записана до выполнения TypeScript normalization или без `unit_progress.unit_type`. Повторно запустите:
+Early prototype schemas may need compatibility repair. First inventory all candidates without mutation. Repair only the owner-approved active file and only after a new approved backup:
 
 ```powershell
-npm run db:backup
+npm run db:inventory -- --db .data/dev-learning-harness.sqlite
+npm run db:backup -- --source .data/dev-learning-harness.sqlite --destination .data/approved-backups/pre-repair-2026-08-08T120000Z.sqlite
 npm run db:migrate
 npm run db:seed
 ```
 
-Migration включает repeatable repair schema/snapshot. Legacy session сохраняется в истории, но current versioned UI выбирает активную versioned session; старый `legacy-v1` не подменяет новый путь.
+Migration can rewrite schema/snapshot bytes. It retains legacy session history, but after commit the rollback is whole-file restore from the new approved backup—not a quarantined historical copy.
 
 ## Порты заняты
 
@@ -59,7 +61,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Освободите `3100/8887`; удаление lock не заменяет остановку владельца процесса. E2E использует `.next-e2e`, in-memory DB, отдельные attempts, `reuseExistingServer: false` и `retries: 0`. Failure означает реальную ошибку текущего прогона; изучите retained trace/test-results, не включайте retries для маскировки flake.
+Free `3100/8887`; deleting a lock does not replace stopping its owner. E2E uses one `.data/e2e-runs/<run-id>/` root for a file-backed disposable database, attempts, Next output, and logs, with `reuseExistingServer: false` and `retries: 0`. On failure inspect `.verify/e2e-failures/<run-id>/playwright-results` and service logs; CI uploads the same directory. Do not enable retries to mask a flake.
 
 ## Занятие не продолжилось после reload
 
@@ -93,7 +95,7 @@ codex --version
 codex login status
 ```
 
-Перезапустите orchestrator после install/login. Status `connected` подтверждает health/discovery, но не model response: выполните реальный Teacher turn перед заявлением smoke success.
+M1 readiness endpoints intentionally report Codex as policy-blocked without invoking it. The commands above are manual adapter diagnostics only; they are not learning-provider or model-response evidence, and an external-provider smoke is not permitted until its later approval gate.
 
 ## OpenCode unavailable
 
@@ -103,7 +105,7 @@ opencode --version
 Invoke-WebRequest http://127.0.0.1:4096/global/health
 ```
 
-Проверьте `OPENCODE_ENDPOINT`, username/password и совместимость CLI/SDK. Endpoint должен быть HTTP loopback без path/credentials/query. `npm start` пытается поднять sidecar и продолжает с Mock/Codex при failure. В Compose `host.docker.internal` не принимается как loopback.
+Validate `OPENCODE_ENDPOINT`, username/password, and CLI/SDK compatibility manually. The endpoint must be HTTP loopback without path/credentials/query. `npm start` and Compose do not launch a sidecar, and M1 readiness/learning routes do not activate OpenCode. `host.docker.internal` is not accepted as loopback.
 
 ## Запуск OpenCode sidecar
 

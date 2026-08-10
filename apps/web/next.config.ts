@@ -1,5 +1,8 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+import { validateOrchestratorUrl } from "./orchestrator-url";
+
+const orchestrator = validateOrchestratorUrl(process.env);
 
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
@@ -20,8 +23,6 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
-    const orchestrator =
-      process.env.ORCHESTRATOR_URL ?? "http://127.0.0.1:8787";
     return [
       {
         source: "/api/:path*",

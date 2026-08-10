@@ -60,7 +60,8 @@ npm run typecheck
 npm run test --workspace=@dlh/curriculum
 npm run test --workspace=@dlh/database
 npm run typecheck --workspace=@dlh/orchestrator
-npm run db:backup
+npm run db:inventory -- --db .data/dev-learning-harness.sqlite
+npm run db:backup -- --source .data/dev-learning-harness.sqlite --destination .data/approved-backups/pre-authoring-migration-2026-08-08T120000Z.sqlite
 npm run db:migrate
 npm run db:seed
 ```

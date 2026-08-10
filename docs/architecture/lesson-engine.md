@@ -5,11 +5,11 @@
 
 ## Implemented baseline
 
-**Implemented baseline.** Current curriculum contracts define twelve closed unit types, unit statuses, discriminated payloads, completion criteria, and unlock references (`packages/shared/src/curriculum.ts:63-86,147-186,188-294`). The pure progression module validates duplicate/unknown/self prerequisites, rejects cycles, and allows only defined start/pause/complete/skip transitions (`packages/learning-core/src/unit-progression.ts:47-101,116-153,177-238`). Required units determine lesson completion (`packages/learning-core/src/unit-progression.ts:104-113`).
+**Implemented baseline.** Current curriculum contracts define twelve closed unit types, statuses, discriminated payloads, completion criteria, and explicit unlock references. The pure progression module validates prerequisite graphs and legal events, while the M4 Learning Kernel wraps those transitions in scoped append-only facts and chooses the only legal terminal/next-action projection.
 
-**Implemented baseline.** Versioned lesson routes load the immutable session snapshot, reject inactive sessions and mismatched payload types, check completion criteria, run the pure transition, and persist the result (`apps/orchestrator/src/learning-v2.ts:690-770`). Recall, quiz, code-reading, and summary evidence use server-owned endpoints and idempotent operation IDs (`apps/orchestrator/src/learning-v2.ts:43-109`; `packages/database/src/repository.ts:870-968`).
+**Implemented baseline.** Versioned lesson routes load the immutable Course/session snapshot, reject inactive or mismatched operations, persist typed learner/evaluator/check/reviewer facts, and apply the kernel projection transactionally. Recall, Teacher, quiz, code-reading, exercise, review, interview, summary, checkpoint, and spaced-review paths retain their explicit completion criteria and provenance.
 
-**Implemented baseline.** Limitation: the browser still submits a desired status to the generic unit PATCH endpoint, which the server maps to an event (`apps/orchestrator/src/learning-v2.ts:690-735`). The target accepts learner actions, not caller-selected state. Legacy session endpoints bypass this engine and inject fixed completion artifacts (`apps/orchestrator/src/app.ts:374-453`).
+**Implemented baseline limitation.** The compatibility unit PATCH still carries a requested target status, but it cannot set stored state directly: server-side completion criteria and the kernel transition table accept or reject the resulting event. Legacy rows remain readable; new target authority is not inferred from ambiguous historical state.
 
 ## Activity graph
 
@@ -78,10 +78,31 @@ The public application command expresses intent:
 
 ```ts
 type LessonCommand =
-  | { type: "begin-activity"; sessionId: string; activityId: string; operationId: string }
-  | { type: "pause-activity"; sessionId: string; activityId: string; operationId: string }
-  | { type: "submit-action"; sessionId: string; activityId: string; operationId: string; action: LearnerAction }
-  | { type: "skip-optional"; sessionId: string; activityId: string; operationId: string };
+  | {
+      type: "begin-activity";
+      sessionId: string;
+      activityId: string;
+      operationId: string;
+    }
+  | {
+      type: "pause-activity";
+      sessionId: string;
+      activityId: string;
+      operationId: string;
+    }
+  | {
+      type: "submit-action";
+      sessionId: string;
+      activityId: string;
+      operationId: string;
+      action: LearnerAction;
+    }
+  | {
+      type: "skip-optional";
+      sessionId: string;
+      activityId: string;
+      operationId: string;
+    };
 ```
 
 The engine, in one transaction:
@@ -114,15 +135,13 @@ Every accepted action produces or references append-only facts with:
 - evaluator/check/source identity;
 - content/diff hash when freshness matters.
 
-**Implemented baseline.** Current versioned evidence is append-only and operation-ID idempotent; conflicting replay is rejected, and evidence must target an in-progress activity of the expected type (`packages/database/src/repository.ts:887-968`). Current accepted evidence types are limited to recall, quiz, code-reading, and summary (`packages/database/migrations/0003_unit_evidence.sql:1-24`). Teacher, interview, exercise, review, and hint facts therefore need target adapters before the engine can treat them uniformly.
+**Implemented baseline.** `learning_kernel_facts` is append-only and operation-ID idempotent; conflicting replay is rejected, scope/authority/basis links are validated, and corrections append a superseding fact rather than mutating history. Versioned adapters cover learner submissions, deterministic quiz evaluation, trusted checks, review, interview completion, summary, and progression. Unverified Teacher/interview/model narrative cannot become correctness or mastery evidence.
 
 ## Exercise and review boundary
 
-**Approved Core Alpha target.** Activities reference only a trusted `environmentId` and `checkId`. The Execution Fabric owns executable, args, cwd, environment, isolation, timeout, output budget, and result normalization. Neither Course Pack, browser, nor model can select arbitrary values.
+**Implemented baseline for the trusted local-native path.** Activities reference only an app-owned `environmentId` and `checkId`. The M5 Execution Fabric owns executable, args, cwd, environment, trust/network policy, timeout, output budget, cancellation, process cleanup, snapshot freshness, result normalization, and immutable artifacts. Course Pack, browser, and model inputs cannot define a process plan.
 
-Reviewer is read-only. It receives a bounded review bundle and may submit only a typed review result. It cannot patch, edit, apply, run a command, select a state transition, or publish. The engine accepts a review fact only if the trusted check result matches the current complete diff/content fingerprint.
-
-**Implemented baseline.** Current browser command input is strict `{operationId, commandId: "test"}`, and the orchestrator owns the executable plan (`apps/orchestrator/src/app.ts:779-821`). Review requires a non-empty, non-truncated diff and a passing test bound to the same diff fingerprint; the diff is compared again after review (`apps/orchestrator/src/app.ts:870-953`). Preserve these controls.
+Reviewer remains evidence-only and has no patch/apply route. Review requires a non-empty complete Git-visible diff, passing non-truncated check evidence bound to the exact current fingerprint, an immutable evidence bundle, and unchanged before/after workspace state. Trusted local checks still run with local-user authority; Git-ignored state is outside the evidence hash and untrusted execution remains prohibited.
 
 ## Snapshots, resume, and adaptation
 

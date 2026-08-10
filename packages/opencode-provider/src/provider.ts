@@ -11,7 +11,6 @@ import {
   type AgentSession,
   type AgentSessionStatus,
   type CreateAgentSessionInput,
-  type JsonValue,
   type ProviderStatus,
   type StreamAgentMessageInput,
 } from "@dlh/agent-core/shared";
@@ -270,10 +269,8 @@ function messageContent(
     .join("");
 }
 
-function safeJson(value: unknown): JsonValue | undefined {
-  const parsed = JsonValueSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
-}
+// Provider tool inputs and outputs are intentionally discarded. Aptiloop owns
+// the tool boundary and persists only lifecycle metadata.
 
 function isAbortError(error: unknown): boolean {
   return (
@@ -632,13 +629,11 @@ export class OpenCodeAgentProvider implements AgentProvider {
               (currentStatus === "pending" || currentStatus === "running") &&
               previousStatus === undefined
             ) {
-              const inputValue = safeJson(part.state.input);
               yield {
                 ...eventBase(),
                 type: "tool.started",
                 toolCallId: part.callID,
                 toolName: part.tool,
-                ...(inputValue === undefined ? {} : { input: inputValue }),
               };
               continue;
             }
@@ -649,26 +644,18 @@ export class OpenCodeAgentProvider implements AgentProvider {
               previousStatus !== "error"
             ) {
               if (previousStatus === undefined) {
-                const inputValue = safeJson(part.state.input);
                 yield {
                   ...eventBase(),
                   type: "tool.started",
                   toolCallId: part.callID,
                   toolName: part.tool,
-                  ...(inputValue === undefined ? {} : { input: inputValue }),
                 };
               }
-              const rawOutput =
-                currentStatus === "completed"
-                  ? part.state.output
-                  : { error: part.state.error };
-              const output = safeJson(rawOutput);
               yield {
                 ...eventBase(),
                 type: "tool.completed",
                 toolCallId: part.callID,
                 toolName: part.tool,
-                ...(output === undefined ? {} : { output }),
               };
             }
           }

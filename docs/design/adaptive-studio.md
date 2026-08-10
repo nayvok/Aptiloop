@@ -6,7 +6,7 @@ This document specifies the Core Alpha Adaptive Studio. It is not evidence that 
 
 - **Implemented baseline** — current repository evidence.
 - **Approved Core Alpha target** — required Studio contract.
-- **Proposed pending owner approval** — Calm Workshop presentation.
+- **Approved Core Alpha target — Calm Workshop** — selected direction-specific presentation.
 - **Future** — outside Core Alpha.
 
 Adaptive Studio is approximately **70% editorial workspace and 30% developer instrument**. Authors primarily shape a learning experience; stable IDs, schemas, dependencies, environments, validation, hashes, and diffs remain available as contextual instruments. Studio must not become a full IDE, generic CMS card grid, or chat interface.
@@ -85,7 +85,7 @@ Secrets, environment variable values, provider credentials, arbitrary filesystem
 
 ### Desktop
 
-**Proposed pending owner approval — Calm Workshop**
+**Approved Core Alpha target — Calm Workshop**
 
 At widths ≥1280px:
 
@@ -129,7 +129,7 @@ Those actions explain “Available on desktop” and preserve the draft. They ar
 
 ### Light and dark
 
-**Proposed pending owner approval**
+**Approved Core Alpha target — Calm Workshop**
 
 Light Studio uses cool-tinted background, near-white editorial field, and quiet inspector. Dark Studio uses background/surface/raised luminance with thin borders. Selection combines leading marker, selected background, and text/icon state. Validation colors never replace labels or icons. No neon code palette, glow, glass, simulated terminal, or dense IDE menu bar.
 
@@ -170,6 +170,8 @@ The entry surface exposes distinct actions:
 
 These actions are not aliases. Each confirmation names whether bytes are only read, a Draft is created, or an immutable revision is installed. Cancel before the creation/import commit leaves no Draft or installed revision.
 
+Pre-course inspection and staging remain owned by Courses at `/courses/intake/:operationId`. Studio opens only after **Open as local draft** creates a Course/Draft or after an immutable installation enters Course context; it never owns uncommitted external Pack bytes.
+
 ### 3. Pack intake and non-executing inspection
 
 **Approved Core Alpha target**
@@ -197,7 +199,6 @@ The guided entry is a structured workflow, not a generic chat. It renders the pe
 `USER_REVIEW` supports structured edits, **Request revision**, **Reject**, and **Confirm compilation**. Compilation creates only a local Draft through the same schema/canonicalizer as the Authoring Kit. Validation findings focus the resulting Draft field. `PUBLISHED` is reachable only through the ordinary separate Preview → Change review → Publish gates. AI Off switches to the complete manual Draft editor without discarding entered metadata. `FAILED` preserves inputs and prior safe state and names whether discovery, provider/auth, diagnostic, compilation, storage, or validation failed.
 
 Required states: initial, saving request, discovery awaiting answer, diagnostic offered/in progress/skipped, proposal loading/ready/revising, confirmation pending, compilation, validation blocked, provider unavailable, browser offline, Core/storage unavailable, cancelled with no Draft, resumable after restart, and failed with retained input.
-
 
 ### 4. Course metadata editor
 
@@ -348,7 +349,7 @@ Validation loading, cancelled, Core unavailable, storage error, validator-versio
 
 AI is optional and never the primary editor. Pi runs behind Aptiloop-owned typed tools. Studio never exposes arbitrary filesystem, shell, network, write/edit, coding-agent, or plugin tools.
 
-**Implemented baseline** runtime evidence for this boundary is Pi `0.84.1` at commit [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328): [`@earendil-works/pi-ai`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai) supplies the provider/model and typed-tool schema seam, while [`@earendil-works/pi-agent-core`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328/packages/agent) supplies tool validation/execution. Pi explicitly has [no built-in permission system](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/README.md); therefore Aptiloop must own the entire allowed-tool boundary. The documented durable AgentHarness must not be treated as available Studio infrastructure because current operations remain stubbed in [`agent-harness.ts`](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/agent/src/harness/agent-harness.ts).
+**Approved Core Alpha target.** The typed-tool boundary is informed by [pinned upstream Pi evidence](../architecture/pi-runtime.md), not Aptiloop implementation evidence: the published `v0.84.1` tag is commit [`53fa77ccd8a279eb87e92294ef3687b03ff80112`](https://github.com/earendil-works/pi/tree/53fa77ccd8a279eb87e92294ef3687b03ff80112); separately inspected post-release commit [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328) contains unreleased changes while its manifests still report `0.84.1`. Both contain `@earendil-works/pi-ai` provider/model and typed-tool schemas plus the `@earendil-works/pi-agent-core` loop. Aptiloop has integrated neither package. `@earendil-works/pi-coding-agent` is explicitly excluded because its general tools violate this boundary.
 
 A proposal contains:
 
@@ -402,15 +403,18 @@ Publish is a dedicated screen and is desktop-only in Core Alpha. It requires:
 
 - draft saved locally;
 - current deterministic validation with zero errors;
+- learner Preview completed and reviewed for the exact saved Draft digest covered by the current validation result;
 - locale/release policy satisfied;
 - finite graph valid;
 - all required sources/capsules resolved;
 - environment/check references valid;
-- change review completed;
+- Change review completed for that same validated and previewed Draft digest;
 - version/release notes entered;
 - immutable consequence acknowledged;
 - exact Course/revision/parent and resulting hash/version summary;
 - explicit Publish action.
+
+Any content or release-relevant metadata change invalidates validation, Preview, and Change review together; Publish remains blocked until all three are current again.
 
 Apply Proposal, Validate, Preview, and Publish never share one confirmation or primary button. AI cannot publish. A validation pass is not design approval, and owner design approval is not Course publication approval.
 
@@ -436,7 +440,6 @@ Desktop uses source/personal comparison, editorial diff, conflict list, Preview,
 
 Required states: no branch, branch current, Draft saved/saving/failed, upstream available, comparison loading, clean integration, conflict, validation blocked, stale source/hash, merge failure, publish uncertain, and completed personal revision.
 
-
 ### 17. Export
 
 **Approved Core Alpha target**
@@ -456,28 +459,28 @@ Export never silently shares externally. Errors preserve the local target choice
 
 **Approved Core Alpha target**
 
-| State | Studio response |
-| --- | --- |
-| Loading Course/revision | Keep shell and selected Course context; skeleton outline/editor separately. |
-| Empty Course | Guided metadata → first lesson → first activity sequence; no empty card grid. |
-| Draft saved | Quiet “Saved locally” with timestamp on disclosure. |
-| Draft saving | `aria-live` polite once; prevent conflicting publish, not ordinary reading. |
-| Save failed | Inline persistent banner plus affected field/operation; retain local edit buffer. |
-| Browser offline | Allow safe local editing only if durable local save is guaranteed; otherwise read-only with copy/export-draft recovery. Do not promise sync. |
-| Core unavailable | Preserve editor buffer; disable server-owned validation/publish; route to Core settings. |
-| Storage unavailable | Disable mutations; show SQLite/storage reason and non-destructive recovery. |
-| AI off | Manual editor complete; proposal rail absent/quiet. |
-| AI unavailable | Existing proposal/draft retained; explicit Retry/switch/manual. |
-| Runtime missing | Preview capability finding; exact Node/Python/editor contract and settings link. |
-| Validation errors | Count by severity; focus exact node/field; Publish disabled. |
-| Validation stale | Keep prior report visibly stale; require rerun before Publish. |
-| Published/read-only | Disable edit controls; offer Compare and Clone. |
-| Import invalid | Keep outside library; structured findings; no “force import.” |
-| Pack incompatible | Name supported schema range; no auto-conversion claim. |
-| Proposal invalid | Show typed-output validation failure; do not partially apply. |
-| Guided workflow failed | Keep the last safe state and all user input; name provider/auth/storage/compilation/validation layer; retry, back, or continue manually. |
-| Adaptation conflict | Preserve source and personal revisions; show explicit conflict/invariant findings; never auto-merge or rewrite history. |
-| Publish uncertain | Lock duplicate submit; read back revision state; preserve draft until confirmed. |
+| State                   | Studio response                                                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Loading Course/revision | Keep shell and selected Course context; skeleton outline/editor separately.                                                                  |
+| Empty Course            | Guided metadata → first lesson → first activity sequence; no empty card grid.                                                                |
+| Draft saved             | Quiet “Saved locally” with timestamp on disclosure.                                                                                          |
+| Draft saving            | `aria-live` polite once; prevent conflicting publish, not ordinary reading.                                                                  |
+| Save failed             | Inline persistent banner plus affected field/operation; retain local edit buffer.                                                            |
+| Browser offline         | Allow safe local editing only if durable local save is guaranteed; otherwise read-only with copy/export-draft recovery. Do not promise sync. |
+| Core unavailable        | Preserve editor buffer; disable server-owned validation/publish; route to Core settings.                                                     |
+| Storage unavailable     | Disable mutations; show SQLite/storage reason and non-destructive recovery.                                                                  |
+| AI off                  | Manual editor complete; proposal rail absent/quiet.                                                                                          |
+| AI unavailable          | Existing proposal/draft retained; explicit Retry/switch/manual.                                                                              |
+| Runtime missing         | Preview capability finding; exact Node/Python/editor contract and settings link.                                                             |
+| Validation errors       | Count by severity; focus exact node/field; Publish disabled.                                                                                 |
+| Validation stale        | Keep prior report visibly stale; require rerun before Publish.                                                                               |
+| Published/read-only     | Disable edit controls; offer Compare and Clone.                                                                                              |
+| Import invalid          | Keep outside library; structured findings; no “force import.”                                                                                |
+| Pack incompatible       | Name supported schema range; no auto-conversion claim.                                                                                       |
+| Proposal invalid        | Show typed-output validation failure; do not partially apply.                                                                                |
+| Guided workflow failed  | Keep the last safe state and all user input; name provider/auth/storage/compilation/validation layer; retry, back, or continue manually.     |
+| Adaptation conflict     | Preserve source and personal revisions; show explicit conflict/invariant findings; never auto-merge or rewrite history.                      |
+| Publish uncertain       | Lock duplicate submit; read back revision state; preserve draft until confirmed.                                                             |
 
 ## Accessibility requirements
 

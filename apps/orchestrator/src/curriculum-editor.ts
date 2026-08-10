@@ -6,6 +6,10 @@ import {
   type DatabaseConnection,
 } from "@dlh/database";
 import {
+  resolveExplicitUnitDefinitions,
+  validateActivityGraph,
+} from "@dlh/learning-core";
+import {
   CurriculumSourceSchema,
   CurriculumUnitSchema,
   DepthLevelSchema,
@@ -331,30 +335,75 @@ function deleteEntity(
 function assertGraphContracts(graph: CurriculumVersionGraph): void {
   for (const week of graph.weeks) {
     for (const day of week.days) {
+      const definitions = resolveExplicitUnitDefinitions(
+        day.units.map((unit) => ({
+          id: unit.id,
+          stableId: unit.stableId,
+          optional: unit.optional,
+          prerequisiteStableIds: UnitUnlockRuleSchema.array()
+            .parse(unit.unlockRules)
+            .map((rule) => rule.unitId),
+        })),
+      );
+      const prerequisiteIdsByActivityId = new Map(
+        definitions.map((definition) => [
+          definition.id,
+          definition.prerequisiteUnitIds ?? [],
+        ]),
+      );
       for (const unit of day.units) {
         CurriculumUnitSchema.parse({
           id: unit.id,
           stableId: unit.stableId,
           type: unit.type,
+          order: unit.orderIndex + 1,
           title: unit.title,
           description: unit.description ?? unit.title,
-          order: unit.orderIndex + 1,
           estimatedMinutes: unit.estimatedMinutes ?? 0,
           objectives: unit.objectives,
           checklist: unit.checklist,
           sources: unit.sources,
           questions: unit.questions,
           misconceptions: unit.misconceptions,
-          referenceAnswer:
-            typeof unit.referenceAnswer === "string"
-              ? unit.referenceAnswer
-              : null,
+          referenceAnswer: unit.referenceAnswer,
           completionCriteria: unit.completionCriteria,
           unlockRules: unit.unlockRules,
           optional: unit.optional,
           depthLevel: unit.depthLevel ?? "foundation",
           payload: unit.payload,
         });
+      }
+      const validation = validateActivityGraph(
+        {
+          courseId: graph.version.curriculumId,
+          revisionId: graph.version.id,
+          lessonId: day.id,
+          entryActivityIds: definitions
+            .filter(
+              (definition) =>
+                (definition.prerequisiteUnitIds?.length ?? 0) === 0,
+            )
+            .map((definition) => definition.id),
+          activities: day.units.map((unit) => ({
+            id: unit.id,
+            stableId: unit.stableId,
+            courseId: graph.version.curriculumId,
+            revisionId: graph.version.id,
+            lessonId: day.id,
+            type: unit.type,
+            required: !unit.optional,
+            prerequisiteActivityIds:
+              prerequisiteIdsByActivityId.get(unit.id) ?? [],
+          })),
+        },
+        UnitTypeSchema.options,
+      );
+      if (!validation.valid) {
+        throw new Error(
+          `Activity graph is invalid: ${validation.issues
+            .map((issue) => issue.code)
+            .join(", ")}`,
+        );
       }
     }
   }
@@ -468,10 +517,19 @@ async function handle(
       message.includes("completion criteria") ||
       message.includes("Published curriculum requires") ||
       message.includes("Every published day") ||
+      message.includes("prerequisite") ||
       message.includes("Ordered IDs")
     ) {
       return context.json(
-        { error: { code: "validation_failed", message } },
+        {
+          error: {
+            code: "validation_failed",
+            message:
+              message === "legacy lesson prerequisite is invalid"
+                ? "Lesson prerequisite is invalid"
+                : message,
+          },
+        },
         409,
       );
     }

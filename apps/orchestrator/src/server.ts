@@ -1,10 +1,11 @@
 import { serve } from "@hono/node-server";
 
 import { createApp } from "./app.js";
+import { parseOrchestratorStartupConfig } from "./startup-boundary.js";
 
-const port = Number.parseInt(process.env.PORT ?? "8787", 10);
-const hostname = process.env.HOST ?? "127.0.0.1";
-const runtime = createApp();
+const startupConfig = parseOrchestratorStartupConfig(process.env);
+const { hostname, port } = startupConfig;
+const runtime = createApp({ startupConfig });
 
 const server = serve(
   {

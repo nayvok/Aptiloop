@@ -504,14 +504,16 @@ describe("OpenCodeAgentProvider", () => {
       expect.objectContaining({
         type: "tool.started",
         toolCallId: "call-1",
-        input: { file: "lesson.ts" },
+        toolName: "read",
       }),
       expect.objectContaining({
         type: "tool.completed",
         toolCallId: "call-1",
-        output: "source",
+        toolName: "read",
       }),
     ]);
+    expect(JSON.stringify(events)).not.toContain("lesson.ts");
+    expect(JSON.stringify(events)).not.toContain("source");
   });
 
   it("keeps a successful OpenCode session active for another turn", async () => {

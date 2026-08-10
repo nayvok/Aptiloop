@@ -1,4 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
+import {
+  resolveExplicitUnitDefinitions,
+  validateActivityGraph,
+} from "@dlh/learning-core";
+import { CourseEntityIdSchema, UnitUnlockRuleSchema } from "@dlh/shared";
 
 import { withTransaction, type DatabaseConnection } from "./database.js";
 import type {
@@ -249,6 +254,460 @@ function mapUnit(row: UnitRow): CurriculumUnit {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function loadVersionGraph(
+  connection: DatabaseConnection,
+  versionId: string,
+): CurriculumVersionGraph {
+  const versionRow = connection.sqlite
+    .prepare("SELECT * FROM curriculum_versions WHERE id = ?")
+    .get(versionId) as VersionRow | undefined;
+  if (!versionRow) throw new Error(`Unknown curriculum version: ${versionId}`);
+  const weekRows = connection.sqlite
+    .prepare(
+      "SELECT * FROM curriculum_weeks WHERE version_id = ? ORDER BY order_index, id",
+    )
+    .all(versionId) as WeekRow[];
+  const dayRows = connection.sqlite
+    .prepare(
+      "SELECT * FROM curriculum_days_v2 WHERE version_id = ? ORDER BY order_index, id",
+    )
+    .all(versionId) as DayRow[];
+  const unitRows = connection.sqlite
+    .prepare(
+      "SELECT * FROM curriculum_units WHERE version_id = ? ORDER BY order_index, id",
+    )
+    .all(versionId) as UnitRow[];
+  return {
+    version: mapVersion(versionRow),
+    weeks: weekRows.map((weekRow) => ({
+      ...mapWeek(weekRow),
+      days: dayRows
+        .filter((dayRow) => dayRow.week_id === weekRow.id)
+        .map((dayRow) => ({
+          ...mapDay(dayRow),
+          prerequisites: parseArray(
+            dayRow.prerequisites_json,
+            "day prerequisites",
+          ),
+          expectedOutcomes: parseArray(
+            dayRow.expected_outcomes_json,
+            "day outcomes",
+          ),
+          outOfScope: parseArray(dayRow.out_of_scope_json, "day out-of-scope"),
+          topics: parseArray(dayRow.topics_json, "day topics"),
+          units: unitRows
+            .filter((unitRow) => unitRow.day_id === dayRow.id)
+            .map((unitRow) => ({
+              ...mapUnit(unitRow),
+              objectives: parseArray(
+                unitRow.objectives_json,
+                "unit objectives",
+              ),
+              checklist: parseArray(unitRow.checklist_json, "unit checklist"),
+              sources: parseArray(unitRow.sources_json, "unit sources"),
+              questions: parseArray(unitRow.questions_json, "unit questions"),
+              misconceptions: parseArray(
+                unitRow.misconceptions_json,
+                "unit misconceptions",
+              ),
+              referenceAnswer:
+                unitRow.reference_answer_json === null
+                  ? null
+                  : (JSON.parse(unitRow.reference_answer_json) as unknown),
+              completionCriteria: parseArray(
+                unitRow.completion_criteria_json,
+                "unit completion criteria",
+              ),
+              unlockRules: parseArray(
+                unitRow.unlock_rules_json,
+                "unit unlock rules",
+              ),
+              payload: parseObject(unitRow.payload_json, "unit payload"),
+            })),
+        })),
+    })),
+  };
+}
+
+interface ResolvedGraphPrerequisites {
+  readonly lessonIdsByLessonId: ReadonlyMap<string, readonly string[]>;
+  readonly activityIdsByActivityId: ReadonlyMap<string, readonly string[]>;
+}
+
+function resolveGraphPrerequisites(
+  graph: CurriculumVersionGraph,
+): ResolvedGraphPrerequisites {
+  const lessons = graph.weeks.flatMap((week) => week.days);
+  const lessonIdByStableId = new Map<string, string>();
+  for (const lesson of lessons) {
+    if (lessonIdByStableId.has(lesson.stableId)) {
+      throw new Error(`Duplicate lesson stable ID: ${lesson.stableId}`);
+    }
+    lessonIdByStableId.set(lesson.stableId, lesson.id);
+  }
+  const lessonIdsByLessonId = new Map<string, readonly string[]>();
+  for (const lesson of lessons) {
+    const stableIds = CourseEntityIdSchema.array().parse(lesson.prerequisites);
+    const prerequisiteIds = stableIds.map((stableId) => {
+      const prerequisiteId = lessonIdByStableId.get(stableId);
+      if (prerequisiteId === undefined || prerequisiteId === lesson.id) {
+        throw new Error(`Invalid lesson prerequisite: ${stableId}`);
+      }
+      return prerequisiteId;
+    });
+    if (new Set(prerequisiteIds).size !== prerequisiteIds.length) {
+      throw new Error(`Duplicate lesson prerequisite: ${lesson.id}`);
+    }
+    lessonIdsByLessonId.set(lesson.id, prerequisiteIds);
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visitLesson = (lessonId: string): void => {
+    if (visiting.has(lessonId)) {
+      throw new Error(`Cyclic lesson prerequisite: ${lessonId}`);
+    }
+    if (visited.has(lessonId)) return;
+    visiting.add(lessonId);
+    for (const prerequisiteId of lessonIdsByLessonId.get(lessonId) ?? []) {
+      visitLesson(prerequisiteId);
+    }
+    visiting.delete(lessonId);
+    visited.add(lessonId);
+  };
+  for (const lesson of lessons) visitLesson(lesson.id);
+
+  const activityIdsByActivityId = new Map<string, readonly string[]>();
+  for (const lesson of lessons) {
+    const resolved = resolveExplicitUnitDefinitions(
+      lesson.units.map((unit) => ({
+        id: unit.id,
+        stableId: unit.stableId,
+        optional: unit.optional,
+        prerequisiteStableIds: UnitUnlockRuleSchema.array()
+          .parse(unit.unlockRules)
+          .map((rule) => rule.unitId),
+      })),
+    );
+    for (const definition of resolved) {
+      activityIdsByActivityId.set(
+        definition.id,
+        definition.prerequisiteUnitIds ?? [],
+      );
+    }
+    const validation = validateActivityGraph(
+      {
+        courseId: graph.version.curriculumId,
+        revisionId: graph.version.id,
+        lessonId: lesson.id,
+        entryActivityIds: resolved
+          .filter(
+            (definition) => (definition.prerequisiteUnitIds?.length ?? 0) === 0,
+          )
+          .map((definition) => definition.id),
+        activities: lesson.units.map((unit) => ({
+          id: unit.id,
+          stableId: unit.stableId,
+          courseId: graph.version.curriculumId,
+          revisionId: graph.version.id,
+          lessonId: lesson.id,
+          type: unit.type,
+          required: !unit.optional,
+          prerequisiteActivityIds: activityIdsByActivityId.get(unit.id) ?? [],
+        })),
+      },
+      [...unitTypes],
+    );
+    if (!validation.valid) {
+      throw new Error(
+        `Activity graph is invalid: ${validation.issues
+          .map((issue) => issue.code)
+          .join(", ")}`,
+      );
+    }
+  }
+  return { lessonIdsByLessonId, activityIdsByActivityId };
+}
+
+function publicationContent(graph: CurriculumVersionGraph): unknown {
+  return {
+    curriculumId: graph.version.curriculumId,
+    revision: graph.version.revision,
+    title: graph.version.title,
+    description: graph.version.description,
+    weeks: graph.weeks.map(({ createdAt: _c, updatedAt: _u, ...week }) => ({
+      ...week,
+      days: week.days.map(({ createdAt: _dc, updatedAt: _du, ...day }) => ({
+        ...day,
+        units: day.units.map(
+          ({ createdAt: _uc, updatedAt: _uu, ...unit }) => unit,
+        ),
+      })),
+    })),
+  };
+}
+
+function hasCourseProjectionSchema(connection: DatabaseConnection): boolean {
+  return (
+    connection.sqlite
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'course_revisions'",
+      )
+      .get() !== undefined
+  );
+}
+
+/** Rebuilds every draft Course descendant and edge from one source revision. */
+export function synchronizeDraftCourseProjectionWithinTransaction(
+  connection: DatabaseConnection,
+  graph: CurriculumVersionGraph,
+): void {
+  const target = connection.sqlite
+    .prepare(
+      `SELECT course_id, status FROM course_revisions
+       WHERE id = ?`,
+    )
+    .get(graph.version.id) as { course_id: string; status: string } | undefined;
+  if (
+    target?.course_id !== graph.version.curriculumId ||
+    target.status !== "draft"
+  ) {
+    throw new Error(
+      "Draft Course revision projection is missing or mismatched",
+    );
+  }
+  const resolved = resolveGraphPrerequisites(graph);
+  const args = [graph.version.curriculumId, graph.version.id] as const;
+  connection.sqlite
+    .prepare(
+      "DELETE FROM course_activity_prerequisites WHERE course_id = ? AND revision_id = ?",
+    )
+    .run(...args);
+  connection.sqlite
+    .prepare(
+      "DELETE FROM course_activities WHERE course_id = ? AND revision_id = ?",
+    )
+    .run(...args);
+  connection.sqlite
+    .prepare(
+      "DELETE FROM course_lesson_prerequisites WHERE course_id = ? AND revision_id = ?",
+    )
+    .run(...args);
+  connection.sqlite
+    .prepare(
+      "DELETE FROM course_lessons WHERE course_id = ? AND revision_id = ?",
+    )
+    .run(...args);
+  connection.sqlite
+    .prepare(
+      "DELETE FROM course_sections WHERE course_id = ? AND revision_id = ?",
+    )
+    .run(...args);
+  connection.sqlite
+    .prepare(
+      `INSERT INTO course_sections
+         (id, course_id, revision_id, stable_id, order_index, title,
+          description, created_at, updated_at)
+       SELECT week.id, revision.curriculum_id, week.version_id, week.stable_id,
+              week.order_index, week.title, week.description,
+              week.created_at, week.updated_at
+       FROM curriculum_weeks week
+       JOIN curriculum_versions revision ON revision.id = week.version_id
+       WHERE week.version_id = ?`,
+    )
+    .run(graph.version.id);
+  connection.sqlite
+    .prepare(
+      `INSERT INTO course_lessons
+         (id, course_id, revision_id, section_id, stable_id, order_index,
+          title, description, goal, estimated_minutes, expected_outcomes_json,
+          depth_level, out_of_scope_json, topics_json, created_at, updated_at)
+       SELECT lesson.id, revision.curriculum_id, lesson.version_id,
+              lesson.week_id, lesson.stable_id, lesson.order_index, lesson.title,
+              COALESCE(lesson.description, lesson.title), lesson.goal,
+              lesson.estimated_minutes, lesson.expected_outcomes_json,
+              lesson.depth_level, lesson.out_of_scope_json, lesson.topics_json,
+              lesson.created_at, lesson.updated_at
+       FROM curriculum_days_v2 lesson
+       JOIN curriculum_versions revision ON revision.id = lesson.version_id
+       WHERE lesson.version_id = ?`,
+    )
+    .run(graph.version.id);
+  connection.sqlite
+    .prepare(
+      `INSERT INTO course_activities
+         (id, course_id, revision_id, lesson_id, stable_id, activity_type,
+          order_index, title, description, estimated_minutes, required,
+          objectives_json, checklist_json, sources_json, questions_json,
+          misconceptions_json, capability_ids_json, completion_criteria_json,
+          payload_json, protected_material_json, depth_level, created_at, updated_at)
+       SELECT activity.id, revision.curriculum_id, activity.version_id,
+              activity.day_id, activity.stable_id, activity.type,
+              activity.order_index, activity.title,
+              COALESCE(activity.description, activity.title),
+              activity.estimated_minutes,
+              CASE activity.optional WHEN 0 THEN 1 ELSE 0 END,
+              activity.objectives_json, activity.checklist_json,
+              activity.sources_json, activity.questions_json,
+              activity.misconceptions_json, '[]',
+              activity.completion_criteria_json, activity.payload_json,
+              json_object(
+                'referenceAnswer',
+                CASE WHEN activity.reference_answer_json IS NULL
+                  THEN NULL ELSE json(activity.reference_answer_json) END,
+                'questions', json(activity.questions_json)
+              ),
+              activity.depth_level, activity.created_at, activity.updated_at
+       FROM curriculum_units activity
+       JOIN curriculum_versions revision ON revision.id = activity.version_id
+       WHERE activity.version_id = ?`,
+    )
+    .run(graph.version.id);
+  const insertLessonPrerequisite = connection.sqlite.prepare(
+    `INSERT INTO course_lesson_prerequisites
+       (course_id, revision_id, lesson_id, prerequisite_lesson_id)
+     VALUES (?, ?, ?, ?)`,
+  );
+  for (const [lessonId, prerequisiteIds] of resolved.lessonIdsByLessonId) {
+    for (const prerequisiteId of prerequisiteIds) {
+      insertLessonPrerequisite.run(...args, lessonId, prerequisiteId);
+    }
+  }
+  const insertActivityPrerequisite = connection.sqlite.prepare(
+    `INSERT INTO course_activity_prerequisites
+       (course_id, revision_id, lesson_id, activity_id,
+        prerequisite_activity_id)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const lessonIdByActivityId = new Map(
+    graph.weeks.flatMap((week) =>
+      week.days.flatMap((lesson) =>
+        lesson.units.map((activity) => [activity.id, lesson.id] as const),
+      ),
+    ),
+  );
+  for (const [
+    activityId,
+    prerequisiteIds,
+  ] of resolved.activityIdsByActivityId) {
+    const lessonId = lessonIdByActivityId.get(activityId);
+    if (lessonId === undefined) {
+      throw new Error(`Activity has no owning lesson: ${activityId}`);
+    }
+    for (const prerequisiteId of prerequisiteIds) {
+      insertActivityPrerequisite.run(
+        ...args,
+        lessonId,
+        activityId,
+        prerequisiteId,
+      );
+    }
+  }
+  const counts = connection.sqlite
+    .prepare(
+      `SELECT
+         (SELECT count(*) FROM curriculum_weeks WHERE version_id = ?) AS source_sections,
+         (SELECT count(*) FROM course_sections WHERE course_id = ? AND revision_id = ?) AS target_sections,
+         (SELECT count(*) FROM curriculum_days_v2 WHERE version_id = ?) AS source_lessons,
+         (SELECT count(*) FROM course_lessons WHERE course_id = ? AND revision_id = ?) AS target_lessons,
+         (SELECT count(*) FROM curriculum_units WHERE version_id = ?) AS source_activities,
+         (SELECT count(*) FROM course_activities WHERE course_id = ? AND revision_id = ?) AS target_activities`,
+    )
+    .get(
+      graph.version.id,
+      ...args,
+      graph.version.id,
+      ...args,
+      graph.version.id,
+      ...args,
+    ) as Record<string, number>;
+  if (
+    counts.source_sections !== counts.target_sections ||
+    counts.source_lessons !== counts.target_lessons ||
+    counts.source_activities !== counts.target_activities
+  ) {
+    throw new Error("Draft Course projection row counts do not match source");
+  }
+}
+
+export interface PublishDraftCurriculumVersionInput {
+  readonly versionId: string;
+  readonly publishedAt: number;
+  readonly expectedContentHash?: string;
+  readonly courseUpdatedAt?: number;
+}
+
+/** Publishes source and Course projections atomically inside an open transaction. */
+export function publishDraftCurriculumVersionWithinTransaction(
+  connection: DatabaseConnection,
+  input: PublishDraftCurriculumVersionInput,
+): CurriculumVersion {
+  const graph = loadVersionGraph(connection, input.versionId);
+  if (graph.version.status !== "draft") {
+    throw new Error("Only a draft curriculum version can be published");
+  }
+  if (!graph.weeks.length || graph.weeks.some((week) => !week.days.length)) {
+    throw new Error(
+      "Published curriculum requires a non-empty week and day graph",
+    );
+  }
+  const units = graph.weeks.flatMap((week) =>
+    week.days.flatMap((day) => day.units),
+  );
+  if (!units.length || units.some((unit) => !unit.completionCriteria.length)) {
+    throw new Error("Every published day needs units with completion criteria");
+  }
+  const generatedContentHash = hashCanonicalJson(publicationContent(graph));
+  const contentHash = input.expectedContentHash ?? generatedContentHash;
+  const hasCourseProjection = hasCourseProjectionSchema(connection);
+  if (hasCourseProjection) {
+    synchronizeDraftCourseProjectionWithinTransaction(connection, graph);
+  }
+  connection.sqlite
+    .prepare(
+      `UPDATE curriculum_versions
+       SET status = 'archived', archived_at = ?, updated_at = ?
+       WHERE curriculum_id = ? AND status = 'published' AND id != ?`,
+    )
+    .run(
+      input.publishedAt,
+      input.publishedAt,
+      graph.version.curriculumId,
+      input.versionId,
+    );
+  const result = connection.sqlite
+    .prepare(
+      `UPDATE curriculum_versions
+       SET status = 'published', content_hash = ?, published_at = ?, updated_at = ?
+       WHERE id = ? AND status = 'draft'`,
+    )
+    .run(contentHash, input.publishedAt, input.publishedAt, input.versionId);
+  if (result.changes !== 1) {
+    throw new Error("Draft changed while it was being published");
+  }
+  connection.sqlite
+    .prepare(
+      "UPDATE curricula SET active_version_id = ?, updated_at = ? WHERE id = ?",
+    )
+    .run(
+      input.versionId,
+      input.courseUpdatedAt ?? input.publishedAt,
+      graph.version.curriculumId,
+    );
+  if (hasCourseProjection) {
+    const target = connection.sqlite
+      .prepare(
+        `SELECT status, content_hash FROM course_revisions
+         WHERE course_id = ? AND id = ?`,
+      )
+      .get(graph.version.curriculumId, input.versionId) as
+      { status: string; content_hash: string | null } | undefined;
+    if (target?.status !== "published" || target.content_hash !== contentHash) {
+      throw new Error("Published Course projection does not match source");
+    }
+  }
+  return loadVersionGraph(connection, input.versionId).version;
 }
 
 export class CurriculumAuthoringRepository {
@@ -539,75 +998,7 @@ export class CurriculumAuthoringRepository {
   }
 
   async getVersionGraph(versionId: string): Promise<CurriculumVersionGraph> {
-    const version = this.#getVersion(versionId);
-    const weekRows = this.#connection.sqlite
-      .prepare(
-        "SELECT * FROM curriculum_weeks WHERE version_id = ? ORDER BY order_index, id",
-      )
-      .all(versionId) as WeekRow[];
-    const dayRows = this.#connection.sqlite
-      .prepare(
-        "SELECT * FROM curriculum_days_v2 WHERE version_id = ? ORDER BY order_index, id",
-      )
-      .all(versionId) as DayRow[];
-    const unitRows = this.#connection.sqlite
-      .prepare(
-        "SELECT * FROM curriculum_units WHERE version_id = ? ORDER BY order_index, id",
-      )
-      .all(versionId) as UnitRow[];
-    return {
-      version,
-      weeks: weekRows.map((weekRow) => ({
-        ...mapWeek(weekRow),
-        days: dayRows
-          .filter((dayRow) => dayRow.week_id === weekRow.id)
-          .map((dayRow) => ({
-            ...mapDay(dayRow),
-            prerequisites: parseArray(
-              dayRow.prerequisites_json,
-              "day prerequisites",
-            ),
-            expectedOutcomes: parseArray(
-              dayRow.expected_outcomes_json,
-              "day outcomes",
-            ),
-            outOfScope: parseArray(
-              dayRow.out_of_scope_json,
-              "day out-of-scope",
-            ),
-            topics: parseArray(dayRow.topics_json, "day topics"),
-            units: unitRows
-              .filter((unitRow) => unitRow.day_id === dayRow.id)
-              .map((unitRow) => ({
-                ...mapUnit(unitRow),
-                objectives: parseArray(
-                  unitRow.objectives_json,
-                  "unit objectives",
-                ),
-                checklist: parseArray(unitRow.checklist_json, "unit checklist"),
-                sources: parseArray(unitRow.sources_json, "unit sources"),
-                questions: parseArray(unitRow.questions_json, "unit questions"),
-                misconceptions: parseArray(
-                  unitRow.misconceptions_json,
-                  "unit misconceptions",
-                ),
-                referenceAnswer:
-                  unitRow.reference_answer_json === null
-                    ? null
-                    : (JSON.parse(unitRow.reference_answer_json) as unknown),
-                completionCriteria: parseArray(
-                  unitRow.completion_criteria_json,
-                  "unit completion criteria",
-                ),
-                unlockRules: parseArray(
-                  unitRow.unlock_rules_json,
-                  "unit unlock rules",
-                ),
-                payload: parseObject(unitRow.payload_json, "unit payload"),
-              })),
-          })),
-      })),
-    };
+    return loadVersionGraph(this.#connection, versionId);
   }
 
   async getActivePath(
@@ -622,67 +1013,12 @@ export class CurriculumAuthoringRepository {
   }
 
   async publishVersion(versionId: string): Promise<CurriculumVersion> {
-    const graph = await this.getVersionGraph(versionId);
-    if (graph.version.status !== "draft") {
-      throw new Error("Only a draft curriculum version can be published");
-    }
-    if (!graph.weeks.length || graph.weeks.some((week) => !week.days.length)) {
-      throw new Error(
-        "Published curriculum requires a non-empty week and day graph",
-      );
-    }
-    const units = graph.weeks.flatMap((week) =>
-      week.days.flatMap((day) => day.units),
+    return withTransaction(this.#connection, () =>
+      publishDraftCurriculumVersionWithinTransaction(this.#connection, {
+        versionId,
+        publishedAt: this.#now(),
+      }),
     );
-    if (
-      !units.length ||
-      units.some((unit) => !unit.completionCriteria.length)
-    ) {
-      throw new Error(
-        "Every published day needs units with completion criteria",
-      );
-    }
-    const content = {
-      curriculumId: graph.version.curriculumId,
-      revision: graph.version.revision,
-      title: graph.version.title,
-      description: graph.version.description,
-      weeks: graph.weeks.map(({ createdAt: _c, updatedAt: _u, ...week }) => ({
-        ...week,
-        days: week.days.map(({ createdAt: _dc, updatedAt: _du, ...day }) => ({
-          ...day,
-          units: day.units.map(
-            ({ createdAt: _uc, updatedAt: _uu, ...unit }) => unit,
-          ),
-        })),
-      })),
-    };
-    const contentHash = hashCanonicalJson(content);
-    withTransaction(this.#connection, () => {
-      const now = this.#now();
-      this.#connection.sqlite
-        .prepare(
-          `UPDATE curriculum_versions
-           SET status = 'archived', archived_at = ?, updated_at = ?
-           WHERE curriculum_id = ? AND status = 'published' AND id != ?`,
-        )
-        .run(now, now, graph.version.curriculumId, versionId);
-      const result = this.#connection.sqlite
-        .prepare(
-          `UPDATE curriculum_versions
-           SET status = 'published', content_hash = ?, published_at = ?, updated_at = ?
-           WHERE id = ? AND status = 'draft'`,
-        )
-        .run(contentHash, now, now, versionId);
-      if (result.changes !== 1)
-        throw new Error("Draft changed while it was being published");
-      this.#connection.sqlite
-        .prepare(
-          "UPDATE curricula SET active_version_id = ?, updated_at = ? WHERE id = ?",
-        )
-        .run(versionId, now, graph.version.curriculumId);
-    });
-    return this.#getVersion(versionId);
   }
 
   async cloneRevision(

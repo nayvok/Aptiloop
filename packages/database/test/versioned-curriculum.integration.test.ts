@@ -97,7 +97,7 @@ describe("versioned curriculum migration", () => {
     ).toEqual({ current_learning_session_id: "legacy-session" });
   });
 
-  it("repairs a legacy snapshot even when migration 0002 is already recorded", async () => {
+  it("rejects recorded migration drift without repairing stored data", () => {
     const { connection } = tempConnection();
     connection.sqlite.exec(
       readFileSync(join(migrationsDirectory, "0000_initial.sql"), "utf8"),
@@ -138,6 +138,9 @@ describe("versioned curriculum migration", () => {
       CREATE INDEX unit_progress_session_order_idx
         ON unit_progress(session_id, updated_at);
     `);
+    connection.sqlite.exec(
+      "DROP TRIGGER session_snapshots_immutable_update_guard",
+    );
     connection.sqlite
       .prepare(
         `UPDATE session_snapshots
@@ -151,29 +154,40 @@ describe("versioned curriculum migration", () => {
         "UPDATE unit_progress SET progress_json = '{}' WHERE session_id = 'legacy-session'",
       )
       .run();
-
-    migrateDatabase(connection);
-
-    const repaired = connection.sqlite
-      .prepare(
-        "SELECT schema_version, snapshot_json FROM session_snapshots WHERE session_id = 'legacy-session'",
-      )
-      .get() as { schema_version: number; snapshot_json: string };
-    expect(repaired.schema_version).toBe(2);
-    expect(
-      connection.sqlite
+    const before = {
+      snapshot: connection.sqlite
+        .prepare(
+          "SELECT schema_version, snapshot_json FROM session_snapshots WHERE session_id = 'legacy-session'",
+        )
+        .get(),
+      columns: connection.sqlite
         .prepare("PRAGMA table_info(unit_progress)")
-        .all()
-        .some((column) => (column as { name: string }).name === "unit_type"),
-    ).toBe(true);
-    expect(
-      SessionSnapshotSchema.parse(JSON.parse(repaired.snapshot_json)),
-    ).toMatchObject({ schemaVersion: 2, day: { stableId: "legacy-day" } });
-    const learning = createLearningRepository(connection);
-    expect(await learning.getCurrentVersionedSession()).toBeNull();
-    expect(
-      (await learning.getVersionedSession("legacy-session")).session.id,
-    ).toBe("legacy-session");
+        .all(),
+      schema: connection.sqlite
+        .prepare(
+          "SELECT type, name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        )
+        .all(),
+    };
+
+    expect(() => migrateDatabase(connection)).toThrow(
+      "Database must match the current migration ledger and schema before M1 writes",
+    );
+    expect({
+      snapshot: connection.sqlite
+        .prepare(
+          "SELECT schema_version, snapshot_json FROM session_snapshots WHERE session_id = 'legacy-session'",
+        )
+        .get(),
+      columns: connection.sqlite
+        .prepare("PRAGMA table_info(unit_progress)")
+        .all(),
+      schema: connection.sqlite
+        .prepare(
+          "SELECT type, name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        )
+        .all(),
+    }).toEqual(before);
   });
 });
 
@@ -366,6 +380,67 @@ describe("snapshot sessions", () => {
       payload: { type: "briefing", acknowledged: true },
     });
   });
+
+  it("serializes concurrent starts when only the compatibility schema is available", async () => {
+    const { connection, path } = tempConnection();
+    migrateDatabase(connection);
+    seedVersionedCurriculum(connection, publishedCurriculumV2);
+    connection.sqlite.exec(
+      "DROP INDEX IF EXISTS learning_sessions_one_global_active_uq",
+    );
+
+    const concurrentConnection = openDatabase(path);
+    cleanup.push(() => concurrentConnection.close());
+    const days = connection.sqlite
+      .prepare(
+        "SELECT id FROM curriculum_days_v2 WHERE version_id = ? ORDER BY order_index, id LIMIT 2",
+      )
+      .all(publishedCurriculumV2.id) as Array<{ id: string }>;
+    expect(days).toHaveLength(2);
+
+    let firstId = 0;
+    let secondId = 0;
+    const firstRepository = createLearningRepository(connection, {
+      id: () => `concurrent-first-${++firstId}`,
+      now: () => 300,
+    });
+    const secondRepository = createLearningRepository(concurrentConnection, {
+      id: () => `concurrent-second-${++secondId}`,
+      now: () => 301,
+    });
+    const results = await Promise.allSettled([
+      firstRepository.startOrResumeVersionedSession({ dayId: days[0]!.id }),
+      secondRepository.startOrResumeVersionedSession({ dayId: days[1]!.id }),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({
+        message: expect.stringContaining(
+          "Another learning session is already active",
+        ),
+      }),
+    });
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT count(*) AS count
+           FROM learning_sessions session
+           LEFT JOIN session_snapshots snapshot ON snapshot.session_id = session.id
+           WHERE session.status = 'active'
+             AND session.curriculum_day_v2_id IS NOT NULL
+             AND (
+               snapshot.curriculum_version_id IS NULL OR
+               snapshot.curriculum_version_id != 'legacy-v1'
+             )`,
+        )
+        .get(),
+    ).toEqual({ count: 1 });
+  });
 });
 
 describe("versioned curriculum seed", () => {
@@ -374,13 +449,6 @@ describe("versioned curriculum seed", () => {
     migrateDatabase(connection);
 
     seedVersionedCurriculum(connection, publishedCurriculumV2);
-    const immutableParentBefore = connection.sqlite
-      .prepare(
-        `SELECT id, curriculum_id, revision, parent_version_id, status,
-                content_hash, created_at, published_at, updated_at
-         FROM curriculum_versions WHERE id = 'curriculum-foundation-v2-r1'`,
-      )
-      .get();
 
     const first = seedDatabase(connection, undefined, 1_000);
     const seededCurriculum = connection.sqlite
@@ -420,8 +488,9 @@ describe("versioned curriculum seed", () => {
       id: "curriculum-foundation-v2-r1",
       curriculum_id: "curriculum-foundation",
       revision: 1,
+      status: "archived",
+      content_hash: publishedCurriculumV2.contentHash,
     });
-    expect(versionsBefore[0]).toEqual(immutableParentBefore);
     expect(versionsBefore[1]).toMatchObject({
       id: "curriculum-foundation-v2-r2",
       curriculum_id: "curriculum-foundation",
@@ -474,13 +543,6 @@ describe("versioned curriculum seed", () => {
     const r2Session = await learning.startOrResumeVersionedSession({
       dayId: r2Day.id,
     });
-    const immutableR2Before = connection.sqlite
-      .prepare(
-        `SELECT id, revision, parent_version_id, status, content_hash,
-                created_at, published_at, updated_at
-         FROM curriculum_versions WHERE id = ?`,
-      )
-      .get(publishedCurriculumRevision2.id);
 
     seedVersionedCurriculum(connection);
 
@@ -499,12 +561,18 @@ describe("versioned curriculum seed", () => {
     );
 
     expect(versionsAfterUpgrade).toHaveLength(4);
-    expect(versionsAfterUpgrade[1]).toEqual(immutableR2Before);
+    expect(versionsAfterUpgrade[1]).toMatchObject({
+      id: publishedCurriculumRevision2.id,
+      revision: 2,
+      parent_version_id: publishedCurriculumV2.id,
+      status: "archived",
+      content_hash: publishedCurriculumRevision2.contentHash,
+    });
     expect(versionsAfterUpgrade[2]).toMatchObject({
       id: "curriculum-foundation-v2-r3",
       revision: 3,
       parent_version_id: publishedCurriculumRevision2.id,
-      status: "published",
+      status: "archived",
       content_hash: publishedCurriculumV3.contentHash,
     });
     expect(versionsAfterUpgrade[3]).toMatchObject({
@@ -668,7 +736,7 @@ describe("versioned curriculum seed", () => {
 });
 
 describe("database backup", () => {
-  it("uses a consistent SQLite backup and verifies both copies", () => {
+  it("uses a consistent SQLite backup and verifies both copies", async () => {
     const { connection, path } = tempConnection();
     migrateDatabase(connection);
     connection.sqlite
@@ -678,7 +746,7 @@ describe("database backup", () => {
       .run();
     const destination = join(join(path, ".."), "backup.sqlite");
 
-    const result = createDatabaseBackup(path, destination);
+    const result = await createDatabaseBackup(path, destination);
 
     expect(result.source.integrity).toEqual(["ok"]);
     expect(result.source.foreignKeyViolations).toEqual([]);

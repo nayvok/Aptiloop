@@ -40,11 +40,52 @@ interface PendingRequest {
 }
 
 const MAX_JSONL_LINE_BYTES = 1024 * 1024;
+const CODEX_CHILD_ENVIRONMENT_NAMES: Readonly<Record<string, true>> = {
+  APPDATA: true,
+  CODEX_HOME: true,
+  COMSPEC: true,
+  HOME: true,
+  HOMEDRIVE: true,
+  HOMEPATH: true,
+  LANG: true,
+  LC_ALL: true,
+  LOCALAPPDATA: true,
+  OPENAI_API_KEY: true,
+  OPENAI_ORG_ID: true,
+  OPENAI_PROJECT_ID: true,
+  PATH: true,
+  PATHEXT: true,
+  PROGRAMDATA: true,
+  PROGRAMFILES: true,
+  "PROGRAMFILES(X86)": true,
+  SYSTEMDRIVE: true,
+  SYSTEMROOT: true,
+  TEMP: true,
+  TMP: true,
+  USERPROFILE: true,
+  WINDIR: true,
+};
+
+export function createCodexChildEnvironment(
+  source: Readonly<NodeJS.ProcessEnv> = process.env,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (
+      value !== undefined &&
+      Object.hasOwn(CODEX_CHILD_ENVIRONMENT_NAMES, name.toUpperCase())
+    ) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
 
 export interface CodexAppServerOptions {
   command?: string;
   cwd?: string;
   requestTimeoutMs?: number;
+  environment?: Readonly<NodeJS.ProcessEnv>;
   spawn?: SpawnProcess;
 }
 
@@ -54,6 +95,7 @@ export class CodexAppServerTransport implements CodexTransport {
   readonly #cwd: string | undefined;
   readonly #requestTimeoutMs: number;
   readonly #spawn: SpawnProcess;
+  readonly #environment: NodeJS.ProcessEnv;
   readonly #listeners = new Set<NotificationListener>();
   readonly #pending = new Map<number, PendingRequest>();
 
@@ -68,6 +110,7 @@ export class CodexAppServerTransport implements CodexTransport {
   constructor(options: CodexAppServerOptions = {}) {
     this.#command = options.command ?? "codex";
     this.#cwd = options.cwd;
+    this.#environment = createCodexChildEnvironment(options.environment);
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
     this.#spawn = options.spawn ?? nodeSpawn;
   }
@@ -182,7 +225,7 @@ export class CodexAppServerTransport implements CodexTransport {
         ["app-server", "--listen", "stdio://"],
         {
           cwd: this.#cwd,
-          env: process.env,
+          env: this.#environment,
           shell: false,
           windowsHide: true,
           stdio: ["pipe", "pipe", "pipe"],

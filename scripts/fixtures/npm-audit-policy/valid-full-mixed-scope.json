@@ -1,0 +1,65 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "shared-risk": {
+      "name": "shared-risk",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 2001,
+          "name": "shared-risk",
+          "dependency": "shared-risk",
+          "title": "Production low fixture advisory",
+          "url": "https://github.com/advisories/GHSA-2222-3333-4444",
+          "severity": "low",
+          "cwe": ["CWE-000"],
+          "cvss": {
+            "score": 2,
+            "vectorString": "CVSS:3.1/AV:L/AC:H/PR:L/UI:R/S:U/C:N/I:L/A:N"
+          },
+          "range": "<2.0.0"
+        },
+        {
+          "source": 2002,
+          "name": "shared-risk",
+          "dependency": "shared-risk",
+          "title": "Development high fixture advisory",
+          "url": "https://github.com/advisories/GHSA-3333-4444-5555",
+          "severity": "high",
+          "cwe": ["CWE-000"],
+          "cvss": {
+            "score": 8,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+          },
+          "range": "2.0.0 - 2.9.0"
+        }
+      ],
+      "effects": [],
+      "range": "<3.0.0",
+      "nodes": [
+        "node_modules/dev-tool/node_modules/shared-risk",
+        "node_modules/shared-risk"
+      ],
+      "fixAvailable": false
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 1,
+      "critical": 0,
+      "total": 1
+    },
+    "dependencies": {
+      "prod": 2,
+      "dev": 2,
+      "optional": 0,
+      "peer": 0,
+      "peerOptional": 0,
+      "total": 4
+    }
+  }
+}

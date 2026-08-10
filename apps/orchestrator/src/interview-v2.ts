@@ -1,14 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { AgentProvider } from "@dlh/agent-core";
-import type { DatabaseConnection, LearningRepository } from "@dlh/database";
+import { ProviderHubError, type ResolvedProviderTurn } from "@dlh/agent-core";
+import type { DatabaseConnection } from "@dlh/database";
 import { getLatestPrompt } from "@dlh/prompt-library";
-import {
-  ProviderIdSchema,
-  type AgentEvent,
-  type ProviderId,
-} from "@dlh/shared";
 import type { Hono } from "hono";
+import { assertCourseScopedSessionSideEffectAllowed } from "./learning-session-policy.js";
+import {
+  providerFailureCode,
+  type ProviderRuntime,
+} from "./provider-runtime.js";
 import { z } from "zod";
 
 const OperationIdSchema = z.string().trim().min(8).max(200);
@@ -21,6 +21,7 @@ export const InterviewSetupRequestSchema = z
     topics: z.array(TopicSchema).min(1).max(12),
     difficulty: DifficultySchema,
     questionCount: z.number().int().min(1).max(12),
+    disclosureOperationId: OperationIdSchema.optional(),
   })
   .strict();
 
@@ -28,6 +29,7 @@ export const InterviewAnswerRequestSchema = z
   .object({
     operationId: OperationIdSchema,
     answer: z.string().trim().min(1).max(20_000),
+    disclosureOperationId: OperationIdSchema.optional(),
   })
   .strict();
 
@@ -75,6 +77,8 @@ const StoredStateSchema = z.object({
 type StoredState = z.infer<typeof StoredStateSchema>;
 
 const InterviewStatusSchema = z.enum(["setup", "in_progress", "completed"]);
+const interviewOperationConflictMessage =
+  "An interview operation is already in progress. Retry this request.";
 
 interface InterviewRow {
   id: string;
@@ -97,8 +101,11 @@ interface MessageRow {
 
 export interface InterviewV2State {
   connection: DatabaseConnection;
-  repository: Pick<LearningRepository, "getSetting">;
-  providers: Record<ProviderId, AgentProvider>;
+  providerRuntime: ProviderRuntime;
+  interviewReservations: {
+    start: boolean;
+    interviewIds: Set<string>;
+  };
 }
 
 class InterviewProviderFailure extends Error {
@@ -117,92 +124,145 @@ export function registerInterviewV2Routes(
 ): void {
   app.post("/api/interviews/v2", async (context) => {
     const body = InterviewSetupRequestSchema.parse(await context.req.json());
-    const existingByOperation = findInterviewByOperation(
-      state,
-      body.operationId,
-    );
-    if (existingByOperation) {
-      const stored = parseStoredState(existingByOperation);
-      assertSameSetup(stored.setup, body);
-      if (existingByOperation.status === "setup") {
-        try {
-          await ensureOpeningQuestion(
-            state,
-            existingByOperation,
-            stored,
-            context.req.raw.signal,
+    if (state.interviewReservations.start) {
+      return context.json({ error: interviewOperationConflictMessage }, 409);
+    }
+    state.interviewReservations.start = true;
+    try {
+      const existingByOperation = findInterviewByOperation(
+        state,
+        body.operationId,
+      );
+      if (existingByOperation) {
+        if (existingByOperation.learningSessionId) {
+          assertCourseScopedSessionSideEffectAllowed(
+            state.connection,
+            existingByOperation.learningSessionId,
           );
-        } catch (error) {
-          recordProviderFailure(state, stored.setup.conversationId, error);
-          return providerFailureResponse(context, error);
+        }
+        const stored = parseStoredState(existingByOperation);
+        assertSameSetup(stored.setup, body);
+        if (existingByOperation.status === "setup") {
+          try {
+            const selection = await readStoredInterviewerSelection(
+              state,
+              stored,
+            );
+            await ensureOpeningQuestion(
+              state,
+              selection,
+              existingByOperation,
+              stored,
+              context.req.raw.signal,
+              body.disclosureOperationId,
+            );
+          } catch (error) {
+            cleanupFailedInterviewSetup(
+              state,
+              existingByOperation.id,
+              stored.setup.conversationId,
+            );
+            return providerFailureResponse(context, error);
+          }
+        }
+        return context.json(
+          readPublicInterview(state, existingByOperation.id),
+          200,
+        );
+      }
+
+      const current = findCurrentInterview(state);
+      if (current) {
+        return context.json(
+          {
+            error: "Finish the current interview before starting another one.",
+          },
+          409,
+        );
+      }
+
+      const learningSessionId = findCurrentLearningSessionId(state);
+      if (learningSessionId) {
+        assertCourseScopedSessionSideEffectAllowed(
+          state.connection,
+          learningSessionId,
+        );
+      }
+
+      let selection: ResolvedProviderTurn;
+      try {
+        selection = await readInterviewerSelection(state);
+      } catch (error) {
+        return providerFailureResponse(context, error);
+      }
+      const interviewId = deterministicId("interview", body.operationId);
+      const conversationId = `${interviewId}:conversation`;
+      const now = Date.now();
+      const stored = StoredStateSchema.parse({
+        schemaVersion: 1,
+        setup: { ...body, conversationId },
+      });
+      if (selection.connection.external && !body.disclosureOperationId) {
+        const preparation = await state.providerRuntime.prepareDisclosure({
+          role: "interviewer",
+          payload: buildQuestionPrompt(stored, [], 1),
+          payloadCategories: ["course-content"],
+          entityIds: { interview: interviewId },
+          exclusions: ["protected-evaluation", "credentials", "local-paths"],
+          destinationPurpose: "Generate one bounded interview question",
+        });
+        if (preparation.required) {
+          return context.json({ kind: "disclosure", ...preparation }, 202);
         }
       }
-      return context.json(
-        readPublicInterview(state, existingByOperation.id),
-        200,
-      );
-    }
 
-    const current = findCurrentInterview(state);
-    if (current) {
-      return context.json(
-        { error: "Finish the current interview before starting another one." },
-        409,
-      );
-    }
-
-    const selection = await readInterviewerSelection(state);
-    const interviewId = deterministicId("interview", body.operationId);
-    const conversationId = `${interviewId}:conversation`;
-    const now = Date.now();
-    const learningSessionId = findCurrentLearningSessionId(state);
-    const stored = StoredStateSchema.parse({
-      schemaVersion: 1,
-      setup: { ...body, conversationId },
-    });
-
-    state.connection.sqlite.exec("BEGIN IMMEDIATE");
-    try {
-      state.connection.sqlite
-        .prepare(
-          `INSERT INTO interview_sessions
+      state.connection.sqlite.exec("BEGIN IMMEDIATE");
+      try {
+        state.connection.sqlite
+          .prepare(
+            `INSERT INTO interview_sessions
            (id, learning_session_id, status, result_json, started_at, completed_at)
            VALUES (?, ?, 'setup', ?, ?, NULL)`,
-        )
-        .run(interviewId, learningSessionId, JSON.stringify(stored), now);
-      state.connection.sqlite
-        .prepare(
-          `INSERT INTO agent_conversations
+          )
+          .run(interviewId, learningSessionId, JSON.stringify(stored), now);
+        state.connection.sqlite
+          .prepare(
+            `INSERT INTO agent_conversations
            (id, learning_session_id, role, provider_id, model_id,
             provider_session_id, status, created_at, updated_at)
            VALUES (?, ?, 'interviewer', ?, ?, NULL, 'active', ?, ?)`,
-        )
-        .run(
-          conversationId,
-          learningSessionId,
-          selection.providerId,
-          selection.modelId,
-          now,
-          now,
-        );
-      state.connection.sqlite.exec("COMMIT");
-    } catch (error) {
-      state.connection.sqlite.exec("ROLLBACK");
-      throw error;
-    }
+          )
+          .run(
+            conversationId,
+            learningSessionId,
+            selection.connection.adapterId,
+            selection.modelId,
+            now,
+            now,
+          );
+        state.connection.sqlite.exec("COMMIT");
+      } catch (error) {
+        state.connection.sqlite.exec("ROLLBACK");
+        throw error;
+      }
 
-    try {
-      await ensureOpeningQuestion(
-        state,
-        readInterviewRow(state, interviewId),
-        stored,
-        context.req.raw.signal,
-      );
-    } catch (error) {
-      recordProviderFailure(state, stored.setup.conversationId, error);
-      return providerFailureResponse(context, error);
+      try {
+        await ensureOpeningQuestion(
+          state,
+          selection,
+          readInterviewRow(state, interviewId),
+          stored,
+          context.req.raw.signal,
+          body.disclosureOperationId,
+        );
+      } catch (error) {
+        cleanupFailedInterviewSetup(state, interviewId, conversationId);
+        return providerFailureResponse(context, error);
+      }
+      return context.json(readPublicInterview(state, interviewId), 201);
+    } finally {
+      state.interviewReservations.start = false;
     }
-    return context.json(readPublicInterview(state, interviewId), 201);
   });
 
   app.get("/api/interviews/v2/current", (context) => {
@@ -218,136 +278,194 @@ export function registerInterviewV2Routes(
 
   app.post("/api/interviews/v2/:id/answers", async (context) => {
     const body = InterviewAnswerRequestSchema.parse(await context.req.json());
-    const interview = readInterviewRow(state, context.req.param("id"));
-    const stored = parseStoredState(interview);
-    if (interview.status !== "in_progress") {
-      return context.json(
-        { error: "Interview is not accepting answers." },
-        409,
-      );
+    const interviewId = context.req.param("id");
+    if (state.interviewReservations.interviewIds.has(interviewId)) {
+      return context.json({ error: interviewOperationConflictMessage }, 409);
     }
-
-    const transcriptBefore = readTranscript(state, stored.setup.conversationId);
-    const askedBefore = countRole(transcriptBefore, "assistant");
-    const answeredBefore = countRole(transcriptBefore, "user");
-    const answerKey = messageKey(interview.id, "answer", body.operationId);
-    const existingAnswer = findMessageByKey(state, answerKey);
-    if (existingAnswer && existingAnswer.content !== body.answer) {
-      return context.json(
-        {
-          error: "operationId was already used with different answer content.",
-        },
-        409,
-      );
-    }
-    if (!existingAnswer && askedBefore !== answeredBefore + 1) {
-      return context.json(
-        { error: "There is no pending interview question." },
-        409,
-      );
-    }
-
-    if (!existingAnswer) {
-      addMessage(state, {
-        conversationId: stored.setup.conversationId,
-        role: "user",
-        content: body.answer,
-        status: "completed",
-        idempotencyKey: answerKey,
-      });
-    }
-
-    const transcript = readTranscript(state, stored.setup.conversationId);
-    const answered = countRole(transcript, "user");
-    const questionKey = messageKey(interview.id, "follow-up", body.operationId);
-    if (
-      answered < stored.setup.questionCount &&
-      !findMessageByKey(state, questionKey)
-    ) {
-      try {
-        const question = await requestQuestion(
-          state,
-          interview,
-          stored,
-          transcript,
-          answered + 1,
-          context.req.raw.signal,
+    state.interviewReservations.interviewIds.add(interviewId);
+    try {
+      const interview = readInterviewRow(state, interviewId);
+      if (interview.learningSessionId) {
+        assertCourseScopedSessionSideEffectAllowed(
+          state.connection,
+          interview.learningSessionId,
         );
+      }
+      const stored = parseStoredState(interview);
+      if (interview.status !== "in_progress") {
+        return context.json(
+          { error: "Interview is not accepting answers." },
+          409,
+        );
+      }
+
+      const transcriptBefore = readTranscript(
+        state,
+        stored.setup.conversationId,
+      );
+      const askedBefore = countRole(transcriptBefore, "assistant");
+      const answeredBefore = countRole(transcriptBefore, "user");
+      const answerKey = messageKey(interview.id, "answer", body.operationId);
+      const existingAnswer = findMessageByKey(state, answerKey);
+      if (existingAnswer && existingAnswer.content !== body.answer) {
+        return context.json(
+          {
+            error:
+              "operationId was already used with different answer content.",
+          },
+          409,
+        );
+      }
+      if (!existingAnswer && askedBefore !== answeredBefore + 1) {
+        return context.json(
+          { error: "There is no pending interview question." },
+          409,
+        );
+      }
+
+      if (!existingAnswer) {
         addMessage(state, {
           conversationId: stored.setup.conversationId,
-          role: "assistant",
-          content: question,
+          role: "user",
+          content: body.answer,
           status: "completed",
-          idempotencyKey: questionKey,
+          idempotencyKey: answerKey,
         });
-      } catch (error) {
-        recordProviderFailure(state, stored.setup.conversationId, error);
-        return providerFailureResponse(context, error);
       }
-    }
 
-    return context.json(readPublicInterview(state, interview.id));
+      const transcript = readTranscript(state, stored.setup.conversationId);
+      const answered = countRole(transcript, "user");
+      const questionKey = messageKey(
+        interview.id,
+        "follow-up",
+        body.operationId,
+      );
+      if (
+        answered < stored.setup.questionCount &&
+        !findMessageByKey(state, questionKey)
+      ) {
+        try {
+          const selection = await readStoredInterviewerSelection(state, stored);
+          if (selection.connection.external && !body.disclosureOperationId) {
+            const preparation = await state.providerRuntime.prepareDisclosure({
+              role: "interviewer",
+              payload: buildQuestionPrompt(stored, transcript, answered + 1),
+              payloadCategories: ["course-content", "learner-message"],
+              entityIds: { interview: interview.id },
+              exclusions: [
+                "protected-evaluation",
+                "credentials",
+                "local-paths",
+              ],
+              destinationPurpose: "Generate one bounded follow-up question",
+            });
+            if (preparation.required) {
+              return context.json({ kind: "disclosure", ...preparation }, 202);
+            }
+          }
+          const question = await requestQuestion(
+            state,
+            selection,
+            interview,
+            stored,
+            transcript,
+            answered + 1,
+            context.req.raw.signal,
+            body.disclosureOperationId,
+          );
+          addMessage(state, {
+            conversationId: stored.setup.conversationId,
+            role: "assistant",
+            content: question,
+            status: "completed",
+            idempotencyKey: questionKey,
+          });
+        } catch (error) {
+          recordProviderFailure(state, stored.setup.conversationId, error);
+          return providerFailureResponse(context, error);
+        }
+      }
+
+      return context.json(readPublicInterview(state, interview.id));
+    } finally {
+      state.interviewReservations.interviewIds.delete(interviewId);
+    }
   });
 
   app.post("/api/interviews/v2/:id/finish", async (context) => {
     const body = InterviewFinishRequestSchema.parse(await context.req.json());
-    const interview = readInterviewRow(state, context.req.param("id"));
-    const stored = parseStoredState(interview);
-    if (interview.status === "completed" && stored.report) {
-      return context.json({
-        interview: readPublicInterview(state, interview.id),
-        report: stored.report,
-      });
+    const interviewId = context.req.param("id");
+    if (state.interviewReservations.interviewIds.has(interviewId)) {
+      return context.json({ error: interviewOperationConflictMessage }, 409);
     }
-    if (interview.status !== "in_progress") {
-      return context.json({ error: "Interview has not started." }, 409);
-    }
-    const transcript = readTranscript(state, stored.setup.conversationId);
-    const asked = countRole(transcript, "assistant");
-    const answered = countRole(transcript, "user");
-    if (asked !== stored.setup.questionCount || answered !== asked) {
-      return context.json(
-        { error: "Answer every configured question before finishing." },
-        409,
-      );
-    }
-
-    const report = deriveReport(interview.id, stored.setup, transcript);
-    const completedState = StoredStateSchema.parse({
-      ...stored,
-      finishOperationId: body.operationId,
-      report,
-    });
-    const now = Date.now();
-    state.connection.sqlite.exec("BEGIN IMMEDIATE");
+    state.interviewReservations.interviewIds.add(interviewId);
     try {
-      state.connection.sqlite
-        .prepare(
-          `UPDATE interview_sessions
+      const interview = readInterviewRow(state, interviewId);
+      if (interview.learningSessionId) {
+        assertCourseScopedSessionSideEffectAllowed(
+          state.connection,
+          interview.learningSessionId,
+        );
+      }
+      const stored = parseStoredState(interview);
+      if (interview.status === "completed" && stored.report) {
+        return context.json({
+          interview: readPublicInterview(state, interview.id),
+          report: stored.report,
+        });
+      }
+      if (interview.status !== "in_progress") {
+        return context.json({ error: "Interview has not started." }, 409);
+      }
+      const transcript = readTranscript(state, stored.setup.conversationId);
+      const asked = countRole(transcript, "assistant");
+      const answered = countRole(transcript, "user");
+      if (asked !== stored.setup.questionCount || answered !== asked) {
+        return context.json(
+          { error: "Answer every configured question before finishing." },
+          409,
+        );
+      }
+
+      const report = deriveReport(interview.id, stored.setup, transcript);
+      const completedState = StoredStateSchema.parse({
+        ...stored,
+        finishOperationId: body.operationId,
+        report,
+      });
+      const now = Date.now();
+      state.connection.sqlite.exec("BEGIN IMMEDIATE");
+      try {
+        state.connection.sqlite
+          .prepare(
+            `UPDATE interview_sessions
            SET status = 'completed', result_json = ?, completed_at = ?
            WHERE id = ? AND status = 'in_progress'`,
-        )
-        .run(JSON.stringify(completedState), now, interview.id);
-      state.connection.sqlite
-        .prepare(
-          `UPDATE agent_conversations
+          )
+          .run(JSON.stringify(completedState), now, interview.id);
+        state.connection.sqlite
+          .prepare(
+            `UPDATE agent_conversations
            SET status = 'completed', updated_at = ? WHERE id = ?`,
-        )
-        .run(now, stored.setup.conversationId);
-      upsertInterviewUnitProgress(
-        state,
-        interview.learningSessionId,
-        interview.id,
-      );
-      state.connection.sqlite.exec("COMMIT");
-    } catch (error) {
-      state.connection.sqlite.exec("ROLLBACK");
-      throw error;
+          )
+          .run(now, stored.setup.conversationId);
+        upsertInterviewUnitProgress(
+          state,
+          interview.learningSessionId,
+          interview.id,
+        );
+        state.connection.sqlite.exec("COMMIT");
+      } catch (error) {
+        state.connection.sqlite.exec("ROLLBACK");
+        throw error;
+      }
+      return context.json({
+        interview: readPublicInterview(state, interview.id),
+        report,
+      });
+    } finally {
+      state.interviewReservations.interviewIds.delete(interviewId);
     }
-    return context.json({
-      interview: readPublicInterview(state, interview.id),
-      report,
-    });
   });
 }
 
@@ -388,21 +506,46 @@ function upsertInterviewUnitProgress(
     );
 }
 
+function buildQuestionPrompt(
+  stored: StoredState,
+  transcript: MessageRow[],
+  questionNumber: number,
+): string {
+  return JSON.stringify({
+    task: "ask_one_interview_question",
+    topics: stored.setup.topics,
+    difficulty: stored.setup.difficulty,
+    questionNumber,
+    questionCount: stored.setup.questionCount,
+    transcript: transcript.map(({ role, content }) => ({ role, content })),
+    constraints: [
+      "Ask exactly one bounded question.",
+      "Include a time or answer-length limit.",
+      "Do not reveal an answer, rubric, evaluation criteria, or hidden context.",
+      "Use the learner's UI locale for prose; keep code and technical identifiers unchanged.",
+    ],
+  });
+}
+
 async function ensureOpeningQuestion(
   state: InterviewV2State,
+  selection: ResolvedProviderTurn,
   interview: InterviewRow,
   stored: StoredState,
   signal: AbortSignal,
+  disclosureOperationId?: string,
 ): Promise<void> {
   const key = messageKey(interview.id, "opening", stored.setup.operationId);
   if (findMessageByKey(state, key)) return;
   const question = await requestQuestion(
     state,
+    selection,
     interview,
     stored,
     [],
     1,
     signal,
+    disclosureOperationId,
   );
   state.connection.sqlite.exec("BEGIN IMMEDIATE");
   try {
@@ -427,115 +570,134 @@ async function ensureOpeningQuestion(
 
 async function requestQuestion(
   state: InterviewV2State,
+  selection: ResolvedProviderTurn,
   interview: InterviewRow,
   stored: StoredState,
   transcript: MessageRow[],
   questionNumber: number,
   signal: AbortSignal,
+  disclosureOperationId?: string,
 ): Promise<string> {
-  const conversation = readConversation(state, stored.setup.conversationId);
-  const providerId = ProviderIdSchema.parse(conversation.providerId);
-  const provider = state.providers[providerId];
-  if (!provider) {
-    throw new InterviewProviderFailure("failed", "Interviewer is unavailable.");
+  const prompt = buildQuestionPrompt(stored, transcript, questionNumber);
+  const dispatch = await state.providerRuntime.resolveDispatch({
+    role: "interviewer",
+    payload: prompt,
+    ...(disclosureOperationId ? { disclosureOperationId } : {}),
+    metadata: {
+      interviewId: interview.id,
+      questionNumber,
+    },
+  });
+  if (
+    dispatch.connection.connectionId !== selection.connection.connectionId ||
+    dispatch.modelId !== selection.modelId
+  ) {
+    state.providerRuntime.finishDispatch(dispatch, "failed", "misconfigured");
+    throw new InterviewProviderFailure(
+      "failed",
+      "Interviewer provider selection changed during the interview.",
+    );
   }
-  let providerSession: Awaited<ReturnType<AgentProvider["createSession"]>>;
+  const provider = dispatch.provider;
+  let providerSessionId: string | undefined;
+  let terminal: "completed" | "failed" | "cancelled" | undefined;
+  let streamStarted = false;
+  let streamCompleted = false;
+  let dispatchFinished = false;
+  const finishDispatch = (
+    status: "completed" | "failed" | "cancelled",
+    failureCode: ReturnType<typeof providerFailureCode> | null,
+  ) => {
+    if (dispatchFinished) return;
+    state.providerRuntime.finishDispatch(dispatch, status, failureCode);
+    dispatchFinished = true;
+  };
   try {
-    providerSession = await provider.createSession({
+    const providerSession = await provider.createSession({
       role: "interviewer",
-      modelId: conversation.modelId,
+      modelId: dispatch.modelId,
       systemPrompt: getLatestPrompt("interviewer").systemPrompt,
       metadata: { interviewId: interview.id },
     });
-  } catch {
-    throw new InterviewProviderFailure(
-      "failed",
-      "Interviewer provider could not start a session.",
-    );
-  }
-  state.connection.sqlite
-    .prepare(
-      `UPDATE agent_conversations
-       SET provider_session_id = ?, updated_at = ? WHERE id = ?`,
-    )
-    .run(providerSession.id, Date.now(), stored.setup.conversationId);
-
-  const prompt = JSON.stringify({
-    task: "ask_one_interview_question",
-    topics: stored.setup.topics,
-    difficulty: stored.setup.difficulty,
-    questionNumber,
-    questionCount: stored.setup.questionCount,
-    transcript: transcript.map(({ role, content }) => ({ role, content })),
-    constraints: [
-      "Ask exactly one bounded question.",
-      "Include a time or answer-length limit.",
-      "Do not reveal an answer, rubric, evaluation criteria, or hidden context.",
-      "Write the question and all learner-facing text in Russian; keep code and technical terms in English.",
-    ],
-  });
-  let content = "";
-  let terminal: "completed" | "failed" | "cancelled" | undefined;
-  let providerMessage = "Interviewer provider failed.";
-  const cancel = () => {
-    void provider.cancelSession(providerSession.id).catch(() => {});
-  };
-  signal.addEventListener("abort", cancel, { once: true });
-  try {
-    if (signal.aborted) cancel();
-    for await (const event of provider.streamMessage({
-      sessionId: providerSession.id,
-      message: prompt,
-      responseFormat: "text",
-    })) {
-      collectProviderEvent(event, {
-        append: (delta) => {
-          content += delta;
-        },
-        replace: (value) => {
-          content = value;
-        },
-        fail: (message) => {
-          providerMessage = message;
-        },
-        complete: (reason) => {
-          terminal = reason;
-        },
-      });
+    providerSessionId = providerSession.id;
+    if (
+      providerSession.providerId !== dispatch.connection.adapterId ||
+      providerSession.role !== "interviewer" ||
+      providerSession.modelId !== dispatch.modelId
+    ) {
+      throw new ProviderHubError(
+        "invalid_output",
+        "Interviewer provider returned mismatched session metadata",
+      );
     }
-  } catch {
+
+    let content = "";
+    let messageCompleted = false;
+    streamStarted = true;
+    for await (const event of state.providerRuntime.stream(
+      dispatch,
+      providerSession.id,
+      signal,
+      "text",
+    )) {
+      switch (event.type) {
+        case "message.delta":
+          content += event.delta;
+          break;
+        case "message.completed":
+          messageCompleted = true;
+          content = event.content;
+          break;
+        case "session.completed":
+          terminal = event.reason;
+          break;
+        case "tool.started":
+        case "tool.completed":
+          break;
+        case "error":
+          throw new ProviderHubError(
+            "provider_error",
+            "Interviewer provider returned an error",
+          );
+      }
+    }
+    streamCompleted = true;
+    if (signal.aborted || terminal === "cancelled") {
+      throw new ProviderHubError(
+        "cancelled",
+        "Interview request was cancelled",
+      );
+    }
+    if (terminal !== "completed" || !messageCompleted || !content.trim()) {
+      throw new ProviderHubError(
+        "invalid_output",
+        "Interviewer provider did not return one complete question",
+      );
+    }
+    const question = assertSafeQuestion(content.trim());
+    finishDispatch("completed", null);
+    return question;
+  } catch (error) {
+    const cancelled =
+      signal.aborted ||
+      terminal === "cancelled" ||
+      (error instanceof ProviderHubError && error.failure.code === "cancelled");
+    finishDispatch(
+      cancelled ? "cancelled" : "failed",
+      cancelled ? "cancelled" : providerFailureCode(error),
+    );
+    if (error instanceof ProviderHubError) throw error;
     throw new InterviewProviderFailure(
-      signal.aborted ? "cancelled" : "failed",
-      signal.aborted ? "Interview request was cancelled." : providerMessage,
+      cancelled ? "cancelled" : "failed",
+      cancelled
+        ? "Interview request was cancelled."
+        : "Interviewer provider failed.",
     );
   } finally {
-    signal.removeEventListener("abort", cancel);
+    if (providerSessionId && (!streamStarted || streamCompleted)) {
+      await provider.cancelSession(providerSessionId).catch(() => undefined);
+    }
   }
-  if (signal.aborted || terminal === "cancelled") {
-    throw new InterviewProviderFailure(
-      "cancelled",
-      "Interview request was cancelled.",
-    );
-  }
-  if (terminal !== "completed" || !content.trim()) {
-    throw new InterviewProviderFailure("failed", providerMessage);
-  }
-  return assertSafeQuestion(content.trim());
-}
-
-function collectProviderEvent(
-  event: AgentEvent,
-  handlers: {
-    append(value: string): void;
-    replace(value: string): void;
-    fail(message: string): void;
-    complete(reason: "completed" | "failed" | "cancelled"): void;
-  },
-): void {
-  if (event.type === "message.delta") handlers.append(event.delta);
-  if (event.type === "message.completed") handlers.replace(event.content);
-  if (event.type === "error") handlers.fail(event.error.message);
-  if (event.type === "session.completed") handlers.complete(event.reason);
 }
 
 function assertSafeQuestion(value: string): string {
@@ -767,6 +929,30 @@ function findMessageByKey(
     .get(idempotencyKey) ?? null) as MessageRow | null;
 }
 
+function cleanupFailedInterviewSetup(
+  state: InterviewV2State,
+  interviewId: string,
+  conversationId: string,
+): void {
+  state.connection.sqlite.exec("BEGIN IMMEDIATE");
+  try {
+    const deleted = state.connection.sqlite
+      .prepare(
+        "DELETE FROM interview_sessions WHERE id = ? AND status = 'setup'",
+      )
+      .run(interviewId);
+    if (deleted.changes === 1) {
+      state.connection.sqlite
+        .prepare("DELETE FROM agent_conversations WHERE id = ?")
+        .run(conversationId);
+    }
+    state.connection.sqlite.exec("COMMIT");
+  } catch (error) {
+    state.connection.sqlite.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function recordProviderFailure(
   state: InterviewV2State,
   conversationId: string,
@@ -787,32 +973,44 @@ function recordProviderFailure(
   });
 }
 
-async function readInterviewerSelection(state: InterviewV2State): Promise<{
-  providerId: ProviderId;
-  modelId: string;
-}> {
-  const providerId = ProviderIdSchema.parse(
-    (await state.repository.getSetting("interviewerProvider")) ?? "mock",
-  );
-  const modelId = z
-    .string()
-    .min(1)
-    .parse(
-      (await state.repository.getSetting("interviewerModel")) ??
-        "mock-deterministic",
-    );
-  if (!state.providers[providerId]) {
-    throw new Error(
-      `Configured interviewer provider is unavailable: ${providerId}`,
+async function readInterviewerSelection(
+  state: InterviewV2State,
+): Promise<ResolvedProviderTurn> {
+  return state.providerRuntime.inspectRole("interviewer");
+}
+
+async function readStoredInterviewerSelection(
+  state: InterviewV2State,
+  stored: StoredState,
+): Promise<ResolvedProviderTurn> {
+  const conversation = readConversation(state, stored.setup.conversationId);
+  const selection = await state.providerRuntime.inspectRole("interviewer");
+  if (
+    selection.connection.adapterId !== conversation.providerId ||
+    selection.modelId !== conversation.modelId
+  ) {
+    throw new InterviewProviderFailure(
+      "failed",
+      "Interviewer provider selection changed after this interview started.",
     );
   }
-  return { providerId, modelId };
+  return selection;
 }
 
 function findCurrentLearningSessionId(state: InterviewV2State): string | null {
   const row = state.connection.sqlite
     .prepare(
-      "SELECT id FROM learning_sessions WHERE status = 'active' ORDER BY updated_at DESC LIMIT 1",
+      `SELECT session.id
+       FROM learner_state learner
+       JOIN learning_sessions session
+         ON session.id = learner.current_learning_session_id
+       JOIN session_snapshots snapshot ON snapshot.session_id = session.id
+       WHERE learner.id = 'default'
+         AND session.status = 'active'
+         AND session.curriculum_day_v2_id IS NOT NULL
+         AND snapshot.schema_version >= 2
+         AND snapshot.curriculum_version_id != 'legacy-v1'
+         AND session.curriculum_day_v2_id = snapshot.curriculum_day_id`,
     )
     .get() as { id: string } | undefined;
   return row?.id ?? null;
@@ -855,6 +1053,20 @@ function providerFailureResponse(
   context: Parameters<Parameters<Hono["onError"]>[0]>[1],
   error: unknown,
 ) {
+  if (error instanceof ProviderHubError) {
+    return context.json(
+      {
+        error: error.message,
+        failure: error.failure,
+        retryable: error.failure.retryable,
+      },
+      error.failure.code === "ai_disabled" ||
+        error.failure.code === "disclosure_required" ||
+        error.failure.code === "disclosure_mismatch"
+        ? 409
+        : 503,
+    );
+  }
   if (error instanceof InterviewProviderFailure) {
     return context.json(
       {

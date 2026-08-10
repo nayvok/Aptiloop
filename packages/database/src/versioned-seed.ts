@@ -19,6 +19,7 @@ import {
   type UnitCompletionCriterion,
   type UnitPayload,
 } from "@dlh/shared";
+import { publishDraftCurriculumVersionWithinTransaction } from "./authoring-repository.js";
 
 import { withTransaction, type DatabaseConnection } from "./database.js";
 
@@ -291,7 +292,7 @@ function seedSingleVersion(
       { status: string; content_hash: string | null } | undefined;
     if (existing) {
       if (
-        existing.status !== "published" ||
+        (existing.status !== "published" && existing.status !== "archived") ||
         existing.content_hash !== version.contentHash
       ) {
         throw new Error(
@@ -334,6 +335,15 @@ function seedSingleVersion(
     const publishedAt = Date.parse(version.publishedAt ?? version.createdAt);
     const wallClockNow = Date.now();
     const curriculumUpdatedAt = Math.min(publishedAt, wallClockNow);
+    const storedParentVersionId =
+      version.parentVersionId === archivedLegacyCurriculumVersion.id &&
+      connection.sqlite
+        .prepare(
+          "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'course_revisions'",
+        )
+        .get()
+        ? null
+        : version.parentVersionId;
     const parentExists = version.parentVersionId
       ? connection.sqlite
           .prepare("SELECT id FROM curriculum_versions WHERE id = ?")
@@ -405,7 +415,7 @@ function seedSingleVersion(
         version.id,
         version.curriculumId,
         version.revision,
-        version.parentVersionId,
+        storedParentVersionId,
         version.title,
         version.description,
         createdAt,
@@ -492,18 +502,12 @@ function seedSingleVersion(
         }
       }
     }
-    connection.sqlite
-      .prepare(
-        `UPDATE curriculum_versions
-         SET status = 'published', content_hash = ?, published_at = ?, updated_at = ?
-         WHERE id = ? AND status = 'draft'`,
-      )
-      .run(version.contentHash, publishedAt, publishedAt, version.id);
-    connection.sqlite
-      .prepare(
-        "UPDATE curricula SET active_version_id = ?, updated_at = ? WHERE id = ?",
-      )
-      .run(version.id, curriculumUpdatedAt, version.curriculumId);
+    publishDraftCurriculumVersionWithinTransaction(connection, {
+      versionId: version.id,
+      publishedAt,
+      courseUpdatedAt: curriculumUpdatedAt,
+      expectedContentHash: version.contentHash,
+    });
   });
   return result;
 }

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { registerCurriculumEditorRoutes } from "../src/curriculum-editor.js";
 
 const connections: DatabaseConnection[] = [];
+const directAuthority = "127.0.0.1:8787";
 
 afterEach(() => {
   while (connections.length) connections.pop()?.close();
@@ -23,16 +24,30 @@ function runtime() {
   return { app, connection };
 }
 
+function request(app: Hono, path: string): Promise<Response>;
 function request(
   app: Hono,
   path: string,
   method: "POST" | "PATCH" | "DELETE",
   body: Record<string, unknown>,
+): Promise<Response>;
+function request(
+  app: Hono,
+  path: string,
+  method?: "POST" | "PATCH" | "DELETE",
+  requestBody?: Record<string, unknown>,
 ) {
-  return app.request(path, {
+  const url = `http://${directAuthority}${path}`;
+  if (method === undefined) {
+    return app.request(url, { headers: { Host: directAuthority } });
+  }
+  return app.request(url, {
     method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    headers: {
+      Host: directAuthority,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
   });
 }
 
@@ -42,7 +57,7 @@ async function body<T>(response: Response): Promise<T> {
 
 describe("curriculum editor routes", () => {
   it("authors, reorders, publishes, and clones an immutable revision", async () => {
-    const { app } = runtime();
+    const { app, connection } = runtime();
 
     const draftResponse = await request(
       app,
@@ -290,6 +305,21 @@ describe("curriculum editor routes", () => {
       "summary",
       "Summary",
     );
+    expect(
+      (
+        await request(
+          app,
+          `/api/curriculum-editor/versions/${draft.version.id}/units/${summary.unit.id}`,
+          "PATCH",
+          {
+            operationId: "link-summary",
+            unlockRules: [
+              { type: "unit-completed", unitId: briefing.unit.stableId },
+            ],
+          },
+        )
+      ).status,
+    ).toBe(200);
     const temporary = await makeUnit(
       "add-temporary",
       "temporary",
@@ -340,8 +370,41 @@ describe("curriculum editor routes", () => {
     }>(publishResponse);
     expect(published.version.status).toBe("published");
     expect(published.version.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT stable_id FROM course_activities
+           WHERE course_id = ? AND revision_id = ?
+           ORDER BY order_index, id`,
+        )
+        .all("curriculum-js-editor-test", draft.version.id),
+    ).toEqual([
+      { stable_id: "study" },
+      { stable_id: "briefing" },
+      { stable_id: "summary" },
+    ]);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT prerequisite_activity_id FROM course_activity_prerequisites
+           WHERE course_id = ? AND revision_id = ? AND activity_id = ?`,
+        )
+        .all("curriculum-js-editor-test", draft.version.id, summary.unit.id),
+    ).toEqual([{ prerequisite_activity_id: briefing.unit.id }]);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT status, content_hash FROM course_revisions
+           WHERE course_id = ? AND id = ?`,
+        )
+        .get("curriculum-js-editor-test", draft.version.id),
+    ).toEqual({
+      status: "published",
+      content_hash: published.version.contentHash,
+    });
 
-    const publishedGraphResponse = await app.request(
+    const publishedGraphResponse = await request(
+      app,
       `/api/curriculum-editor/versions/${draft.version.id}`,
     );
     const publishedGraph = await body<{
@@ -349,6 +412,8 @@ describe("curriculum editor routes", () => {
         version: { id: string; status: string };
         weeks: Array<{
           days: Array<{
+            id: string;
+            stableId: string;
             estimatedMinutes: number;
             units: Array<{ id: string; stableId: string; title: string }>;
           }>;
@@ -411,8 +476,26 @@ describe("curriculum editor routes", () => {
     );
 
     const cloneGraph = await body<typeof publishedGraph>(
-      await app.request(`/api/curriculum-editor/versions/${clone.version.id}`),
+      await request(app, `/api/curriculum-editor/versions/${clone.version.id}`),
     );
+    const cloneDay = cloneGraph.curriculum.weeks[0]?.days[0];
+    if (!cloneDay) throw new Error("Cloned day is missing");
+    const invalidSelfPrerequisite = await request(
+      app,
+      `/api/curriculum-editor/versions/${clone.version.id}/days/${cloneDay.id}`,
+      "PATCH",
+      {
+        operationId: "make-self-prerequisite",
+        prerequisites: [cloneDay.stableId],
+      },
+    );
+    expect(invalidSelfPrerequisite.status).toBe(409);
+    expect(await invalidSelfPrerequisite.json()).toEqual({
+      error: {
+        code: "validation_failed",
+        message: "Lesson prerequisite is invalid",
+      },
+    });
     const cloneStudyId = cloneGraph.curriculum.weeks[0]?.days[0]?.units[0]?.id;
     expect(cloneStudyId).toBeTruthy();
     const invalidPartialUnit = await request(
@@ -423,7 +506,7 @@ describe("curriculum editor routes", () => {
     );
     expect(invalidPartialUnit.status).toBe(409);
     const cloneAfterInvalidPatch = await body<typeof publishedGraph>(
-      await app.request(`/api/curriculum-editor/versions/${clone.version.id}`),
+      await request(app, `/api/curriculum-editor/versions/${clone.version.id}`),
     );
     expect(
       cloneAfterInvalidPatch.curriculum.weeks[0]?.days[0]?.units[0],
@@ -440,13 +523,13 @@ describe("curriculum editor routes", () => {
     ).toBe(200);
 
     const originalAfterClone = await body<typeof publishedGraph>(
-      await app.request(`/api/curriculum-editor/versions/${draft.version.id}`),
+      await request(app, `/api/curriculum-editor/versions/${draft.version.id}`),
     );
     expect(originalAfterClone).toEqual(publishedGraph);
 
     const versions = await body<{
       versions: Array<{ id: string; revision: number }>;
-    }>(await app.request("/api/curriculum-editor/versions"));
+    }>(await request(app, "/api/curriculum-editor/versions"));
     expect(versions.versions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: draft.version.id, revision: 1 }),

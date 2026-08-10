@@ -8,14 +8,16 @@ The current application has no user authentication or authorization. `Origin`, `
 
 The committed `compose.yaml` is **loopback/local only and is not authenticated public self-hosting**. Although the containers listen on `0.0.0.0` internally, the host publishes web and orchestrator only on `127.0.0.1`. Changing those port bindings, forwarding them, or adding a public reverse proxy produces an unsupported and unsafe deployment.
 
+**Approved Core Alpha target:** process mode rejects any non-loopback bind. The local Compose profile may bind a service to `0.0.0.0` only inside its verified private container network while every host-published port remains explicitly loopback-only. Startup/preflight validates the effective host publication and fails closed on wildcard/LAN publication, forwarding, or unapproved proxy exposure; internal wildcard binding does not make client headers or Origin checks authentication.
+
 ## Model matrix
 
-| Model | Status | User/data model | Database | Execution | Editor | Network exposure |
-| --- | --- | --- | --- | --- | --- | --- |
-| Local processes | **Implemented baseline** | One local user; private local data | SQLite file | Trusted-only unsandboxed native exercise runner | Zed/copy-path; embedded editor is target | Loopback only |
-| Local Compose | **Implemented baseline** | One local operator; named local volumes | SQLite in `harness-data` | Trusted-only unsandboxed native process in orchestrator container; not a hostile-code sandbox | Host Zed integration is not equivalent to native process mode | Host ports bound to loopback only |
-| Hardened self-host | **Future** | Authenticated identities and explicit authorization | SQLite only for an approved single-instance profile; PostgreSQL-compatible repository boundary later | Isolated server backend, no host mounts/credentials, resource quotas, deny network by default | Embedded/remote contract | TLS behind an approved proxy; no unauthenticated routes |
-| Managed/remote | **Future** | Multi-tenant isolation and policy | PostgreSQL or another approved service behind repository contracts | Tenant-isolated remote Execution Fabric, deny network | Remote editor | Authenticated encrypted service boundary |
+| Model              | Status                   | User/data model                                     | Database                                                                                             | Execution                                                                                           | Editor                                                        | Network exposure                                        |
+| ------------------ | ------------------------ | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------- |
+| Local processes    | **Implemented baseline** | One local user; private local data                  | SQLite file                                                                                          | M5 trusted local-native Execution Fabric; finite Node/Python checks; unsandboxed, network inherited | Zed/copy-path; embedded editor is target                      | Loopback only                                           |
+| Local Compose      | **Implemented baseline** | One local operator; named local volumes             | SQLite in `harness-data`                                                                             | Same trusted Fabric inside orchestrator container; container is not hostile-code isolation          | Host Zed integration is not equivalent to native process mode | Host ports bound to loopback only                       |
+| Hardened self-host | **Future**               | Authenticated identities and explicit authorization | SQLite only for an approved single-instance profile; PostgreSQL-compatible repository boundary later | Isolated server backend, no host mounts/credentials, resource quotas, deny network by default       | Embedded/remote contract                                      | TLS behind an approved proxy; no unauthenticated routes |
+| Managed/remote     | **Future**               | Multi-tenant isolation and policy                   | PostgreSQL or another approved service behind repository contracts                                   | Tenant-isolated remote Execution Fabric, deny network                                               | Remote editor                                                 | Authenticated encrypted service boundary                |
 
 No row in the future section is a promise that the behavior exists.
 
@@ -23,16 +25,16 @@ No row in the future section is a promise that the behavior exists.
 
 The source defaults are:
 
-- orchestrator `127.0.0.1:8787`;
-- web `127.0.0.1:3000` through local development tooling;
-- SQLite at `.data/dev-learning-harness.sqlite`, resolved from the configured project root;
-- backups at `.data/backups`;
-- trusted templates at `workspaces/exercises` and learner attempts at `.data/exercise-attempts`;
-- optional OpenCode endpoint restricted to HTTP loopback; provider credentials remain environment/local provider state.
+- orchestrator direct mode accepts only `127.0.0.1`, `::1`, or `localhost` and defaults to `127.0.0.1:8787`;
+- web defaults to `127.0.0.1:3000` through local development tooling;
+- the only active M1 SQLite candidate is `.data/dev-learning-harness.sqlite`;
+- new approved backups use explicit active-source preflight and `.data/approved-backups`; five alternate families and eleven old backups remain quarantined;
+- trusted templates are at `workspaces/exercises`, attempts at `.data/exercise-attempts`, and fixed compatibility/Core Node/Python Environment Pack/check descriptors are app-distributed;
+- Mock is the only learning provider; Codex/OpenCode are blocked legacy adapters and no external sidecar is started.
 
 The web browser uses Next.js routes/rewrite to reach the orchestrator. The orchestrator owns SQLite, filesystem/process operations, providers, and deterministic learning transitions.
 
-Native exercise tests run with the current user's authority. They are unsandboxed and the runner does not enforce network denial. Only trusted repository-controlled templates may be used. Local mode must show that boundary; it must not imply that a path allowlist or a container makes untrusted code safe.
+M5 native checks run with the current user's authority. App-owned exact plans, minimal child environments, time/output/cancellation/tree-cleanup limits, complete-workspace snapshot binding, and immutable artifacts improve auditability, but do not enforce network, memory, disk, or process-count isolation. Only trusted repository-controlled templates may use the compatibility npm plan; imported Course content cannot supply executable input. Local mode must say trusted/unsandboxed explicitly.
 
 ## Implemented loopback Compose model
 
@@ -44,6 +46,8 @@ The committed Compose topology has two services:
 - named `harness-data` and `harness-attempts` volumes;
 - a bind mount of the repository-controlled exercise templates;
 - non-root application users in both images and local health checks.
+
+The services set explicit `ORCHESTRATOR_BIND_MODE=container-loopback-published`. Only that mode permits the orchestrator's internal `0.0.0.0` bind and exact `http://orchestrator:<port>` web rewrite; direct mode rejects both. The host publications above remain the unauthenticated network boundary.
 
 This is a local packaging convenience, not an isolation or public-hosting claim. Important limits:
 
@@ -124,7 +128,7 @@ Multi-user collaboration, conflict resolution, automatic merge, public Course ma
 For all models:
 
 1. inventory candidate databases and choose one explicitly;
-2. create a timestamped, non-overwriting SQLite `VACUUM INTO` backup that includes committed WAL state;
+2. create a timestamped, non-overwriting SQLite backup with the Node `node:sqlite` online `backup()` API so committed WAL state is included in the logical copy;
 3. verify `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on source and backup;
 4. stop writers for restore, preserve the failed database separately, restore the verified file, and re-run health checks;
 5. never run migration experiments against the normal database. Use a disposable database or a separate verified copy.

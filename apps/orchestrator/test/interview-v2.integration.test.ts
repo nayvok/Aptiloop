@@ -4,12 +4,19 @@ import path from "node:path";
 
 import { MockAgentProvider, type AgentProvider } from "@dlh/agent-core";
 import {
-  createLearningRepository,
+  canonicalJson,
+  hashCanonicalJson,
   migrateDatabase,
   openDatabase,
   type DatabaseConnection,
 } from "@dlh/database";
-import type { AgentEvent, AgentSession } from "@dlh/shared";
+import type {
+  AgentEvent,
+  AgentSession,
+  CreateAgentSessionInput,
+  ProviderId,
+  SessionSnapshot,
+} from "@dlh/shared";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
 import { ZodError } from "zod";
@@ -18,9 +25,11 @@ import {
   registerInterviewV2Routes,
   type InterviewV2State,
 } from "../src/interview-v2.js";
+import { ProviderRuntime } from "../src/provider-runtime.js";
 
 const roots: string[] = [];
 const connections: DatabaseConnection[] = [];
+const directAuthority = "127.0.0.1:8787";
 
 afterEach(() => {
   for (const connection of connections.splice(0)) connection.close();
@@ -34,16 +43,25 @@ function createState(provider: AgentProvider = new MockAgentProvider()) {
   const connection = openDatabase(path.join(root, "test.sqlite"));
   connections.push(connection);
   migrateDatabase(connection);
+  const providers = {
+    mock: provider,
+    codex: provider,
+    opencode: provider,
+    pi: provider,
+  };
   const state: InterviewV2State = {
     connection,
-    repository: createLearningRepository(connection),
-    providers: {
-      mock: provider,
-      codex: provider,
-      opencode: provider,
+    providerRuntime: new ProviderRuntime({
+      connection,
+      providers,
+      developmentMode: process.env.NODE_ENV !== "production",
+    }),
+    interviewReservations: {
+      start: false,
+      interviewIds: new Set(),
     },
   };
-  return { state, root };
+  return { state, root, providers };
 }
 
 function createTestApp(state: InterviewV2State) {
@@ -59,14 +77,19 @@ function createTestApp(state: InterviewV2State) {
   return app;
 }
 
-const request = (app: Hono, url: string, body?: unknown) =>
-  body === undefined
-    ? app.request(url)
-    : app.request(url, {
+const request = (app: Hono, url: string, body?: unknown) => {
+  const absoluteUrl = `http://${directAuthority}${url}`;
+  return body === undefined
+    ? app.request(absoluteUrl, { headers: { Host: directAuthority } })
+    : app.request(absoluteUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Host: directAuthority,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify(body),
       });
+};
 
 function protectedKeys(value: unknown, path = "$"): string[] {
   if (Array.isArray(value)) {
@@ -143,11 +166,490 @@ class FailingInterviewer implements AgentProvider {
   async cancelSession() {}
 }
 
+type InterviewEventScript = (sessionId: string) => AsyncIterable<AgentEvent>;
+
+class TrackingInterviewer implements AgentProvider {
+  readonly createInputs: CreateAgentSessionInput[] = [];
+  readonly cancelCalls: string[] = [];
+  failStream = false;
+  listCalls = 0;
+  beforeStream: (() => Promise<void>) | undefined;
+  streamCalls = 0;
+  activeStreams = 0;
+  maxActiveStreams = 0;
+
+  constructor(
+    readonly id: ProviderId,
+    readonly modelId: string,
+    readonly script?: InterviewEventScript,
+  ) {}
+
+  async getStatus() {
+    return {
+      providerId: this.id,
+      state: "connected" as const,
+      checkedAt: new Date().toISOString(),
+      capabilities: [
+        "streaming" as const,
+        "models" as const,
+        "structured-output" as const,
+        "cancellation" as const,
+      ],
+    };
+  }
+
+  async listModels() {
+    this.listCalls += 1;
+    return [
+      {
+        id: this.modelId,
+        providerId: this.id,
+        name: "Tracked interviewer model",
+        supportsStreaming: true,
+        available: true,
+      },
+    ];
+  }
+
+  async createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
+    this.createInputs.push(input);
+    return {
+      id: `${this.id}-tracked-session`,
+      providerId: this.id,
+      role: input.role,
+      modelId: input.modelId,
+      status: "active",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  async *streamMessage(): AsyncIterable<AgentEvent> {
+    const sessionId = `${this.id}-tracked-session`;
+    const timestamp = new Date().toISOString();
+    this.streamCalls += 1;
+    this.activeStreams += 1;
+    this.maxActiveStreams = Math.max(this.maxActiveStreams, this.activeStreams);
+    try {
+      await this.beforeStream?.();
+      if (this.failStream) {
+        yield {
+          type: "error",
+          sessionId,
+          sequence: 0,
+          timestamp,
+          error: {
+            code: "provider_error",
+            message: "injected downstream interviewer failure",
+            retryable: true,
+          },
+        };
+        yield {
+          type: "session.completed",
+          sessionId,
+          sequence: 1,
+          timestamp,
+          reason: "failed",
+        };
+        return;
+      }
+      if (this.script) {
+        yield* this.script(sessionId);
+        return;
+      }
+      yield {
+        type: "message.completed",
+        sessionId,
+        sequence: 0,
+        timestamp,
+        content: "Объясните event loop не более чем за одну минуту.",
+      };
+      yield {
+        type: "session.completed",
+        sessionId,
+        sequence: 1,
+        timestamp,
+        reason: "completed",
+      };
+    } finally {
+      this.activeStreams -= 1;
+    }
+  }
+
+  async cancelSession(sessionId: string) {
+    this.cancelCalls.push(sessionId);
+  }
+}
+
+function gateNextStream(provider: TrackingInterviewer) {
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  provider.beforeStream = async () => {
+    markStarted();
+    await blocked;
+  };
+  return { release, started };
+}
+const interviewerBoundaryCases: Array<[string, InterviewEventScript]> = [
+  [
+    "delta-only completion",
+    async function* (sessionId) {
+      const eventTimestamp = new Date().toISOString();
+      yield {
+        type: "message.delta",
+        sessionId,
+        sequence: 0,
+        timestamp: eventTimestamp,
+        delta: "Объясните event loop не более чем за одну минуту.",
+      };
+      yield {
+        type: "session.completed",
+        sessionId,
+        sequence: 1,
+        timestamp: eventTimestamp,
+        reason: "completed",
+      };
+    },
+  ],
+  [
+    "out-of-order sequence",
+    async function* (sessionId) {
+      const eventTimestamp = new Date().toISOString();
+      yield {
+        type: "message.completed",
+        sessionId,
+        sequence: 1,
+        timestamp: eventTimestamp,
+        content: "Объясните event loop не более чем за одну минуту.",
+      };
+      yield {
+        type: "session.completed",
+        sessionId,
+        sequence: 0,
+        timestamp: eventTimestamp,
+        reason: "completed",
+      };
+    },
+  ],
+  [
+    "post-completion",
+    async function* (sessionId) {
+      const eventTimestamp = new Date().toISOString();
+      yield {
+        type: "message.completed",
+        sessionId,
+        sequence: 0,
+        timestamp: eventTimestamp,
+        content: "Безопасный вопрос.",
+      };
+      yield {
+        type: "message.delta",
+        sessionId,
+        sequence: 1,
+        timestamp: eventTimestamp,
+        delta: "private-post-completion",
+      };
+    },
+  ],
+  [
+    "response-bytes",
+    async function* (sessionId) {
+      yield {
+        type: "message.delta",
+        sessionId,
+        sequence: 0,
+        timestamp: new Date().toISOString(),
+        delta: "x".repeat(256_001),
+      };
+    },
+  ],
+  [
+    "event-count",
+    async function* (sessionId) {
+      const eventTimestamp = new Date().toISOString();
+      for (let sequence = 0; sequence < 1_001; sequence += 1) {
+        yield {
+          type: "message.delta",
+          sessionId,
+          sequence,
+          timestamp: eventTimestamp,
+          delta: "",
+        };
+      }
+    },
+  ],
+];
+
 describe("restart-safe interview v2", () => {
+  it("serializes concurrent retries of the same interview start operation", async () => {
+    const provider = new TrackingInterviewer("mock", "mock-deterministic");
+    const { state } = createState(provider);
+    const app = createTestApp(state);
+    const gate = gateNextStream(provider);
+    const setup = {
+      operationId: "concurrent-start-operation",
+      topics: ["event-loop"],
+      difficulty: "foundation",
+      questionCount: 2,
+    } as const;
+
+    const firstRequest = request(app, "/api/interviews/v2", setup);
+    await gate.started;
+    expect(provider.activeStreams).toBe(1);
+    const concurrent = await request(app, "/api/interviews/v2", setup);
+    expect(concurrent.status).toBe(409);
+    expect(await concurrent.json()).toEqual({
+      error:
+        "An interview operation is already in progress. Retry this request.",
+    });
+    expect(provider.streamCalls).toBe(1);
+    expect(provider.maxActiveStreams).toBe(1);
+
+    gate.release();
+    const first = await firstRequest;
+    expect(first.status).toBe(201);
+    const firstBody = await first.json();
+    const retried = await request(app, "/api/interviews/v2", setup);
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toEqual(firstBody);
+    expect(provider.streamCalls).toBe(1);
+    expect(provider.activeStreams).toBe(0);
+    expect(
+      state.connection.sqlite
+        .prepare("SELECT role FROM agent_messages WHERE role = 'assistant'")
+        .all(),
+    ).toEqual([{ role: "assistant" }]);
+  });
+
+  it.each(interviewerBoundaryCases)(
+    "fails closed for an interviewer %s violation",
+    async (label, script) => {
+      const provider = new TrackingInterviewer(
+        "mock",
+        "mock-deterministic",
+        script,
+      );
+      const { state } = createState(provider);
+      const app = createTestApp(state);
+
+      const response = await request(app, "/api/interviews/v2", {
+        operationId: `boundary-${label}`,
+        topics: ["event-loop"],
+        difficulty: "foundation",
+        questionCount: 1,
+      });
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        failure: { code: expect.any(String) },
+      });
+      expect(provider.cancelCalls).toEqual(["mock-tracked-session"]);
+      expect(
+        state.connection.sqlite
+          .prepare("SELECT count(*) AS count FROM interview_sessions")
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(
+        state.connection.sqlite
+          .prepare("SELECT count(*) AS count FROM agent_messages")
+          .get(),
+      ).toEqual({ count: 0 });
+    },
+  );
+
+  it("serializes concurrent retries of the same answer operation", async () => {
+    const provider = new TrackingInterviewer("mock", "mock-deterministic");
+    const { state } = createState(provider);
+    const app = createTestApp(state);
+    const started = await request(app, "/api/interviews/v2", {
+      operationId: "same-answer-start",
+      topics: ["event-loop"],
+      difficulty: "foundation",
+      questionCount: 2,
+    });
+    const interview = (await started.json()) as { id: string };
+    const gate = gateNextStream(provider);
+    const answer = {
+      operationId: "same-answer-operation",
+      answer: "Promise callbacks run after the current stack.",
+    } as const;
+
+    const firstRequest = request(
+      app,
+      `/api/interviews/v2/${interview.id}/answers`,
+      answer,
+    );
+    await gate.started;
+    expect(provider.activeStreams).toBe(1);
+    const concurrent = await request(
+      app,
+      `/api/interviews/v2/${interview.id}/answers`,
+      answer,
+    );
+    expect(concurrent.status).toBe(409);
+    expect(await concurrent.json()).toEqual({
+      error:
+        "An interview operation is already in progress. Retry this request.",
+    });
+    expect(provider.streamCalls).toBe(2);
+    expect(provider.maxActiveStreams).toBe(1);
+
+    gate.release();
+    const first = await firstRequest;
+    expect(first.status).toBe(200);
+    const firstBody = await first.json();
+    const retried = await request(
+      app,
+      `/api/interviews/v2/${interview.id}/answers`,
+      answer,
+    );
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toEqual(firstBody);
+    expect(provider.streamCalls).toBe(2);
+    expect(provider.activeStreams).toBe(0);
+    expect(
+      state.connection.sqlite
+        .prepare("SELECT role FROM agent_messages ORDER BY sequence ASC")
+        .all(),
+    ).toEqual([{ role: "assistant" }, { role: "user" }, { role: "assistant" }]);
+  });
+
+  it("serializes distinct answer operations for one interview", async () => {
+    const provider = new TrackingInterviewer("mock", "mock-deterministic");
+    const { state } = createState(provider);
+    const app = createTestApp(state);
+    const started = await request(app, "/api/interviews/v2", {
+      operationId: "distinct-answer-start",
+      topics: ["event-loop"],
+      difficulty: "foundation",
+      questionCount: 2,
+    });
+    const interview = (await started.json()) as { id: string };
+    const gate = gateNextStream(provider);
+    const firstAnswer = {
+      operationId: "distinct-answer-operation-one",
+      answer: "The current stack completes before microtasks run.",
+    } as const;
+    const secondAnswer = {
+      operationId: "distinct-answer-operation-two",
+      answer: "A timer callback runs in a later task.",
+    } as const;
+
+    const firstRequest = request(
+      app,
+      `/api/interviews/v2/${interview.id}/answers`,
+      firstAnswer,
+    );
+    await gate.started;
+    expect(provider.activeStreams).toBe(1);
+    const concurrent = await request(
+      app,
+      `/api/interviews/v2/${interview.id}/answers`,
+      secondAnswer,
+    );
+    expect(concurrent.status).toBe(409);
+    expect(await concurrent.json()).toEqual({
+      error:
+        "An interview operation is already in progress. Retry this request.",
+    });
+    expect(provider.streamCalls).toBe(2);
+    expect(provider.maxActiveStreams).toBe(1);
+
+    gate.release();
+    const first = await firstRequest;
+    expect(first.status).toBe(200);
+    const later = await request(
+      app,
+      `/api/interviews/v2/${interview.id}/answers`,
+      secondAnswer,
+    );
+    expect(later.status).toBe(200);
+    const laterBody = await later.json();
+    const persistedRetry = await request(
+      app,
+      `/api/interviews/v2/${interview.id}/answers`,
+      secondAnswer,
+    );
+    expect(persistedRetry.status).toBe(200);
+    expect(await persistedRetry.json()).toEqual(laterBody);
+    expect(provider.streamCalls).toBe(2);
+    expect(provider.activeStreams).toBe(0);
+    expect(
+      state.connection.sqlite
+        .prepare("SELECT role FROM agent_messages ORDER BY sequence ASC")
+        .all(),
+    ).toEqual([
+      { role: "assistant" },
+      { role: "user" },
+      { role: "assistant" },
+      { role: "user" },
+    ]);
+  });
   it("writes interview unit progress into the linked learning session on finish", async () => {
     const { state } = createState();
     const app = createTestApp(state);
     const now = Date.now();
+    const snapshotCore: Omit<SessionSnapshot, "contentHash"> = {
+      schemaVersion: 2,
+      curriculumId: "interview-curriculum",
+      curriculumVersionId: "interview-version",
+      curriculumRevision: 1,
+      curriculumTitle: "Interview curriculum",
+      week: {
+        id: "interview-week",
+        stableId: "interview-week",
+        order: 1,
+        title: "Interview week",
+        description: null,
+      },
+      day: {
+        id: "interview-day-v2",
+        stableId: "interview-day",
+        order: 1,
+        title: "Interview day",
+        description: "Practice interviews",
+        goal: "Practice interviews",
+        estimatedMinutes: 30,
+        prerequisites: [],
+        expectedOutcomes: [],
+        depthLevel: "foundation",
+        outOfScope: [],
+        topics: [],
+      },
+      units: [
+        {
+          id: "unit-interview-1",
+          stableId: "unit-interview-1",
+          type: "interview",
+          title: "Interview",
+          description: "Practice an interview",
+          order: 1,
+          estimatedMinutes: 30,
+          objectives: [],
+          checklist: [],
+          sources: [],
+          questions: [],
+          misconceptions: [],
+          referenceAnswer: null,
+          completionCriteria: [{ type: "acknowledgement" }],
+          unlockRules: [],
+          optional: false,
+          depthLevel: "foundation",
+          payload: { type: "interview", topics: ["closures"] },
+        },
+      ],
+      capturedAt: new Date(now).toISOString(),
+    };
+    const snapshotHash = hashCanonicalJson(snapshotCore);
+    const snapshotJson = canonicalJson({
+      ...snapshotCore,
+      contentHash: snapshotHash,
+    });
     state.connection.sqlite
       .prepare(
         `INSERT INTO curriculum_days
@@ -157,6 +659,53 @@ describe("restart-safe interview v2", () => {
                  'Test', 1, '[]', '[]', ?, ?)`,
       )
       .run(now, now);
+    state.connection.sqlite.exec(`
+      INSERT INTO curricula
+        (id, slug, title, description, active_version_id, created_at, updated_at)
+      VALUES
+        ('interview-curriculum', 'interview-curriculum', 'Interview curriculum',
+         NULL, NULL, ${now}, ${now});
+      INSERT INTO curriculum_versions
+        (id, curriculum_id, revision, parent_version_id, status, title,
+         description, content_hash, created_at, published_at, archived_at,
+         updated_at)
+      VALUES
+        ('interview-version', 'interview-curriculum', 1, NULL, 'draft',
+         'Interview version', NULL, NULL, ${now}, NULL, NULL, ${now});
+      INSERT INTO curriculum_weeks
+        (id, version_id, stable_id, order_index, title, description,
+         created_at, updated_at)
+      VALUES
+        ('interview-week', 'interview-version', 'interview-week', 0,
+         'Interview week', NULL, ${now}, ${now});
+      INSERT INTO curriculum_days_v2
+        (id, version_id, week_id, stable_id, order_index, title, description,
+         goal, estimated_minutes, prerequisites_json, expected_outcomes_json,
+         depth_level, out_of_scope_json, topics_json, created_at, updated_at)
+      VALUES
+        ('interview-day-v2', 'interview-version', 'interview-week',
+         'interview-day', 0, 'Interview day', NULL, 'Practice interviews', 30,
+         '[]', '[]', 'foundation', '[]', '[]', ${now}, ${now});
+      INSERT INTO curriculum_units
+        (id, version_id, day_id, stable_id, type, order_index, title,
+         description, estimated_minutes, objectives_json, checklist_json,
+         sources_json, questions_json, misconceptions_json,
+         reference_answer_json, completion_criteria_json, unlock_rules_json,
+         optional, depth_level, payload_json, created_at, updated_at)
+      VALUES
+        ('unit-interview-1', 'interview-version', 'interview-day-v2',
+         'unit-interview-1', 'interview', 0, 'Interview',
+         'Practice an interview', 30, '[]', '[]', '[]', '[]', '[]', NULL,
+         '[{"type":"acknowledgement"}]', '[]', 0, 'foundation',
+         '{"type":"interview","topics":["closures"]}', ${now}, ${now});
+      UPDATE curriculum_versions
+      SET status = 'published', content_hash = '${"a".repeat(64)}',
+          published_at = ${now}
+      WHERE id = 'interview-version';
+      UPDATE curricula
+      SET active_version_id = 'interview-version', updated_at = ${now}
+      WHERE id = 'interview-curriculum';
+    `);
     state.connection.sqlite
       .prepare(
         `INSERT INTO learning_sessions
@@ -164,9 +713,29 @@ describe("restart-safe interview v2", () => {
           completed_at, updated_at, curriculum_day_v2_id)
          VALUES ('session-interview-1', 'interview-test-day', 'active',
                  'unit-interview-1', 'session-interview-operation', ?, NULL,
-                 ?, NULL)`,
+                 ?, 'interview-day-v2')`,
       )
       .run(now, now);
+    state.connection.sqlite
+      .prepare(
+        `INSERT INTO session_snapshots
+         (id, session_id, schema_version, curriculum_id, curriculum_version_id,
+          curriculum_day_id, content_hash, snapshot_json, created_at)
+         VALUES ('interview-snapshot', 'session-interview-1', 2,
+                 'interview-curriculum', 'interview-version',
+                 'interview-day-v2', ?, ?, ?)`,
+      )
+      .run(snapshotHash, snapshotJson, now);
+    state.connection.sqlite
+      .prepare(
+        `INSERT INTO learner_state
+         (id, current_learning_session_id, updated_at)
+         VALUES ('default', 'session-interview-1', ?)
+         ON CONFLICT(id) DO UPDATE SET
+           current_learning_session_id = excluded.current_learning_session_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(now);
     state.connection.sqlite
       .prepare(
         `INSERT INTO unit_progress
@@ -332,13 +901,22 @@ describe("restart-safe interview v2", () => {
       fileMustExist: true,
     });
     connections.push(restartedConnection);
+    const restartedProviders = {
+      mock: new MockAgentProvider(),
+      codex: new MockAgentProvider(),
+      opencode: new MockAgentProvider(),
+      pi: new MockAgentProvider(),
+    };
     const restartedState: InterviewV2State = {
       connection: restartedConnection,
-      repository: createLearningRepository(restartedConnection),
-      providers: {
-        mock: new MockAgentProvider(),
-        codex: new MockAgentProvider(),
-        opencode: new MockAgentProvider(),
+      providerRuntime: new ProviderRuntime({
+        connection: restartedConnection,
+        providers: restartedProviders,
+        developmentMode: true,
+      }),
+      interviewReservations: {
+        start: false,
+        interviewIds: new Set(),
       },
     };
     const restartedApp = createTestApp(restartedState);
@@ -362,7 +940,7 @@ describe("restart-safe interview v2", () => {
   });
 
   it("keeps prior answers when the provider fails, then retries idempotently", async () => {
-    const { state } = createState();
+    const { state, providers } = createState();
     const app = createTestApp(state);
     const setup = {
       operationId: "setup-operation-failure",
@@ -375,7 +953,7 @@ describe("restart-safe interview v2", () => {
     expect(started.status).toBe(201);
     const { id } = (await started.json()) as { id: string };
 
-    state.providers.mock = new FailingInterviewer();
+    providers.mock = new FailingInterviewer();
     const answer = {
       operationId: "answer-operation-failure",
       answer: "A closure retains access to bindings from its lexical scope.",
@@ -385,11 +963,10 @@ describe("restart-safe interview v2", () => {
       `/api/interviews/v2/${id}/answers`,
       answer,
     );
-    expect(failed.status).toBe(502);
+    expect(failed.status).toBe(503);
     const failedBody = (await failed.json()) as Record<string, unknown>;
-    expect(failedBody).toEqual({
-      error: "Interviewer provider failed. Your transcript was preserved.",
-      retryable: true,
+    expect(failedBody).toMatchObject({
+      failure: { code: "provider_error", retryable: false },
     });
     expect(JSON.stringify(failedBody)).not.toContain(
       "private provider diagnostic",
@@ -407,7 +984,7 @@ describe("restart-safe interview v2", () => {
     ]);
     expect(restoredBody.transcript[1]?.content).toBe(answer.answer);
 
-    state.providers.mock = new MockAgentProvider();
+    providers.mock = new MockAgentProvider();
     const retried = await request(
       app,
       `/api/interviews/v2/${id}/answers`,
@@ -429,5 +1006,167 @@ describe("restart-safe interview v2", () => {
       modelId: "browser-selected-model",
     });
     expect(rejectedProviderOverride.status).toBe(400);
+  });
+
+  it("keeps production no-AI setup write-free and retryable", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const mock = new TrackingInterviewer("mock", "mock-deterministic");
+      const { state } = createState(mock);
+      const app = createTestApp(state);
+      const setup = {
+        operationId: "production-no-ai-interview",
+        topics: ["event-loop"],
+        difficulty: "foundation" as const,
+        questionCount: 1,
+      };
+
+      const blocked = await request(app, "/api/interviews/v2", setup);
+      expect(blocked.status).toBe(409);
+      expect(await blocked.json()).toMatchObject({
+        failure: { code: "ai_disabled", retryable: false },
+      });
+      expect(mock.createInputs).toHaveLength(0);
+      expect(mock.cancelCalls).toEqual([]);
+      expect(
+        state.connection.sqlite
+          .prepare("SELECT count(*) AS count FROM interview_sessions")
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(
+        state.connection.sqlite
+          .prepare(
+            "SELECT count(*) AS count FROM agent_conversations WHERE role = 'interviewer'",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+      const current = await request(app, "/api/interviews/v2/current");
+      expect(await current.json()).toEqual({ interview: null });
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
+  it("removes failed downstream setup so the same operation can retry", async () => {
+    const mock = new TrackingInterviewer("mock", "mock-deterministic");
+    mock.failStream = true;
+    const { state } = createState(mock);
+    const app = createTestApp(state);
+    const setup = {
+      operationId: "downstream-interview-failure",
+      topics: ["closures"],
+      difficulty: "interview-ready" as const,
+      questionCount: 1,
+    };
+
+    const failed = await request(app, "/api/interviews/v2", setup);
+    expect(failed.status).toBe(503);
+    expect(await failed.json()).toMatchObject({
+      failure: { code: "provider_error", retryable: false },
+    });
+    expect(mock.createInputs).toHaveLength(1);
+    expect(mock.cancelCalls).toEqual(["mock-tracked-session"]);
+    expect(
+      state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM interview_sessions")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      state.connection.sqlite
+        .prepare(
+          "SELECT count(*) AS count FROM agent_conversations WHERE role = 'interviewer'",
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    const current = await request(app, "/api/interviews/v2/current");
+    expect(await current.json()).toEqual({ interview: null });
+
+    mock.failStream = false;
+    const retried = await request(app, "/api/interviews/v2", setup);
+    expect(retried.status).toBe(201);
+    expect(await retried.json()).toMatchObject({ status: "in_progress" });
+    expect(mock.createInputs).toHaveLength(2);
+    expect(mock.cancelCalls).toEqual([
+      "mock-tracked-session",
+      "mock-tracked-session",
+    ]);
+  });
+
+  it("requires and consumes exact disclosure for an external interviewer", async () => {
+    const mock = new TrackingInterviewer("mock", "mock-deterministic");
+    const pi = new TrackingInterviewer("pi", "pi-exact");
+    const { state, providers } = createState(mock);
+    providers.pi = pi;
+    const settings = await state.providerRuntime.settings();
+    await state.providerRuntime.saveRoleProfiles(
+      settings.roleProfiles.map((profile) =>
+        profile.role === "evaluator"
+          ? {
+              role: profile.role,
+              mode: "connection" as const,
+              connectionId: "conn:pi:openai",
+              modelId: "pi-exact",
+            }
+          : {
+              role: profile.role,
+              mode: profile.mode,
+              connectionId: profile.connectionId,
+              modelId: profile.modelId,
+            },
+      ),
+    );
+    const app = createTestApp(state);
+    const setup = {
+      operationId: "external-interviewer-policy",
+      topics: ["closures"],
+      difficulty: "foundation" as const,
+      questionCount: 1,
+    };
+
+    const preview = await request(app, "/api/interviews/v2", setup);
+    expect(preview.status).toBe(202);
+    const previewBody = (await preview.json()) as {
+      disclosure: { operationId: string; status: string };
+    };
+    expect(previewBody.disclosure.status).toBe("pending");
+    expect(pi.createInputs).toHaveLength(0);
+
+    state.providerRuntime.approveDisclosure(previewBody.disclosure.operationId);
+    const approved = await request(app, "/api/interviews/v2", {
+      ...setup,
+      disclosureOperationId: previewBody.disclosure.operationId,
+    });
+    expect(approved.status).toBe(201);
+    expect(pi.createInputs).toHaveLength(1);
+    expect(mock.createInputs).toHaveLength(0);
+  });
+
+  it("rejects an unavailable exact interviewer model before saving", async () => {
+    const mock = new TrackingInterviewer("mock", "mock-deterministic");
+    const { state } = createState(mock);
+    const settings = await state.providerRuntime.settings();
+
+    await expect(
+      state.providerRuntime.saveRoleProfiles(
+        settings.roleProfiles.map((profile) =>
+          profile.role === "evaluator"
+            ? {
+                role: profile.role,
+                mode: "connection" as const,
+                connectionId: "conn:mock",
+                modelId: "missing-interviewer-model",
+              }
+            : {
+                role: profile.role,
+                mode: profile.mode,
+                connectionId: profile.connectionId,
+                modelId: profile.modelId,
+              },
+        ),
+      ),
+    ).rejects.toMatchObject({ failure: { code: "model_unavailable" } });
+    expect(mock.createInputs).toHaveLength(0);
   });
 });

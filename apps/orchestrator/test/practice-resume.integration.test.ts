@@ -7,7 +7,11 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { fingerprintExerciseDiff, getExerciseDiff } from "@dlh/exercise-core";
+import {
+  fingerprintExerciseDiff,
+  getExerciseDiff,
+  snapshotCompleteWorkspace,
+} from "@dlh/exercise-core";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -40,6 +44,7 @@ function runtime(databasePath?: string, attemptsRoot?: string) {
   const created = createApp({
     projectRoot,
     databasePath: resolvedDatabasePath,
+    databaseMode: "disposable",
     exerciseAttemptsRoot: resolvedAttemptsRoot,
   });
   runtimes.push(created);
@@ -55,9 +60,10 @@ function request(
   pathname: string,
   init?: RequestInit,
 ) {
-  return app.request(pathname, {
+  return app.request(`http://127.0.0.1:8787${pathname}`, {
     ...init,
     headers: {
+      Host: "127.0.0.1:8787",
       "X-DLH-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
@@ -104,7 +110,7 @@ describe("restart-safe versioned practice", () => {
     ).json()) as Record<string, unknown> & { id: string };
     expect(beforeAttempt).toMatchObject({
       sessionId,
-      workspacePath: null,
+      workspace: null,
       exerciseUnitId: expect.any(String),
       reviewUnitId: expect.any(String),
       exerciseUnitProgress: {
@@ -112,6 +118,7 @@ describe("restart-safe versioned practice", () => {
         payload: { type: "exercise" },
       },
     });
+    expect(beforeAttempt).not.toHaveProperty("workspacePath");
     first.state.connection.sqlite
       .prepare(
         `UPDATE unit_progress
@@ -131,10 +138,19 @@ describe("restart-safe versioned practice", () => {
     const { id: attemptId } = (await attemptResponse.json()) as { id: string };
     const attemptRow = first.state.connection.sqlite
       .prepare(
-        `SELECT workspace_path AS workspacePath, baseline_hash AS baselineHash
+        `SELECT workspace_path AS workspacePath, baseline_hash AS baselineHash,
+                workspace_handle_id AS workspaceHandleId,
+                workspace_generation AS workspaceGeneration,
+                environment_id AS environmentId
          FROM exercise_attempts WHERE id = ?`,
       )
-      .get(attemptId) as { workspacePath: string; baselineHash: string };
+      .get(attemptId) as {
+      workspacePath: string;
+      baselineHash: string;
+      workspaceHandleId: string;
+      workspaceGeneration: number;
+      environmentId: string;
+    };
     writeFileSync(
       path.join(attemptRow.workspacePath, "learner-note.txt"),
       "learner-authored change\n",
@@ -147,18 +163,33 @@ describe("restart-safe versioned practice", () => {
     if (!testedFingerprint || testedDiff.truncated) {
       throw new Error("Resume fixture requires a complete diff fingerprint");
     }
+    const testedSnapshot = await snapshotCompleteWorkspace(
+      attemptRow.workspacePath,
+    );
 
     const now = Date.now();
     first.state.connection.sqlite
       .prepare(
         `INSERT INTO test_runs
          (id, exercise_attempt_id, operation_id, status, exit_code, stdout,
-          stderr, duration_ms, diff_fingerprint, diff_truncated, started_at,
-          completed_at)
+          stderr, duration_ms, diff_fingerprint, diff_truncated, check_id,
+          environment_id, environment_pack_digest, backend_id,
+          input_snapshot_hash, result_json, started_at, completed_at)
          VALUES ('test-latest', ?, 'operation-latest', 'passed', 0,
-                 '12 tests passed', '', 42, ?, 0, ?, ?)`,
+                 '12 tests passed', '', 42, ?, 0,
+                 'apt.compat.node24.npm-test.v1',
+                 'apt.compat.node24.local.v1',
+                 'sha256:8a714b40eb7d8c64ea6ef2844577bbffd509f7edf7225b2bd26bd2656a0b68b8',
+                 'local-native', ?, ?, ?, ?)`,
       )
-      .run(attemptId, testedFingerprint, now, now + 5_000);
+      .run(
+        attemptId,
+        testedFingerprint,
+        testedSnapshot.contentHash,
+        JSON.stringify({ schemaVersion: 1, status: "passed" }),
+        now,
+        now + 5_000,
+      );
     first.state.connection.sqlite
       .prepare(
         `INSERT INTO reviews
@@ -188,7 +219,12 @@ describe("restart-safe versioned practice", () => {
       );
       expect(response.status).toBe(200);
       return (await response.json()) as Record<string, unknown> & {
-        workspacePath: string;
+        workspace: {
+          id: string;
+          generation: number;
+          environmentId: string;
+          trust: string;
+        };
         attempt: {
           diff: { patch: string; changed: boolean; truncated: boolean };
           latestTestRun: Record<string, unknown>;
@@ -197,7 +233,13 @@ describe("restart-safe versioned practice", () => {
       };
     };
     const beforeRestart = await readState(first.app);
-    expect(beforeRestart.workspacePath).toBe(attemptRow.workspacePath);
+    expect(beforeRestart.workspace).toEqual({
+      id: attemptRow.workspaceHandleId,
+      generation: attemptRow.workspaceGeneration,
+      environmentId: attemptRow.environmentId,
+      trust: "trusted-local-unsandboxed",
+    });
+    expect(beforeRestart).not.toHaveProperty("workspacePath");
     expect(beforeRestart.attempt.diff).toMatchObject({
       changed: true,
       truncated: false,
@@ -209,6 +251,7 @@ describe("restart-safe versioned practice", () => {
       status: "passed",
       exitCode: 0,
       output: "12 tests passed",
+      result: { schemaVersion: 1, status: "passed" },
       workspaceCurrent: true,
     });
     expect(beforeRestart.attempt.latestReview).toEqual({
@@ -217,6 +260,7 @@ describe("restart-safe versioned practice", () => {
       summary: "Решение соответствует критериям",
       findings: [],
       strengths: ["Сохранена чистая функция"],
+      evidenceBundle: null,
     });
     expect(collectKeys(beforeRestart)).not.toContain("rawResponse");
     expect(JSON.stringify(beforeRestart)).not.toContain("RAW_PROVIDER_SECRET");
@@ -249,11 +293,12 @@ describe("restart-safe versioned practice", () => {
     const rejectedStaleReview = await request(
       restarted.app,
       `/api/exercise-attempts/${encodeURIComponent(attemptId)}/reviews`,
-      { method: "POST", body: "{}" },
+      { method: "POST", body: JSON.stringify({ operationId: "stale-review" }) },
     );
     expect(rejectedStaleReview.status).toBe(409);
     expect(await rejectedStaleReview.json()).toEqual({
-      error: "Review requires a passing test run after the latest learner edit",
+      error:
+        "Review requires a passing trusted check after the latest learner edit",
     });
   });
 });

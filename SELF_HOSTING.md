@@ -10,10 +10,10 @@ See [Deployment Models](docs/architecture/deployment-models.md) for the normativ
 
 Aptiloop Core Alpha is local-first and single-user. Two local forms exist in the repository:
 
-- local Node processes, with the orchestrator defaulting to `127.0.0.1:8787` and the web application on local loopback;
+- local Node processes, where direct mode accepts only `127.0.0.1`, `::1`, or `localhost` and the orchestrator defaults to `127.0.0.1:8787`;
 - the committed two-service Compose topology, with host publication restricted to `127.0.0.1:3000` and `127.0.0.1:8787`.
 
-Compose runs the web and orchestrator as non-root container users, waits for local health checks, stores SQLite data and attempt data in named volumes, and bind-mounts repository-controlled exercise templates. The orchestrator listens on `0.0.0.0` inside its container so the web container can reach it; the host port mappings provide the loopback boundary.
+Compose runs the web and orchestrator as non-root container users, waits for local health checks, stores SQLite data and attempt data in named volumes, and bind-mounts repository-controlled exercise templates. Only explicit `ORCHESTRATOR_BIND_MODE=container-loopback-published` permits the orchestrator to listen on `0.0.0.0` inside its private container network; host mappings remain `127.0.0.1:3000` and `127.0.0.1:8787`.
 
 This is **local packaging, not authenticated public self-hosting**. Do not change `127.0.0.1` port publication to `0.0.0.0`, publish it through a router/tunnel, or place a public proxy in front of it.
 
@@ -21,40 +21,51 @@ This is **local packaging, not authenticated public self-hosting**. Do not chang
 
 Default process-mode locations are:
 
-| Data | Default |
-| --- | --- |
-| SQLite database | `.data/dev-learning-harness.sqlite` |
-| Verified backup directory | `.data/backups` |
-| Trusted exercise templates | `workspaces/exercises` |
-| Learner attempt workspaces | `.data/exercise-attempts` |
-| Optional OpenCode endpoint | HTTP loopback only |
+| Data                              | Default                             |
+| --------------------------------- | ----------------------------------- |
+| Active SQLite database            | `.data/dev-learning-harness.sqlite` |
+| New approved backup directory     | `.data/approved-backups`            |
+| Quarantined historical backups    | `.data/backups`                     |
+| Trusted exercise templates        | `workspaces/exercises`              |
+| Learner attempt workspaces        | `.data/exercise-attempts`           |
+| External provider learning access | Blocked in M1                       |
 
 Compose stores the database in `harness-data` and attempt workspaces in `harness-attempts`. These volumes are private runtime data and are not source fixtures. They can contain answers, transcripts, mastery, mistakes, diffs, test output, provider/model metadata, and local paths.
 
-Private data is never to be uploaded or shared without an explicit user action that names the destination and scope. Course Packs, exports, logs, process environments, and model prompts must not carry credentials. Real-provider failure is explicit; there is no silent fallback to Mock. Mock is test/CI/dev-only.
+Private data is never uploaded or shared without an explicit user action naming destination and scope. Course Packs, exports, logs, process environments, and model prompts must not carry credentials. Mock is the only M1 learning provider and only in explicit development/test mode; every other runtime reports no-AI. Codex/OpenCode settings and adapters remain readable legacy boundaries, but readiness and learning routes do not activate them, `npm start` starts no external sidecar, and failure never silently substitutes Mock.
 
 ## Backup before migration or upgrade
 
 Before changing an installation that has data:
 
 1. stop or quiesce application writers;
-2. inventory every candidate database and select each one explicitly; do not auto-merge or delete candidates;
-3. create a separate timestamped, non-overwriting backup with the repository backup command (`npm run db:backup`) or the same verified backup primitive;
-4. require `PRAGMA integrity_check` to return `ok` and `PRAGMA foreign_key_check` to report no violations on both source and backup;
-5. retain the inventory, source path, backup path, migration markers, counts, and hashes with the maintenance record;
-6. perform migration rehearsal on a disposable database or a separate copy, never on the normal database.
+2. inventory every explicit root/candidate without merging, deleting, selecting newest, or opening a candidate for write;
+3. use only `.data/dev-learning-harness.sqlite` as the owner-approved active source; runtime and writable CLIs reject every alternate candidate before opening;
+4. create one new non-overwriting copy under `.data/approved-backups/` only after the active read-only preflight passes;
+5. require integrity `ok`, zero foreign-key violations, the exact migration ledger, complete `agent_messages`/`reviews` schemas, zero logical raw/tool/review payload rows, and stable source hashes around inspection;
+6. retain the inventory and backup record, then rehearse migration on a disposable copy rather than the active file.
 
-The backup implementation uses SQLite `VACUUM INTO`, includes committed WAL state, rejects same-file and overwrite destinations, and health-checks both files.
+```sh
+npm run db:inventory -- --root .data --root data --root packages/database/.data
+npm run db:inventory -- --db .data/dev-learning-harness.sqlite
+npm run db:backup -- --source .data/dev-learning-harness.sqlite --destination .data/approved-backups/pre-migration-2026-08-08T120000Z.sqlite
+```
 
-A failed in-flight migration is transaction-rolled back. After a migration commits, Aptiloop has no supported down migration: **restore from the verified pre-migration backup is the rollback**. Stop writers, preserve the failed database separately for diagnosis, restore the whole database file consistently, then repeat integrity/foreign-key checks. The restore loses writes made after the backup; define the maintenance cutoff before starting.
+Choose a new destination filename for every backup. The inventory fingerprints main/WAL/SHM files and inspects a disposable family copy, so committed WAL-visible rows are counted without checkpointing or mutating the source. It reports only health, migration IDs, sizes/hashes, and aggregate tool/raw counts—never learner content or secret values.
+
+**Approved 2026-08-08 disposition:** the other five candidate families and all eleven existing backups are preserved unchanged and quarantined from runtime, restore, and approved-backup use until M2 reconciliation. `.data/m0-baseline/` is protected unchanged. No M1 cleanup migration exists because the observed logical non-empty tool/raw count is zero; absence of bytes in free pages, WAL, SHM, snapshots, or external copies is not proven.
+
+The approved backup command repeats the preflight, uses the Node `node:sqlite` online `backup()` API, includes committed WAL state in the logical backup, rejects every other source and destinations outside `.data/approved-backups/`, refuses overwrite, binds the produced logical digest to the approved source snapshot, and health-checks the source and copy. Existing `.data/backups/` files are not approved restore points.
+
+A failed in-flight future migration is transaction-rolled back. After a migration commits, Aptiloop has no supported down migration: restore the whole database from the explicitly approved pre-migration backup while writers are stopped, preserve the failed database separately, and repeat integrity, foreign-key, migration-marker, and private-payload checks. The restore loses writes after the maintenance cutoff.
 
 See [Core Alpha Migration Strategy](docs/migration/core-alpha-migration-strategy.md) for candidate inventory, dual-read/write, quarantine, and removal gates.
 
-## Native execution warning
+The observed candidate inventory and exact disposition are recorded in [M1 Safety-Boundary and Private-Data Inventory](docs/audits/2026-08-08-m1-safety-boundary-inventory.md).
 
-The current exercise path copies a trusted repository template into an attempt workspace and runs only the app-owned `test` command with `shell: false`, a sanitized environment, timeout, output cap, cancellation, and process-tree cleanup. Review is bound to the complete diff fingerprint and is read-only.
+The current exercise path copies a trusted repository template into an attempt workspace and accepts only the app-owned browser command ID `test`, with an outer `shell: false` runner, sanitized environment, timeout, output cap, cancellation, and process-tree cleanup. Review is bound to a fingerprint of the Git-visible patch and denies writes; Git-ignored workspace state is not covered. The internal plan invokes `npm test`; learner-modifiable package scripts and npm lifecycle behavior remain trusted-code authority.
 
-It is nevertheless **native, unsandboxed, trusted-only execution**. The process has the authority of the orchestrator/container user within its reachable environment, and current execution does not enforce network denial. Path containment and a command allowlist are not a hostile-code sandbox.
+It is therefore **native, unsandboxed, trusted-only execution**. The process has the authority of the orchestrator/container user within its reachable environment, and current execution does not enforce network denial or host resource quotas. Path containment and a browser command allowlist are not a hostile-code sandbox.
 
 Consequences:
 

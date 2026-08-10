@@ -1,7 +1,5 @@
 import { spawn } from "node:child_process";
 
-import { validateOpenCodeEndpoint } from "@dlh/opencode-provider/config";
-
 try {
   process.loadEnvFile?.(".env");
 } catch (error) {
@@ -10,14 +8,6 @@ try {
   }
 }
 
-const endpoint = validateOpenCodeEndpoint(
-  process.env.OPENCODE_ENDPOINT ?? "http://127.0.0.1:4096",
-);
-const appEnvironment = { ...process.env, OPENCODE_ENDPOINT: endpoint };
-const endpointUrl = new URL(endpoint);
-const endpointHostname =
-  endpointUrl.hostname === "[::1]" ? "::1" : endpointUrl.hostname;
-let ownedOpenCode;
 let app;
 let stopping = false;
 
@@ -51,58 +41,28 @@ function terminate(child) {
   }
 }
 
-async function isOpenCodeReady() {
-  try {
-    const response = await fetch(new URL("/global/health", endpoint), {
-      signal: AbortSignal.timeout(800),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
 function stop(exitCode = 0) {
   if (stopping) return;
   stopping = true;
   terminate(app);
-  terminate(ownedOpenCode);
   process.exitCode = exitCode;
 }
 
-if (await isOpenCodeReady()) {
-  console.log(`[local] OpenCode уже доступен: ${endpoint}`);
-} else {
-  console.log(
-    `[local] Запускаю OpenCode: ${endpointHostname}:${endpointUrl.port || "80"}`,
-  );
-  ownedOpenCode = spawnCommand("opencode", [
-    "serve",
-    "--hostname",
-    endpointHostname,
-    "--port",
-    endpointUrl.port || "80",
-  ]);
-  ownedOpenCode.on("error", (error) => {
-    console.warn(`[local] OpenCode не запущен: ${error.message}`);
-    console.warn("[local] Приложение продолжит работу с Mock/Codex.");
-  });
-  ownedOpenCode.on("exit", (code) => {
-    if (!stopping && code && code !== 0) {
-      console.warn(`[local] OpenCode завершился с кодом ${code}.`);
-    }
-  });
-}
+const localEnvironment = {
+  ...process.env,
+  NODE_ENV: process.env.NODE_ENV || "development",
+};
+const turboArguments = ["exec", "--", "turbo", "run", "dev", "--parallel"];
 
 app = process.env.npm_execpath
-  ? spawn(process.execPath, [process.env.npm_execpath, "run", "dev"], {
-      env: appEnvironment,
+  ? spawn(process.execPath, [process.env.npm_execpath, ...turboArguments], {
+      env: localEnvironment,
       stdio: "inherit",
       windowsHide: true,
     })
-  : spawnCommand("npm", ["run", "dev"], appEnvironment);
+  : spawnCommand("npm", turboArguments, localEnvironment);
 app.on("error", (error) => {
-  console.error(`[local] Не удалось запустить приложение: ${error.message}`);
+  console.error(`[local] Failed to start Aptiloop: ${error.message}`);
   stop(1);
 });
 app.on("exit", (code) => stop(code ?? 0));

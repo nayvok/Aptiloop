@@ -1,6 +1,6 @@
 # Environment Packs
 
-Status: **Approved Core Alpha target**. The current fixed `npm test` exercise runner is an **Implemented baseline** only; installable Node/Python Environment Packs are not implemented.
+Status: **Implemented baseline** for the finite app-distributed M5 compatibility Node, Core Node 24, and Core Python 3 Environment Pack contracts. Third-party/installable packs and isolated server execution remain **Future**.
 
 ## Definition
 
@@ -29,7 +29,7 @@ type EnvironmentPackManifest = {
 };
 ```
 
-This is a target contract, not an implemented API. Its rules are:
+This is the implemented public descriptor shape for the finite local registry. Its rules are:
 
 1. `(id, version, digest)` identifies one immutable pack. Replacing bytes under the same identity is forbidden.
 2. IDs are bounded portable identifiers. Versions follow one documented comparison scheme; digests use an approved cryptographic hash over canonical content.
@@ -60,16 +60,20 @@ Dependency acquisition is not implicit execution. Core Alpha should prefer prebu
 
 ## Node Environment Pack
 
-The repository currently requires Node `>=24` and the trusted exercise path invokes app-owned `npm test`. That is an **Implemented baseline**, not a generic Node pack.
+The compatibility environment `apt.compat.node24.local.v1` preserves the existing repository-controlled `npm test` path. It verifies Node 24 but deliberately remains `isolated: false`: the learner template's `package.json` selects its internal npm script, npm dispatches that script through its own shell, and local network/account authority remains. This is an **Implemented baseline compatibility contract**, not the generic Core Node boundary.
 
-The **Approved Core Alpha target** Node contract is:
+The **Implemented baseline** Core Node contract is `apt.core.node24.local.v1` / `apt.core.node24.node-test.v1`:
 
 ```ts
 type NodeRuntimeContract = {
   kind: "node";
   node: { major: number; version?: string };
   packageManager: { kind: "npm"; version: string };
-  lockfile: { name: "package-lock.json"; required: true; lockfileVersion: number };
+  lockfile: {
+    name: "package-lock.json";
+    required: true;
+    lockfileVersion: number;
+  };
   dependencyMode: "prebuilt" | "owner-materialized";
   lifecycleScripts: "disabled";
   moduleMode: "esm" | "commonjs";
@@ -90,7 +94,7 @@ A target built-in catalog might expose IDs such as `node24.vitest`, but names ar
 
 ## Python Environment Pack
 
-Python support is an **Approved Core Alpha target** and is not present in the current exercise runner.
+Python support is an **Implemented baseline** contract at `apt.core.python3.local.v1` / `apt.core.python3.unittest.v1`. It requires the app-owned empty `requirements.lock`, runs the fixed isolated `python -I -B -m unittest discover` plan, disables user-site/bytecode discovery through the child environment, and returns explicit unsupported/failure results. Host interpreter presence/version support is observed at execution; no dependency installation occurs.
 
 ```ts
 type PythonRuntimeContract = {
@@ -157,15 +161,8 @@ Validation occurs at four layers:
 
 Disabling or uninstalling a pack never rewrites a published revision or old Evidence. Existing content becomes explicitly unavailable until the exact pack returns. Historical structured results retain the pack identity and digest needed for provenance.
 
-## Acceptance gates
+## Acceptance evidence and residual gates
 
-Environment Packs are not implemented until contract tests prove:
+**Implemented baseline.** The installed registry has immutable `(id, version, digest)` descriptors and exact check membership. Course Pack validation rejects executable/path/secret/plugin data and unknown environment/check references. Fabric tests cover duplicate/unknown IDs, runtime/lock failure, no automatic environment substitution, complete-workspace freshness, and normalized Node/Python pass/fail evidence. The app-owned process runner supplies the minimal environment, timeout/output limits, cancellation, and process-tree cleanup.
 
-- canonical identity/digest behavior and immutable version selection;
-- rejection of executable/path/secret/plugin fields in Course Packs;
-- exact and collision-safe check resolution;
-- Node version/npm/lockfile/lifecycle-script boundaries;
-- Python interpreter/user-site/plugin/lock integrity boundaries;
-- no credential inheritance and bounded environment/output/artifacts;
-- explicit failure rather than automatic substitution when runtime, pack, or checks are unavailable;
-- local native trust warnings and, for any server backend, tested sandbox and deny-network enforcement.
+**Residual/Future:** the registry is app-distributed rather than a third-party pack installer; compatibility npm remains less isolated than Core Node; local-native checks retain local-user and network authority; memory/disk/process-count quotas are not enforced. A future server backend requires tested isolation and deny-network enforcement before it can execute untrusted content.

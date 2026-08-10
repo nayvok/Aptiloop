@@ -18,7 +18,7 @@ Status vocabulary:
 
 - **Implemented baseline** — current repository evidence.
 - **Approved Core Alpha target** — required accessibility behavior.
-- **Proposed pending owner approval** — direction-specific presentation.
+- **Approved Core Alpha target — Calm Workshop** — selected direction-specific presentation.
 - **Future** — outside Core Alpha.
 
 ## Baseline audit
@@ -157,7 +157,7 @@ No flashing content, rapid high-contrast animation, or autoplay visual effects. 
 - Focused components are not entirely hidden by sticky headers, action bars, bottom navigation, or overlays, satisfying Focus Not Obscured (Minimum), 2.4.11 at Level AA.
 - Breadcrumb/current item and `aria-current` expose location.
 
-Although Focus Appearance (2.4.13) is Level AAA, **Proposed pending owner approval** Calm Workshop uses a two-layer focus ring designed to be at least 2 CSS px equivalent and visibly contrasted across light/dark surfaces as a product-quality goal.
+Although Focus Appearance (2.4.13) is Level AAA, **Approved Core Alpha target — Calm Workshop** uses a two-layer focus ring designed to be at least 2 CSS px equivalent and visibly contrasted across light/dark surfaces as a product-quality goal.
 
 ### Pointer gestures, cancellation, labels, dragging, and target size — 2.5.x
 
@@ -199,7 +199,7 @@ Although Focus Appearance (2.4.13) is Level AAA, **Proposed pending owner approv
 - Errors identify the field and problem in text. Validation summaries link to exact fields/nodes.
 - Labels and instructions appear before input; placeholder is never the only label.
 - Course Pack import, delete, Apply, export, private-data transmission, and Publish explain scope and consequences before action.
-- Consequential submission is reversible, checked, or confirmed under the applicable error-prevention criterion. Immutable Publish uses Validate → Change review → consequence acknowledgement → explicit Publish.
+- Consequential submission is reversible, checked, or confirmed under the applicable error-prevention criterion. Immutable Publish uses current saved Draft → current Validate → reviewed Preview of that validated Draft → Change review → consequence acknowledgement → explicit Publish.
 - Redundant Entry (3.3.7): previously entered Course/revision/provider configuration is prefilled or selectable in the same process unless re-entry is essential or needed for security.
 - Status errors do not clear drafts. A user can copy/export a local draft when safe recovery is needed.
 
@@ -311,14 +311,14 @@ These are required future acceptance activities, not tests run for this document
 
 **Approved Core Alpha target**
 
-| WCAG 2.2 criterion | Level | Aptiloop requirement |
-| --- | --- | --- |
-| 2.4.11 Focus Not Obscured (Minimum) | AA | Sticky headers, action footers, bottom nav, sheets, and banners never entirely hide focused content. |
-| 2.5.7 Dragging Movements | AA | Every reorder/edge/drag operation has a non-drag alternative. |
-| 2.5.8 Target Size (Minimum) | AA | ≥24×24 CSS px or valid spacing/exception; 44×44 product target for primary mobile controls. |
-| 3.2.6 Consistent Help | A | Help/recovery access stays in consistent relative locations. |
-| 3.3.7 Redundant Entry | A | Reuse/prefill prior information in a process unless essential/security-related. |
-| 3.3.8 Accessible Authentication (Minimum) | AA | No unsupported cognitive test; allow paste/password managers/provider OAuth. |
+| WCAG 2.2 criterion                        | Level | Aptiloop requirement                                                                                 |
+| ----------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------- |
+| 2.4.11 Focus Not Obscured (Minimum)       | AA    | Sticky headers, action footers, bottom nav, sheets, and banners never entirely hide focused content. |
+| 2.5.7 Dragging Movements                  | AA    | Every reorder/edge/drag operation has a non-drag alternative.                                        |
+| 2.5.8 Target Size (Minimum)               | AA    | ≥24×24 CSS px or valid spacing/exception; 44×44 product target for primary mobile controls.          |
+| 3.2.6 Consistent Help                     | A     | Help/recovery access stays in consistent relative locations.                                         |
+| 3.3.7 Redundant Entry                     | A     | Reuse/prefill prior information in a process unless essential/security-related.                      |
+| 3.3.8 Accessible Authentication (Minimum) | AA    | No unsupported cognitive test; allow paste/password managers/provider OAuth.                         |
 
 Removed WCAG 2.0 criterion 4.1.1 Parsing is not used as a reason to lower engineering quality; valid semantic markup remains required for robust behavior.
 

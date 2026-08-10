@@ -1,0 +1,40 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "runtime-risk": {
+      "name": "runtime-risk",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        {
+          "source": 1001,
+          "dependency": "runtime-risk",
+          "url": "https://github.com/advisories/GHSA-AAAA-BBBB-CCCC",
+          "severity": "high"
+        }
+      ],
+      "effects": [],
+      "range": "<2.0.0",
+      "nodes": ["node_modules/runtime-risk"],
+      "fixAvailable": false
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 1
+    },
+    "dependencies": {
+      "prod": 1,
+      "dev": 0,
+      "optional": 0,
+      "peer": 0,
+      "peerOptional": 0,
+      "total": 1
+    }
+  }
+}

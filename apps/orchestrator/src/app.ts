@@ -1,32 +1,49 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  createOpenAiPiAgentProvider,
   MockAgentProvider,
   parseReviewResult,
+  ProviderHubError,
   type AgentProvider,
 } from "@dlh/agent-core";
 import { CodexProvider } from "@dlh/codex-provider";
 import { weekOneCurriculum } from "@dlh/curriculum";
 import {
+  assertM1E2EDatabaseTarget,
+  assertM1WritableDatabaseTarget,
+  createCoursePackRepository,
+  createCourseFoundationRepository,
   createLearningRepository,
   migrateDatabase,
   openDatabase,
+  openM1WritableDatabase,
+  withAsyncTransaction,
   seedCurriculum,
+  type CourseFoundationRepository,
   type DatabaseConnection,
+  type DatabaseMigrationAdmissionCapability,
   type LearningRepository,
+  type M1DatabaseTargetValidation,
+  type M1WritableDatabaseOpenOptions,
 } from "@dlh/database";
 import {
-  AllowedProcessRunner,
   buildZedOpenPlan,
+  createCoreExecutionFabric,
   createExerciseAttemptWorkspace,
   ensureExerciseBaseline,
   fingerprintExerciseDiff,
   getExerciseDiff,
+  LEGACY_NODE_ENVIRONMENT_ID,
+  LEGACY_NODE_TEST_CHECK_ID,
   openInZed,
   resolveWorkspacePath,
+  snapshotCompleteWorkspace,
+  type ExecutionResult,
+  type TrustedExecutionFabric,
 } from "@dlh/exercise-core";
 import { exportFlashcards } from "@dlh/learning-core";
 import {
@@ -36,10 +53,8 @@ import {
 import { getLatestPrompt } from "@dlh/prompt-library";
 import {
   AgentRoleSchema,
-  ProviderIdSchema,
+  AptiloopAiRoleSchema,
   type ReviewResult,
-  type AgentEvent,
-  type AgentRole,
   type ProviderId,
 } from "@dlh/shared";
 import { Hono } from "hono";
@@ -48,12 +63,43 @@ import { z } from "zod";
 
 import { registerVersionedLearningRoutes } from "./learning-v2.js";
 import { registerCurriculumEditorRoutes } from "./curriculum-editor.js";
+import { registerCoursePackRoutes } from "./course-packs.js";
 import { registerInterviewV2Routes } from "./interview-v2.js";
+import {
+  apiRequestBoundaryError,
+  createApiRequestBoundary,
+} from "./http-boundary.js";
+import {
+  parseOrchestratorStartupConfig,
+  type OrchestratorStartupConfig,
+} from "./startup-boundary.js";
+import {
+  assertCourseScopedSessionSideEffectAllowed,
+  CourseSessionContextError,
+  legacyLearningMutationError,
+  LegacyLearningMutationError,
+} from "./learning-session-policy.js";
+import {
+  ProviderRuntime,
+  providerFailureCode,
+  providerFailurePayload,
+  type ProviderDispatch,
+} from "./provider-runtime.js";
 
 const sourceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const defaultOpenCodeEndpoint = "http://127.0.0.1:4096";
 const defaultWebOrigin = "http://127.0.0.1:3000";
-const mutationMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const safeAgentFailureMessage =
+  "The agent response was rejected by safety policy.";
+const safeAgentCancellationMessage = "The agent turn was cancelled.";
+const activeAgentTurnConflictMessage =
+  "An agent turn is already active for this session, role, provider, and model.";
+const mutationMethods: Readonly<Record<string, true>> = {
+  DELETE: true,
+  PATCH: true,
+  POST: true,
+  PUT: true,
+};
 const dimensions = [
   "understanding",
   "explanation",
@@ -74,10 +120,15 @@ const stepLabels = [
 export interface AppOptions {
   projectRoot?: string;
   databasePath?: string;
+  databaseMode?: "active" | "disposable";
+  /** @internal Deterministic database-open adversarial seam. */
+  databaseTestHooks?: M1WritableDatabaseOpenOptions["testHooks"];
   connection?: DatabaseConnection;
   providers?: Partial<Record<ProviderId, AgentProvider>>;
   webOrigin?: string;
+  developmentMode?: boolean;
   exerciseAttemptsRoot?: string;
+  startupConfig?: OrchestratorStartupConfig;
 }
 
 interface AttemptRecord {
@@ -86,6 +137,10 @@ interface AttemptRecord {
   exerciseId: string;
   workspacePath: string;
   baselineHash: string;
+  environmentId: string;
+  workspaceHandleId: string;
+  workspaceGeneration: number;
+  sourceSnapshotHash: string;
 }
 
 interface ExerciseContext {
@@ -117,6 +172,12 @@ interface TestRunRecord {
   diffTruncated: number;
   startedAt: number;
   completedAt: number | null;
+  checkId: string | null;
+  environmentId: string | null;
+  environmentPackDigest: string | null;
+  backendId: string | null;
+  inputSnapshotHash: string | null;
+  resultJson: string | null;
 }
 
 interface ReviewRecord {
@@ -124,6 +185,9 @@ interface ReviewRecord {
   status: string;
   resultJson: string;
   createdAt: number;
+  bundleId: string | null;
+  evidenceSha256: string | null;
+  workspaceSnapshotHash: string | null;
 }
 
 interface ProviderSessionRecord {
@@ -136,50 +200,107 @@ interface ProviderSessionRecord {
 interface AppState {
   connection: DatabaseConnection;
   repository: LearningRepository;
+  courseFoundationRepository: CourseFoundationRepository;
   projectRoot: string;
   defaultWorkspaceRoot: string;
   exerciseAttemptsRoot: string;
+  executionFabric: TrustedExecutionFabric;
+  developmentMode: boolean;
   providers: Record<ProviderId, AgentProvider>;
+  providerRuntime: ProviderRuntime;
   providerSessions: Map<string, ProviderSessionRecord>;
   activeProviderTurns: Map<
     string,
     { key: string; session: ProviderSessionRecord }
   >;
+  activeProviderTurnReservations: Map<string, string>;
+  interviewReservations: {
+    start: boolean;
+    interviewIds: Set<string>;
+  };
+}
+type BrowserAgentEvent =
+  | { type: "message.delta"; turnId: string; content: string }
+  | { type: "message.completed"; turnId: string; content: string }
+  | { type: "error"; turnId: string; message: string }
+  | {
+      type: "session.completed";
+      turnId: string;
+      reason: "completed" | "failed" | "cancelled";
+    };
+
+function resolveLauncherOwnedE2EDatabase(
+  databasePath: string,
+  projectRoot: string,
+): M1DatabaseTargetValidation | null {
+  const runId = process.env.E2E_RUN_ID;
+  const configuredRunRoot = process.env.E2E_RUN_ROOT;
+  const configuredDatabase = process.env.E2E_DATABASE_PATH;
+  if (
+    process.env.NODE_ENV !== "test" ||
+    !runId ||
+    !configuredRunRoot ||
+    !configuredDatabase ||
+    databasePath === ":memory:"
+  ) {
+    return null;
+  }
+
+  return assertM1E2EDatabaseTarget(databasePath, {
+    projectRoot,
+    runId,
+    runRootPath: configuredRunRoot,
+    configuredDatabasePath: configuredDatabase,
+  });
 }
 
-const settingsSchema = z.object({
-  workspaceRoot: z.string().min(1),
-  zedExecutable: z.string().min(1),
-  opencodeBaseUrl: z.string().url(),
-  teacherProvider: ProviderIdSchema,
-  teacherModel: z.string().min(1),
-  reviewerProvider: ProviderIdSchema,
-  reviewerModel: z.string().min(1),
-  interviewerProvider: ProviderIdSchema,
-  interviewerModel: z.string().min(1),
-  curatorProvider: ProviderIdSchema,
-  curatorModel: z.string().min(1),
-  codexExpertProvider: ProviderIdSchema,
-  codexExpertModel: z.string().min(1),
-  theme: z.enum(["system", "light", "dark"]),
-});
-type AppSettings = z.infer<typeof settingsSchema>;
-const settingsMutationSchema = settingsSchema.omit({
-  workspaceRoot: true,
-  zedExecutable: true,
-});
+const settingsSchema = z
+  .object({
+    workspaceRoot: z.string().min(1),
+    zedExecutable: z.string().min(1),
+    opencodeBaseUrl: z.string().url(),
+    theme: z.enum(["system", "light", "dark"]),
+  })
+  .strict();
+const settingsMutationSchema = z
+  .object({
+    theme: z.enum(["system", "light", "dark"]),
+  })
+  .strict();
+const aiSettingsMutationSchema = z
+  .object({
+    roleProfiles: z
+      .array(
+        z
+          .object({
+            role: AptiloopAiRoleSchema,
+            mode: z.enum(["no-ai", "connection"]),
+            connectionId: z.string().trim().min(1).max(200).nullable(),
+            modelId: z.string().trim().min(1).max(300).nullable(),
+          })
+          .strict(),
+      )
+      .length(AptiloopAiRoleSchema.options.length),
+  })
+  .strict();
 
-const chatSchema = z.object({
-  role: AgentRoleSchema.default("teacher"),
-  providerId: ProviderIdSchema.optional(),
-  modelId: z.string().min(1).optional(),
-  sessionId: z.string().min(1).optional(),
-  message: z.string().trim().min(1).max(50_000),
+const chatSchema = z
+  .object({
+    role: AgentRoleSchema.default("teacher"),
+    sessionId: z.string().min(1).optional(),
+    message: z.string().trim().min(1).max(50_000),
+    disclosureOperationId: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+const disclosureRequestSchema = chatSchema.omit({
+  disclosureOperationId: true,
 });
 
 export function createApp(options: AppOptions = {}) {
   const projectRoot = path.resolve(options.projectRoot ?? sourceRoot);
   loadRootEnvironment(projectRoot);
+  const startupConfig =
+    options.startupConfig ?? parseOrchestratorStartupConfig({});
   const databasePath =
     options.databasePath ??
     resolveDatabasePath(
@@ -187,25 +308,79 @@ export function createApp(options: AppOptions = {}) {
       process.env.DATABASE_PATH ?? process.env.DATABASE_URL,
     ) ??
     path.join(projectRoot, ".data", "dev-learning-harness.sqlite");
-  const connection = options.connection ?? openDatabase(databasePath);
+  const launcherOwnedE2E =
+    options.databaseMode === undefined
+      ? resolveLauncherOwnedE2EDatabase(databasePath, projectRoot)
+      : null;
+  const databaseMode =
+    options.databaseMode ?? (launcherOwnedE2E ? "disposable" : "active");
+  const revalidateDatabaseTarget = ():
+    M1DatabaseTargetValidation | undefined => {
+    if (launcherOwnedE2E) {
+      const current = resolveLauncherOwnedE2EDatabase(
+        databasePath,
+        projectRoot,
+      );
+      if (!current) {
+        throw new Error("E2E database ownership changed during startup");
+      }
+      return current;
+    }
+    return assertM1WritableDatabaseTarget(databasePath, {
+      projectRoot,
+      mode: databaseMode,
+      allowContainerPath:
+        startupConfig.bindMode === "container-loopback-published",
+    });
+  };
+  const initialDatabaseTarget = revalidateDatabaseTarget();
+  if (options.connection && databaseMode !== "disposable") {
+    throw new Error("Injected database connections require disposable mode");
+  }
+  let connection: DatabaseConnection;
+  let migrationCapability: DatabaseMigrationAdmissionCapability | undefined;
+  if (options.connection) {
+    connection = options.connection;
+  } else if (initialDatabaseTarget?.identity) {
+    const writableConnection = openM1WritableDatabase(databasePath, {
+      initialTarget: initialDatabaseTarget,
+      revalidateTarget: revalidateDatabaseTarget,
+      migrationMode:
+        databaseMode === "disposable" ? "bootstrap" : "current-or-empty",
+      ...(options.databaseTestHooks
+        ? { testHooks: options.databaseTestHooks }
+        : {}),
+    });
+    connection = writableConnection;
+    if (writableConnection.migrationAdmission?.kind === "legacy-compatible") {
+      migrationCapability =
+        writableConnection.migrationAdmission.migrationCapability;
+    }
+  } else {
+    if (databaseMode !== "disposable" || launcherOwnedE2E) {
+      throw new Error("Writable database identity is required before opening");
+    }
+    connection = openDatabase(databasePath);
+  }
   migrateDatabase(
     connection,
     path.join(projectRoot, "packages", "database", "migrations"),
+    migrationCapability,
   );
   seedCurriculum(connection);
 
   const repository = createLearningRepository(connection);
+  const courseFoundationRepository =
+    createCourseFoundationRepository(connection);
   const allowedWebOrigin = validateWebOrigin(
     options.webOrigin ?? process.env.WEB_ORIGIN ?? defaultWebOrigin,
   );
-  const persistedOpenCodeEndpoint = readSettingSync<string>(
-    connection,
-    "opencodeBaseUrl",
+  const apiRequestBoundary = createApiRequestBoundary(
+    startupConfig,
+    allowedWebOrigin,
   );
   const opencodeEndpoint = validateOpenCodeEndpoint(
-    process.env.OPENCODE_ENDPOINT ??
-      persistedOpenCodeEndpoint ??
-      defaultOpenCodeEndpoint,
+    process.env.OPENCODE_ENDPOINT ?? defaultOpenCodeEndpoint,
   );
   const defaultProviders: Record<ProviderId, AgentProvider> = {
     mock: new MockAgentProvider(),
@@ -214,10 +389,28 @@ export function createApp(options: AppOptions = {}) {
       directory: projectRoot,
       endpoint: opencodeEndpoint,
     }),
+    pi: createOpenAiPiAgentProvider(),
   };
+  const providers = { ...defaultProviders, ...options.providers };
+  const providerRuntime = new ProviderRuntime({
+    connection,
+    providers,
+    developmentMode: options.developmentMode === true,
+  });
+  const npmTest = npmTestCommand();
+  const executionFabric = createCoreExecutionFabric({
+    legacyNodeTestPlan: {
+      executable: npmTest.executable,
+      args: npmTest.args,
+      timeoutMs: 120_000,
+      maxOutputBytes: 1_000_000,
+    },
+  });
   const state: AppState = {
     connection,
     repository,
+    courseFoundationRepository,
+    executionFabric,
     projectRoot,
     defaultWorkspaceRoot: path.resolve(
       projectRoot,
@@ -229,13 +422,34 @@ export function createApp(options: AppOptions = {}) {
         process.env.EXERCISE_ATTEMPTS_ROOT ??
         path.join(".data", "exercise-attempts"),
     ),
-    providers: { ...defaultProviders, ...options.providers },
+    developmentMode: options.developmentMode === true,
+    providers,
+    providerRuntime,
     providerSessions: new Map(),
     activeProviderTurns: new Map(),
+    activeProviderTurnReservations: new Map(),
+    interviewReservations: {
+      start: false,
+      interviewIds: new Set(),
+    },
   };
   const app = new Hono();
 
   app.onError((error, context) => {
+    if (error instanceof LegacyLearningMutationError) {
+      return context.json(legacyLearningMutationError, 410);
+    }
+    if (error instanceof ProviderHubError) {
+      const status =
+        error.failure.code === "disclosure_required" ||
+        error.failure.code === "disclosure_mismatch" ||
+        error.failure.code === "ai_disabled"
+          ? 409
+          : error.failure.retryable
+            ? 503
+            : 400;
+      return context.json(providerFailurePayload(error), status);
+    }
     console.error("orchestrator_request_failed", {
       name: error.name,
       message: error.message,
@@ -245,19 +459,22 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.use("/api/*", async (context, next) => {
-    const client = context.req.header("X-DLH-Client");
-    if (client !== "web" && process.env.NODE_ENV !== "test") {
+    context.header("Cache-Control", "no-store");
+    const boundaryError = apiRequestBoundaryError(
+      context.req.raw,
+      apiRequestBoundary,
+    );
+    if (boundaryError) return context.json({ error: boundaryError }, 400);
+
+    const isMutation =
+      mutationMethods[context.req.method.toUpperCase()] === true;
+    if (isMutation && context.req.header("X-DLH-Client") !== "web") {
       return context.json(
-        { error: "Missing trusted local client header" },
+        { error: "Local browser client marker is required" },
         403,
       );
     }
-    const isMutation = mutationMethods.has(context.req.method.toUpperCase());
-    const origin = context.req.header("Origin");
-    if (
-      (isMutation && !origin) ||
-      (origin && !isAllowedWebOrigin(origin, allowedWebOrigin))
-    ) {
+    if (isMutation && context.req.header("Origin") !== allowedWebOrigin) {
       return context.json({ error: "Origin is not allowed" }, 403);
     }
     if (isMutation && !isJsonContentType(context.req.header("Content-Type"))) {
@@ -270,30 +487,48 @@ export function createApp(options: AppOptions = {}) {
     context.json({ status: "ready", database: "connected" }),
   );
 
-  app.get("/api/providers", async (context) => {
-    const providers = await Promise.all(
-      Object.values(state.providers).map(async (provider) => {
-        const status = await provider.getStatus();
-        const models =
-          status.state === "connected"
-            ? await provider.listModels().catch(() => [])
-            : [];
-        return {
-          id: provider.id,
-          label:
-            provider.id === "mock"
-              ? "Mock"
-              : provider.id === "codex"
-                ? "Codex"
-                : "OpenCode",
-          status: status.state,
-          model: models[0]?.name,
-          models,
-          message: status.message,
-        };
-      }),
+  app.post("/api/ai/disclosures", async (context) => {
+    const body = disclosureRequestSchema.parse(await context.req.json());
+    const sessionRejection = await agentLearningSessionRejection(
+      state,
+      body.sessionId,
     );
-    return context.json({ providers });
+    if (sessionRejection) {
+      return context.json(
+        { error: sessionRejection.error },
+        sessionRejection.status,
+      );
+    }
+    const preparation = await state.providerRuntime.prepareDisclosure({
+      role: body.role,
+      payload: body.message,
+      payloadCategories: ["learner-message"],
+      ...(body.sessionId
+        ? { entityIds: { "learning-session": body.sessionId } }
+        : {}),
+      destinationPurpose: "optional learning assistance",
+    });
+    return context.json(preparation);
+  });
+
+  app.post("/api/ai/disclosures/:operationId/approve", async (context) => {
+    z.object({})
+      .strict()
+      .parse(await context.req.json());
+    const disclosure = state.providerRuntime.approveDisclosure(
+      context.req.param("operationId"),
+    );
+    return context.json({ disclosure });
+  });
+
+  app.post("/api/ai/disclosures/:operationId/cancel", async (context) => {
+    z.object({})
+      .strict()
+      .parse(await context.req.json());
+    const disclosure = state.providerRuntime.cancelDisclosure(
+      context.req.param("operationId"),
+    );
+    return context.json({ disclosure });
   });
 
   app.get("/api/dashboard", async (context) => {
@@ -368,221 +603,560 @@ export function createApp(options: AppOptions = {}) {
   });
 
   registerVersionedLearningRoutes(app, state);
+  registerCoursePackRoutes(app, createCoursePackRepository(connection));
   registerCurriculumEditorRoutes(app, state);
   registerInterviewV2Routes(app, state);
 
-  app.post("/api/learning/sessions", async (context) => {
-    const input = z
-      .object({ dayNumber: z.number().int().min(1).max(7) })
-      .parse(await context.req.json());
-    const day = weekOneCurriculum.days.find(
-      (candidate) => candidate.dayNumber === input.dayNumber,
-    );
-    if (!day) throw new Error("Unknown curriculum day");
-    const detail = await state.repository.startSession({
-      dayId: day.id,
-      idempotencyKey: `day:${day.id}:active`,
-    });
-    return context.json({ id: detail.session.id }, 201);
-  });
+  app.post("/api/learning/sessions", (context) =>
+    context.json(legacyLearningMutationError, 410),
+  );
 
   app.get("/api/learning/sessions/:id", async (context) => {
     const detail = await state.repository.getSession(context.req.param("id"));
     return context.json(toSessionResponse(detail));
   });
 
-  app.post("/api/learning/sessions/:id/answers", async (context) => {
-    const body = z
-      .object({
-        questionId: z.string().min(1),
-        answer: z.string().trim().min(1).max(50_000),
-      })
-      .parse(await context.req.json());
-    await state.repository.recordAnswer({
-      sessionId: context.req.param("id"),
-      questionId: body.questionId,
-      answer: body.answer,
-    });
-    return context.json({ saved: true });
-  });
+  app.post("/api/learning/sessions/:id/answers", (context) =>
+    context.json(legacyLearningMutationError, 410),
+  );
 
-  app.post("/api/learning/sessions/:id/complete", async (context) => {
-    const session = await state.repository.getSession(context.req.param("id"));
-    const topic = session.topics[0];
-    const answer = session.questions[0]?.attempts.at(-1)?.answer;
-    await state.repository.completeSession({
-      sessionId: session.session.id,
-      mastery: topic
-        ? dimensions.map((dimension, index) => ({
-            topicId: topic.id,
-            dimension,
-            evidenceType: index < 3 ? "explanation" : "exercise",
-            sourceId: session.session.id,
-            delta: index < 3 ? 45 : 30,
-            score: index < 3 ? 120 : 90,
-            confidence: 35,
-            evidenceTypes: ["explanation", "exercise"],
-          }))
-        : [],
-      mistakes:
-        topic && answer
-          ? [
-              {
-                topicId: topic.id,
-                sourceType: "answer",
-                sourceId: session.questions[0]?.id ?? session.session.id,
-                summary: "Проверить точность причинно-следственной связи",
-                correction:
-                  "Сначала сформулировать механизм, затем следствие и короткий пример.",
-                fingerprint: `${topic.id}:causal-chain`,
-              },
-            ]
-          : [],
-      flashcards: topic
-        ? [
-            {
-              topicId: topic.id,
-              sourceMistakeFingerprint: `${topic.id}:causal-chain`,
-              front: `Как кратко объяснить тему «${topic.title}»?`,
-              back: "Определение → механизм → следствие → минимальный пример.",
-            },
-          ]
-        : [],
-    });
-    return context.json({ completed: true });
-  });
+  app.post("/api/learning/sessions/:id/complete", (context) =>
+    context.json(legacyLearningMutationError, 410),
+  );
 
   app.post("/api/agent/stream", async (context) => {
     const body = chatSchema.parse(await context.req.json());
-    const settings = await readSettings(state);
-    const configured = selectionForRole(settings, body.role);
-    const providerId = body.providerId ?? configured.providerId;
-    const provider = state.providers[providerId];
-    const modelId =
-      body.modelId ??
-      (providerId === configured.providerId
-        ? configured.modelId
-        : await defaultModel(provider));
-    const key = `${body.sessionId ?? "global"}:${body.role}:${providerId}:${modelId}`;
-    let storedSession = state.providerSessions.get(key);
-    if (!storedSession) {
-      const session = await provider.createSession({
+    const sessionRejection = await agentLearningSessionRejection(
+      state,
+      body.sessionId,
+    );
+    if (sessionRejection) {
+      return context.json(
+        { error: sessionRejection.error },
+        sessionRejection.status,
+      );
+    }
+    const requestSignal = context.req.raw.signal;
+    let setupAborted = requestSignal.aborted;
+    const onSetupAbort = () => {
+      setupAborted = true;
+    };
+    if (!setupAborted) {
+      requestSignal.addEventListener("abort", onSetupAbort, { once: true });
+      if (requestSignal.aborted) setupAborted = true;
+    }
+    if (setupAborted) {
+      return context.json({ error: safeAgentCancellationMessage }, 409);
+    }
+    const inspection = await state.providerRuntime.inspectRole(body.role);
+    const providerId = inspection.connection.adapterId;
+    const modelId = inspection.modelId;
+    const key = JSON.stringify([
+      body.sessionId ?? null,
+      body.role,
+      inspection.connection.connectionId,
+      modelId,
+    ]);
+    const turnId = randomUUID();
+    const setupUserMessageIdempotencyKey = `agent-turn:${turnId}:user`;
+    const setupAssistantMessageIdempotencyKey = `agent-turn:${turnId}:assistant`;
+    if (state.activeProviderTurnReservations.has(key)) {
+      return context.json({ error: activeAgentTurnConflictMessage }, 409);
+    }
+    state.activeProviderTurnReservations.set(key, turnId);
+
+    let storedSession: ProviderSessionRecord;
+    let createdProviderSession:
+      { provider: AgentProvider; providerSessionId: string } | undefined;
+    let createdSessionRecord: ProviderSessionRecord | undefined;
+    let reusedSessionRecord: ProviderSessionRecord | undefined;
+    let createdConversationId: string | undefined;
+    let setupCleanup: Promise<void> | undefined;
+    let dispatch: ProviderDispatch | undefined;
+    let dispatchFinished = false;
+    const finishDispatch = (
+      status: "completed" | "failed" | "cancelled",
+      failureCode: ReturnType<typeof providerFailureCode> | null,
+    ) => {
+      if (!dispatch || dispatchFinished) return;
+      state.providerRuntime.finishDispatch(dispatch, status, failureCode);
+      dispatchFinished = true;
+    };
+    const hasPersistedSetupMessage = (input: {
+      conversationId: string;
+      idempotencyKey: string;
+      role: "user" | "assistant";
+      content: string;
+      status: "completed" | "failed" | "cancelled";
+    }) =>
+      state.connection.sqlite
+        .prepare(
+          `SELECT 1 AS found FROM agent_messages
+           WHERE conversation_id = ? AND idempotency_key = ?
+             AND role = ? AND content = ? AND status = ?
+             AND tool_events_json = '[]' AND raw_event_json IS NULL`,
+        )
+        .get(
+          input.conversationId,
+          input.idempotencyKey,
+          input.role,
+          input.content,
+          input.status,
+        ) !== undefined;
+    const cleanupFailedSetup = () => {
+      setupCleanup ??= (async () => {
+        let transcriptPersistenceFailed = false;
+        let transcriptRollbackUnverified = false;
+        try {
+          if (createdSessionRecord) {
+            evictProviderSession(state, key, createdSessionRecord);
+            await createdSessionRecord.provider
+              .cancelSession(createdSessionRecord.providerSessionId)
+              .catch(() => {});
+          } else if (createdProviderSession) {
+            await createdProviderSession.provider
+              .cancelSession(createdProviderSession.providerSessionId)
+              .catch(() => {});
+          } else if (reusedSessionRecord) {
+            let userMessagePersisted = false;
+            try {
+              userMessagePersisted = hasPersistedSetupMessage({
+                conversationId: reusedSessionRecord.conversationId,
+                idempotencyKey: setupUserMessageIdempotencyKey,
+                role: "user",
+                content: body.message,
+                status: "completed",
+              });
+            } catch {
+              transcriptPersistenceFailed = true;
+            }
+
+            if (userMessagePersisted || transcriptPersistenceFailed) {
+              evictProviderSession(state, key, reusedSessionRecord);
+              await reusedSessionRecord.provider
+                .cancelSession(reusedSessionRecord.providerSessionId)
+                .catch(() => {});
+            }
+
+            if (userMessagePersisted) {
+              const cancelled = setupAborted || requestSignal.aborted;
+              const terminalContent = cancelled
+                ? safeAgentCancellationMessage
+                : safeAgentFailureMessage;
+              const terminalStatus = cancelled ? "cancelled" : "failed";
+              let terminalPersisted = false;
+              try {
+                await persistAgentResponse(state, {
+                  conversationId: reusedSessionRecord.conversationId,
+                  content: terminalContent,
+                  status: terminalStatus,
+                  idempotencyKey: setupAssistantMessageIdempotencyKey,
+                });
+                terminalPersisted = hasPersistedSetupMessage({
+                  conversationId: reusedSessionRecord.conversationId,
+                  idempotencyKey: setupAssistantMessageIdempotencyKey,
+                  role: "assistant",
+                  content: terminalContent,
+                  status: terminalStatus,
+                });
+              } catch {
+                try {
+                  terminalPersisted = hasPersistedSetupMessage({
+                    conversationId: reusedSessionRecord.conversationId,
+                    idempotencyKey: setupAssistantMessageIdempotencyKey,
+                    role: "assistant",
+                    content: terminalContent,
+                    status: terminalStatus,
+                  });
+                } catch {
+                  terminalPersisted = false;
+                }
+              }
+              if (!terminalPersisted) {
+                transcriptPersistenceFailed = true;
+                try {
+                  state.connection.sqlite
+                    .prepare(
+                      `DELETE FROM agent_messages
+                       WHERE conversation_id = ? AND idempotency_key = ?
+                         AND role = 'user' AND content = ?
+                         AND status = 'completed'
+                         AND tool_events_json = '[]'
+                         AND raw_event_json IS NULL`,
+                    )
+                    .run(
+                      reusedSessionRecord.conversationId,
+                      setupUserMessageIdempotencyKey,
+                      body.message,
+                    );
+                  transcriptRollbackUnverified =
+                    state.connection.sqlite
+                      .prepare(
+                        `SELECT 1 AS found FROM agent_messages
+                         WHERE conversation_id = ? AND idempotency_key = ?`,
+                      )
+                      .get(
+                        reusedSessionRecord.conversationId,
+                        setupUserMessageIdempotencyKey,
+                      ) !== undefined;
+                } catch {
+                  transcriptRollbackUnverified = true;
+                }
+              }
+            }
+          }
+        } finally {
+          try {
+            if (createdConversationId) {
+              state.connection.sqlite
+                .prepare("DELETE FROM agent_conversations WHERE id = ?")
+                .run(createdConversationId);
+            }
+          } finally {
+            releaseAgentTurnReservation(state, key, turnId);
+          }
+        }
+        if (transcriptPersistenceFailed || transcriptRollbackUnverified) {
+          throw new Error(safeAgentFailureMessage);
+        }
+      })();
+      return setupCleanup;
+    };
+    try {
+      if (setupAborted || requestSignal.aborted) {
+        throw new Error(safeAgentCancellationMessage);
+      }
+      dispatch = await state.providerRuntime.resolveDispatch({
         role: body.role,
-        modelId,
-        systemPrompt: getLatestPrompt(body.role).systemPrompt,
+        payload: body.message,
+        ...(body.disclosureOperationId
+          ? { disclosureOperationId: body.disclosureOperationId }
+          : {}),
         metadata: body.sessionId ? { learningSessionId: body.sessionId } : {},
       });
-      const conversation = await state.repository.createConversation({
-        learningSessionId: body.sessionId ?? null,
-        role: body.role,
-        providerId,
-        modelId,
-        providerSessionId: session.id,
-      });
-      storedSession = {
-        providerId,
-        provider,
-        providerSessionId: session.id,
-        conversationId: conversation.id,
-      };
-      state.providerSessions.set(key, storedSession);
-    }
-    const activeProviderSessionId = storedSession.providerSessionId;
-    const conversationId = storedSession.conversationId;
-    await state.repository.addMessage({
-      conversationId,
-      role: "user",
-      content: body.message,
-    });
-    context.header("X-DLH-Agent-Session-Id", activeProviderSessionId);
-    state.activeProviderTurns.set(activeProviderSessionId, {
-      key,
-      session: storedSession,
-    });
-    return streamSSE(context, async (stream) => {
-      let assistantContent = "";
-      let failedMessage: string | undefined;
-      let terminalReason: "completed" | "failed" | "cancelled" | undefined;
-      let streamThrew = false;
-      const toolEvents: AgentEvent[] = [];
-      const onAbort = () => {
-        void cancelAndEvictProviderSession(state, key, storedSession).catch(
-          () => {},
+      const { provider } = dispatch;
+      if (setupAborted || requestSignal.aborted) {
+        throw new Error(safeAgentCancellationMessage);
+      }
+      if (
+        dispatch.connection.adapterId !== providerId ||
+        dispatch.modelId !== modelId
+      ) {
+        throw new ProviderHubError(
+          "misconfigured",
+          "Role profile changed while the provider turn was starting",
         );
-      };
-      context.req.raw.signal.addEventListener("abort", onAbort, { once: true });
-      try {
-        for await (const event of provider.streamMessage({
-          sessionId: activeProviderSessionId,
-          message: body.message,
-          responseFormat: body.role === "reviewer" ? "json" : "text",
-        })) {
-          if (event.type === "message.delta") assistantContent += event.delta;
-          if (event.type === "message.completed") {
-            assistantContent = event.content;
-          }
-          if (event.type === "error") failedMessage = event.error.message;
-          if (event.type === "session.completed") {
-            terminalReason = event.reason;
-          }
-          if (
-            event.type === "tool.started" ||
-            event.type === "tool.completed"
-          ) {
-            toolEvents.push(event);
-          }
-          const clientEvent =
-            event.type === "message.delta"
-              ? { type: event.type, content: event.delta }
-              : event.type === "error"
-                ? { type: event.type, message: event.error.message }
-                : event.type === "tool.started" ||
-                    event.type === "tool.completed"
-                  ? { type: event.type, name: event.toolName }
-                  : event;
-          await stream.writeSSE({ data: JSON.stringify(clientEvent) });
-        }
-      } catch (error) {
-        streamThrew = true;
-        throw error;
-      } finally {
-        context.req.raw.signal.removeEventListener("abort", onAbort);
-        const activeTurn = state.activeProviderTurns.get(
-          activeProviderSessionId,
-        );
-        if (activeTurn?.session === storedSession) {
-          state.activeProviderTurns.delete(activeProviderSessionId);
+      }
+      const existingSession = state.providerSessions.get(key);
+      if (existingSession) {
+        storedSession = existingSession;
+        reusedSessionRecord = existingSession;
+      } else {
+        const session = await provider
+          .createSession({
+            role: body.role,
+            modelId,
+            systemPrompt: getLatestPrompt(body.role).systemPrompt,
+            metadata: body.sessionId
+              ? { learningSessionId: body.sessionId }
+              : {},
+          })
+          .catch(() => {
+            throw new Error(safeAgentFailureMessage);
+          });
+        createdProviderSession = {
+          provider,
+          providerSessionId: session.id,
+        };
+        if (setupAborted || requestSignal.aborted) {
+          throw new Error(safeAgentCancellationMessage);
         }
         if (
-          streamThrew ||
-          failedMessage ||
-          terminalReason === "failed" ||
-          terminalReason === "cancelled"
+          session.providerId !== providerId ||
+          session.role !== body.role ||
+          session.modelId !== modelId
         ) {
-          evictProviderSession(state, key, storedSession);
+          throw new Error(safeAgentFailureMessage);
         }
-        await persistAgentResponse(state, {
-          conversationId,
-          content: assistantContent || failedMessage || "Ответ был отменён.",
-          toolEvents,
-          status:
-            terminalReason === "cancelled"
-              ? "cancelled"
-              : failedMessage || streamThrew || terminalReason === "failed"
-                ? "failed"
-                : "completed",
+        const conversation = await state.repository.createConversation({
+          learningSessionId: body.sessionId ?? null,
+          role: body.role,
+          providerId,
+          modelId,
+          providerSessionId: null,
         });
+        createdConversationId = conversation.id;
+        if (setupAborted || requestSignal.aborted) {
+          throw new Error(safeAgentCancellationMessage);
+        }
+        storedSession = {
+          providerId,
+          provider,
+          providerSessionId: session.id,
+          conversationId: conversation.id,
+        };
+        createdSessionRecord = storedSession;
+        state.providerSessions.set(key, storedSession);
       }
-    });
+      await state.repository.addMessage({
+        conversationId: storedSession.conversationId,
+        role: "user",
+        content: body.message,
+        idempotencyKey: setupUserMessageIdempotencyKey,
+      });
+      if (setupAborted || requestSignal.aborted) {
+        throw new Error(safeAgentCancellationMessage);
+      }
+    } catch (error) {
+      requestSignal.removeEventListener("abort", onSetupAbort);
+      await cleanupFailedSetup();
+      const cancelled = setupAborted || requestSignal.aborted;
+      finishDispatch(
+        cancelled ? "cancelled" : "failed",
+        cancelled ? "cancelled" : providerFailureCode(error),
+      );
+      if (cancelled) {
+        return context.json({ error: safeAgentCancellationMessage }, 409);
+      }
+      throw error;
+    }
+
+    const providerSessionId = storedSession.providerSessionId;
+    const conversationId = storedSession.conversationId;
+    if (setupAborted || requestSignal.aborted) {
+      requestSignal.removeEventListener("abort", onSetupAbort);
+      await cleanupFailedSetup();
+      finishDispatch("cancelled", "cancelled");
+      return context.json({ error: safeAgentCancellationMessage }, 409);
+    }
+    const activeDispatch = dispatch;
+    if (!activeDispatch) {
+      throw new ProviderHubError(
+        "provider_error",
+        "Provider dispatch was not initialized",
+      );
+    }
+    try {
+      context.header("X-DLH-Agent-Turn-Id", turnId);
+      state.activeProviderTurns.set(turnId, { key, session: storedSession });
+      return streamSSE(context, async (stream) => {
+        let assistantContent = "";
+        let terminalReason: "completed" | "failed" | "cancelled" | undefined;
+        let status: "completed" | "failed" | "cancelled" = "failed";
+        let messageCompleted = false;
+        let completedClientEvent: BrowserAgentEvent | undefined;
+        let responsePersisted = false;
+        let providerStreamCompleted = false;
+        const persistResponse = async () => {
+          await persistAgentResponse(state, {
+            conversationId,
+            content: assistantContent,
+            status,
+          });
+          responsePersisted = true;
+        };
+        try {
+          if (setupAborted || requestSignal.aborted) {
+            throw new Error(safeAgentCancellationMessage);
+          }
+          for await (const event of state.providerRuntime.stream(
+            activeDispatch,
+            providerSessionId,
+            requestSignal,
+            body.role === "reviewer" ? "json" : "text",
+          )) {
+            if (requestSignal.aborted) {
+              throw new ProviderHubError(
+                "cancelled",
+                safeAgentCancellationMessage,
+              );
+            }
+            let clientEvent: BrowserAgentEvent;
+            switch (event.type) {
+              case "message.delta": {
+                if (messageCompleted) {
+                  throw new ProviderHubError(
+                    "invalid_output",
+                    safeAgentFailureMessage,
+                  );
+                }
+                assistantContent += event.delta;
+                clientEvent = {
+                  type: "message.delta",
+                  turnId,
+                  content: event.delta,
+                };
+                break;
+              }
+              case "message.completed": {
+                if (messageCompleted) {
+                  throw new ProviderHubError(
+                    "invalid_output",
+                    safeAgentFailureMessage,
+                  );
+                }
+                messageCompleted = true;
+                assistantContent = event.content;
+                completedClientEvent = {
+                  type: "message.completed",
+                  turnId,
+                  content: event.content,
+                };
+                continue;
+              }
+              case "session.completed":
+                terminalReason = event.reason;
+                if (event.reason === "failed") {
+                  throw new Error(safeAgentFailureMessage);
+                }
+                continue;
+              case "tool.started":
+              case "tool.completed":
+                continue;
+              case "error":
+                throw new ProviderHubError(
+                  "provider_error",
+                  safeAgentFailureMessage,
+                );
+            }
+            await stream.writeSSE({ data: JSON.stringify(clientEvent) });
+          }
+          providerStreamCompleted = true;
+          if (requestSignal.aborted) {
+            throw new Error(safeAgentCancellationMessage);
+          }
+
+          if (terminalReason === "cancelled") {
+            status = "cancelled";
+            assistantContent = safeAgentCancellationMessage;
+            evictProviderSession(state, key, storedSession);
+          } else if (terminalReason === "completed") {
+            if (!messageCompleted) throw new Error(safeAgentFailureMessage);
+            status = "completed";
+          } else {
+            throw new Error(safeAgentFailureMessage);
+          }
+
+          await persistResponse();
+          finishDispatch(status, status === "completed" ? null : "cancelled");
+          if (status === "completed" && completedClientEvent) {
+            await stream.writeSSE({
+              data: JSON.stringify(completedClientEvent),
+            });
+          }
+          await stream.writeSSE({
+            data: JSON.stringify({
+              type: "session.completed",
+              turnId,
+              reason: terminalReason,
+            } satisfies BrowserAgentEvent),
+          });
+        } catch (error) {
+          const cancelled =
+            setupAborted ||
+            requestSignal.aborted ||
+            (error instanceof ProviderHubError &&
+              error.failure.code === "cancelled");
+          status = cancelled ? "cancelled" : "failed";
+          assistantContent = cancelled
+            ? safeAgentCancellationMessage
+            : safeAgentFailureMessage;
+          if (providerStreamCompleted) {
+            await cancelAndEvictProviderSession(
+              state,
+              key,
+              storedSession,
+            ).catch(() => evictProviderSession(state, key, storedSession));
+          } else {
+            evictProviderSession(state, key, storedSession);
+          }
+          finishDispatch(
+            status,
+            cancelled ? "cancelled" : providerFailureCode(error),
+          );
+
+          let persistenceFailed = false;
+          if (!responsePersisted) {
+            try {
+              await persistResponse();
+            } catch {
+              persistenceFailed = true;
+              status = "failed";
+              assistantContent = safeAgentFailureMessage;
+            }
+          }
+
+          try {
+            if (cancelled && !persistenceFailed) {
+              await stream.writeSSE({
+                data: JSON.stringify({
+                  type: "session.completed",
+                  turnId,
+                  reason: "cancelled",
+                } satisfies BrowserAgentEvent),
+              });
+            } else {
+              await stream.writeSSE({
+                data: JSON.stringify({
+                  type: "error",
+                  turnId,
+                  message: safeAgentFailureMessage,
+                } satisfies BrowserAgentEvent),
+              });
+              await stream.writeSSE({
+                data: JSON.stringify({
+                  type: "session.completed",
+                  turnId,
+                  reason: "failed",
+                } satisfies BrowserAgentEvent),
+              });
+            }
+          } catch {
+            // The browser may have disconnected while the provider was cancelled.
+          }
+        } finally {
+          const activeTurn = state.activeProviderTurns.get(turnId);
+          if (activeTurn?.session === storedSession) {
+            state.activeProviderTurns.delete(turnId);
+          }
+          if (status !== "completed") {
+            evictProviderSession(state, key, storedSession);
+          }
+          releaseAgentTurnReservation(state, key, turnId);
+        }
+      });
+    } catch (error) {
+      requestSignal.removeEventListener("abort", onSetupAbort);
+      const activeTurn = state.activeProviderTurns.get(turnId);
+      if (activeTurn?.session === storedSession) {
+        state.activeProviderTurns.delete(turnId);
+      }
+      await cleanupFailedSetup();
+      const cancelled = setupAborted || requestSignal.aborted;
+      finishDispatch(
+        cancelled ? "cancelled" : "failed",
+        cancelled ? "cancelled" : providerFailureCode(error),
+      );
+      if (cancelled) {
+        return context.json({ error: safeAgentCancellationMessage }, 409);
+      }
+      throw error;
+    }
   });
 
-  app.delete("/api/agent/sessions/:id/turn", async (context) => {
-    const providerSessionId = context.req.param("id");
-    const active = state.activeProviderTurns.get(providerSessionId);
+  app.delete("/api/agent/turns/:turnId", async (context) => {
+    const turnId = context.req.param("turnId");
+    const active = state.activeProviderTurns.get(turnId);
     if (!active) {
-      return context.json({ error: "Unknown active agent session" }, 404);
+      return context.json({ error: "Unknown active agent turn" }, 404);
     }
-    await cancelAndEvictProviderSession(state, active.key, active.session);
+    await cancelAndEvictProviderSession(
+      state,
+      active.key,
+      active.session,
+    ).catch(() => {
+      throw new Error(safeAgentFailureMessage);
+    });
     return context.json({ cancelled: true });
   });
 
@@ -657,11 +1231,14 @@ export function createApp(options: AppOptions = {}) {
       criteria: exercise.criteria,
       constraints: exercise.constraints,
       topics: exercise.topics,
-      // A versioned session only reveals the server-created isolated attempt
-      // path. The trusted template path remains an implementation detail.
-      workspacePath: versioned
-        ? (attempt?.workspacePath ?? null)
-        : exercise.workspacePath,
+      workspace: attempt
+        ? {
+            id: attempt.workspaceHandleId,
+            generation: attempt.workspaceGeneration,
+            environmentId: attempt.environmentId,
+            trust: "trusted-local-unsandboxed" as const,
+          }
+        : null,
       ...(attempt
         ? {
             attempt: {
@@ -686,6 +1263,10 @@ export function createApp(options: AppOptions = {}) {
       .object({ sessionId: z.string().min(1) })
       .strict()
       .parse(await context.req.json());
+    assertCourseScopedSessionSideEffectAllowed(
+      state.connection,
+      body.sessionId,
+    );
     const resolved = await resolveExerciseContext(
       state,
       body.sessionId,
@@ -714,7 +1295,14 @@ export function createApp(options: AppOptions = {}) {
       body.sessionId,
       exercise.templateExerciseId,
     );
-    if (existing) return context.json({ id: existing.id });
+    if (existing)
+      return context.json({
+        id: existing.id,
+        workspace: {
+          id: existing.workspaceHandleId,
+          generation: existing.workspaceGeneration,
+        },
+      });
     const absoluteWorkspace = await resolveExerciseWorkspace(
       state,
       exercise.workspacePath,
@@ -727,19 +1315,25 @@ export function createApp(options: AppOptions = {}) {
       templateRoot: absoluteWorkspace,
     });
     let baseline;
+    let sourceSnapshot;
     try {
       baseline = await ensureExerciseBaseline(isolated.workspacePath);
+      sourceSnapshot = await snapshotCompleteWorkspace(isolated.workspacePath);
     } catch (error) {
       await rm(isolated.workspacePath, { recursive: true, force: true });
       throw error;
     }
+    const workspaceHandleId = randomUUID();
     const now = Date.now();
     try {
       state.connection.sqlite
         .prepare(
           `INSERT INTO exercise_attempts
-           (id, session_id, exercise_id, status, workspace_path, baseline_path, baseline_hash, started_at, completed_at, updated_at)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, NULL, ?)`,
+           (id, session_id, exercise_id, status, workspace_path, baseline_path,
+            baseline_hash, environment_id, workspace_handle_id,
+            workspace_generation, source_snapshot_hash, started_at,
+            completed_at, updated_at)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?)`,
         )
         .run(
           id,
@@ -748,6 +1342,9 @@ export function createApp(options: AppOptions = {}) {
           isolated.workspacePath,
           isolated.workspacePath,
           baseline.commit,
+          LEGACY_NODE_ENVIRONMENT_ID,
+          workspaceHandleId,
+          sourceSnapshot.contentHash,
           now,
           now,
         );
@@ -758,10 +1355,20 @@ export function createApp(options: AppOptions = {}) {
         body.sessionId,
         exercise.templateExerciseId,
       );
-      if (raced) return context.json({ id: raced.id });
+      if (raced)
+        return context.json({
+          id: raced.id,
+          workspace: {
+            id: raced.workspaceHandleId,
+            generation: raced.workspaceGeneration,
+          },
+        });
       throw error;
     }
-    return context.json({ id }, 201);
+    return context.json(
+      { id, workspace: { id: workspaceHandleId, generation: 1 } },
+      201,
+    );
   });
 
   app.get("/api/exercise-attempts/:id/diff", async (context) => {
@@ -776,90 +1383,169 @@ export function createApp(options: AppOptions = {}) {
     });
   });
 
-  app.post("/api/exercise-attempts/:id/commands", async (context) => {
-    const attempt = await requireAttempt(state, context.req.param("id"));
+  app.post("/api/exercise-attempts/:id/checks", async (context) => {
+    const attempt = await requireAttempt(state, context.req.param("id"), true);
     const body = z
       .object({
         operationId: z.string().trim().min(1).max(200),
-        commandId: z.literal("test"),
+        checkIds: z.array(z.literal(LEGACY_NODE_TEST_CHECK_ID)).length(1),
       })
       .strict()
       .parse(await context.req.json());
+    const checkId = body.checkIds[0]!;
+    const inputSnapshot = await snapshotCompleteWorkspace(
+      attempt.workspacePath,
+    );
     const previousRun = findTestRunByOperation(
       state.connection,
       body.operationId,
     );
     if (previousRun) {
-      if (previousRun.exerciseAttemptId !== attempt.id) {
+      if (
+        previousRun.exerciseAttemptId !== attempt.id ||
+        previousRun.environmentId !== attempt.environmentId ||
+        previousRun.checkId !== checkId ||
+        previousRun.inputSnapshotHash !== inputSnapshot.contentHash
+      ) {
         return context.json(
-          { error: "Operation ID has already been used" },
+          {
+            error:
+              "Operation ID has already been used for another check request",
+          },
           409,
         );
       }
       return context.json(toTestRunResponse(previousRun));
     }
-    const npmTest = npmTestCommand();
-    const runner = new AllowedProcessRunner({
-      test: {
-        executable: npmTest.executable,
-        args: npmTest.args,
-        timeoutMs: 120_000,
-      },
-    });
+    const environment = state.executionFabric.describeEnvironment(
+      attempt.environmentId,
+    );
     const testRunId = randomUUID();
     const startedAt = Date.now();
+    const runningResult = {
+      schemaVersion: 1,
+      operationId: body.operationId,
+      status: "running",
+      environmentId: environment.id,
+      environmentPackDigest: environment.digest,
+      inputSnapshotHash: inputSnapshot.contentHash,
+    };
     state.connection.sqlite
       .prepare(
         `INSERT INTO test_runs
-         (id, exercise_attempt_id, operation_id, status, exit_code, stdout, stderr, duration_ms, started_at, completed_at)
-         VALUES (?, ?, ?, 'running', NULL, '', '', NULL, ?, NULL)`,
+         (id, exercise_attempt_id, operation_id, status, exit_code, stdout,
+          stderr, duration_ms, diff_fingerprint, diff_truncated, started_at,
+          completed_at, check_id, environment_id, environment_pack_digest,
+          backend_id, input_snapshot_hash, result_json)
+         VALUES (?, ?, ?, 'running', NULL, '', '', NULL, NULL, 0, ?, NULL,
+                 ?, ?, ?, 'local-native', ?, ?)`,
       )
-      .run(testRunId, attempt.id, body.operationId, startedAt);
+      .run(
+        testRunId,
+        attempt.id,
+        body.operationId,
+        startedAt,
+        checkId,
+        environment.id,
+        environment.digest,
+        inputSnapshot.contentHash,
+        JSON.stringify(runningResult),
+      );
     try {
-      const result = await runner.run(body.commandId, {
-        cwd: attempt.workspacePath,
+      const result = await state.executionFabric.run({
+        operationId: body.operationId,
+        attemptId: attempt.id,
+        courseRevisionId: requireAttemptCourseRevisionId(
+          state.connection,
+          attempt.sessionId,
+        ),
+        activityId: attempt.exerciseId,
+        workspacePath: attempt.workspacePath,
+        environmentId: attempt.environmentId,
+        checkIds: body.checkIds,
+        expectedInputSnapshotHash: inputSnapshot.contentHash,
         signal: context.req.raw.signal,
       });
       const testedDiff = await getExerciseDiff(attempt.workspacePath, {
         expectedBaselineHash: attempt.baselineHash,
       });
       const diffFingerprint = fingerprintExerciseDiff(testedDiff);
+      const publicResult = publicExecutionResult(result);
+      const stdout = result.artifacts
+        .map((artifact) => artifact.content)
+        .join("\n");
+      const stderr = result.diagnostics
+        .filter((diagnostic) => diagnostic.severity === "error")
+        .map((diagnostic) => diagnostic.message)
+        .join("\n");
       const now = Date.now();
-      state.connection.sqlite
-        .prepare(
-          `UPDATE test_runs
-           SET status = ?, exit_code = ?, stdout = ?, stderr = ?,
-               duration_ms = ?, diff_fingerprint = ?, diff_truncated = ?,
-               completed_at = ?
-           WHERE id = ?`,
-        )
-        .run(
-          result.exitCode === 0 ? "passed" : "failed",
-          result.exitCode,
-          result.stdout,
-          result.stderr,
-          result.durationMs,
-          diffFingerprint,
-          testedDiff.truncated ? 1 : 0,
-          now,
-          testRunId,
+      await withAsyncTransaction(state.connection, async () => {
+        state.connection.sqlite
+          .prepare(
+            `UPDATE test_runs
+             SET status = ?, exit_code = ?, stdout = ?, stderr = ?,
+                 duration_ms = ?, diff_fingerprint = ?, diff_truncated = ?,
+                 result_json = ?, completed_at = ?
+             WHERE id = ? AND status = 'running'`,
+          )
+          .run(
+            result.status,
+            result.status === "passed" ? 0 : 1,
+            stdout,
+            stderr,
+            result.durationMs,
+            diffFingerprint,
+            testedDiff.truncated || result.truncated ? 1 : 0,
+            JSON.stringify(publicResult),
+            now,
+            testRunId,
+          );
+        const insertArtifact = state.connection.sqlite.prepare(
+          `INSERT INTO execution_artifacts
+           (id, test_run_id, artifact_type, media_type, digest, size_bytes,
+            retention, truncated, content, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
+        for (const artifact of result.artifacts) {
+          insertArtifact.run(
+            artifact.id,
+            testRunId,
+            artifact.type,
+            artifact.mediaType,
+            artifact.digest,
+            artifact.sizeBytes,
+            artifact.retention,
+            artifact.truncated ? 1 : 0,
+            artifact.content,
+            now,
+          );
+        }
+      });
       return context.json({
         id: testRunId,
-        output: [result.stdout, result.stderr].filter(Boolean).join("\n"),
-        exitCode: result.exitCode ?? -1,
-        status: result.exitCode === 0 ? "passed" : "failed",
+        output: [stdout, stderr].filter(Boolean).join("\n"),
+        exitCode: result.status === "passed" ? 0 : 1,
+        status: result.status,
         operationId: body.operationId,
+        result: publicResult,
       });
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Trusted check runner failed";
       state.connection.sqlite
         .prepare(
           `UPDATE test_runs
-           SET status = 'failed', stderr = ?, completed_at = ?
+           SET status = 'backend_error', stderr = ?, result_json = ?,
+               completed_at = ?
            WHERE id = ? AND status = 'running'`,
         )
         .run(
-          error instanceof Error ? error.message : "Test runner failed",
+          message,
+          JSON.stringify({
+            ...runningResult,
+            status: "backend_error",
+            error: message,
+          }),
           Date.now(),
           testRunId,
         );
@@ -868,13 +1554,61 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.post("/api/exercise-attempts/:id/reviews", async (context) => {
-    z.object({})
+    const attempt = await requireAttempt(state, context.req.param("id"), true);
+    const body = z
+      .object({
+        operationId: z.string().trim().min(1).max(200),
+        previewDisclosure: z.boolean().optional(),
+        disclosureOperationId: z.string().trim().min(1).max(200).optional(),
+      })
       .strict()
       .parse(await context.req.json());
-    const attempt = await requireAttempt(state, context.req.param("id"));
-    const before = await getExerciseDiff(attempt.workspacePath, {
-      expectedBaselineHash: attempt.baselineHash,
-    });
+    const prior = state.connection.sqlite
+      .prepare(
+        `SELECT r.id, r.exercise_attempt_id AS exerciseAttemptId,
+                r.result_json AS resultJson, b.id AS bundleId,
+                b.bundle_sha256 AS evidenceSha256,
+                b.workspace_snapshot_hash AS workspaceSnapshotHash
+         FROM reviews r
+         LEFT JOIN review_evidence_bundles b ON b.review_id = r.id
+         WHERE r.operation_id = ? LIMIT 1`,
+      )
+      .get(body.operationId) as
+      | {
+          id: string;
+          exerciseAttemptId: string | null;
+          resultJson: string | null;
+          bundleId: string | null;
+          evidenceSha256: string | null;
+          workspaceSnapshotHash: string | null;
+        }
+      | undefined;
+    if (prior) {
+      if (prior.exerciseAttemptId !== attempt.id || !prior.resultJson) {
+        return context.json(
+          { error: "Operation ID has already been used for another review" },
+          409,
+        );
+      }
+      return context.json({
+        id: prior.id,
+        ...JSON.parse(prior.resultJson),
+        evidenceBundle: prior.bundleId
+          ? {
+              id: prior.bundleId,
+              sha256: prior.evidenceSha256,
+              workspaceSnapshotHash: prior.workspaceSnapshotHash,
+            }
+          : null,
+      });
+    }
+    const [before, beforeSnapshot] = await Promise.all([
+      getExerciseDiff(attempt.workspacePath, {
+        expectedBaselineHash: attempt.baselineHash,
+      }),
+      snapshotCompleteWorkspace(attempt.workspacePath),
+    ]);
+    const reviewedDiffFingerprint = fingerprintExerciseDiff(before);
     if (!before.hasChanges) {
       return context.json(
         { error: "Review requires a learner-authored diff" },
@@ -895,12 +1629,13 @@ export function createApp(options: AppOptions = {}) {
       !latestTest ||
       latestTest.status !== "passed" ||
       latestTest.diffTruncated !== 0 ||
-      latestTest.diffFingerprint !== fingerprintExerciseDiff(before)
+      latestTest.diffFingerprint !== reviewedDiffFingerprint ||
+      latestTest.inputSnapshotHash !== beforeSnapshot.contentHash
     ) {
       return context.json(
         {
           error:
-            "Review requires a passing test run after the latest learner edit",
+            "Review requires a passing trusted check after the latest learner edit",
         },
         409,
       );
@@ -914,47 +1649,132 @@ export function createApp(options: AppOptions = {}) {
       attempt,
       diff: before.patch,
       diffTruncated: before.truncated,
+      workspaceSnapshotHash: beforeSnapshot.contentHash,
       testRun: latestTest,
       criteria: exercise.criteria,
       constraints: exercise.constraints,
       prompt: exercise.prompt,
       signal: context.req.raw.signal,
+      ...(body.previewDisclosure ? { previewDisclosure: true } : {}),
+      ...(body.disclosureOperationId
+        ? { disclosureOperationId: body.disclosureOperationId }
+        : {}),
     });
-    const after = await getExerciseDiff(attempt.workspacePath, {
-      expectedBaselineHash: attempt.baselineHash,
-    });
+    if (review.kind === "disclosure") {
+      return context.json(review, 202);
+    }
+    const [after, afterSnapshot] = await Promise.all([
+      getExerciseDiff(attempt.workspacePath, {
+        expectedBaselineHash: attempt.baselineHash,
+      }),
+      snapshotCompleteWorkspace(attempt.workspacePath),
+    ]);
     if (
       before.patch !== after.patch ||
       before.truncated !== after.truncated ||
-      before.baselineCommit !== after.baselineCommit
+      before.baselineCommit !== after.baselineCommit ||
+      beforeSnapshot.contentHash !== afterSnapshot.contentHash
     ) {
       throw new Error("Reviewer boundary violation: workspace changed");
     }
     const now = Date.now();
     const reviewId = randomUUID();
-    state.connection.sqlite
-      .prepare(
-        `INSERT INTO reviews
-         (id, session_id, exercise_attempt_id, provider_id, model_id, status, result_json, raw_response, created_at, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        reviewId,
-        attempt.sessionId,
-        attempt.id,
-        review.providerId,
-        review.modelId,
-        review.result.status,
-        JSON.stringify(review.result),
-        review.rawResponse,
-        now,
-        now,
-      );
-    return context.json({ id: reviewId, ...review.result });
+    const bundleId = randomUUID();
+    const evidenceSha256 = `sha256:${createHash("sha256")
+      .update(review.evidenceBundleJson)
+      .digest("hex")}`;
+    await withAsyncTransaction(state.connection, async () => {
+      state.connection.sqlite
+        .prepare(
+          `INSERT INTO reviews
+           (id, session_id, exercise_attempt_id, operation_id, provider_id,
+            model_id, status, result_json, raw_response, created_at, completed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          reviewId,
+          attempt.sessionId,
+          attempt.id,
+          body.operationId,
+          review.providerId,
+          review.modelId,
+          review.result.status,
+          JSON.stringify(review.result),
+          null,
+          now,
+          now,
+        );
+      state.connection.sqlite
+        .prepare(
+          `INSERT INTO review_evidence_bundles
+           (id, review_id, exercise_attempt_id, test_run_id,
+            workspace_snapshot_hash, diff_fingerprint, bundle_sha256,
+            bundle_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          bundleId,
+          reviewId,
+          attempt.id,
+          latestTest.id,
+          beforeSnapshot.contentHash,
+          reviewedDiffFingerprint,
+          evidenceSha256,
+          review.evidenceBundleJson,
+          now,
+        );
+    });
+    return context.json({
+      id: reviewId,
+      ...review.result,
+      evidenceBundle: {
+        id: bundleId,
+        sha256: evidenceSha256,
+        workspaceSnapshotHash: beforeSnapshot.contentHash,
+      },
+    });
   });
 
+  app.get(
+    "/api/exercise-attempts/:id/review-bundles/:bundleId",
+    async (context) => {
+      const attempt = await requireAttempt(state, context.req.param("id"));
+      const row = state.connection.sqlite
+        .prepare(
+          `SELECT id, workspace_snapshot_hash AS workspaceSnapshotHash,
+                  bundle_sha256 AS evidenceSha256, bundle_json AS bundleJson,
+                  created_at AS createdAt
+           FROM review_evidence_bundles
+           WHERE id = ? AND exercise_attempt_id = ?`,
+        )
+        .get(context.req.param("bundleId"), attempt.id) as
+        | {
+            id: string;
+            workspaceSnapshotHash: string;
+            evidenceSha256: string;
+            bundleJson: string;
+            createdAt: number;
+          }
+        | undefined;
+      if (!row) return context.json({ error: "Unknown review capsule" }, 404);
+      const observedSha256 = `sha256:${createHash("sha256")
+        .update(row.bundleJson)
+        .digest("hex")}`;
+      if (observedSha256 !== row.evidenceSha256) {
+        throw new Error("Review capsule integrity check failed");
+      }
+      return context.json({
+        id: row.id,
+        workspaceSnapshotHash: row.workspaceSnapshotHash,
+        sha256: row.evidenceSha256,
+        createdAt: row.createdAt,
+        evidence: JSON.parse(row.bundleJson),
+      });
+    },
+  );
+
   app.post("/api/exercise-attempts/:id/open", async (context) => {
-    const attempt = await requireAttempt(state, context.req.param("id"));
+    const attempt = await requireAttempt(state, context.req.param("id"), true);
     const configured = process.env.ZED_EXECUTABLE ?? "zed";
     const plan = buildZedOpenPlan(attempt.workspacePath, {
       executable: configured,
@@ -962,8 +1782,11 @@ export function createApp(options: AppOptions = {}) {
     const result = await openInZed(plan);
     return context.json({
       opened: result.opened,
-      path: result.fallback.path,
-      message: result.error ?? result.fallback.message,
+      message:
+        result.error ??
+        (result.opened
+          ? "Editor opened for the trusted attempt workspace."
+          : "Editor launch is unavailable."),
     });
   });
 
@@ -1027,6 +1850,7 @@ export function createApp(options: AppOptions = {}) {
   app.patch("/api/flashcards/:id", async (context) => {
     const body = z
       .object({ status: z.enum(["candidate", "approved", "rejected"]) })
+      .strict()
       .parse(await context.req.json());
     const card = await state.repository.updateFlashcard(
       context.req.param("id"),
@@ -1068,68 +1892,21 @@ export function createApp(options: AppOptions = {}) {
 
   app.get("/api/settings", async (context) => {
     const settings = await readSettings(state);
-    const providers = await Promise.all(
-      Object.values(state.providers).map(async (provider) => {
-        const status = await provider.getStatus();
-        const models =
-          status.state === "connected"
-            ? await provider.listModels().catch(() => [])
-            : [];
-        return { id: provider.id, status: status.state, models };
-      }),
-    );
-    return context.json({ ...settings, providers });
+    const ai = await state.providerRuntime.settings();
+    return context.json({ ...settings, ai });
   });
 
   app.put("/api/settings", async (context) => {
-    const parsed = settingsMutationSchema.parse(await context.req.json());
-    const body = {
-      ...parsed,
-      opencodeBaseUrl: validateOpenCodeEndpoint(parsed.opencodeBaseUrl),
-    };
-    const nextOpenCodeProvider = new OpenCodeAgentProvider({
-      directory: state.projectRoot,
-      endpoint: body.opencodeBaseUrl,
-    });
-    const activeOpenCodeEndpoint = validateOpenCodeEndpoint(
-      process.env.OPENCODE_ENDPOINT ??
-        readSettingSync<string>(state.connection, "opencodeBaseUrl") ??
-        defaultOpenCodeEndpoint,
-    );
-    if (body.opencodeBaseUrl !== activeOpenCodeEndpoint) {
-      const status = await nextOpenCodeProvider.getStatus().catch(() => null);
-      if (status?.state !== "connected") {
-        return context.json(
-          {
-            error: `OpenCode сервер недоступен по адресу ${body.opencodeBaseUrl}. Запустите sidecar или верните прежний адрес.`,
-          },
-          400,
-        );
-      }
-    }
-    await validateProviderModelSelections(
-      { ...state.providers, opencode: nextOpenCodeProvider },
-      body,
-    );
-    const previousOpenCodeProvider = state.providers.opencode;
-    for (const [key, session] of state.providerSessions) {
-      if (session.providerId === "opencode") {
-        evictProviderSession(state, key, session);
-      }
-    }
-    if (
-      "shutdown" in previousOpenCodeProvider &&
-      typeof previousOpenCodeProvider.shutdown === "function"
-    ) {
-      await previousOpenCodeProvider.shutdown();
-    }
-    await Promise.all(
-      Object.entries(body).map(([key, value]) =>
-        state.repository.setSetting(key, value),
-      ),
-    );
-    state.providers.opencode = nextOpenCodeProvider;
+    const settings = settingsMutationSchema.parse(await context.req.json());
+    await state.repository.setSetting("theme", settings.theme);
     return context.json({ saved: true });
+  });
+  app.put("/api/settings/ai", async (context) => {
+    const settings = aiSettingsMutationSchema.parse(await context.req.json());
+    const roleProfiles = await state.providerRuntime.saveRoleProfiles(
+      settings.roleProfiles,
+    );
+    return context.json({ saved: true, roleProfiles });
   });
 
   return {
@@ -1147,43 +1924,6 @@ export function createApp(options: AppOptions = {}) {
       connection.close();
     },
   };
-}
-
-async function validateProviderModelSelections(
-  providers: Record<ProviderId, AgentProvider>,
-  settings: z.infer<typeof settingsMutationSchema>,
-): Promise<void> {
-  const selections = [
-    [settings.teacherProvider, settings.teacherModel],
-    [settings.reviewerProvider, settings.reviewerModel],
-    [settings.interviewerProvider, settings.interviewerModel],
-    [settings.curatorProvider, settings.curatorModel],
-    [settings.codexExpertProvider, settings.codexExpertModel],
-  ] as const;
-  const modelsByProvider = new Map<ProviderId, Set<string>>();
-
-  for (const providerId of new Set(selections.map(([id]) => id))) {
-    const provider = providers[providerId];
-    const models = await provider.listModels().catch(() => {
-      throw new Error(`Models are unavailable for provider ${providerId}`);
-    });
-    modelsByProvider.set(
-      providerId,
-      new Set(
-        models
-          .filter((model) => model.providerId === providerId && model.available)
-          .map((model) => model.id),
-      ),
-    );
-  }
-
-  for (const [providerId, modelId] of selections) {
-    if (!modelsByProvider.get(providerId)?.has(modelId)) {
-      throw new Error(
-        `Model ${modelId} is unavailable for provider ${providerId}`,
-      );
-    }
-  }
 }
 
 function validateWebOrigin(origin: string): string {
@@ -1206,39 +1946,66 @@ function validateWebOrigin(origin: string): string {
   }
 }
 
-function isLoopbackOrigin(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "http:" &&
-      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
-      url.username === "" &&
-      url.password === "" &&
-      url.pathname === "/" &&
-      url.search === "" &&
-      url.hash === ""
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isAllowedWebOrigin(origin: string, allowedWebOrigin: string): boolean {
-  if (origin === allowedWebOrigin) return true;
-  if (!isLoopbackOrigin(origin) || !isLoopbackOrigin(allowedWebOrigin)) {
-    return false;
-  }
-  try {
-    return new URL(origin).port === new URL(allowedWebOrigin).port;
-  } catch {
-    return false;
-  }
-}
-
 function isJsonContentType(contentType: string | undefined): boolean {
   return (
     contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json"
   );
+}
+
+async function agentLearningSessionRejection(
+  state: AppState,
+  sessionId: string | undefined,
+): Promise<{ status: 404 | 409; error: string } | null> {
+  if (sessionId === undefined) return null;
+
+  let requested: Awaited<ReturnType<LearningRepository["getVersionedSession"]>>;
+  try {
+    requested = await state.repository.getVersionedSession(sessionId);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Unknown versioned learning session:")
+    ) {
+      return { status: 404, error: error.message };
+    }
+    throw error;
+  }
+  if (requested.session.status !== "active") {
+    return {
+      status: 409,
+      error: "Agent turns require an active versioned learning session",
+    };
+  }
+  const current = await state.repository.getCurrentVersionedSession();
+  if (current?.session.id !== requested.session.id) {
+    return {
+      status: 409,
+      error:
+        "Agent turns require the current active versioned learning session",
+    };
+  }
+  try {
+    assertCourseScopedSessionSideEffectAllowed(
+      state.connection,
+      requested.session.id,
+    );
+  } catch (error) {
+    if (error instanceof CourseSessionContextError) {
+      return { status: 409, error: error.message };
+    }
+    throw error;
+  }
+  return null;
+}
+
+function releaseAgentTurnReservation(
+  state: AppState,
+  key: string,
+  turnId: string,
+): void {
+  if (state.activeProviderTurnReservations.get(key) === turnId) {
+    state.activeProviderTurnReservations.delete(key);
+  }
 }
 
 function evictProviderSession(
@@ -1249,9 +2016,10 @@ function evictProviderSession(
   if (state.providerSessions.get(key) === session) {
     state.providerSessions.delete(key);
   }
-  const activeTurn = state.activeProviderTurns.get(session.providerSessionId);
-  if (activeTurn?.session === session) {
-    state.activeProviderTurns.delete(session.providerSessionId);
+  for (const [turnId, activeTurn] of state.activeProviderTurns) {
+    if (activeTurn.session === session) {
+      state.activeProviderTurns.delete(turnId);
+    }
   }
 }
 
@@ -1262,13 +2030,6 @@ async function cancelAndEvictProviderSession(
 ): Promise<void> {
   evictProviderSession(state, key, session);
   await session.provider.cancelSession(session.providerSessionId);
-}
-
-async function defaultModel(provider: AgentProvider): Promise<string> {
-  const models = await provider.listModels();
-  const model = models.find((candidate) => candidate.available);
-  if (!model) throw new Error(`No available model for ${provider.id}`);
-  return model.id;
 }
 
 function toSessionResponse(
@@ -1310,7 +2071,11 @@ function findAttemptByExercise(
   return connection.sqlite
     .prepare(
       `SELECT id, session_id AS sessionId, exercise_id AS exerciseId,
-              workspace_path AS workspacePath, baseline_hash AS baselineHash
+              workspace_path AS workspacePath, baseline_hash AS baselineHash,
+              environment_id AS environmentId,
+              workspace_handle_id AS workspaceHandleId,
+              workspace_generation AS workspaceGeneration,
+              source_snapshot_hash AS sourceSnapshotHash
        FROM exercise_attempts WHERE session_id = ? AND exercise_id = ?`,
     )
     .get(sessionId, exerciseId) as AttemptRecord | undefined;
@@ -1319,15 +2084,26 @@ function findAttemptByExercise(
 async function requireAttempt(
   state: Pick<AppState, "connection" | "exerciseAttemptsRoot">,
   attemptId: string,
+  forMutation = false,
 ): Promise<AttemptRecord> {
   const attempt = state.connection.sqlite
     .prepare(
       `SELECT id, session_id AS sessionId, exercise_id AS exerciseId,
-              workspace_path AS workspacePath, baseline_hash AS baselineHash
+              workspace_path AS workspacePath, baseline_hash AS baselineHash,
+              environment_id AS environmentId,
+              workspace_handle_id AS workspaceHandleId,
+              workspace_generation AS workspaceGeneration,
+              source_snapshot_hash AS sourceSnapshotHash
        FROM exercise_attempts WHERE id = ?`,
     )
     .get(attemptId) as AttemptRecord | undefined;
   if (!attempt) throw new Error("Unknown exercise attempt");
+  if (forMutation) {
+    assertCourseScopedSessionSideEffectAllowed(
+      state.connection,
+      attempt.sessionId,
+    );
+  }
   let storedRealPath: string;
   let trustedRealPath: string;
   try {
@@ -1405,13 +2181,17 @@ async function readAttemptEvidence(
   const currentDiff = await getExerciseDiff(attempt.workspacePath, {
     expectedBaselineHash: attempt.baselineHash,
   });
+  const currentSnapshot = await snapshotCompleteWorkspace(
+    attempt.workspacePath,
+  );
   const latestTest = findLatestTestRun(connection, attempt.id);
   const currentDiffFingerprint = fingerprintExerciseDiff(currentDiff);
   const testFresh = Boolean(
     latestTest &&
     latestTest.diffTruncated === 0 &&
     latestTest.diffFingerprint !== null &&
-    latestTest.diffFingerprint === currentDiffFingerprint,
+    latestTest.diffFingerprint === currentDiffFingerprint &&
+    latestTest.inputSnapshotHash === currentSnapshot.contentHash,
   );
   const latestReviewRecord = findLatestReview(connection, attempt.id);
   const reviewIsCurrent = Boolean(
@@ -1426,6 +2206,11 @@ async function readAttemptEvidence(
     summary: string;
     findings: ReviewResult["findings"];
     strengths: string[];
+    evidenceBundle: {
+      id: string;
+      sha256: string;
+      workspaceSnapshotHash: string;
+    } | null;
   } | null = null;
   if (latestReviewRecord && reviewIsCurrent) {
     try {
@@ -1437,6 +2222,17 @@ async function readAttemptEvidence(
           summary: parsed.summary,
           findings: parsed.findings,
           strengths: parsed.strengths,
+          evidenceBundle:
+            latestReviewRecord.bundleId &&
+            latestReviewRecord.evidenceSha256 &&
+            latestReviewRecord.workspaceSnapshotHash
+              ? {
+                  id: latestReviewRecord.bundleId,
+                  sha256: latestReviewRecord.evidenceSha256,
+                  workspaceSnapshotHash:
+                    latestReviewRecord.workspaceSnapshotHash,
+                }
+              : null,
         };
       }
     } catch {
@@ -1463,9 +2259,14 @@ function findLatestReview(
 ): ReviewRecord | undefined {
   return connection.sqlite
     .prepare(
-      `SELECT id, status, result_json AS resultJson, created_at AS createdAt
-       FROM reviews WHERE exercise_attempt_id = ?
-       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      `SELECT r.id, r.status, r.result_json AS resultJson,
+              r.created_at AS createdAt, b.id AS bundleId,
+              b.bundle_sha256 AS evidenceSha256,
+              b.workspace_snapshot_hash AS workspaceSnapshotHash
+       FROM reviews r
+       LEFT JOIN review_evidence_bundles b ON b.review_id = r.id
+       WHERE r.exercise_attempt_id = ?
+       ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1`,
     )
     .get(attemptId) as ReviewRecord | undefined;
 }
@@ -1481,7 +2282,12 @@ function findTestRunByOperation(
               stdout, stderr, duration_ms AS durationMs,
               diff_fingerprint AS diffFingerprint,
               diff_truncated AS diffTruncated,
-              started_at AS startedAt, completed_at AS completedAt
+              started_at AS startedAt, completed_at AS completedAt,
+              check_id AS checkId, environment_id AS environmentId,
+              environment_pack_digest AS environmentPackDigest,
+              backend_id AS backendId,
+              input_snapshot_hash AS inputSnapshotHash,
+              result_json AS resultJson
        FROM test_runs WHERE operation_id = ? LIMIT 1`,
     )
     .get(operationId) as TestRunRecord | undefined;
@@ -1498,7 +2304,12 @@ function findLatestTestRun(
               stdout, stderr, duration_ms AS durationMs,
               diff_fingerprint AS diffFingerprint,
               diff_truncated AS diffTruncated,
-              started_at AS startedAt, completed_at AS completedAt
+              started_at AS startedAt, completed_at AS completedAt,
+              check_id AS checkId, environment_id AS environmentId,
+              environment_pack_digest AS environmentPackDigest,
+              backend_id AS backendId,
+              input_snapshot_hash AS inputSnapshotHash,
+              result_json AS resultJson
        FROM test_runs WHERE exercise_attempt_id = ?
        ORDER BY started_at DESC, rowid DESC LIMIT 1`,
     )
@@ -1506,12 +2317,21 @@ function findLatestTestRun(
 }
 
 function toTestRunResponse(run: TestRunRecord) {
+  let result: unknown = null;
+  if (run.resultJson !== null) {
+    try {
+      result = JSON.parse(run.resultJson);
+    } catch {
+      result = null;
+    }
+  }
   return {
     id: run.id,
     output: [run.stdout, run.stderr].filter(Boolean).join("\n"),
     exitCode: run.exitCode ?? -1,
     status: run.status,
     operationId: run.operationId,
+    result,
   };
 }
 
@@ -1529,6 +2349,29 @@ function npmTestCommand(): { executable: string; args: string[] } {
       "npm-cli.js",
     );
   return { executable: process.execPath, args: [npmCli, "test"] };
+}
+function requireAttemptCourseRevisionId(
+  connection: DatabaseConnection,
+  sessionId: string,
+): string {
+  const row = connection.sqlite
+    .prepare(
+      `SELECT revision_id AS revisionId
+       FROM session_course_contexts WHERE session_id = ?`,
+    )
+    .get(sessionId) as { revisionId: string } | undefined;
+  if (!row)
+    throw new Error("Exercise session has no immutable Course revision");
+  return row.revisionId;
+}
+
+function publicExecutionResult(result: ExecutionResult) {
+  return {
+    ...result,
+    artifacts: result.artifacts.map(
+      ({ content: _content, ...artifact }) => artifact,
+    ),
+  };
 }
 
 function readMistakes(connection: DatabaseConnection, limit: number) {
@@ -1564,16 +2407,6 @@ async function readSettings(state: AppState) {
     opencodeBaseUrl: validateOpenCodeEndpoint(
       process.env.OPENCODE_ENDPOINT ?? defaultOpenCodeEndpoint,
     ),
-    teacherProvider: "mock" as const,
-    teacherModel: "mock-deterministic",
-    reviewerProvider: "mock" as const,
-    reviewerModel: "mock-deterministic",
-    interviewerProvider: "mock" as const,
-    interviewerModel: "mock-deterministic",
-    curatorProvider: "mock" as const,
-    curatorModel: "mock-deterministic",
-    codexExpertProvider: "mock" as const,
-    codexExpertModel: "mock-deterministic",
     theme: "system" as const,
   };
   const entries = await Promise.all(
@@ -1581,7 +2414,7 @@ async function readSettings(state: AppState) {
       const defaultValue = defaults[key as keyof typeof defaults];
       return [
         key,
-        key === "zedExecutable"
+        key === "zedExecutable" || key === "opencodeBaseUrl"
           ? defaultValue
           : ((await state.repository.getSetting(key)) ?? defaultValue),
       ];
@@ -1590,185 +2423,284 @@ async function readSettings(state: AppState) {
   return settingsSchema.parse(Object.fromEntries(entries));
 }
 
-function selectionForRole(
-  settings: AppSettings,
-  role: AgentRole,
-): { providerId: ProviderId; modelId: string } {
-  switch (role) {
-    case "teacher":
-      return {
-        providerId: settings.teacherProvider,
-        modelId: settings.teacherModel,
-      };
-    case "reviewer":
-      return {
-        providerId: settings.reviewerProvider,
-        modelId: settings.reviewerModel,
-      };
-    case "interviewer":
-      return {
-        providerId: settings.interviewerProvider,
-        modelId: settings.interviewerModel,
-      };
-    case "codex-expert":
-      return {
-        providerId: settings.codexExpertProvider,
-        modelId: settings.codexExpertModel,
-      };
-    case "curator":
-    case "flashcard-generator":
-    case "daily-summary":
-    case "weekly-analysis":
-      return {
-        providerId: settings.curatorProvider,
-        modelId: settings.curatorModel,
-      };
-  }
-}
-
 async function requestExerciseReview(
   state: AppState,
   input: {
     attempt: AttemptRecord;
     diff: string;
     diffTruncated: boolean;
+    workspaceSnapshotHash: string;
     testRun: TestRunRecord;
     criteria: string[];
     constraints: string[];
     prompt: string;
     signal: AbortSignal;
+    previewDisclosure?: boolean;
+    disclosureOperationId?: string;
   },
-): Promise<{
-  providerId: ProviderId;
-  modelId: string;
-  result: ReviewResult;
-  rawResponse: string;
-}> {
-  const settings = await readSettings(state);
-  const { providerId, modelId } = selectionForRole(settings, "reviewer");
-  const provider = state.providers[providerId];
-  const key = `${input.attempt.sessionId}:reviewer:${providerId}:${modelId}`;
-  let storedSession = state.providerSessions.get(key);
-  if (!storedSession) {
-    const session = await provider.createSession({
-      role: "reviewer",
-      modelId,
-      systemPrompt: getLatestPrompt("reviewer").systemPrompt,
-      metadata: {
-        learningSessionId: input.attempt.sessionId,
-        exerciseAttemptId: input.attempt.id,
-      },
-    });
-    const conversation = await state.repository.createConversation({
-      learningSessionId: input.attempt.sessionId,
-      role: "reviewer",
-      providerId,
-      modelId,
-      providerSessionId: session.id,
-    });
-    storedSession = {
-      providerId,
-      provider,
-      providerSessionId: session.id,
-      conversationId: conversation.id,
-    };
-    state.providerSessions.set(key, storedSession);
-  }
-
+): Promise<
+  | {
+      kind: "review";
+      providerId: ProviderId;
+      modelId: string;
+      result: ReviewResult;
+      evidenceBundleJson: string;
+    }
+  | {
+      kind: "disclosure";
+      required: true;
+      disclosure: Extract<
+        Awaited<ReturnType<ProviderRuntime["prepareDisclosure"]>>,
+        { required: true }
+      >["disclosure"];
+    }
+> {
+  const priorReviewCount = z
+    .object({ count: z.number().int().nonnegative() })
+    .parse(
+      state.connection.sqlite
+        .prepare(
+          "SELECT count(*) AS count FROM reviews WHERE exercise_attempt_id = ?",
+        )
+        .get(input.attempt.id),
+    ).count;
   const reviewPrompt = JSON.stringify({
+    schemaVersion: 1,
+    kind: "apt.review-evidence.v1",
     task: "Review the learner-authored change. Return only ReviewResult JSON.",
     exercise: {
       prompt: input.prompt,
       acceptanceCriteria: input.criteria,
       constraints: input.constraints,
     },
+    workspace: {
+      id: input.attempt.workspaceHandleId,
+      generation: input.attempt.workspaceGeneration,
+      sourceSnapshotHash: input.attempt.sourceSnapshotHash,
+      inputSnapshotHash: input.workspaceSnapshotHash,
+    },
     evidence: {
-      priorReviewCount: (
-        state.connection.sqlite
-          .prepare(
-            "SELECT count(*) AS count FROM reviews WHERE exercise_attempt_id = ?",
-          )
-          .get(input.attempt.id) as { count: number }
-      ).count,
+      priorReviewCount,
       gitDiff: input.diff,
       diffTruncated: input.diffTruncated,
-      latestTestRun: {
+      trustedCheck: {
         operationId: input.testRun.operationId,
+        checkId: input.testRun.checkId,
+        environmentId: input.testRun.environmentId,
+        environmentPackDigest: input.testRun.environmentPackDigest,
+        backendId: input.testRun.backendId,
+        inputSnapshotHash: input.testRun.inputSnapshotHash,
         status: input.testRun.status,
         exitCode: input.testRun.exitCode,
         stdout: input.testRun.stdout,
         stderr: input.testRun.stderr,
         durationMs: input.testRun.durationMs,
+        result:
+          input.testRun.resultJson === null
+            ? null
+            : JSON.parse(input.testRun.resultJson),
       },
     },
   });
-  await state.repository.addMessage({
-    conversationId: storedSession.conversationId,
-    role: "user",
-    content: reviewPrompt,
-  });
+  if (input.previewDisclosure) {
+    const preparation = await state.providerRuntime.prepareDisclosure({
+      role: "reviewer",
+      payload: reviewPrompt,
+      payloadCategories: [
+        "review-bundle",
+        "learner-evidence",
+        "workspace-diff",
+      ],
+      entityIds: {
+        "exercise-attempt": input.attempt.id,
+        "learning-session": input.attempt.sessionId,
+      },
+      exclusions: [
+        "workspace files outside the complete diff",
+        "protected answer keys",
+      ],
+      destinationPurpose: "evidence-only code review",
+    });
+    if (preparation.required) {
+      return { kind: "disclosure", ...preparation };
+    }
+  }
 
-  let rawResponse = "";
-  let failure: string | undefined;
-  let terminalReason: "completed" | "failed" | "cancelled" | undefined;
-  const toolEvents: AgentEvent[] = [];
-  state.activeProviderTurns.set(storedSession.providerSessionId, {
-    key,
-    session: storedSession,
+  const dispatch = await state.providerRuntime.resolveDispatch({
+    role: "reviewer",
+    payload: reviewPrompt,
+    ...(input.disclosureOperationId
+      ? { disclosureOperationId: input.disclosureOperationId }
+      : {}),
+    metadata: {
+      learningSessionId: input.attempt.sessionId,
+      exerciseAttemptId: input.attempt.id,
+      workspaceSnapshotHash: input.workspaceSnapshotHash,
+    },
   });
-  const onAbort = () => {
-    void cancelAndEvictProviderSession(state, key, storedSession).catch(
-      () => {},
-    );
+  const providerId = dispatch.connection.adapterId;
+  const { modelId, provider } = dispatch;
+  const key = JSON.stringify([
+    input.attempt.sessionId,
+    "reviewer",
+    dispatch.connection.connectionId,
+    modelId,
+  ]);
+  let storedSession = state.providerSessions.get(key);
+  let turnId: string | undefined;
+  let terminalReason: "completed" | "failed" | "cancelled" | undefined;
+  let providerStreamCompleted = false;
+  let dispatchFinished = false;
+  const finishDispatch = (
+    status: "completed" | "failed" | "cancelled",
+    failureCode: ReturnType<typeof providerFailureCode> | null,
+  ) => {
+    if (dispatchFinished) return;
+    state.providerRuntime.finishDispatch(dispatch, status, failureCode);
+    dispatchFinished = true;
   };
-  if (input.signal.aborted) onAbort();
-  else input.signal.addEventListener("abort", onAbort, { once: true });
+  const cancelTurn = async () => {
+    if (storedSession) {
+      await cancelAndEvictProviderSession(state, key, storedSession).catch(
+        () => {
+          if (storedSession) evictProviderSession(state, key, storedSession);
+        },
+      );
+    }
+  };
+
   try {
-    for await (const event of provider.streamMessage({
-      sessionId: storedSession.providerSessionId,
-      message: reviewPrompt,
-      responseFormat: "json",
-    })) {
-      if (event.type === "message.delta") rawResponse += event.delta;
-      if (event.type === "message.completed") rawResponse = event.content;
-      if (event.type === "error") failure = event.error.message;
-      if (event.type === "session.completed") terminalReason = event.reason;
-      if (event.type === "tool.started" || event.type === "tool.completed") {
-        toolEvents.push(event);
+    if (!storedSession) {
+      const session = await provider.createSession({
+        role: "reviewer",
+        modelId,
+        systemPrompt: getLatestPrompt("reviewer").systemPrompt,
+        metadata: {
+          learningSessionId: input.attempt.sessionId,
+          exerciseAttemptId: input.attempt.id,
+        },
+      });
+      if (
+        session.providerId !== providerId ||
+        session.role !== "reviewer" ||
+        session.modelId !== modelId
+      ) {
+        await provider.cancelSession(session.id).catch(() => undefined);
+        throw new ProviderHubError(
+          "invalid_output",
+          "Reviewer provider returned mismatched session metadata",
+        );
+      }
+      const conversation = await state.repository.createConversation({
+        learningSessionId: input.attempt.sessionId,
+        role: "reviewer",
+        providerId,
+        modelId,
+        providerSessionId: null,
+      });
+      storedSession = {
+        providerId,
+        provider,
+        providerSessionId: session.id,
+        conversationId: conversation.id,
+      };
+      state.providerSessions.set(key, storedSession);
+    }
+
+    await state.repository.addMessage({
+      conversationId: storedSession.conversationId,
+      role: "user",
+      content: reviewPrompt,
+    });
+    let rawResponse = "";
+    let messageCompleted = false;
+    turnId = randomUUID();
+    state.activeProviderTurns.set(turnId, { key, session: storedSession });
+    for await (const event of state.providerRuntime.stream(
+      dispatch,
+      storedSession.providerSessionId,
+      input.signal,
+      "json",
+    )) {
+      switch (event.type) {
+        case "message.delta":
+          rawResponse += event.delta;
+          break;
+        case "message.completed":
+          messageCompleted = true;
+          rawResponse = event.content;
+          break;
+        case "session.completed":
+          terminalReason = event.reason;
+          break;
+        case "tool.started":
+        case "tool.completed":
+          break;
+        case "error":
+          throw new ProviderHubError(
+            "provider_error",
+            "Reviewer provider returned an error",
+          );
       }
     }
-    if (failure || terminalReason !== "completed") {
-      throw new Error(
-        failure ??
-          `Reviewer provider ended without success (${terminalReason ?? "unknown"})`,
+    providerStreamCompleted = true;
+    if (terminalReason !== "completed" || !messageCompleted) {
+      throw new ProviderHubError(
+        terminalReason === "cancelled" ? "cancelled" : "invalid_output",
+        "Reviewer provider did not return a complete result",
       );
     }
     const result = await parseReviewResult(rawResponse);
     await persistAgentResponse(state, {
       conversationId: storedSession.conversationId,
-      content: rawResponse,
-      toolEvents,
+      content: JSON.stringify(result),
       status: "completed",
     });
-    return { providerId, modelId, result, rawResponse };
+    finishDispatch("completed", null);
+    return {
+      kind: "review",
+      providerId,
+      modelId,
+      result,
+      evidenceBundleJson: reviewPrompt,
+    };
   } catch (error) {
-    evictProviderSession(state, key, storedSession);
-    await persistAgentResponse(state, {
-      conversationId: storedSession.conversationId,
-      content:
-        rawResponse ||
-        (error instanceof Error ? error.message : "Reviewer failed"),
-      toolEvents,
-      status: terminalReason === "cancelled" ? "cancelled" : "failed",
-    });
-    throw error;
-  } finally {
-    input.signal.removeEventListener("abort", onAbort);
-    const active = state.activeProviderTurns.get(
-      storedSession.providerSessionId,
+    const cancelled =
+      input.signal.aborted ||
+      terminalReason === "cancelled" ||
+      (error instanceof ProviderHubError && error.failure.code === "cancelled");
+    if (providerStreamCompleted) {
+      await cancelTurn();
+    } else if (storedSession) {
+      evictProviderSession(state, key, storedSession);
+    }
+    finishDispatch(
+      cancelled ? "cancelled" : "failed",
+      cancelled ? "cancelled" : providerFailureCode(error),
     );
-    if (active?.session === storedSession) {
-      state.activeProviderTurns.delete(storedSession.providerSessionId);
+    if (storedSession) {
+      try {
+        await persistAgentResponse(state, {
+          conversationId: storedSession.conversationId,
+          content: cancelled
+            ? safeAgentCancellationMessage
+            : safeAgentFailureMessage,
+          status: cancelled ? "cancelled" : "failed",
+        });
+      } catch {
+        // A transcript failure must not make an invalid review authoritative.
+      }
+    }
+    throw new Error(
+      cancelled ? safeAgentCancellationMessage : safeAgentFailureMessage,
+      { cause: error },
+    );
+  } finally {
+    if (turnId) {
+      const active = state.activeProviderTurns.get(turnId);
+      if (active?.session === storedSession) {
+        state.activeProviderTurns.delete(turnId);
+      }
     }
   }
 }
@@ -1778,36 +2710,19 @@ async function persistAgentResponse(
   input: {
     conversationId: string;
     content: string;
-    toolEvents: AgentEvent[];
     status: string;
+    idempotencyKey?: string;
   },
 ): Promise<void> {
-  try {
-    await state.repository.addMessage({
-      conversationId: input.conversationId,
-      role: "assistant",
-      content: input.content,
-      toolEvents: input.toolEvents,
-      status: input.status,
-    });
-  } catch (error) {
-    console.error("agent_message_persistence_failed", {
-      name: error instanceof Error ? error.name : "UnknownError",
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-function readSettingSync<T>(
-  connection: DatabaseConnection,
-  key: string,
-): T | null {
-  const row = connection.sqlite
-    .prepare(
-      "SELECT value_json AS valueJson FROM application_settings WHERE key = ?",
-    )
-    .get(key) as { valueJson: string } | undefined;
-  return row ? (JSON.parse(row.valueJson) as T) : null;
+  await state.repository.addMessage({
+    conversationId: input.conversationId,
+    role: "assistant",
+    content: input.content,
+    status: input.status,
+    ...(input.idempotencyKey === undefined
+      ? {}
+      : { idempotencyKey: input.idempotencyKey }),
+  });
 }
 
 function loadRootEnvironment(projectRoot: string): void {

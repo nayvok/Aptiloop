@@ -1,8 +1,8 @@
 # Aptiloop Core Alpha Roadmap
 
-**Status:** Proposed pending owner approval
+**Status:** Approved Core Alpha target
 **Audit date:** 2026-08-08
-**Scope:** M0–M12 planning only; this document does not authorize implementation
+**Scope:** Owner-approved M0–M12 implementation order; this roadmap is not evidence that any target milestone is implemented
 
 ## Roadmap rules
 
@@ -25,13 +25,13 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M0 — Repository audit and owner approval gate
 
-**Status:** Implemented baseline — audit artifacts and owner decisions were recorded on 2026-08-08.
+**Status:** Approved Core Alpha target. **Implemented baseline:** audit and specification artifacts exist; the owner approved the six M0 decisions on 2026-08-08, selected Calm Workshop, and explicitly deferred license application and public distribution pending professional legal review.
 
 - **Objective:** Establish one evidence-based baseline, one coherent Core Alpha contract, and explicit owner decisions before product migration, redesign, or licensing changes.
 - **Scope:** Central 17-part audit; target specifications; ADRs; M0–M12 roadmap; exact verification record; design alternatives; migration, security, runtime, and licensing plans.
 - **Non-goals:** Production code, schema changes, dependency changes, UI changes, tests, course content, license texts, or public release.
 - **Migrations:** None. Historical Russian documentation and Superpowers artifacts remain untouched and are classified for later migration or archival.
-- **Tests:** No commands are run for M0 documentation. Evidence is the recorded 2026-08-08 baseline: `npm run verify` passed, while `npm run test:e2e` passed 1/4 and `npm audit` reported six vulnerabilities.
+- **Tests:** M0 changes no production code or tests. The 2026-08-08 verification was rerun and recorded: `npm run verify` passed, while `npm run test:e2e` passed 1/4 and `npm audit` reported six vulnerabilities.
 - **Docs:** All documents linked from the [central repository audit](docs/audits/2026-08-08-core-alpha-repository-audit.md), including product, architecture, design, security, migration, self-hosting, licensing, and ADR sets.
 - **Demo:** Owner review of the audit, target architecture, roadmap, three visual directions, and licensing recommendation.
 - **Acceptance:** The repository owner explicitly approves or rejects the Core Alpha target, roadmap/order, recommended visual direction, migration plan, and licensing direction; every owner/business licensing decision in the licensing register has a recorded disposition or explicit deferral that keeps the affected release channel/artifact out of scope pending counsel review.
@@ -40,37 +40,37 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M1 — Safety, provenance, and repeatable quality gate
 
-**Status:** Approved Core Alpha target; M1 implementation authorized by the owner on 2026-08-08.
+**Status:** Accepted **Implemented baseline** as of 2026-08-09 after independent review and the refreshed local integrated gate.
 
 - **Objective:** Make the existing vertical slice safe enough to serve as the migration base and make verification repeatable before adding capability.
-- **Scope:** Deny general provider filesystem/shell/network/edit tools for every learning role; minimize child environments; stop raw tool input/output persistence; inventory existing `agent_messages.tool_events_json`, SQLite WAL, application-managed backups, restores, exports, SSE, and logs; record an owner-approved preserve/redact/delete/quarantine disposition for sensitive legacy rows and copies; validate loopback-only bind; inventory current v1 callers and freeze externally reachable deterministic-integrity bypass writes without deleting history; fix or explicitly approve dependency advisories; add committed CI for install, audit policy, format, lint, typecheck, fast tests, E2E, and build; generate a private-data inventory and candidate-DB report.
-- **Non-goals:** Pi integration, Course Packs, new IA, Studio redesign, PostgreSQL, remote access, or a production course.
-- **Migrations:** No unrelated destructive DB migration. Inventory each configured, `.data`, and `data` SQLite candidate without merging it. Apply only the approved targeted cleanup to legacy raw tool events and their WAL/application-managed backup copies, retaining a bounded audit envelope and disposition record rather than sensitive payloads. Cleanup runs before a backup is approved and is re-applied/verified after restore. Create verified non-overwriting backups only from a cleaned candidate before any later data change.
-- **Tests:** Adapter role-policy matrix; prompt-injection attempts proving no file/shell/network calls; seeded nested, encoded, and split secret sentinels proving absence from child environments, API/SSE, logs, SQLite, WAL, application-managed backups, restore results, and exports; legacy cleanup idempotency and disposition accounting; non-loopback bind rejection; v1 write-route rejection with historical reads preserved; dependency policy; the full existing vertical slice including all four E2E scenarios.
-- **Docs:** Update approved security, AI-boundary, secrets, self-hosting, and verification procedures. Record advisory IDs, reachability, exceptions, owner, and expiry where a fix is unavailable.
-- **Demo:** Run Day 1, Curriculum Editor, Interview, and theme flows with Mock explicitly selected for development; show a real-provider failure remaining explicit; show that injected tool requests cannot mutate the repository.
-- **Acceptance:** All four E2E scenarios pass; no unapproved high/critical production advisory; no general AI tool authority; every existing raw tool-event row/copy has an approved, reconciled disposition; no sentinel secret remains in API/SSE, SQLite, WAL, logs, approved backups, restores, or exports; OpenCode learning roles and backup approval remain blocked until that record closes; no externally reachable write path bypasses deterministic evidence; CI reproduces the gate.
-- **Known limitations:** The product is still the legacy UI/data model. Trusted exercise execution is not a sandbox. External providers remain optional and are not required to pass the deterministic learner path.
-- **Rollback/compatibility:** Security restrictions are fail-closed. Existing provider settings remain readable, but unsupported tool-capable behavior is not preserved. CI can be reverted independently without changing user data.
+- **Implemented baseline:** Mock alone is permitted for Teacher, Reviewer, Interviewer, Curator, and Codex Expert in explicit development/test mode; Codex/OpenCode and non-development Mock are blocked without provider activation; provider/model is server-owned with no fallback; child/provider event data is minimized; browser events use an app-owned opaque turn UUID; message/review persistence cannot store raw protocol/tool payloads; v1 mutations return 410 while v2 remains operational; direct mode is exact-loopback-only and Compose uses an explicit internal wildcard mode behind loopback-only host publication; every API response is no-store.
+- **Data disposition:** Read-only inventory observed six SQLite families and eleven pre-existing backups with zero logical non-empty raw/tool rows, so M1 adds no cleanup migration and makes no user-data change. `.data/dev-learning-harness.sqlite` is active. Runtime and writable database CLIs reject all alternate candidates before opening them; disposable databases require explicit test mode and Compose permits only `/data/dev-learning-harness.sqlite`. The other five families and all eleven existing backups, including `.data/m0-baseline`, remain preserved and quarantined from runtime/restore/approved-backup use until M2. Byte absence from free pages/WAL/SHM is unproven. The active-only preflight requires complete M1 tables and created the one approved backup.
+- **Supply chain:** Supported lock updates leave zero production advisories and one reported low graph-dev-only esbuild advisory (`GHSA-g7r4-m6w7-qqqr`) without an exception. The orchestrator image currently copies the full root `node_modules` tree, so committed policy blocks High/Critical findings across the shipped installed tree while retaining full/production classification and avoiding duplicate production overlap. Node 24/npm 11 CI uploads audit and CycloneDX artifacts and defines format, lint, typecheck, fast-test, explicit E2E, and build gates. No hosted GitHub Actions run is claimed.
+- **Non-goals:** Pi integration, Course Packs, new IA, Studio redesign, PostgreSQL, remote access, a production course, legacy data reconciliation, or M2 domain migration.
+- **Tests/evidence:** `npm ci` succeeded. The refreshed `npm run verify` passed formatting, 12/12 lint, 12/12 typecheck, 656 fast tests across 12/12 workspaces, and 12/12 builds. Focused provider totals were Codex 17/17 and OpenCode 34/34. The post-remediation ownership/lock suite passed 30/30, covering transient ownership reads, persistent ownership loss, authenticated stale-run scavenging, and preservation of live or ambiguous service processes. Two consecutive lock-serialized `npm run test:e2e` runs with isolated launcher-owned data passed 4/4; the first removed the retained authenticated, stale, proven-dead run root. The fixed loopback ports fail closed if occupied and do not provide parallel run isolation. Final active and approved-backup inventories reported integrity `ok`, coherent session ownership, zero foreign-key violations, and zero non-empty tool/raw rows; the approved backup repeated the private-payload and migration preflight. The final audit policy reported zero production findings and one low graph-dev-only full-tree advisory, and CycloneDX generation passed.
+- **Docs:** Current README, security, AI-boundary, secrets, self-hosting, this roadmap, and the [M1 inventory/runbook](docs/audits/2026-08-08-m1-safety-boundary-inventory.md) record status, commands, disposition, and rollback limits.
+- **Demo:** `npm start` composition was exercised through `scripts/dev-local.mjs`: only web and orchestrator started. The refreshed 1440×900 Settings smoke rendered server-owned provider/model values as read-only, returned explicit policy-blocked external-provider states, persisted a theme change with HTTP 200, restored the prior theme, and observed no browser console or page errors.
+- **Acceptance:** Accepted locally on 2026-08-09. Independent security and correctness re-reviews closed every reported M1 blocker, including provider authority, private-payload persistence, backup admission and promotion, audit/CI trust, workflow parsing, E2E ownership and restart cleanup, launcher mode, and durable terminal ordering for streamed and pre-stream-aborted turns. The refreshed gates prove blocked external learning providers and production Mock execution; browser/persistence exclusion of provider raw/tool payloads; 410 legacy writes; approved data disposition and backup; dependency policy/SBOM; canonical E2E ownership; and the loopback boundary. No hosted GitHub Actions run is claimed.
+- **Known limitations:** The product remains the legacy UI/data model; trusted exercise execution is not a sandbox; external learning providers are blocked rather than migrated to Pi; logical inventory does not prove historical byte erasure; one low graph-dev-only advisory remains reported in the shipped installed tree.
+- **Rollback/compatibility:** Security restrictions fail closed. Existing provider settings remain readable, unsupported tool-capable behavior is not preserved, and v2/Mock remains runnable only in explicit development/test mode. No M1 schema/data rollback exists. CI can be reverted independently. After any future committed migration, rollback is whole-file restore from a new explicitly approved backup—not any quarantined historical copy.
 
 ## M2 — Additive Course, revision, activity, and evidence foundations
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** **Implemented baseline**. M2 local acceptance closed on 2026-08-09 after authorized active-data migration, runtime smoke, full gates, and independent correctness and security/data-migration review.
 
-- **Objective:** Introduce the target domain boundaries while preserving the working versioned session flow.
-- **Scope:** Course as the top entity; immutable Course Revision; finite Activity graph; Source Snapshot and Knowledge Capsule; Personal Adaptation Branch; typed Evidence and Review Item; stable IDs; explicit course/revision/activity ownership; SQLite repository ports with PostgreSQL-compatible boundaries.
-- **Non-goals:** Pack archive import, redesign, AI authoring, multi-user identity, cloud sync, or removal of legacy tables/routes.
-- **Migrations:** Add target tables or compatibility views plus source-to-target provenance and quarantine records. Deterministically map existing `curricula`, versions, weeks/days/units, snapshots, and evidence without deleting or rewriting source rows. Preserve immutable session snapshots and hashes.
-- **Tests:** Pristine and real-old-schema fixtures; empty/malformed/partial-marker cases; multi-course and multi-revision isolation; cross-course/revision/activity negative constraints; idempotent backfill; snapshot immutability; quarantine; backup restore; SQLite foreign-key and explicit orphan checks.
-- **Docs:** Keep Course Pack, Lesson Engine, Learning Kernel, Knowledge System, and migration specifications aligned with the implemented schema boundary.
-- **Demo:** Open the existing learner path and resume an existing session through target read models; inspect course/revision/activity provenance and an unchanged historical snapshot.
-- **Acceptance:** Every mapped row has provenance or an explicit quarantine reason; no historical content/evidence hash changes; two courses can coexist without global selection loss; the current learner vertical slice remains runnable.
-- **Known limitations:** Compatibility legacy rows and global-current assumptions may still exist behind bounded adapters. Only SQLite is implemented.
-- **Rollback/compatibility:** Additive migration only. Pre-migration verified backup is the rollback. Dual-read comparison remains available; no legacy table or column is dropped.
+- **Implemented contracts:** `Course` is the top entity; revisions, sections, lessons, finite typed Activity graphs, Source Snapshots, Knowledge Capsules, personal Adaptation Branches, session Course contexts, typed Evidence, and Review Items have strict shared schemas and SQLite repository contracts. Published/archived revisions and historical target rows are immutable; evidence and migration records are append-only.
+- **Graph and identity:** Stable IDs are scoped explicitly. Deterministic validation rejects duplicates, unknown activity/evidence types, dangling or cross-scope prerequisites, and cycles. Course/revision/lesson/activity composite ownership is enforced at repository and database boundaries.
+- **Migration:** Additive migrations `0006_course_foundations` through `0010_m2_quarantine_immutability` preserve every source row and historical snapshot byte/hash, preserve migrated parent lineage, converge fresh and admitted legacy schemas, close compatibility authority, harden revision/snapshot/ownership guards, and freeze every quarantined source revision used as compatibility evidence. The active reconciliation still accounts for all 572 source rows: 2 mapped, 526 quarantined, and 44 intentionally unmapped, with zero invalid statuses and zero target orphans.
+- **Compatibility:** Course-scoped list/path APIs and v2 session start/resume use target read models. Missing target context is compatible only for an exact revision/lesson/session snapshot carrying `m2-v1` quarantine provenance; unknown or unaccounted identities fail closed. Legacy tables remain readable and are not dropped.
+- **Valuable data:** Every active write used a distinct non-overwriting active-source-only backup: pre-M2 `.data/approved-backups/2026-08-09T15-00-16Z-pre-m2-active.sqlite` (`501338c295589d8367a31a1082ef7469ca0e22bb91e6a3123abdb94b70220f1b`), pre-`0008` `.data/approved-backups/2026-08-09T16-19-35Z-pre-m2-correction-active.sqlite` (`a09332dde7732b43b2ca6b9734bd5201fc6d71449c7c3d7303824d845418af09`), pre-`0009` `.data/approved-backups/2026-08-09T22-54-00Z-pre-m2-hardening-active.sqlite` (`9dc4b6af0c5e5a9b73cfa3e4f38240703d023f37ada6c3e0fa297dbe4aa22da2`), and pre-`0010` `.data/approved-backups/2026-08-09T23-34-00Z-pre-m2-quarantine-immutability-active.sqlite` (`bc325e8314117a3eb073ae015a5daf72ec3b4ea3f7f74aadfbfbe34a25c57f4d`). The current exact schema SHA-256 is `a6a1543e468e3dbb90494bc6e5d5598933e22dd0cf49a9830f82ee695eda5a01`; post-migration inventory observed `integrity_check=ok`, zero foreign-key violations, zero unaccounted active sessions, preserved snapshot bytes/hashes, zero target private-payload bytes, and exact `m2-v1` through `m2-v4` run/backup bindings.
+- **Acceptance evidence:** The post-`0010` runtime returned ready health on the owner-approved alternate web port 3002, rendered the Course-owned learner path, and resumed the retained active session with no observed browser console/page errors. After every review blocker was remediated, `npm run verify` passed formatting, 12/12 lint tasks, 12/12 typecheck tasks, 21/21 fast-test tasks with 614 tests passed and 3 skipped, and 12/12 builds; `npm run test:e2e` passed 4/4. Independent correctness and security/data-migration re-reviews returned PASS with no remaining M2 blocker. Final explicit active/backup inventory reconfirmed the exact active `0000`–`0010` contract and pre-`0010` backup binding. No hosted GitHub Actions result or external-provider smoke is claimed.
+- **Non-goals preserved:** No Pack archive import, broad UI redesign, AI authoring, authentication/multi-user model, cloud sync, production Course, legacy deletion, or M3 implementation was added.
+- **Known limitations:** The 526 quarantined source rows remain preserved and unresolved; the current UI/package identity and global-current compatibility adapter remain; Source Snapshot/Capsule target tables contain no approved production content; only SQLite is implemented.
+- **Rollback:** There is no down migration. Stop all writers and restore one exact named approved backup as a whole file: the initial backup returns to pre-M2 `0000`–`0005`, the correction backup to pre-`0008` `0000`–`0007`, the hardening backup to pre-`0009` `0000`–`0008`, and the quarantine-immutability backup to pre-`0010` `0000`–`0009`; every option discards all later writes. Never restore a quarantined historical candidate automatically. See [the M2 runbook](docs/migration/m2-course-foundations-runbook.md).
 
 ## M3 — Declarative Course Pack lifecycle
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** **Implemented baseline**. M3 local acceptance closed on 2026-08-10; no production Course was approved or bundled.
 
 - **Objective:** Let a user validate, inspect, install, export, and open a safe declarative Course Pack without executing content.
 - **Scope:** Versioned single-file JSON manifest/schema; canonical serialization and hash; locale, provenance, attribution/license, runtime requirements, finite graph, Source Snapshots, and Knowledge Capsules; byte/count/depth/parse limits; transactional import; quarantine and validation report; install/open/export for local user-selected packs; an Authoring Kit with versioned schema, typed definitions, templates, fixture, local validator, canonicalizer/hash command, packaging/import instructions, compatibility matrix, and no-execution guidance. The repository supplies development fixtures, not production courses.
@@ -80,12 +80,14 @@ The order reduces the highest observed risks before expanding capability: provid
 - **Docs:** Course Pack specification, Course authoring and Authoring Kit guide, untrusted-pack threat model, language policy, licensing/provenance rules, compatibility matrix, packaging/import instructions, and fixture disclaimer.
 - **Demo:** Validate an invalid pack with field/path diagnostics; install a valid local fixture; open its course; export and re-import with the same canonical hash; show that embedded command-like data is rejected or inert.
 - **Acceptance:** Import performs zero content-defined execution or network access; installed revisions are immutable; invalid/untrusted content cannot escape staging; no production course is presented as shipped content.
+- **Implementation evidence:** `@dlh/course-authoring-kit` supplies the strict V1 schema, canonicalizer/hash, generated JSON Schema, CLI, and development-only fixture. Migration `0011_course_pack_lifecycle` adds immutable install/quarantine/provenance records. Hono routes and the Courses UI implement bounded validation/Preview, hash-confirmed transactional Install/Open-as-draft, canonical export, and explicit archival uninstall. Invalid staging bytes are removed and cannot activate content.
+- **Verification evidence:** Focused Authoring Kit and orchestrator lifecycle suites cover invalid encoding/JSON/duplicates/limits/parse budget, authority/secrets/paths/URLs, graph/references/requirements/hash/locale/provenance, idempotency, collision/rollback, oversize preflight, export parity, and preserved-history uninstall. The final integrated `npm run verify` gate and 4/4 Playwright gate passed.
 - **Known limitations:** Local filesystem import/export only. No registry, signatures, trust service, or collaborative authoring.
 - **Rollback/compatibility:** Failed import leaves no partial course. Uninstall does not delete learner evidence and requires explicit confirmation. Existing seeded curriculum remains available through compatibility mapping until M11.
 
 ## M4 — Deterministic Learning Kernel and replay-complete evidence
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** **Implemented baseline**. M4 local acceptance closed on 2026-08-10 after M3 acceptance and deterministic replay verification.
 
 - **Objective:** Make all learning state, progression, mastery, review scheduling, and summaries deterministic and fully replayable from typed evidence.
 - **Scope:** Kernel-owned state transitions; complete mastery replay including successful UTC days and repeated-error counts; observed/injected clock; activity completion validators; review scheduling; correction cycle; explicit treatment of interview evidence; personal adaptation branch decisions; fact-only summaries.
@@ -95,12 +97,14 @@ The order reduces the highest observed risks before expanding capability: provid
 - **Docs:** Learning Kernel, Lesson Engine, Knowledge System, user journey, and terminology contracts.
 - **Demo:** Rebuild one learner state from evidence and compare the fingerprint; edit a draft course without changing an active session; complete a correction cycle and observe deterministic review/mastery effects.
 - **Acceptance:** Replaying persisted evidence reconstructs identical state and summaries; no provider/model output directly mutates mastery or progression; unknown or ambiguous evidence fails closed or is quarantined.
+- **Implementation evidence:** `packages/learning-core/src/kernel.ts` is the pure closed fact reducer and canonical projector. Migration `0012_learning_kernel` adds append-only facts, replay-complete projections, immutable migration quarantine/provenance, and repository reconciliation. Versioned learner actions are adapted to kernel facts; terminal transitions, objective evidence, correction supersession, mastery, mistakes, review scheduling, next action, and summaries project from persisted facts. Interview completion remains non-correctness and cannot change mastery without an approved evaluator.
+- **Verification evidence:** Pure reducer tests prove terminal ownership, idempotency, input-order byte stability, correction history, repeated-error/review behavior, learner-only dismissal, and fail-closed unknown/forged/future facts. Database tests prove atomic fact/projection persistence, rollback, replay hash equality, and idempotent provenance-preserving reconciliation. The summary integration reconstructs from server facts. The final integrated `npm run verify` gate and 4/4 Playwright gate passed.
 - **Known limitations:** Historical rows lacking facts remain explicitly partial. Interview technical evaluation remains absent unless separately approved and implemented.
 - **Rollback/compatibility:** Dual-calculate old/new projections during rollout. Keep source evidence immutable and old projections readable until parity is proven; rollback switches readers, not evidence history.
 
 ## M5 — Generic Execution Fabric and environment contracts
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** **Implemented baseline**. M5 local acceptance closed on 2026-08-10 after M4 acceptance. The accepted backend is trusted local-native execution, not a sandbox.
 
 - **Objective:** Generalize trusted exercise execution without creating an arbitrary command surface.
 - **Scope:** Trusted check IDs; server-owned execution plans; isolated attempt workspaces; finite lifecycle; output/time/process caps; Node and Python Environment Pack contracts; runtime diagnostics; external editor handoff; immutable review bundles; Reviewer read-only invariant.
@@ -108,14 +112,16 @@ The order reduces the highest observed risks before expanding capability: provid
 - **Migrations:** Map current `commandId: "test"`, exercise attempts, Git baseline, test runs, and reviews to generic check/environment identifiers while preserving fingerprints and history.
 - **Tests:** Unknown check/environment rejection; Node and Python happy/failure paths; environment/secret allowlist; traversal/symlink/reparse rejection; process timeout/cap/cancel/tree cleanup; same-mtime diff changes; truncated diff; review before/after immutability; restart/resume.
 - **Docs:** Execution Fabric, Environment Packs, workspaces/editors, deployment, security isolation, and Course Pack runtime-requirement references.
-- **Demo:** Run one trusted Node check and one trusted Python check by ID, review the exact immutable evidence bundle, request changes, edit manually, rerun, and obtain a new read-only review.
-- **Acceptance:** Course content cannot choose a command; every process plan is app-owned and auditable; Reviewer cannot patch; Node/Python contracts are reproducible and produce normalized evidence.
+- **Demo:** Run one trusted Node check and one trusted Python check by ID, disclose the exact immutable review capsule, request changes, edit manually, rerun, and obtain a new evidence-only review.
+- **Acceptance:** Course content cannot choose a command; every process plan is app-owned and auditable; Reviewer receives no local/general tools and cannot read outside the capsule or apply a patch; Node/Python contracts are reproducible and produce normalized evidence.
+- **Implementation evidence:** Migration `0013_execution_fabric` records exact environment/check identity on attempts and test runs. `TrustedExecutionFabric` exposes a finite app-owned registry, normalized result/artifact envelope, complete-workspace input hash, and explicit unsupported status. The existing exercise API is compatibility-mapped through `apt.compat.node24.local.v1`; built-in Node 24 and Python 3 contracts use fixed `shell: false` plans, lock/runtime validation, minimal environments, 120-second/1 MB limits, cancellation and process-tree cleanup. Reviewer remains on the existing immutable diff/test capsule and no-apply route.
+- **Verification evidence:** Execution Fabric tests prove exact/collision-safe ID resolution, input binding, stale-snapshot rejection, explicit unsupported environments, and normalized Node/Python pass/fail results. Existing process, containment, diff freshness, and review policy suites retain timeout/output/cancellation/tree-cleanup and Reviewer immutability coverage. The final integrated `npm run verify` gate and 4/4 Playwright gate passed. A subsequent read-only inventory observed the active `0000`–`0013` schema hash, `integrity_check=ok`, zero foreign-key violations, coherent compatibility, reconciled M2 accounting, and zero target orphans.
 - **Known limitations:** Trusted local execution retains local-user privileges unless an approved deployment adds isolation. Only Node and Python contracts are Core Alpha.
 - **Rollback/compatibility:** Preserve the current test command as a compatibility-mapped trusted check. Existing attempts remain readable; no attempt directory is deleted automatically.
 
 ## M6 — Provider Hub and constrained Pi runtime
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** Implementation-complete evidenced **Implemented baseline**; M6 acceptance remains blocked on the required authenticated external provider/model smoke.
 
 - **Objective:** Replace ad hoc provider selection with one explicit app-owned Provider Hub and introduce Pi only behind typed Aptiloop tools.
 - **Scope:** `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` pinned integration; explicit provider/auth/model resolution; app-level Course Designer, Tutor, Evaluator, and Reviewer roles; per-role typed tool allowlists; strict input/output validation; cancellation/status; private-data disclosure gate; explicit AI Off/unavailable/failure states.
@@ -126,11 +132,14 @@ The order reduces the highest observed risks before expanding capability: provid
 - **Demo:** Run the deterministic learner path with AI Off; opt into one configured real-provider Tutor turn; show provenance; fail the provider and observe an explicit recoverable error rather than Mock output.
 - **Acceptance:** The app owns permissions, roles, state, and typed tools; no general Pi coding tools are exposed; provider choice and failure are explicit; private data crosses a provider boundary only after explicit user action.
 - **Known limitations:** Pi AgentHarness v2 durable driving remains partial/stubbed upstream. Provider capabilities differ; tool schemas do not imply a generic structured assistant response format.
+- **Implementation evidence:** Exact `0.84.1` `pi-ai`/`pi-agent-core` dependencies; constrained OpenAI Pi adapter with normalized stream/cancel/status and no coding-agent tools; strict Provider Hub/RoleProfile/capability/failure/disclosure/provenance contracts; finite default-deny Course Designer/Tutor/Evaluator/Reviewer tool policies with app-side input/output validation; additive `0014_provider_hub` persistence with immutable disclosure events and terminal provenance.
+- **Verification evidence:** Focused agent-core tests prove exact connection/model resolution, AI Off, capability/model failure without fallback, hash-scoped external disclosure, all four finite role tool matrices, strict tool schemas, and normalized Pi events/readiness after an observed request. Orchestrator integration tests prove active chat/interview/reviewer Hub cutover, exact disclosure preview/approval/one-time dispatch, cumulative input/output/event/tool/deadline enforcement, cancellation cleanup, explicit failures, private environment/context sentinel exclusion, bounded persistence, and no provider override. Database tests prove secret-free configuration round-trip, append-only approval/one-time consumption, expiry rejection, immutable disclosure scope, and one terminal provenance transition. Local package suites pass; the full repository and Playwright gates must be rerun for the M6 commit. No authenticated external request is claimed.
+- **M6 acceptance blocker:** run one exact authenticated OpenAI-via-Pi model request, observe normalized completion and persisted provider/model provenance, exercise cancellation, and retain the explicit failure behavior without Mock fallback. `OPENAI_API_KEY` is absent on this workstation, so this external gate cannot be closed locally yet.
 - **Rollback/compatibility:** Provider Hub adapters can route existing provider implementations while callers migrate. AI Off always preserves the deterministic path. No conversation/evidence deletion is part of cutover.
 
 ## M7 — Product identity, localization, and primary information architecture
 
-**Status:** Approved Core Alpha target for IA/languages; visual direction proposed pending owner approval.
+**Status:** Approved Core Alpha target; Calm Workshop is the selected visual direction. Implementation remains gated by M6 acceptance.
 
 - **Objective:** Present Aptiloop as a coherent local learning product with English-first UI and complete Russian UI support.
 - **Scope:** Primary navigation **Home / Courses / Review / Skills / Settings**; Aptiloop naming; UI locale catalogs for `en-US` and `ru-RU`; language selection; one primary course locale independent of UI locale; compatibility redirects; mobile navigation; honest Core/SQLite/AI/runtime states.
@@ -145,7 +154,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M8 — Stable Activity Frame and renderer registry
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** Approved Core Alpha target. Implementation remains gated by M7 acceptance.
 
 - **Objective:** Migrate the monolithic unit UI to a stable activity contract without changing Kernel semantics.
 - **Scope:** `ActivityFrame`; declarative renderer registry; context/status/accessibility/runtime/evidence/action slots; one-by-one migration of briefing, study, sources, recall, Tutor, quiz, code reading, practice, review, interview, and summary; contained code/output behavior.
@@ -160,7 +169,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M9 — Adaptive Studio manual editorial workflow
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** Approved Core Alpha target. Implementation remains gated by M8 acceptance.
 
 - **Objective:** Deliver the complete manual 70% editorial portion of Adaptive Studio before AI assistance.
 - **Scope:** Pack overview; finite outline/graph; schema-driven activity editing; locale/provenance/source panels; learner Preview; validation; release history; explicit Validate → Preview → Change review → immutable Publish; parity with the Authoring Kit schemas and validators; personal Adaptation overview, branch creation/edit, divergence/impact validation, personal Publish, and explicit upstream comparison/conflict resolution into a new personal Draft.
@@ -175,7 +184,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M10 — Adaptive Studio typed AI proposals
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** Approved Core Alpha target. Implementation remains gated by M9 acceptance.
 
 - **Objective:** Add the optional 30% developer instrument and guided Course Designer as reviewable typed proposals, without weakening manual authoring or publish gates.
 - **Scope:** Guided Course Designer state machine (`DRAFT_REQUEST → DISCOVERY → DIAGNOSTIC → CURRICULUM_PROPOSAL → USER_REVIEW → COMPILATION → VALIDATION → PUBLISHED`, with `FAILED` recovery); natural-language goal, target outcome, current level, constraints, sources, activities, and runtime requirements; optional diagnostic questions or practical tasks; revision requests and explicit confirmation; typed Course Designer/Research proposal tools; stable target IDs; structured before/after diff; provenance and model disclosure; validation; Apply/Reject; draft-only mutation; Research Gateway with explicit source/private-data actions.
@@ -190,7 +199,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M11 — Course/session cutover and legacy retirement
 
-**Status:** Approved Core Alpha target; implementation proposed pending owner approval.
+**Status:** Approved Core Alpha target. Implementation remains gated by M10 acceptance.
 
 - **Objective:** Move all product callers to the target Course/session/evidence model and retire obsolete runtime paths only after parity and recovery evidence.
 - **Scope:** Explicit course selection; per-course active revision/session; Personal Adaptation Branch; target evidence/review reads and writes; removal of v1 caller-supplied mastery/fixed completion; removal of global `learner_state='default'` and `LIMIT 1` selection assumptions; historical data retention/export.
@@ -205,7 +214,7 @@ The order reduces the highest observed risks before expanding capability: provid
 
 ## M12 — Core Alpha release candidate and licensing cutover
 
-**Status:** Proposed pending owner approval and legal review.
+**Status:** Approved Core Alpha target. Professional legal review and the recorded M0 licensing deferrals remain release-blocking.
 
 - **Objective:** Produce a releasable loopback-only local Core Alpha candidate with verified docs, notices, recovery, and end-to-end behavior.
 - **Scope:** The defined [50-item Core Alpha release matrix](docs/product/core-alpha-scope.md#core-alpha-release-matrix); supported local-process and loopback-Compose packaging; backups/restore; SBOM and third-party notices; fixture/content terms; trademark policy; owner-approved license application; accessibility/responsive verification; clean install/upgrade; no production courses; known limitations.

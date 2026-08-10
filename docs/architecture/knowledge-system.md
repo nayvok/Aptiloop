@@ -5,11 +5,11 @@
 
 ## Implemented baseline
 
-**Implemented baseline.** Current curriculum sources record ID, title, URL, kind, author/description location metadata, required flag, time, learning goal, and examples (`packages/shared/src/curriculum.ts:16-52`). The older authored source interface is smaller and has no captured content hash, capture timestamp, attribution/license, or citation range (`packages/curriculum/src/versioned-types.ts:20-39`). Current units reference topic strings, sources, questions, misconceptions, and protected evaluation (`packages/shared/src/curriculum.ts:264-294,325-355`).
+**Implemented baseline.** M2 stores immutable Course-owned Source Snapshots and Knowledge Capsules with hashes, provenance/rights metadata, claims/citations, and protected-material separation. M3 Course Pack V1 validates and transactionally imports declarative snapshot/capsule records and their references; the repository development fixture is not approved production content.
 
-**Implemented baseline.** Versioned sessions copy sources, questions, topics, and unit payloads into an immutable hashed snapshot, and learner reads redact protected reference answers/evaluation points (`packages/database/src/repository.ts:541-606,658-701,744-759`). Current mastery, mistakes, flashcards, hints, and evidence are persisted, but evidence/activity/question relationships are partly text-only and current source records are not Source Snapshots (`packages/database/migrations/0001_versioned_curriculum.sql:102-128`; `packages/database/migrations/0003_unit_evidence.sql:1-24`).
+**Implemented baseline.** Versioned sessions pin their exact Course revision and learner-safe snapshot. M4 accepted facts are scoped to Course/revision/personal branch/session/activity/knowledge node and deterministically project mastery, mistake families, review items, and summary from a canonical fact frontier. Learner/model narrative alone remains unverified, and protected evaluator material remains server-only.
 
-These are migration seams. They do not implement the target Source Snapshot/Knowledge Capsule model.
+The active database still has no approved production Source Snapshot or Knowledge Capsule corpus. Live source acquisition, production provenance/licensing approval, Adaptive Studio editing, and Research Gateway behavior retain their target status.
 
 ## Entity model
 

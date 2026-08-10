@@ -12,6 +12,16 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
 
 import { api, ApiError } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { PageHeader } from "@/components/page-header";
 import { InterviewChatView } from "@/components/interview-chat-view";
 import { QueryError } from "@/components/query-state";
@@ -103,6 +113,20 @@ const currentResponseSchema = z
 const finishResponseSchema = z
   .object({ interview: interviewSchema, report: reportSchema })
   .strict();
+const disclosureResponseSchema = z.object({
+  kind: z.literal("disclosure"),
+  required: z.literal(true),
+  disclosure: z.object({
+    operationId: idSchema,
+    status: z.literal("pending"),
+    scope: z.object({
+      destination: z.string().min(1),
+      payloadCategories: z.array(z.string().min(1)),
+      byteCount: z.number().int().nonnegative(),
+      exclusions: z.array(z.string().min(1)),
+    }),
+  }),
+});
 
 export type Interview = z.infer<typeof interviewSchema>;
 type Difficulty = z.infer<typeof difficultySchema>;
@@ -114,6 +138,13 @@ const pendingAnswerSchema = z
     answer: z.string().trim().min(1).max(20_000),
   })
   .strict();
+type PendingAnswer = z.infer<typeof pendingAnswerSchema>;
+type PendingDisclosure = {
+  disclosure: z.infer<typeof disclosureResponseSchema>["disclosure"];
+  resume:
+    | { kind: "start"; draft: StartDraft }
+    | { kind: "answer"; pending: PendingAnswer };
+};
 type StartDraft = z.infer<typeof startDraftSchema>;
 type ScopeMode = "studied" | "current-week" | "manual" | "all";
 
@@ -310,6 +341,8 @@ export function InterviewClient() {
     null,
   );
   const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingDisclosure, setPendingDisclosure] =
+    useState<PendingDisclosure | null>(null);
 
   const interview = interviewQuery.data ?? null;
   const persistedAnswer = useMemo(
@@ -383,9 +416,12 @@ export function InterviewClient() {
     }
   }, [interview, persistedAnswer]);
 
-  async function startInterview(retryDraft?: StartDraft) {
+  async function startInterview(
+    retryDraft?: StartDraft,
+    disclosureOperationId?: string,
+  ) {
     const topics = retryDraft?.topics ?? selectedTopics;
-    const draft = retryDraft ?? {
+    const draft: StartDraft = retryDraft ?? {
       operationId: operationId(),
       topics,
       difficulty,
@@ -406,13 +442,22 @@ export function InterviewClient() {
     setAction("start");
     setActionError(null);
     try {
-      const next = parsePayload(
-        interviewSchema,
-        await api<unknown>("/interviews/v2", {
-          method: "POST",
-          body: JSON.stringify(draft),
+      const raw = await api<unknown>("/interviews/v2", {
+        method: "POST",
+        body: JSON.stringify({
+          ...draft,
+          ...(disclosureOperationId ? { disclosureOperationId } : {}),
         }),
-      );
+      });
+      const disclosure = disclosureResponseSchema.safeParse(raw);
+      if (disclosure.success) {
+        setPendingDisclosure({
+          disclosure: disclosure.data.disclosure,
+          resume: { kind: "start", draft },
+        });
+        return;
+      }
+      const next = parsePayload(interviewSchema, raw);
       writeStorage(latestInterviewKey, next.id);
       if (next.status !== "setup") removeStorage(startDraftKey);
       queryClient.setQueryData(queryKey, next);
@@ -421,6 +466,47 @@ export function InterviewClient() {
         error instanceof Error ? error.message : "Не удалось начать интервью.",
       );
       await interviewQuery.refetch();
+    } finally {
+      setAction(null);
+    }
+  }
+
+  async function sendPendingAnswer(
+    pending: PendingAnswer,
+    disclosureOperationId?: string,
+  ) {
+    setAction("answer");
+    setActionError(null);
+    try {
+      const raw = await api<unknown>(
+        `/interviews/v2/${encodeURIComponent(pending.interviewId)}/answers`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            operationId: pending.operationId,
+            answer: pending.answer,
+            ...(disclosureOperationId ? { disclosureOperationId } : {}),
+          }),
+        },
+      );
+      const disclosure = disclosureResponseSchema.safeParse(raw);
+      if (disclosure.success) {
+        setPendingDisclosure({
+          disclosure: disclosure.data.disclosure,
+          resume: { kind: "answer", pending },
+        });
+        return;
+      }
+      const next = parsePayload(interviewSchema, raw);
+      removeStorage(pendingAnswerKey);
+      setAnswer("");
+      queryClient.setQueryData(queryKey, next);
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? `${error.message} Ответ сохранён в форме — можно повторить запрос.`
+          : "Следующий вопрос не получен. Ответ сохранён в форме.",
+      );
     } finally {
       setAction(null);
     }
@@ -438,34 +524,7 @@ export function InterviewClient() {
             answer: answer.trim(),
           };
     writeStorage(pendingAnswerKey, pending);
-    setAction("answer");
-    setActionError(null);
-    try {
-      const next = parsePayload(
-        interviewSchema,
-        await api<unknown>(
-          `/interviews/v2/${encodeURIComponent(interview.id)}/answers`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              operationId: pending.operationId,
-              answer: pending.answer,
-            }),
-          },
-        ),
-      );
-      removeStorage(pendingAnswerKey);
-      setAnswer("");
-      queryClient.setQueryData(queryKey, next);
-    } catch (error) {
-      setActionError(
-        error instanceof Error
-          ? `${error.message} Ответ сохранён в форме — можно повторить запрос.`
-          : "Следующий вопрос не получен. Ответ сохранён в форме.",
-      );
-    } finally {
-      setAction(null);
-    }
+    await sendPendingAnswer(pending);
   }
 
   async function finishInterview() {
@@ -495,6 +554,44 @@ export function InterviewClient() {
       setAction(null);
     }
   }
+  async function approveDisclosure() {
+    const pending = pendingDisclosure;
+    if (!pending) return;
+    try {
+      await api(`/ai/disclosures/${pending.disclosure.operationId}/approve`, {
+        method: "POST",
+        body: "{}",
+      });
+      setPendingDisclosure(null);
+      if (pending.resume.kind === "start") {
+        await startInterview(
+          pending.resume.draft,
+          pending.disclosure.operationId,
+        );
+      } else {
+        await sendPendingAnswer(
+          pending.resume.pending,
+          pending.disclosure.operationId,
+        );
+      }
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось подтвердить отправку данных.",
+      );
+    }
+  }
+
+  async function cancelDisclosure() {
+    const pending = pendingDisclosure;
+    if (!pending) return;
+    setPendingDisclosure(null);
+    await api(`/ai/disclosures/${pending.disclosure.operationId}`, {
+      method: "DELETE",
+    }).catch(() => undefined);
+    setActionError("Данные не отправлены. Интервью можно продолжить позже.");
+  }
 
   function startNewInterview() {
     removeStorage(latestInterviewKey);
@@ -517,6 +614,57 @@ export function InterviewClient() {
       Вернуться к занятию
     </Button>
   ) : null;
+  const disclosureDialog = (
+    <AlertDialog open={pendingDisclosure !== null}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Отправить данные внешнему AI?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Разрешение действует один раз для следующего вопроса интервью.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {pendingDisclosure ? (
+          <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 text-sm">
+            <div>
+              <dt className="font-medium">Получатель</dt>
+              <dd className="text-muted-foreground">
+                {pendingDisclosure.disclosure.scope.destination}
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium">Данные</dt>
+              <dd className="text-muted-foreground">
+                {pendingDisclosure.disclosure.scope.payloadCategories.join(
+                  ", ",
+                )}{" "}
+                · {pendingDisclosure.disclosure.scope.byteCount} bytes
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium">Не отправляется</dt>
+              <dd className="text-muted-foreground">
+                {pendingDisclosure.disclosure.scope.exclusions.join(", ")}
+              </dd>
+            </div>
+          </dl>
+        ) : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            disabled={action !== null}
+            onClick={() => void cancelDisclosure()}
+          >
+            Не отправлять
+          </AlertDialogCancel>
+          <AlertDialogAction
+            disabled={action !== null}
+            onClick={() => void approveDisclosure()}
+          >
+            Разрешить один раз
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 
   if (interviewQuery.isLoading) {
     return (
@@ -734,6 +882,7 @@ export function InterviewClient() {
             </Button>
           </div>
         </section>
+        {disclosureDialog}
       </div>
     );
   }
@@ -787,6 +936,7 @@ export function InterviewClient() {
             )}
           </Button>
         </section>
+        {disclosureDialog}
       </div>
     );
   }
@@ -831,6 +981,7 @@ export function InterviewClient() {
         onRetry={() => void submitAnswer()}
         onFinish={() => void finishInterview()}
       />
+      {disclosureDialog}
     </div>
   );
 }

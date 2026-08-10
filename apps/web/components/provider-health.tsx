@@ -12,90 +12,64 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-type Provider = {
-  id: string;
-  label: string;
-  status: "connected" | "unavailable" | "misconfigured" | "starting" | "error";
-  model?: string;
-  message?: string;
+type Connection = {
+  connectionId: string;
+  displayName: string;
+  state: string;
 };
-
+type RoleProfile = {
+  role: "course-designer" | "tutor" | "evaluator" | "reviewer";
+  mode: "no-ai" | "connection";
+  connectionId: string | null;
+  modelId: string | null;
+};
 type Settings = {
-  teacherProvider: string;
-  teacherModel: string;
-  reviewerProvider: string;
-  reviewerModel: string;
-  interviewerProvider: string;
-  interviewerModel: string;
-  curatorProvider: string;
-  curatorModel: string;
-  codexExpertProvider: string;
-  codexExpertModel: string;
+  ai: {
+    connections: Connection[];
+    roleProfiles: RoleProfile[];
+  };
 };
-
-const providerLabels: Record<string, string> = {
-  mock: "Mock",
-  opencode: "OpenCode",
-  codex: "Codex",
+const roleLabels: Readonly<Record<RoleProfile["role"], string>> = {
+  "course-designer": "Course Designer",
+  tutor: "Tutor",
+  evaluator: "Evaluator",
+  reviewer: "Reviewer",
 };
 
 export function ProviderHealth() {
-  const providersQuery = useQuery({
-    queryKey: ["providers"],
-    queryFn: () => api<{ providers: Provider[] }>("/providers"),
-  });
   const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: () => api<Settings>("/settings"),
   });
-  const providers = providersQuery.data?.providers ?? [];
-  const settings = settingsQuery.data ?? null;
-  const roles = [
-    {
-      label: "Преподаватель",
-      provider: settings?.teacherProvider,
-      model: settings?.teacherModel,
-    },
-    {
-      label: "Проверка решения",
-      provider: settings?.reviewerProvider,
-      model: settings?.reviewerModel,
-    },
-    {
-      label: "Интервьюер",
-      provider: settings?.interviewerProvider,
-      model: settings?.interviewerModel,
-    },
-    {
-      label: "Итоги и повторение",
-      provider: settings?.curatorProvider,
-      model: settings?.curatorModel,
-    },
-    {
-      label: "Эксперт",
-      provider: settings?.codexExpertProvider,
-      model: settings?.codexExpertModel,
-    },
-  ];
-  const roleProviders = roles.map((role) =>
-    providers.find((candidate) => candidate.id === role.provider),
-  );
-  const hasRoleProviders = roleProviders.length > 0 && roles.length > 0;
+  const settings = settingsQuery.data?.ai ?? null;
+  const roles =
+    settings?.roleProfiles.map((profile) => {
+      const connection = settings.connections.find(
+        (candidate) => candidate.connectionId === profile.connectionId,
+      );
+      return {
+        ...profile,
+        connection,
+        status:
+          profile.mode === "no-ai"
+            ? "disabled"
+            : (connection?.state ?? "unavailable"),
+      };
+    }) ?? [];
   const ready =
-    hasRoleProviders &&
-    roleProviders.every(
-      (provider) =>
-        provider?.status === "connected" || provider?.status === "starting",
+    roles.length > 0 &&
+    roles.every((role) =>
+      role.mode === "no-ai"
+        ? true
+        : role.status === "connected" || role.status === "degraded",
     );
-  const hasProblem =
-    hasRoleProviders &&
-    roleProviders.some((provider) =>
-      ["misconfigured", "error", "unavailable"].includes(
-        provider?.status ?? "unavailable",
-      ),
-    );
+  const hasProblem = roles.some(
+    (role) =>
+      role.mode === "connection" &&
+      !["connected", "degraded", "starting"].includes(role.status),
+  );
 
-  if (providersQuery.isLoading || settingsQuery.isLoading) {
+  if (settingsQuery.isLoading) {
     return (
       <div data-slot="provider-health" role="status" aria-label="Проверяю AI">
         <Skeleton aria-hidden className="h-7 w-24 rounded-full" />
@@ -103,7 +77,7 @@ export function ProviderHealth() {
       </div>
     );
   }
-  if (providersQuery.isError || settingsQuery.isError) {
+  if (settingsQuery.isError) {
     return (
       <span
         data-slot="provider-health"
@@ -142,45 +116,43 @@ export function ProviderHealth() {
             <p className="text-sm font-semibold">AI для обучения</p>
             <p className="text-xs text-muted-foreground">
               {
-                roleProviders.filter(
-                  (provider) => provider?.status === "connected",
+                roles.filter(
+                  (role) =>
+                    role.mode === "no-ai" || role.status === "connected",
                 ).length
               }{" "}
-              из {roles.length} ролей готово
+              of {roles.length} roles ready
             </p>
           </div>
           <ul className="flex flex-col gap-2">
-            {roles.map((role) => {
-              const provider = providers.find(
-                (candidate) => candidate.id === role.provider,
-              );
-              const status = provider?.status ?? "unavailable";
-              return (
-                <li
-                  key={role.label}
-                  data-slot="provider-role"
-                  data-status={status}
-                  className="flex items-center justify-between gap-2 text-sm"
-                >
-                  <span className="min-w-0 truncate text-muted-foreground">
-                    {role.label}
+            {roles.map((role) => (
+              <li
+                key={role.role}
+                data-slot="provider-role"
+                data-status={role.status}
+                className="flex items-center justify-between gap-2 text-sm"
+              >
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {roleLabels[role.role]}
+                </span>
+                <span className="flex min-w-0 items-center gap-1.5 text-xs">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      role.mode === "no-ai" || role.status === "connected"
+                        ? "bg-success"
+                        : "bg-warning",
+                    )}
+                  />
+                  <span className="truncate">
+                    {role.mode === "no-ai"
+                      ? "AI Off"
+                      : `${role.connection?.displayName ?? "Unavailable"} · ${role.modelId ?? "No model"}`}
                   </span>
-                  <span className="flex min-w-0 items-center gap-1.5 text-xs">
-                    <span
-                      aria-hidden
-                      className={cn(
-                        "size-1.5 shrink-0 rounded-full",
-                        status === "connected" ? "bg-success" : "bg-warning",
-                      )}
-                    />
-                    <span className="truncate">
-                      {providerLabels[role.provider ?? ""] ?? role.provider} ·{" "}
-                      {role.model}
-                    </span>
-                  </span>
-                </li>
-              );
-            })}
+                </span>
+              </li>
+            ))}
           </ul>
           {hasProblem ? (
             <p className="rounded-md bg-warning/10 p-2 text-xs leading-5 text-warning-foreground">

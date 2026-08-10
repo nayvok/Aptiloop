@@ -1,0 +1,50 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "low-parent": {
+      "name": "low-parent",
+      "severity": "low",
+      "isDirect": true,
+      "via": ["high-transitive"],
+      "effects": [],
+      "range": "<2.0.0",
+      "nodes": ["node_modules/low-parent"],
+      "fixAvailable": false
+    },
+    "high-transitive": {
+      "name": "high-transitive",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 3003,
+          "dependency": "high-transitive",
+          "url": "https://github.com/advisories/GHSA-REFS-HIGH-BLOCK",
+          "severity": "high"
+        }
+      ],
+      "effects": ["low-parent"],
+      "range": "<4.0.0",
+      "nodes": ["node_modules/high-transitive"],
+      "fixAvailable": false
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 1,
+      "moderate": 0,
+      "high": 1,
+      "critical": 0,
+      "total": 2
+    },
+    "dependencies": {
+      "prod": 2,
+      "dev": 0,
+      "optional": 0,
+      "peer": 0,
+      "peerOptional": 0,
+      "total": 2
+    }
+  }
+}

@@ -45,7 +45,7 @@ The interface is not a generic dashboard or card grid, a ChatGPT clone, or a ful
 **Implemented baseline**
 
 - `apps/web/app/globals.css:5-160` defines a semantic OKLCH light/dark foundation and activity tokens.
-- `apps/web/app/layout.tsx:1-3` loads local Geist Sans and Geist Mono.
+- `apps/web/app/layout.tsx:1-3` imports the installed `geist` package's self-hosted Sans and Mono styles; `apps/web/app/globals.css:5-7,170-175` maps Geist to the active body font stack.
 - `apps/web/components/ui/button.tsx:7-55` provides semantic variants, visible focus, disabled behavior, and 44px mobile targets.
 - `apps/web/components/query-state.tsx:5-57` provides reusable error and empty-state compositions.
 - `apps/web/components/dashboard-client.tsx:237-275` distinguishes loading, query failure, and no published curriculum; `:303-452` provides a clear current-day and week path.
@@ -59,7 +59,7 @@ The interface is not a generic dashboard or card grid, a ChatGPT clone, or a ful
 **Implemented baseline** audit findings, not compliance claims:
 
 - The primary navigation exposes seven subsystems plus Settings (`apps/web/components/app-shell.tsx:24-60`) instead of learner journeys.
-- Mobile renders eight destinations in a four-column grid (`apps/web/components/app-shell.tsx:187-212`). Recorded 390×844 smoke evidence found no horizontal overflow but an overfull mobile navigation and a dense 3534px Home page.
+- Mobile renders eight destinations in a four-column grid (`apps/web/components/app-shell.tsx:187-212`). The current 390×844 smoke found no horizontal overflow, but Home was 3,414 px tall and the navigation consumed two overfull rows.
 - The shell, metadata, content, and labels are hardcoded in Russian (`apps/web/components/app-shell.tsx:24-60`, `apps/web/app/layout.tsx:11-20`); this is migration evidence, not localization compliance.
 - Home and the curriculum editor still lean on repeated cards. The editor nests Week → Day → Unit panels (`apps/web/components/curriculum-editor-client.tsx:1365-1468`, `:1497-1559`), contradicting the current no-nested-card intent.
 - The knowledge table requires `min-w-[900px]` horizontal scrolling (`apps/web/components/knowledge-client.tsx:62-119`) and has no mobile-native summary.
@@ -67,15 +67,15 @@ The interface is not a generic dashboard or card grid, a ChatGPT clone, or a ful
 - Studio authoring relies on raw JSON fields (`apps/web/components/curriculum-editor-client.tsx:993-1041`). Course Pack opening, import, export, validation, locale completion, preview, and typed AI proposals are absent.
 - Current screenshots cover paired light/dark Path, Session, Settings, and Interview setup plus a few single-state desktop views in `docs/screenshots/`. They do not prove mobile, error, offline, no-AI, missing-runtime, exercise, review, Skills, or Studio-dark behavior.
 
-Recorded verification is mixed and must remain described accurately: `npm run verify` passed its recorded format, lint, typecheck, fast-test, and build tasks, but `npm run test:e2e` had 1 pass and 3 failures. The failed flows were Day 1 (`Plan day` not found), Curriculum Editor (create-revision navigation timeout), and Interview (default studied-scope radio not found). A disposable 1440×900 browser smoke loaded Home, started a session, opened the plan drawer, and showed no observed console errors. This evidence does not approve the Core Alpha design.
+Recorded verification is mixed and must remain described accurately: `npm run verify` passed its recorded format, lint, typecheck, fast-test, and build tasks, but `npm run test:e2e` had 1 pass and 3 failures. The web server first emitted repeated fatal Turbopack `Next.js package not found` errors while writing `/session/page`, `/settings/curriculum/page`, and `/interview/page`; missing Day 1 plan and Interview controls plus repeated Curriculum Editor navigation were downstream observed symptoms. A disposable 1440×900 browser smoke separately loaded Home, started a session, opened the plan drawer, and showed no observed console errors. This evidence does not prove the target IA or visual direction.
 
 ## Design directions
 
-The three directions below were evaluated at the M0 gate. The owner approved **A Calm Workshop** on 2026-08-08; B and C remain unselected alternatives, not implementation targets.
+The owner selected **A. Calm Workshop** on 2026-08-08. B and C remain documented as **Future** alternatives; none of the directions is implementation evidence.
 
 ### A Calm Workshop
 
-**Approved Core Alpha target — owner-selected direction**
+**Approved Core Alpha target.** Selected direction: **A. Calm Workshop**.
 
 A cold-neutral and eucalyptus workshop: open editorial learner surfaces, thin separators, restrained elevation, and contextual technical panels. The learner sees a calm reading and practice space; Studio increases information density without becoming an IDE.
 
@@ -90,7 +90,7 @@ Tradeoffs: this is the lowest-risk incremental migration and the strongest share
 
 ### B Learning Ledger
 
-**Future — unselected alternative**
+**Future**
 
 A warm editorial study ledger: paper-tinted fields, ruled separators, strong long-form rhythm, and margin evidence. Authored material feels durable and deliberate.
 
@@ -102,7 +102,7 @@ Tradeoffs: strongest identity for reading and reflective work, but weaker for de
 
 ### C Graph Blueprint
 
-**Future — unselected alternative**
+**Future**
 
 A slate and navy technical workbench: explicit dependency lines, graph/list switching, cobalt selection, amber validation, and dense inspectors without glow or glass.
 
@@ -114,12 +114,12 @@ Tradeoffs: best for finite-graph inspection and dark Studio density, but most li
 
 ### Comparable direction matrix
 
-**Approved Core Alpha target.** The matrix preserves the decision evidence and tradeoffs; only A Calm Workshop is the selected direction, and none of the reference values is implementation evidence.
+**Approved Core Alpha target.** The matrix records the selection evidence and tradeoffs for A; B and C remain **Future** alternatives. None of the reference values is implementation evidence.
 
 | Dimension                           | A Calm Workshop                                                                                               | B Learning Ledger                                                                                                               | C Graph Blueprint                                                                                                                   |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Light/dark semantic palette         | Cool-neutral surfaces; eucalyptus action; independent activity/status colors; three dark luminance levels.    | Warm paper/ink/forest/rust in light; charcoal parchment in dark; independent evidence/status inks.                              | Slate/near-white light and navy/slate dark; cobalt selection, amber validation; independent semantic statuses; no neon.             |
-| Type and licensing impact           | Existing local Geist Sans/Mono; lowest packaging and Cyrillic risk.                                           | Source Serif 4 + IBM Plex Sans/Mono; strongest editorial voice, but new font provenance, payload, Cyrillic, and hinting review. | IBM Plex Sans/Mono; technical density, with new font provenance/payload and less long-form warmth.                                  |
+| Type and licensing impact           | Existing self-hosted Geist Sans/Mono package; lowest new-dependency and Cyrillic migration risk.              | Source Serif 4 + IBM Plex Sans/Mono; strongest editorial voice, but new font provenance, payload, Cyrillic, and hinting review. | IBM Plex Sans/Mono; technical density, with new font provenance/payload and less long-form warmth.                                  |
 | Density, spacing, radius, elevation | 4px system; 8/12px radii; open learner spacing; dense three-region Studio; thin borders; overlay-only shadow. | 4px system with larger 16/24px prose rhythm; 4/8px radii; ruled document fields; almost no elevation.                           | 4px system; 6/8px radii; compact rows and inspectors; border/selection markers; elevation only for overlays/drag.                   |
 | Home                                | Lead next action, open phase rows, compact readiness/evidence rail.                                           | Dated learning brief, manuscript-like next action, evidence margin.                                                             | Dependency-oriented next action, compact readiness and graph-position rail.                                                         |
 | Lesson                              | 720–800px calm ActivityFrame plus optional context rail.                                                      | 68–74ch reading sheet with margin sources/evidence and restrained task footer.                                                  | Compact ActivityFrame with collapsible dependency/evidence rail; learner material still visually primary.                           |
@@ -130,13 +130,35 @@ Tradeoffs: best for finite-graph inspection and dark Studio density, but most li
 
 All directions use the same five-destination IA, ActivityFrame, no-generic-dashboard rule, responsive state contract, WCAG 2.2 AA target, and manual/no-AI completeness. Direction choice changes composition and visual language, not product authority or security boundaries.
 
-## Recommendation and approval gate
+### Selection-level foundations for B and C
 
-**Approved Core Alpha target — owner selected A Calm Workshop on 2026-08-08**
+**Approved Core Alpha target.** Calm Workshop receives the rendered token/component, font-provenance, contrast, and bilingual reflow pass before implementation. The B and C foundations remain decision history and are not licenses to mix their tokens into the selected direction.
 
-A Calm Workshop is selected because it preserves the strongest implemented seams—Geist, OKLCH, restrained motion, session progression, and source/review evidence—while materially changing composition and information architecture. It supports a calm lesson surface and a capable three-region Studio without a big-bang rewrite.
+#### B. Learning Ledger foundation
 
-The approval covers the direction, not every token or a claim of implementation:
+- **Light/dark palette:** warm paper and ink with forest action and restrained rust evidence accents; dark mode becomes charcoal parchment with raised ruled fields, never inverted white paper or sepia glow. Shared success/warning/error/info roles remain independently named and never rely on the paper metaphor or color alone.
+- **Typography:** Source Serif 4 for authored prose/headings, IBM Plex Sans for application controls, and IBM Plex Mono for code/IDs. Adoption requires verified package/source license, Cyrillic coverage, local packaging, payload, hinting, and 30% English/Russian label expansion.
+- **Density and shape:** 16/24px reading rhythm, 4/8px radii, ruled groups, almost no shadow, and a 68–74ch manuscript field. Cards remain limited to self-contained entities; nested paper sheets are prohibited.
+- **Product composition:** Home is a dated learning brief with an evidence margin; Lesson is a manuscript with source/evidence margin; Studio is document index / manuscript editor / evidence margin, with graph and validation in dedicated modes rather than an IDE grid.
+- **Responsive behavior:** mobile keeps one reading sheet and opens section index, sources/evidence, validation, and Studio modes as full-height sheets/screens. Dark, forced-colors, large-text, and Russian reflow must preserve rule hierarchy without depending on paper tint.
+- **Primary tradeoff:** strongest durable reading/authoring identity; highest font, localization, dense-graph, and dark-mode migration cost.
+
+#### C. Graph Blueprint foundation
+
+- **Light/dark palette:** slate/near-white light surfaces and navy/slate dark surfaces with cobalt selection and amber validation; status roles remain separate, labeled, and non-neon. Graph lines are supplementary to text/list relationships.
+- **Typography:** IBM Plex Sans and Mono with compact technical metadata. Adoption requires verified local packaging/license, Cyrillic coverage, payload, and 30% bilingual label expansion before density is accepted.
+- **Density and shape:** 4px grid, 6/8px radii, compact ruled rows and inspectors, selection markers, and overlay/drag-only elevation. No glass, terminal chrome, decorative grid, or nested control-plane cards.
+- **Product composition:** Home emphasizes dependency-aware next action without exposing internal graph machinery; Lesson keeps learner material primary with a collapsible dependency/evidence rail; Studio uses tree or graph/list / editor-preview / inspector-validation regions.
+- **Responsive behavior:** mobile exposes one outline, editor, Preview, or inspector mode; graph meaning always has an ordered-list/text equivalent. Large text, keyboard focus, screen-reader traversal, forced colors, and Russian reflow may reduce density rather than truncate meaning.
+- **Primary tradeoff:** strongest finite-graph and validation expression; highest risk of IDE/control-plane drift and learner cognitive load.
+
+## Selected direction and implementation gate
+
+**Approved Core Alpha target.** Selected direction: **A. Calm Workshop**.
+
+A Calm Workshop was selected because it preserves the strongest implemented seams—the self-hosted Geist package/CSS mapping, semantic OKLCH roles, restrained motion, session progression, and source/review evidence—while materially changing composition and information architecture. It supports a calm lesson surface and a capable three-region Studio without a big-bang rewrite.
+
+The owner selection covers the direction, not every token or a claim of implementation:
 
 - direction-specific work follows the approved roadmap and milestone gates;
 - the token values below remain design inputs until verified in rendered UI;
@@ -153,7 +175,7 @@ After approval, implementation must still pass the independent accessibility, re
 
 The existing semantic names in `apps/web/app/globals.css:5-160` are the migration foundation: background, foreground, card/popover, primary, secondary, muted, accent, destructive, success, warning, border, input, ring, sidebar, and activity pairs. Existing activity-practice is emerald; stale references to blue practice are not authoritative.
 
-**Proposed pending owner approval** Calm Workshop identity values:
+**Approved Core Alpha target** Calm Workshop identity values:
 
 | Role             | Light                    | Dark                     |
 | ---------------- | ------------------------ | ------------------------ |
@@ -194,9 +216,9 @@ No interface may use hardcoded hex, pure black, pure white, or arbitrary compone
 
 ### Typography
 
-**Proposed pending owner approval**
+**Approved Core Alpha target**
 
-- UI and authored prose: Geist Sans, with the installed local font and language-appropriate fallback.
+- UI and authored prose: Geist Sans from the current self-hosted package import, with a language-appropriate fallback.
 - Code, paths, stable IDs, hashes, versions, model IDs, check IDs, and compact metrics: Geist Mono.
 - Page title: 28/34, weight 650.
 - Section title: 20/28, weight 600.
@@ -210,7 +232,7 @@ English and Russian must share the scale. Controls must allow at least 30% label
 
 ### Spacing, shape, elevation, motion
 
-**Proposed pending owner approval**
+**Approved Core Alpha target**
 
 - 4px base with named steps 4, 8, 12, 16, 24, 32, 48, 64.
 - Control radius 8px; bounded panels and overlays 12px; pills only for compact state or tags.
@@ -284,4 +306,4 @@ Every networked or runtime-dependent region declares one of: loading, ready, emp
 
 ## Acceptance gate
 
-Design implementation may be called approved only after the owner selects a direction and the implementation is reviewed against all four supporting specifications. Passing build or unit checks alone is insufficient. The review must cover desktop/mobile, light/dark, `en-US`/`ru-RU`, keyboard and assistive technology, the complete state model, all required screens and authoring/import/validation flows, and proof that no silent real-provider-to-Mock fallback or private-data transmission has been introduced.
+Design implementation may be called approved only after it is reviewed against all four supporting specifications. Owner selection is recorded, but implementation still requires desktop/mobile, light/dark, `en-US`/`ru-RU`, keyboard and assistive technology, the complete state model, all required screens and authoring/import/validation flows, and proof that no silent real-provider-to-Mock fallback or private-data transmission has been introduced.

@@ -5,6 +5,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
+import z from "zod";
+import { createLearningKernelRepository } from "@dlh/database";
+import { learningKernelSha256 } from "@dlh/learning-core";
 
 const runtimes: Array<ReturnType<typeof createApp>> = [];
 const roots: string[] = [];
@@ -25,6 +28,7 @@ function createRuntime(databasePath?: string) {
   const runtime = createApp({
     projectRoot: path.resolve("../.."),
     databasePath: resolvedDatabasePath,
+    databaseMode: "disposable",
   });
   const result = Object.assign(runtime, { databasePath: resolvedDatabasePath });
   runtimes.push(result);
@@ -36,9 +40,10 @@ function request(
   pathname: string,
   init?: RequestInit,
 ) {
-  return app.request(pathname, {
+  return app.request(`http://127.0.0.1:8787${pathname}`, {
     ...init,
     headers: {
+      Host: "127.0.0.1:8787",
       "X-DLH-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
@@ -260,6 +265,62 @@ function preparePersistedSummaryFacts(
     sqlite.exec("ROLLBACK");
     throw error;
   }
+  const kernelRepository = createLearningKernelRepository(
+    runtime.state.connection,
+  );
+  const scope = kernelRepository.resolveSessionScope(session.id);
+  const progressByStableId = new Map(
+    session.snapshot.units.map((unit) => [
+      unit.stableId,
+      sqlite
+        .prepare(
+          `SELECT status FROM unit_progress
+           WHERE session_id = ? AND unit_id = ?`,
+        )
+        .get(session.id, unit.id) as { status: string },
+    ]),
+  );
+  const activityByStableId = sqlite.prepare(
+    `SELECT id FROM course_activities
+     WHERE course_id = ? AND revision_id = ? AND stable_id = ?`,
+  );
+  let factSequence = 0;
+  for (const unit of session.snapshot.units) {
+    const status = progressByStableId.get(unit.stableId)?.status;
+    if (status !== "completed" && status !== "in_progress") continue;
+    const activity = activityByStableId.get(
+      scope.courseId,
+      scope.revisionId,
+      unit.stableId,
+    ) as { id: string };
+    for (const transition of status === "completed"
+      ? (["start", "complete"] as const)
+      : (["start"] as const)) {
+      const sequence = String(factSequence++).padStart(3, "0");
+      const source = {
+        sessionId: session.id,
+        activityId: activity.id,
+        transition,
+      };
+      kernelRepository.accept(scope, {
+        operationId: `summary-fixture-${sequence}-${transition}`,
+        factId: `summary-fixture-fact-${sequence}-${transition}`,
+        observedAt: new Date(now - 1_000 + factSequence).toISOString(),
+        provenance: {
+          kind:
+            transition === "complete"
+              ? "deterministic_evaluator"
+              : "learner_submission",
+          sourceId: `summary-fixture-${sequence}`,
+          sourceHash: learningKernelSha256(source),
+          ...(transition === "complete"
+            ? { evaluatorVersion: "summary-fixture-v1" }
+            : {}),
+        },
+        body: { type: "progress", activityId: activity.id, transition },
+      });
+    }
+  }
   return { summary, questionIds };
 }
 
@@ -424,6 +485,28 @@ describe("versioned day summary", () => {
     );
     expect((mistakes as { mistakes: unknown[] }).mistakes).toHaveLength(1);
     expect((cards as { flashcards: unknown[] }).flashcards).toHaveLength(1);
+
+    const card = z
+      .object({ id: z.string(), status: z.literal("candidate") })
+      .parse((cards as { flashcards: unknown[] }).flashcards[0]);
+    const unknownFlashcardField = await request(
+      restarted.app,
+      `/api/flashcards/${card.id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status: "approved", unexpected: true }),
+      },
+    );
+    expect(unknownFlashcardField.status).toBe(400);
+    const unchangedCards = z
+      .object({
+        flashcards: z.array(z.object({ id: z.string(), status: z.string() })),
+      })
+      .parse(await (await request(restarted.app, "/api/flashcards")).json());
+    expect(
+      unchangedCards.flashcards.find((candidate) => candidate.id === card.id)
+        ?.status,
+    ).toBe("candidate");
 
     const completeResponse = await request(
       restarted.app,

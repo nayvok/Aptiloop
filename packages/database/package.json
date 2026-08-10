@@ -12,14 +12,16 @@
     "build": "tsup src/index.ts --format esm --sourcemap --dts --out-dir dist",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/cli/migrate.ts",
-    "db:backup": "tsx src/cli/backup.ts",
+    "db:backup": "tsx ../../scripts/create-approved-backup.ts",
     "db:seed": "tsx src/cli/seed.ts",
     "lint": "eslint src test --max-warnings=0",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@dlh/course-authoring-kit": "0.1.0",
     "@dlh/curriculum": "0.1.0",
+    "@dlh/learning-core": "0.1.0",
     "@dlh/shared": "0.1.0",
     "drizzle-orm": "1.0.0-rc.4"
   },

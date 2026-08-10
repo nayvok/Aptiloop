@@ -53,6 +53,15 @@ describe("SQLite database", () => {
       "0003_unit_evidence",
       "0004_unit_progress_compatibility",
       "0005_test_run_diff_fingerprint",
+      "0006_course_foundations",
+      "0007_quarantined_course_compatibility",
+      "0008_m2_acceptance_corrections",
+      "0009_m2_acceptance_hardening",
+      "0010_m2_quarantine_immutability",
+      "0011_course_pack_lifecycle",
+      "0012_learning_kernel",
+      "0013_execution_fabric",
+      "0014_provider_hub",
     ]);
     expect(() =>
       connection.sqlite

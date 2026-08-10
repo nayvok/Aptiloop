@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
+  createUnitProgression,
+  resolveExplicitUnitDefinitions,
+} from "@dlh/learning-core";
+import {
   SessionSnapshotSchema,
   UnitProgressPayloadSchema,
   UnitProgressSchema,
@@ -26,7 +30,6 @@ import {
 
 import { withTransaction, type DatabaseConnection } from "./database.js";
 import {
-  canonicalJson,
   CurriculumAuthoringRepository,
   hashCanonicalJson,
 } from "./authoring-repository.js";
@@ -604,8 +607,48 @@ export class LearningRepository {
       ...snapshotCore,
       contentHash,
     });
-    const sessionId = this.#id();
-    withTransaction(this.#connection, () => {
+    const resolvedSessionId = withTransaction(this.#connection, () => {
+      const concurrentCurrent = this.#connection.sqlite
+        .prepare(
+          `SELECT session.id, session.curriculum_day_v2_id
+           FROM learning_sessions session
+           LEFT JOIN session_snapshots snapshot ON snapshot.session_id = session.id
+           WHERE session.status = 'active'
+             AND session.curriculum_day_v2_id IS NOT NULL
+             AND (
+               snapshot.curriculum_version_id IS NULL OR
+               snapshot.curriculum_version_id != 'legacy-v1'
+             )
+           ORDER BY session.updated_at DESC, session.id DESC
+           LIMIT 1`,
+        )
+        .get() as { id: string; curriculum_day_v2_id: string } | undefined;
+      if (concurrentCurrent) {
+        if (concurrentCurrent.curriculum_day_v2_id !== input.dayId) {
+          throw new Error(
+            `Another learning session is already active: ${concurrentCurrent.id}`,
+          );
+        }
+        return concurrentCurrent.id;
+      }
+
+      if (input.idempotencyKey) {
+        const concurrentIdempotent = this.#connection.sqlite
+          .prepare(
+            "SELECT id, curriculum_day_v2_id FROM learning_sessions WHERE idempotency_key = ?",
+          )
+          .get(input.idempotencyKey) as
+          { id: string; curriculum_day_v2_id: string | null } | undefined;
+        if (concurrentIdempotent) {
+          if (concurrentIdempotent.curriculum_day_v2_id !== input.dayId) {
+            throw new Error(
+              "Idempotency key is already associated with another day",
+            );
+          }
+          return concurrentIdempotent.id;
+        }
+      }
+
       const compatibilityDay = this.#connection.sqlite
         .prepare("SELECT id FROM curriculum_days WHERE id = ?")
         .get(day.id);
@@ -634,9 +677,24 @@ export class LearningRepository {
             capturedAt,
           );
       }
-      const firstRequired =
-        day.units.find((unit) => !unit.optional) ?? day.units[0];
-      if (!firstRequired) throw new Error("Cannot start a day without units");
+      const definitions = resolveExplicitUnitDefinitions(
+        snapshotUnits.map((unit) => ({
+          id: unit.id,
+          stableId: unit.stableId,
+          optional: unit.optional,
+          prerequisiteStableIds: unit.unlockRules.map((rule) => rule.unitId),
+        })),
+      );
+      const initialProgress = createUnitProgression(definitions);
+      const initialStatusByUnitId = new Map(
+        initialProgress.map((item) => [item.unitId, item.status]),
+      );
+      const firstReady = snapshotUnits.find(
+        (unit) => initialStatusByUnitId.get(unit.id) === "ready",
+      );
+      if (!firstReady)
+        throw new Error("Cannot start a day without entry units");
+      const sessionId = this.#id();
       this.#connection.sqlite
         .prepare(
           `INSERT INTO learning_sessions
@@ -647,7 +705,7 @@ export class LearningRepository {
         .run(
           sessionId,
           day.id,
-          firstRequired.stableId,
+          firstReady.stableId,
           input.idempotencyKey ?? null,
           capturedAt,
           capturedAt,
@@ -661,30 +719,37 @@ export class LearningRepository {
            VALUES (?, ?, 2, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
-          this.#id(),
+          `${sessionId}:snapshot`,
           sessionId,
           dayRow.curriculum_id,
           dayRow.version_id,
           day.id,
           contentHash,
-          canonicalJson(snapshot),
+          stringifyJson(snapshot, "session snapshot"),
           capturedAt,
         );
       const insertProgress = this.#connection.sqlite.prepare(
         `INSERT INTO unit_progress
-         (id, session_id, unit_id, unit_type, status, progress_json, started_at,
-          completed_at, skipped_at, updated_at)
+         (id, session_id, unit_id, unit_type, status, progress_json,
+          started_at, completed_at, skipped_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
       );
-      for (const unit of day.units) {
+      for (const unit of snapshotUnits) {
         const unitType = UnitTypeSchema.parse(unit.type);
+        const status = initialStatusByUnitId.get(unit.id);
+        if (status === undefined) {
+          throw new Error(`Missing initial progress for unit: ${unit.id}`);
+        }
         insertProgress.run(
           this.#id(),
           sessionId,
           unit.id,
           unitType,
-          unit.id === firstRequired.id ? "ready" : "locked",
-          JSON.stringify(createInitialProgressPayload(unitType)),
+          status,
+          stringifyJson(
+            createInitialProgressPayload(unitType),
+            "initial unit progress",
+          ),
           capturedAt,
         );
       }
@@ -697,8 +762,9 @@ export class LearningRepository {
              updated_at = excluded.updated_at`,
         )
         .run(sessionId, capturedAt);
+      return sessionId;
     });
-    return this.getVersionedSession(sessionId);
+    return this.getVersionedSession(resolvedSessionId);
   }
 
   async getCurrentVersionedSession(): Promise<VersionedSessionDetail | null> {
@@ -1466,20 +1532,10 @@ export class LearningRepository {
     conversationId: string;
     role: string;
     content: string;
-    toolEvents?: unknown[];
-    rawEvent?: unknown;
     status?: string;
     idempotencyKey?: string;
   }) {
     const now = this.#now();
-    const toolEventsJson = stringifyJson(
-      input.toolEvents ?? [],
-      "message tool events",
-    );
-    const rawEventJson =
-      input.rawEvent === undefined
-        ? null
-        : stringifyJson(input.rawEvent, "raw provider event");
     const id = withTransaction(this.#connection, () => {
       if (input.idempotencyKey) {
         const existing = this.#connection.sqlite
@@ -1503,15 +1559,13 @@ export class LearningRepository {
           `INSERT INTO agent_messages
            (id, conversation_id, role, content, tool_events_json, raw_event_json, status,
             sequence, idempotency_key, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, '[]', NULL, ?, ?, ?, ?)`,
         )
         .run(
           newId,
           input.conversationId,
           input.role,
           input.content,
-          toolEventsJson,
-          rawEventJson,
           input.status ?? "completed",
           latest.sequence + 1,
           input.idempotencyKey ?? null,

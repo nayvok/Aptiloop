@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted product constraint; implementation pending approval gate
+Approved Core Alpha target
 
 ## Date
 
@@ -10,7 +10,7 @@ Accepted product constraint; implementation pending approval gate
 
 ## Context
 
-Practice activities need reproducible checks without allowing course authors, browsers, or models to select arbitrary commands. The current Node exercise path has valuable isolation, canonical-path, fixed-command, output-cap, diff-fingerprint, and reviewer controls, but it is tied to a trusted repository template and one `npm test` plan. Core Alpha also requires explicit Node and Python environment contracts.
+Practice activities need reproducible checks without allowing course authors, browsers, or models to select arbitrary commands. The current Node exercise path has valuable attempt isolation, canonical-path, fixed-command, output-cap, visible-change fingerprint, and reviewer controls, but it is tied to a trusted repository template and one `npm test` plan. Core Alpha also requires explicit Node and Python environment contracts.
 
 Related specifications: [Execution Fabric](../architecture/execution-fabric.md), [Environment Packs](../architecture/environment-packs.md), [Workspaces and editors](../architecture/workspaces-and-editors.md), [Execution isolation](../security/execution-isolation.md), [Lesson Engine](../architecture/lesson-engine.md), and [Threat model](../security/threat-model.md).
 
@@ -23,8 +23,8 @@ Aptiloop uses a generic Execution Fabric with app-owned backends and declarative
 - The common backend contract covers prepare, execute check, cancel, collect bounded artifacts, inspect change evidence, and dispose. Results are typed, size/time bounded, provenance-stamped, and suitable as Learning Kernel evidence.
 - Node and Python Environment Packs declare runtime/version constraints, dependency-lock expectations, fixture hashes, allowed checks, resource limits, filesystem scope, network policy, and platform compatibility. They contain no secrets or user-selected commands.
 - Workspaces are attempt-scoped and canonically contained. Links/reparse escapes are rejected; child environments are minimized and secret-shaped variables are excluded; processes use `shell: false`, deadlines, output caps, and process-tree cleanup.
-- Network is denied unless a separately approved trusted backend contract requires it. Host home directories, credentials, repository roots, and the Core database are outside attempt scope.
-- Reviewer consumes a bounded evidence bundle read-only and returns findings. It cannot edit or patch the workspace; the app verifies the before/after fingerprint.
+- The Core Alpha local-native backend is trusted-only and unsandboxed: it may use `inherit-local-trusted`, and its process can reach anything readable by the local account. Course Pack content never enters this path. Enforced deny-network/no-host-access is a Future isolated-backend contract, not a native-process claim.
+- Reviewer consumes a bounded evidence bundle read-only and returns findings. It cannot edit or patch the workspace; the app verifies a canonical manifest/hash covering every allowed workspace file before and after review.
 - External editors are optional views over an approved workspace path and do not become execution authorities.
 
 ## Consequences
@@ -43,10 +43,10 @@ Aptiloop uses a generic Execution Fabric with app-owned backends and declarative
 
 ## Implementation status
 
-**Implemented baseline:** trusted templates are copied into isolated attempts; canonical containment and link rejection are present; one allowlisted Node test command runs with `shell: false`, sanitized environment, deadlines, output caps, process cleanup, Git baseline, full-diff fingerprinting, and reviewer mutation checks. There is no generic Execution Fabric registry, portable Environment Pack contract, Python backend, or sandbox for untrusted imported code.
+**Implemented baseline:** trusted templates are copied into isolated attempts; canonical containment and link rejection are present; one allowlisted Node test command runs with `shell: false`, sanitized environment, deadlines, output caps, process cleanup, Git baseline, a fingerprint of Git-visible changes, and reviewer mutation checks. Git-ignored files are not covered, so this is not a complete workspace freshness guarantee. There is no generic Execution Fabric registry, portable Environment Pack contract, Python backend, or sandbox for untrusted imported code.
 
 **Approved Core Alpha target:** the backend and environment boundaries above are normative; no future Fabric or Environment Pack package is claimed to exist.
 
-**Future:** hardened containers/VMs, remote runners, additional languages, and explicitly networked environments.
+**Future:** hardened containers/VMs, remote runners, additional languages, enforced network/host isolation, and explicitly networked isolated environments.
 
 No major implementation is authorized until the Core Alpha audit/specification set passes the owner approval gate.

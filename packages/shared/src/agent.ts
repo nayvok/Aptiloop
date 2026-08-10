@@ -14,14 +14,17 @@ export const AgentRoleSchema = z.enum([
 ]);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 
-export const ProviderIdSchema = z.enum(["mock", "opencode", "codex"]);
+export const ProviderIdSchema = z.enum(["mock", "opencode", "codex", "pi"]);
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 
 export const ProviderConnectionStateSchema = z.enum([
+  "disabled",
+  "starting",
   "connected",
+  "degraded",
+  "authentication-required",
   "unavailable",
   "misconfigured",
-  "starting",
   "error",
 ]);
 export type ProviderConnectionState = z.infer<

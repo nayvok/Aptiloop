@@ -1,0 +1,43 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "cycle-a": {
+      "name": "cycle-a",
+      "severity": "low",
+      "isDirect": true,
+      "via": ["cycle-b"],
+      "effects": ["cycle-b"],
+      "range": "<2.0.0",
+      "nodes": ["node_modules/cycle-a"],
+      "fixAvailable": false
+    },
+    "cycle-b": {
+      "name": "cycle-b",
+      "severity": "low",
+      "isDirect": false,
+      "via": ["cycle-a"],
+      "effects": ["cycle-a"],
+      "range": "<2.0.0",
+      "nodes": ["node_modules/cycle-b"],
+      "fixAvailable": false
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 2,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 2
+    },
+    "dependencies": {
+      "prod": 2,
+      "dev": 0,
+      "optional": 0,
+      "peer": 0,
+      "peerOptional": 0,
+      "total": 2
+    }
+  }
+}

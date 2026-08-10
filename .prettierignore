@@ -8,3 +8,5 @@ playwright-report
 test-results
 pnpm-lock.yaml
 *.sqlite*
+packages/course-authoring-kit/schema/course-pack-v1.schema.json
+packages/course-authoring-kit/templates/development-course-pack.json

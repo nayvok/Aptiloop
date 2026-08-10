@@ -3,577 +3,256 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { useForm, type UseFormReturn } from "react-hook-form";
 import { useTheme } from "next-themes";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { ApiError, api } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldTitle,
+} from "@/components/ui/field";
 import { QueryError } from "@/components/query-state";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const providerSchema = z.enum(["mock", "opencode", "codex"]);
-const baseSchema = z.object({
-  opencodeBaseUrl: z
-    .url()
-    .refine(
-      (value) =>
-        ["127.0.0.1", "localhost", "[::1]"].includes(new URL(value).hostname),
-      "Для MVP разрешён только loopback endpoint",
-    ),
-  teacherProvider: providerSchema,
-  teacherModel: z.string().min(1),
-  reviewerProvider: providerSchema,
-  reviewerModel: z.string().min(1),
-  interviewerProvider: providerSchema,
-  interviewerModel: z.string().min(1),
-  curatorProvider: providerSchema,
-  curatorModel: z.string().min(1),
-  codexExpertProvider: providerSchema,
-  codexExpertModel: z.string().min(1),
-  theme: z.enum(["system", "light", "dark"]),
-});
-type Settings = z.infer<typeof baseSchema>;
-type ProviderStatus = {
-  id: z.infer<typeof providerSchema>;
-  status: string;
-  message?: string;
-  models: Array<{ id: string; name: string; available?: boolean }>;
+const settingsMutationSchema = z
+  .object({ theme: z.enum(["system", "light", "dark"]) })
+  .strict();
+type SettingsMutation = z.infer<typeof settingsMutationSchema>;
+type AiRole = "course-designer" | "tutor" | "evaluator" | "reviewer";
+type RoleProfile = {
+  role: AiRole;
+  mode: "no-ai" | "connection";
+  connectionId: string | null;
+  modelId: string | null;
+  requiredCapabilities: string[];
+  toolPolicyId: string;
+  budgets: {
+    maxInputBytes: number;
+    maxOutputBytes: number;
+    maxEvents: number;
+    maxToolCalls: number;
+    deadlineMs: number;
+  };
 };
-type SettingsQuery = Settings & {
+type Connection = {
+  connectionId: string;
+  adapterId: string;
+  providerType: string;
+  displayName: string;
+  enabled: boolean;
+  external: boolean;
+  state: string;
+  lastCheckedAt: string | null;
+  observedCapabilities: {
+    models: Array<{
+      modelId: string;
+      available: boolean;
+    }>;
+  } | null;
+};
+type SettingsQuery = SettingsMutation & {
   workspaceRoot: string;
   zedExecutable: string;
-  providers: ProviderStatus[];
+  opencodeBaseUrl: string;
+  ai: {
+    connections: Connection[];
+    roleProfiles: RoleProfile[];
+  };
 };
 
-const statusLabels: Record<string, string> = {
-  connected: "Подключён",
-  unavailable: "Недоступен",
-  misconfigured: "Нужна настройка",
-  starting: "Запускается",
-  error: "Ошибка",
-};
-
-const providerNames: Record<string, string> = {
-  mock: "Mock",
-  opencode: "OpenCode",
-  codex: "Codex",
-};
-
-const roleSelections = [
-  ["teacherProvider", "teacherModel"],
-  ["reviewerProvider", "reviewerModel"],
-  ["interviewerProvider", "interviewerModel"],
-  ["curatorProvider", "curatorModel"],
-  ["codexExpertProvider", "codexExpertModel"],
-] as const;
-
-function settingsSchema(providers: ProviderStatus[]) {
-  return baseSchema.superRefine((values, context) => {
-    for (const [providerField, modelField] of roleSelections) {
-      const provider = providers.find(
-        (candidate) => candidate.id === values[providerField],
-      );
-      const models =
-        provider?.models.filter((model) => model.available !== false) ?? [];
-      if (!models.some((model) => model.id === values[modelField])) {
-        context.addIssue({
-          code: "custom",
-          path: [modelField],
-          message: provider
-            ? `Модель недоступна у провайдера ${provider.id}`
-            : "Провайдер недоступен",
-        });
-      }
-    }
-  });
-}
-
-type RoleMeta = {
-  group: string;
+const roleMeta: ReadonlyArray<{
+  role: AiRole;
   label: string;
-  provider: (typeof roleSelections)[number][0];
-  model: (typeof roleSelections)[number][1];
   help: string;
-};
-
-const roleMeta: RoleMeta[] = [
-  {
-    group: "Teacher",
-    label: "Преподаватель",
-    provider: "teacherProvider",
-    model: "teacherModel",
-    help: "Сократический диалог и проверка объяснений.",
-  },
-  {
-    group: "Reviewer",
-    label: "Проверка решения",
-    provider: "reviewerProvider",
-    model: "reviewerModel",
-    help: "Всегда получает read-only/deny-write policy.",
-  },
-  {
-    group: "Interviewer",
-    label: "Интервьюер",
-    provider: "interviewerProvider",
-    model: "interviewerModel",
-    help: "Один вопрос за раз и отдельная оценка.",
-  },
-  {
-    group: "Curator",
-    label: "Итоги и повторение",
-    provider: "curatorProvider",
-    model: "curatorModel",
-    help: "Итоги, повторение и кандидаты карточек.",
-  },
-  {
-    group: "Codex Expert",
-    label: "Эксперт",
-    provider: "codexExpertProvider",
-    model: "codexExpertModel",
-    help: "Ручной глубокий анализ и архитектурные задачи.",
-  },
-];
-
-type ProfileId = "economical" | "balanced" | "accuracy";
-
-const profilePlans: Record<
-  ProfileId,
-  Array<{
-    provider: (typeof roleSelections)[number][0];
-    model: (typeof roleSelections)[number][1];
-    providerId: "opencode" | "codex";
-  }>
-> = {
-  economical: [
-    {
-      provider: "teacherProvider",
-      model: "teacherModel",
-      providerId: "opencode",
-    },
-    {
-      provider: "reviewerProvider",
-      model: "reviewerModel",
-      providerId: "opencode",
-    },
-    {
-      provider: "interviewerProvider",
-      model: "interviewerModel",
-      providerId: "opencode",
-    },
-    {
-      provider: "curatorProvider",
-      model: "curatorModel",
-      providerId: "opencode",
-    },
-    {
-      provider: "codexExpertProvider",
-      model: "codexExpertModel",
-      providerId: "codex",
-    },
-  ],
-  balanced: [
-    {
-      provider: "teacherProvider",
-      model: "teacherModel",
-      providerId: "opencode",
-    },
-    {
-      provider: "reviewerProvider",
-      model: "reviewerModel",
-      providerId: "opencode",
-    },
-    {
-      provider: "interviewerProvider",
-      model: "interviewerModel",
-      providerId: "opencode",
-    },
-    {
-      provider: "curatorProvider",
-      model: "curatorModel",
-      providerId: "opencode",
-    },
-    {
-      provider: "codexExpertProvider",
-      model: "codexExpertModel",
-      providerId: "codex",
-    },
-  ],
-  accuracy: [
-    {
-      provider: "teacherProvider",
-      model: "teacherModel",
-      providerId: "opencode",
-    },
-    {
-      provider: "reviewerProvider",
-      model: "reviewerModel",
-      providerId: "codex",
-    },
-    {
-      provider: "interviewerProvider",
-      model: "interviewerModel",
-      providerId: "codex",
-    },
-    { provider: "curatorProvider", model: "curatorModel", providerId: "codex" },
-    {
-      provider: "codexExpertProvider",
-      model: "codexExpertModel",
-      providerId: "codex",
-    },
-  ],
-};
-
-const profiles: Array<{
-  id: ProfileId;
-  title: string;
-  description: string;
-  caption?: string;
-  warning?: string;
 }> = [
   {
-    id: "economical",
-    title: "Экономный",
-    description:
-      "Повседневные роли — OpenCode, Эксперт — Codex. Минимальный расход лимитов Codex.",
+    role: "course-designer",
+    label: "Course Designer",
+    help: "Draft-only proposals. Apply and Publish remain separate actions.",
   },
   {
-    id: "balanced",
-    title: "Сбалансированный",
-    description:
-      "Преподаватель, проверка, интервью и итоги — OpenCode; Эксперт — Codex.",
-    caption:
-      "Сложная проверка решения и экспертная помощь — Codex по ручной эскалации.",
+    role: "tutor",
+    label: "Tutor",
+    help: "Learner-safe explanation and Socratic guidance.",
   },
   {
-    id: "accuracy",
-    title: "Максимальная точность",
-    description:
-      "Проверка, интервью, итоги и Эксперт — Codex; преподаватель — OpenCode.",
-    warning: "Повышенный расход лимитов Codex.",
+    role: "evaluator",
+    label: "Evaluator",
+    help: "Bounded interview and evaluation output; no mastery writes.",
+  },
+  {
+    role: "reviewer",
+    label: "Reviewer",
+    help: "Evidence-only review with no patch or local file authority.",
   },
 ];
 
-const fieldClass =
-  "h-11 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring";
+const statusLabels: Readonly<Record<string, string>> = {
+  disabled: "Off",
+  starting: "Starting",
+  connected: "Connected",
+  degraded: "Needs canary",
+  "authentication-required": "Authentication required",
+  unavailable: "Unavailable",
+  misconfigured: "Configuration required",
+  error: "Error",
+};
 const sectionClass =
   "min-w-0 rounded-xl border border-border bg-card p-5 sm:p-6";
-const sectionTitleClass = "font-semibold";
 
-function firstAvailableModel(
-  providers: ProviderStatus[],
-  providerId: string,
-): string | null {
-  return (
-    providers
-      .find((provider) => provider.id === providerId)
-      ?.models.find((model) => model.available !== false)?.id ?? null
-  );
-}
-
-function RoleSelects({
-  meta,
-  providers,
-  form,
-}: {
-  meta: RoleMeta;
-  providers: ProviderStatus[];
-  form: UseFormReturn<Settings>;
-}) {
-  const helpId = `${meta.provider}-help`;
-  const modelError = form.formState.errors[meta.model];
-  const selectedProvider = form.watch(meta.provider);
-  const selectedModel = form.watch(meta.model);
-  const availableModels =
-    providers
-      .find((provider) => provider.id === selectedProvider)
-      ?.models.filter((model) => model.available !== false) ?? [];
-  const hasSelectedModel = availableModels.some(
-    (model) => model.id === selectedModel,
-  );
-  const providerRegistration = form.register(meta.provider);
-  return (
-    <fieldset
-      aria-describedby={helpId}
-      className="grid min-w-0 gap-2 sm:grid-cols-[220px_1fr]"
-    >
-      <legend className="sr-only">{meta.label}</legend>
-      <div className="flex flex-col gap-1">
-        <p className="text-sm font-medium">{meta.label}</p>
-        <p id={helpId} className="text-xs leading-5 text-muted-foreground">
-          {meta.help}
-        </p>
-      </div>
-      <div className="grid min-w-0 gap-3 sm:grid-cols-[130px_1fr]">
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor={meta.provider}
-            className="block text-xs text-muted-foreground"
-          >
-            Провайдер
-          </label>
-          <select
-            id={meta.provider}
-            {...providerRegistration}
-            onChange={(event) => {
-              void providerRegistration.onChange(event);
-              const provider = providers.find(
-                (candidate) => candidate.id === event.target.value,
-              );
-              const firstModel = provider?.models.find(
-                (model) => model.available !== false,
-              );
-              form.setValue(meta.model, firstModel?.id ?? "", {
-                shouldDirty: true,
-                shouldTouch: true,
-                shouldValidate: true,
-              });
-            }}
-            className={fieldClass}
-          >
-            <option value="mock">Mock</option>
-            <option value="opencode">OpenCode</option>
-            <option value="codex">Codex</option>
-          </select>
-        </div>
-        <div className="flex min-w-0 flex-col gap-1">
-          <label
-            htmlFor={meta.model}
-            className="block text-xs text-muted-foreground"
-          >
-            Модель
-          </label>
-          <select
-            id={meta.model}
-            {...form.register(meta.model)}
-            aria-invalid={Boolean(modelError)}
-            aria-describedby={modelError ? `${meta.model}-error` : undefined}
-            className={`${fieldClass} font-mono`}
-          >
-            {!hasSelectedModel && selectedModel ? (
-              <option value={selectedModel} disabled>
-                {selectedModel} · недоступна
-              </option>
-            ) : null}
-            {availableModels.length === 0 ? (
-              <option value="">Нет доступных моделей</option>
-            ) : null}
-            {availableModels.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </select>
-          {modelError ? (
-            <p id={`${meta.model}-error`} className="text-xs text-destructive">
-              {modelError.message}
-            </p>
-          ) : null}
-        </div>
-      </div>
-    </fieldset>
-  );
+function selectionValue(profile: RoleProfile): string {
+  return profile.mode === "connection" &&
+    profile.connectionId &&
+    profile.modelId
+    ? `${profile.connectionId}\u0000${profile.modelId}`
+    : "off";
 }
 
 export function SettingsForm() {
   const queryClient = useQueryClient();
   const { setTheme } = useTheme();
-  const [profile, setProfile] = useState<ProfileId>("balanced");
-  const [profileNote, setProfileNote] = useState<string | null>(null);
+  const [roleProfiles, setRoleProfiles] = useState<RoleProfile[]>([]);
   const query = useQuery({
     queryKey: ["settings"],
     queryFn: () => api<SettingsQuery>("/settings"),
   });
-  const save = useMutation({
-    mutationFn: (values: Settings) =>
+  useEffect(() => {
+    if (query.data) setRoleProfiles(query.data.ai.roleProfiles);
+  }, [query.data]);
+
+  const saveTheme = useMutation({
+    mutationFn: (values: SettingsMutation) =>
       api<{ saved: true }>("/settings", {
         method: "PUT",
         body: JSON.stringify(values),
       }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["settings"] }),
-        queryClient.invalidateQueries({ queryKey: ["providers"] }),
-      ]);
+    onSuccess: (_result, submitted) => {
+      queryClient.setQueryData<SettingsQuery>(["settings"], (current) =>
+        current ? { ...current, theme: submitted.theme } : current,
+      );
     },
   });
-  const values: Settings = query.data
-    ? {
-        opencodeBaseUrl: query.data.opencodeBaseUrl,
-        teacherProvider: query.data.teacherProvider,
-        teacherModel: query.data.teacherModel,
-        reviewerProvider: query.data.reviewerProvider,
-        reviewerModel: query.data.reviewerModel,
-        interviewerProvider: query.data.interviewerProvider,
-        interviewerModel: query.data.interviewerModel,
-        curatorProvider: query.data.curatorProvider,
-        curatorModel: query.data.curatorModel,
-        codexExpertProvider: query.data.codexExpertProvider,
-        codexExpertModel: query.data.codexExpertModel,
-        theme: query.data.theme,
-      }
-    : {
-        opencodeBaseUrl: "http://127.0.0.1:4096",
-        teacherProvider: "mock",
-        teacherModel: "mock-deterministic",
-        reviewerProvider: "mock",
-        reviewerModel: "mock-deterministic",
-        interviewerProvider: "mock",
-        interviewerModel: "mock-deterministic",
-        curatorProvider: "mock",
-        curatorModel: "mock-deterministic",
-        codexExpertProvider: "mock",
-        codexExpertModel: "mock-deterministic",
-        theme: "system",
-      };
-  const validationSchema = useMemo(
-    () => settingsSchema(query.data?.providers ?? []),
-    [query.data?.providers],
-  );
-  const form = useForm<Settings>({
-    resolver: zodResolver(validationSchema),
-    values,
+  const saveAi = useMutation({
+    mutationFn: (profiles: RoleProfile[]) =>
+      api<{ saved: true; roleProfiles: RoleProfile[] }>("/settings/ai", {
+        method: "PUT",
+        body: JSON.stringify({
+          roleProfiles: profiles.map(
+            ({ role, mode, connectionId, modelId }) => ({
+              role,
+              mode,
+              connectionId,
+              modelId,
+            }),
+          ),
+        }),
+      }),
+    onSuccess: (result) => {
+      setRoleProfiles(result.roleProfiles);
+      queryClient.setQueryData<SettingsQuery>(["settings"], (current) =>
+        current
+          ? {
+              ...current,
+              ai: { ...current.ai, roleProfiles: result.roleProfiles },
+            }
+          : current,
+      );
+    },
+  });
+  const form = useForm<SettingsMutation>({
+    resolver: zodResolver(settingsMutationSchema),
+    values: { theme: query.data?.theme ?? "system" },
     mode: "onChange",
   });
 
-  function applyProfile(profileId: ProfileId) {
-    const skipped: string[] = [];
-    for (const step of profilePlans[profileId]) {
-      const modelId = firstAvailableModel(
-        query.data?.providers ?? [],
-        step.providerId,
-      );
-      if (!modelId) {
-        const meta = roleMeta.find(
-          (candidate) => candidate.provider === step.provider,
-        );
-        skipped.push(
-          meta
-            ? `${meta.label} → ${providerNames[step.providerId] ?? step.providerId}`
-            : (providerNames[step.providerId] ?? step.providerId),
-        );
-        continue;
-      }
-      form.setValue(step.provider, step.providerId, {
-        shouldDirty: true,
-        shouldTouch: true,
-        shouldValidate: true,
-      });
-      form.setValue(step.model, modelId, {
-        shouldDirty: true,
-        shouldTouch: true,
-        shouldValidate: true,
-      });
-    }
-    setProfileNote(
-      skipped.length > 0
-        ? `Профиль применён частично: ${skipped.join(", ")} — доступных моделей нет, роли оставлены без изменений.`
-        : null,
-    );
-  }
-
-  if (query.isLoading)
+  if (query.isLoading) {
     return (
-      <div role="status" aria-label="Загружаю настройки">
+      <div role="status" aria-label="Loading settings">
         <Skeleton aria-hidden className="h-96" />
-        <span className="sr-only">Загружаю настройки…</span>
+        <span className="sr-only">Loading settings…</span>
       </div>
     );
-  if (query.isError || !query.data)
+  }
+  if (query.isError || !query.data) {
     return (
       <QueryError
-        message="Настройки недоступны"
+        message="Settings are unavailable"
         retry={() => void query.refetch()}
       />
     );
+  }
 
   const themeRegistration = form.register("theme");
-  const connectionProviders = query.data.providers.filter(
-    (provider) => provider.id === "opencode" || provider.id === "codex",
+  const connectionOptions = query.data.ai.connections.flatMap((connection) =>
+    (connection.observedCapabilities?.models ?? [])
+      .filter((model) => model.available)
+      .map((model) => ({ connection, modelId: model.modelId })),
   );
-  const connectedCount = connectionProviders.filter(
-    (provider) => provider.status === "connected",
-  ).length;
-  let healthText: string;
-  let healthVariant: "success" | "warning" | "error" | "outline";
-  if (connectionProviders.length === 0) {
-    healthText = "Адаптеры ещё не зарегистрированы сервером.";
-    healthVariant = "outline";
-  } else if (connectedCount === connectionProviders.length) {
-    healthText = "Все локальные подключения работают.";
-    healthVariant = "success";
-  } else if (connectedCount > 0) {
-    healthText = `${connectedCount} из ${connectionProviders.length} подключено.`;
-    healthVariant = "warning";
-  } else {
-    healthText = "Подключения недоступны — проверьте настройки и процессы.";
-    healthVariant = "error";
-  }
-  const diagnostics = connectionProviders
-    .filter((provider) => provider.status !== "connected")
-    .map(
-      (provider) =>
-        `${providerNames[provider.id] ?? provider.id}: ${
-          provider.message ?? statusLabels[provider.status] ?? provider.status
-        }`,
-    );
 
   return (
     <form
       data-slot="settings-form"
       className="grid gap-6"
-      onSubmit={form.handleSubmit((submitted) => save.mutate(submitted))}
+      onSubmit={form.handleSubmit((submitted) => saveTheme.mutate(submitted))}
     >
       <section
         aria-labelledby="settings-general-title"
         className={sectionClass}
       >
         <div className="mb-5">
-          <h3 id="settings-general-title" className={sectionTitleClass}>
-            Основные
+          <h3 id="settings-general-title" className="font-semibold">
+            General
           </h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Тема интерфейса и локальные пути, которыми управляет сервер.
+            Appearance and server-owned local paths.
           </p>
         </div>
-        <div className="grid gap-5">
-          <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
-            <div className="flex flex-col gap-1">
-              <label htmlFor="theme" className="text-sm font-medium">
-                Тема
-              </label>
-              <p
-                id="theme-help"
-                className="text-xs leading-5 text-muted-foreground"
-              >
-                Изменение применяется сразу и сохраняется после отправки формы.
-              </p>
-            </div>
+        <FieldGroup>
+          <Field orientation="responsive">
+            <FieldContent>
+              <FieldLabel htmlFor="theme">Theme</FieldLabel>
+              <FieldDescription>
+                Applied immediately and saved locally.
+              </FieldDescription>
+            </FieldContent>
             <select
               id="theme"
               {...themeRegistration}
-              aria-describedby="theme-help"
               onChange={(event) => {
                 themeRegistration.onChange(event);
                 setTheme(event.target.value);
               }}
-              className={`${fieldClass} max-w-xs`}
+              className="h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <option value="system">Системная</option>
-              <option value="light">Светлая</option>
-              <option value="dark">Тёмная</option>
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
             </select>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
-            <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium">Локальные пути</p>
-              <p className="text-xs leading-5 text-muted-foreground">
-                Управляются сервером и показаны только для диагностики.
-              </p>
-            </div>
-            <dl className="grid min-w-0 gap-3 text-sm">
+          </Field>
+          <Field orientation="responsive">
+            <FieldContent>
+              <FieldTitle>Local paths</FieldTitle>
+              <FieldDescription>
+                Diagnostic only; never sent by the browser.
+              </FieldDescription>
+            </FieldContent>
+            <dl className="grid min-w-0 gap-2 text-sm">
               <div className="min-w-0 rounded-lg border border-border bg-muted/20 p-3">
                 <dt className="text-xs text-muted-foreground">
                   Exercise workspace
@@ -587,7 +266,7 @@ export function SettingsForm() {
               </div>
               <div className="min-w-0 rounded-lg border border-border bg-muted/20 p-3">
                 <dt className="text-xs text-muted-foreground">
-                  Zed executable
+                  Editor executable
                 </dt>
                 <dd
                   className="mt-1 truncate font-mono"
@@ -597,108 +276,108 @@ export function SettingsForm() {
                 </dd>
               </div>
             </dl>
-          </div>
-        </div>
+          </Field>
+        </FieldGroup>
       </section>
 
       <section aria-labelledby="settings-ai-title" className={sectionClass}>
-        <div className="mb-5">
-          <h3 id="settings-ai-title" className={sectionTitleClass}>
-            AI для обучения
-          </h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Роли, которые ведут занятие, и профили подбора моделей.
-          </p>
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 id="settings-ai-title" className="font-semibold">
+              AI roles
+            </h3>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Exact connection and model resolution. No fallback to Mock.
+            </p>
+          </div>
+          <Badge variant="outline">Server-owned policy</Badge>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <FieldGroup>
           {roleMeta.map((meta) => {
-            const selectedProvider = form.watch(meta.provider);
-            const selectedModel = form.watch(meta.model);
+            const profile = roleProfiles.find(
+              (candidate) => candidate.role === meta.role,
+            );
+            if (!profile) return null;
             return (
-              <div
-                key={meta.group}
-                className="rounded-lg border border-border bg-background p-4"
-              >
-                <p className="text-sm font-medium">{meta.label}</p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {meta.help}
-                </p>
-                <p
-                  className="mt-2 truncate font-mono text-xs text-foreground/80"
-                  title={`${selectedProvider}/${selectedModel}`}
+              <Field key={meta.role} orientation="responsive">
+                <FieldContent>
+                  <FieldLabel htmlFor={`role-${meta.role}`}>
+                    {meta.label}
+                  </FieldLabel>
+                  <FieldDescription>{meta.help}</FieldDescription>
+                </FieldContent>
+                <Select
+                  value={selectionValue(profile)}
+                  onValueChange={(value) => {
+                    setRoleProfiles((current) =>
+                      current.map((candidate) => {
+                        if (candidate.role !== meta.role) return candidate;
+                        if (value === "off") {
+                          return {
+                            ...candidate,
+                            mode: "no-ai",
+                            connectionId: null,
+                            modelId: null,
+                          };
+                        }
+                        const [connectionId, modelId] = value.split("\u0000");
+                        return {
+                          ...candidate,
+                          mode: "connection",
+                          connectionId: connectionId ?? null,
+                          modelId: modelId ?? null,
+                        };
+                      }),
+                    );
+                  }}
                 >
-                  {providerNames[selectedProvider] ?? selectedProvider} ·{" "}
-                  {selectedModel}
-                </p>
-              </div>
+                  <SelectTrigger
+                    id={`role-${meta.role}`}
+                    className="w-full max-w-sm"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="off">AI Off</SelectItem>
+                      {connectionOptions.map(({ connection, modelId }) => (
+                        <SelectItem
+                          key={`${connection.connectionId}:${modelId}`}
+                          value={`${connection.connectionId}\u0000${modelId}`}
+                        >
+                          {connection.displayName} · {modelId}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
             );
           })}
+        </FieldGroup>
+        <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
+          <span
+            role="status"
+            aria-live="polite"
+            className="text-xs text-muted-foreground"
+          >
+            {saveAi.isSuccess
+              ? "AI role profiles saved"
+              : saveAi.isError
+                ? saveAi.error instanceof ApiError
+                  ? saveAi.error.message
+                  : "Could not save AI role profiles"
+                : "External turns require one-time disclosure approval"}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={saveAi.isPending}
+            onClick={() => saveAi.mutate(roleProfiles)}
+          >
+            {saveAi.isPending ? "Saving…" : "Save AI roles"}
+          </Button>
         </div>
-
-        <div className="mt-6">
-          <p className="text-sm font-medium">Профиль подбора</p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Профиль заполняет роли доступными моделями. Ручной выбор — в
-            расширенных настройках ниже.
-          </p>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {profiles.map((option) => (
-              <label
-                key={option.id}
-                className="grid cursor-pointer gap-2 rounded-xl border border-border bg-background p-4 transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
-              >
-                <span className="flex items-center gap-2 text-sm font-medium">
-                  <input
-                    type="radio"
-                    name="ai-profile"
-                    value={option.id}
-                    checked={profile === option.id}
-                    onChange={() => {
-                      setProfile(option.id);
-                      applyProfile(option.id);
-                    }}
-                    className="size-4 accent-primary"
-                  />
-                  {option.title}
-                </span>
-                <span className="text-xs leading-5 text-muted-foreground">
-                  {option.description}
-                </span>
-                {option.caption ? (
-                  <span className="text-xs leading-5 text-muted-foreground">
-                    {option.caption}
-                  </span>
-                ) : null}
-                {option.warning ? (
-                  <span className="text-xs font-medium leading-5 text-warning-foreground">
-                    {option.warning}
-                  </span>
-                ) : null}
-              </label>
-            ))}
-          </div>
-          {profileNote ? (
-            <p role="status" className="mt-3 text-xs text-muted-foreground">
-              {profileNote}
-            </p>
-          ) : null}
-        </div>
-
-        <details className="mt-6 rounded-lg border border-border bg-background p-4">
-          <summary className="cursor-pointer text-sm font-medium">
-            Расширенные настройки
-          </summary>
-          <div className="mt-5 grid gap-5">
-            {roleMeta.map((meta) => (
-              <RoleSelects
-                key={meta.group}
-                meta={meta}
-                providers={query.data.providers}
-                form={form}
-              />
-            ))}
-          </div>
-        </details>
       </section>
 
       <section
@@ -706,163 +385,47 @@ export function SettingsForm() {
         className={sectionClass}
       >
         <div className="mb-5">
-          <h3 id="settings-connections-title" className={sectionTitleClass}>
-            Подключения
+          <h3 id="settings-connections-title" className="font-semibold">
+            Connections
           </h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Локальные адаптеры, health check и доступные модели.
+            Readiness is observed and time-scoped. Credentials stay in
+            provider-owned storage.
           </p>
         </div>
-        <div className="grid gap-5">
-          <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
-            <div className="flex flex-col gap-1">
-              <label htmlFor="opencodeBaseUrl" className="text-sm font-medium">
-                OpenCode server
-              </label>
-              <p
-                id="opencodeBaseUrl-help"
-                className="text-xs leading-5 text-muted-foreground"
-              >
-                Headless server должен слушать loopback. Пароль читается только
-                из environment.
-              </p>
-            </div>
-            <div className="flex flex-col gap-1">
-              <input
-                id="opencodeBaseUrl"
-                {...form.register("opencodeBaseUrl")}
-                aria-invalid={Boolean(form.formState.errors.opencodeBaseUrl)}
-                aria-describedby={`opencodeBaseUrl-help${
-                  form.formState.errors.opencodeBaseUrl
-                    ? " opencodeBaseUrl-error"
-                    : ""
-                }`}
-                className={fieldClass}
-              />
-              {form.formState.errors.opencodeBaseUrl ? (
-                <p
-                  id="opencodeBaseUrl-error"
-                  className="text-xs text-destructive"
+        <ul className="grid gap-3 md:grid-cols-2">
+          {query.data.ai.connections.map((connection) => (
+            <li
+              key={connection.connectionId}
+              className="rounded-lg border border-border bg-background p-4"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">{connection.displayName}</p>
+                <Badge
+                  variant={
+                    connection.state === "connected"
+                      ? "success"
+                      : connection.state === "error"
+                        ? "error"
+                        : "outline"
+                  }
                 >
-                  {form.formState.errors.opencodeBaseUrl.message}
-                </p>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            {(["opencode", "codex"] as const).map((id) => {
-              const provider = query.data.providers.find(
-                (candidate) => candidate.id === id,
-              );
-              const label = provider
-                ? (statusLabels[provider.status] ?? provider.status)
-                : "Недоступен";
-              const variant = provider
-                ? provider.status === "connected"
-                  ? "success"
-                  : provider.status === "misconfigured"
-                    ? "warning"
-                    : provider.status === "error"
-                      ? "error"
-                      : "outline"
-                : "outline";
-              return (
-                <div
-                  key={id}
-                  className="rounded-lg border border-border bg-background p-4"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium">{providerNames[id]}</p>
-                    <Badge variant={variant}>{label}</Badge>
-                  </div>
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">
-                    {provider
-                      ? provider.models.length
-                        ? `${provider.models.length} ${
-                            provider.models.length === 1
-                              ? "модель"
-                              : provider.models.length < 5
-                                ? "модели"
-                                : "моделей"
-                          }`
-                        : "Модели недоступны"
-                      : "Провайдер не зарегистрирован"}
-                  </p>
-                  {provider?.message ? (
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {provider.message}
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 p-4">
-            <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium">Health check</p>
-              <p className="text-xs leading-5 text-muted-foreground">
-                {healthText}
+                  {statusLabels[connection.state] ?? connection.state}
+                </Badge>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {connection.external ? "External" : "Local development"} ·{" "}
+                {connection.observedCapabilities?.models.length ?? 0} models
               </p>
-            </div>
-            <Badge variant={healthVariant}>
-              {connectedCount === connectionProviders.length &&
-              connectionProviders.length > 0
-                ? "Работает"
-                : connectedCount > 0
-                  ? "Частично"
-                  : connectionProviders.length > 0
-                    ? "Недоступно"
-                    : "Нет данных"}
-            </Badge>
-          </div>
-
-          {diagnostics.length > 0 ? (
-            <ul className="grid gap-1 text-xs leading-5 text-muted-foreground">
-              {diagnostics.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          ) : null}
-
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background p-4">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">Полная диагностика</p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Endpoint, список моделей, lifecycle процессов и события
-                провайдеров.
+              <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                {connection.connectionId}
               </p>
-            </div>
-            <Button asChild variant="outline">
-              <Link href="/settings/developer-tools">
-                Инструменты разработчика
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      <section aria-labelledby="settings-dev-title" className={sectionClass}>
-        <div className="mb-4">
-          <h3 id="settings-dev-title" className={sectionTitleClass}>
-            Для разработчика
-          </h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Диагностика и ручные инструменты — вне основного учебного маршрута.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background p-4">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">Инструменты разработчика</p>
-            <ul className="mt-1 list-inside list-disc text-xs leading-5 text-muted-foreground">
-              <li>Endpoint и список моделей</li>
-              <li>Lifecycle процессов</li>
-              <li>Agent Playground и события провайдеров</li>
-            </ul>
-          </div>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-5 flex justify-end">
           <Button asChild variant="outline">
-            <Link href="/settings/developer-tools">Открыть</Link>
+            <Link href="/settings/developer-tools">Developer diagnostics</Link>
           </Button>
         </div>
       </section>
@@ -871,22 +434,18 @@ export function SettingsForm() {
         <span
           role="status"
           aria-live="polite"
-          className={
-            save.isError
-              ? "text-xs text-destructive"
-              : "text-xs text-muted-foreground"
-          }
+          className="text-xs text-muted-foreground"
         >
-          {save.isSuccess
-            ? "Сохранено"
-            : save.isError
-              ? save.error instanceof ApiError
-                ? save.error.message
-                : "Не удалось сохранить настройки. Повтори попытку."
-              : "Секреты здесь не сохраняются"}
+          {saveTheme.isSuccess
+            ? "Theme saved"
+            : saveTheme.isError
+              ? saveTheme.error instanceof ApiError
+                ? saveTheme.error.message
+                : "Could not save theme"
+              : "Settings remain local"}
         </span>
-        <Button type="submit" disabled={save.isPending}>
-          {save.isPending ? "Сохраняю…" : "Сохранить настройки"}
+        <Button type="submit" disabled={saveTheme.isPending}>
+          {saveTheme.isPending ? "Saving…" : "Save theme"}
         </Button>
       </div>
     </form>

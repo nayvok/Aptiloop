@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed pending owner approval
+Approved Core Alpha target
 
 ## Date
 
@@ -16,9 +16,9 @@ Related specifications: [Core Alpha licensing plan](../licensing/core-alpha-lice
 
 ## Decision
 
-The following model is proposed for owner approval and professional legal review:
+The owner approved the following engineering direction on 2026-08-08, subject to professional legal review and the recorded no-distribution deferrals:
 
-- Propose **AGPL-3.0-only** for the existing integrated application/server surface. The exact included paths must be recorded in an approved license matrix before adding license text or publishing.
+- Use **AGPL-3.0-only** for the existing integrated application/server surface if and when professional counsel approves the exact included path matrix and a separate change applies the license text.
 - Use **Apache-2.0** only for newly separated, genuinely reusable Course Pack, activity, and environment SDK packages after their boundaries, copyright ownership, contribution history, and dependency obligations are verified. This ADR does not claim that those packages exist or that any current package already qualifies.
 - Do not dual-license or relicense existing code by inference. Any exception requires an explicit owner-approved path-level decision and verified authority from every copyright holder.
 - Treat curriculum/content, exercise fixtures/templates, screenshots, fonts, sample databases, and learner-generated artifacts separately from software code. Choose explicit content/fixture terms only after provenance and redistribution scope are verified.
@@ -45,8 +45,8 @@ The following model is proposed for owner approval and professional legal review
 
 **Implemented baseline:** no own-project license or notice set is present. The lockfile contains dependency license metadata, but upstream texts, notices, provenance, distribution contents, and trademark permissions have not been fully verified.
 
-**Proposed pending owner approval:** AGPL-3.0-only for the approved integrated surface and Apache-2.0 only for qualifying newly separated SDK packages, subject to legal review. No license text is added by this ADR.
+**Approved Core Alpha target:** AGPL-3.0-only for the approved integrated surface and Apache-2.0 only for qualifying newly separated SDK packages, subject to professional legal review. No license text is added by this ADR.
 
 **Future:** any dual-license program, commercial exception, contribution program, or separately licensed content catalog.
 
-No licensing change, public release, or major implementation is authorized until the owner and legal review approve the license matrix and the complete Core Alpha audit/specification gate.
+No license application or public release is authorized. Ownership, contributor authority, content/fixture terms, artifact distribution scope, dependency notices/SBOM, and trademark/contribution policy remain explicitly deferred and release-blocking pending professional legal review.

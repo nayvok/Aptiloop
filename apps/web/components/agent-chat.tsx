@@ -5,6 +5,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PaperPlaneTiltIcon, StopIcon } from "@phosphor-icons/react";
 
 import { api, streamAgent } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
@@ -31,18 +41,39 @@ const roles = [
   "codex-expert",
 ] as const;
 type Role = (typeof roles)[number];
-type AgentSettings = {
-  teacherProvider: string;
-  teacherModel: string;
-  reviewerProvider: string;
-  reviewerModel: string;
-  interviewerProvider: string;
-  interviewerModel: string;
-  curatorProvider: string;
-  curatorModel: string;
-  codexExpertProvider: string;
-  codexExpertModel: string;
+type Connection = {
+  connectionId: string;
+  adapterId: string;
+  displayName: string;
+  state: string;
+  observedCapabilities: {
+    models: Array<{ modelId: string; available: boolean }>;
+  } | null;
 };
+type RoleProfile = {
+  role: "course-designer" | "tutor" | "evaluator" | "reviewer";
+  mode: "no-ai" | "connection";
+  connectionId: string | null;
+  modelId: string | null;
+};
+type AgentSettings = {
+  ai: {
+    connections: Connection[];
+    roleProfiles: RoleProfile[];
+  };
+};
+type Disclosure = {
+  operationId: string;
+  scope: {
+    destination: string;
+    payloadCategories: string[];
+    exclusions: string[];
+    byteCount: number;
+  };
+  expiresAt: string;
+};
+const agentFailureMessage = "Не удалось получить ответ.";
+const agentCancellationMessage = "Ответ остановлен.";
 
 export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
   const queryClient = useQueryClient();
@@ -59,6 +90,10 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
   const [tools, setTools] = useState<string[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [pendingDisclosure, setPendingDisclosure] = useState<{
+    message: string;
+    disclosure: Disclosure;
+  } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const history = useQuery({
     queryKey: ["agent-history", role],
@@ -89,6 +124,65 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
   async function send() {
     const message = input.trim();
     if (!message || streaming) return;
+    setStreaming(true);
+    setStreamError(null);
+    try {
+      const preparation = await api<
+        { required: false } | { required: true; disclosure: Disclosure }
+      >("/ai/disclosures", {
+        method: "POST",
+        body: JSON.stringify({ role, message }),
+      });
+      if (preparation.required) {
+        setPendingDisclosure({ message, disclosure: preparation.disclosure });
+        return;
+      }
+      await runStream(message);
+    } catch (error) {
+      setStreamError(
+        error instanceof Error
+          ? `Не удалось подготовить запрос: ${error.message}`
+          : agentFailureMessage,
+      );
+    } finally {
+      setStreaming(false);
+    }
+  }
+
+  async function approveDisclosure() {
+    const pending = pendingDisclosure;
+    if (!pending) return;
+    setPendingDisclosure(null);
+    setStreaming(true);
+    setStreamError(null);
+    try {
+      await api(`/ai/disclosures/${pending.disclosure.operationId}/approve`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      await runStream(pending.message, pending.disclosure.operationId);
+    } catch (error) {
+      setStreamError(
+        error instanceof Error
+          ? `Не удалось отправить запрос: ${error.message}`
+          : agentFailureMessage,
+      );
+    } finally {
+      setStreaming(false);
+    }
+  }
+
+  async function cancelDisclosure() {
+    const pending = pendingDisclosure;
+    setPendingDisclosure(null);
+    if (!pending) return;
+    await api(`/ai/disclosures/${pending.disclosure.operationId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }).catch(() => undefined);
+  }
+
+  async function runStream(message: string, disclosureOperationId?: string) {
     const previousMessages = messages.map(
       ({ id, role: messageRole, content }) => ({
         id,
@@ -99,6 +193,8 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
     const userId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
     let assistantContent = "";
+    let terminalReason: "completed" | "failed" | "cancelled" | null = null;
+    let streamReportedError = false;
     setMessages((current) => [
       ...current,
       {
@@ -110,55 +206,79 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
       { id: assistantId, role: "assistant", label: role, content: "" },
     ]);
     setInput("");
-    setStreaming(true);
-    setStreamError(null);
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      for await (const event of streamAgent(
-        { role, message },
+      stream: for await (const event of streamAgent(
+        {
+          role,
+          message,
+          ...(disclosureOperationId ? { disclosureOperationId } : {}),
+        },
         controller.signal,
       )) {
-        if (event.type === "message.delta") {
-          assistantContent += event.content ?? "";
-          setMessages((current) =>
-            current.map((entry) =>
-              entry.id === assistantId
-                ? { ...entry, content: entry.content + (event.content ?? "") }
-                : entry,
-            ),
-          );
+        switch (event.type) {
+          case "message.delta":
+            assistantContent += event.content;
+            setMessages((current) =>
+              current.map((entry) =>
+                entry.id === assistantId
+                  ? { ...entry, content: entry.content + event.content }
+                  : entry,
+              ),
+            );
+            break;
+          case "message.completed":
+            assistantContent = event.content;
+            setMessages((current) =>
+              current.map((entry) =>
+                entry.id === assistantId
+                  ? { ...entry, content: event.content }
+                  : entry,
+              ),
+            );
+            break;
+          case "error":
+            streamReportedError = true;
+            assistantContent = agentFailureMessage;
+            setMessages((current) =>
+              current.map((entry) =>
+                entry.id === assistantId
+                  ? { ...entry, content: agentFailureMessage }
+                  : entry,
+              ),
+            );
+            break;
+          case "session.completed":
+            terminalReason = event.reason;
+            break stream;
         }
-        if (event.type === "tool.started")
-          setTools((current) => [
-            ...current,
-            `${event.name ?? "tool"}: запущен`,
-          ]);
-        if (event.type === "tool.completed")
-          setTools((current) => [
-            ...current,
-            `${event.name ?? "tool"}: завершён`,
-          ]);
-        if (event.type === "error") {
-          assistantContent = event.message ?? "Не удалось получить ответ";
-          setMessages((current) =>
-            current.map((entry) =>
-              entry.id === assistantId
-                ? {
-                    ...entry,
-                    content: event.message ?? "Не удалось получить ответ",
-                  }
-                : entry,
-            ),
-          );
-        }
+      }
+
+      if (terminalReason === "cancelled") {
+        assistantContent = agentCancellationMessage;
+      } else if (
+        terminalReason === "failed" ||
+        terminalReason === null ||
+        streamReportedError
+      ) {
+        assistantContent = agentFailureMessage;
+      }
+      if (terminalReason !== "completed" || streamReportedError) {
+        setMessages((current) =>
+          current.map((entry) =>
+            entry.id === assistantId
+              ? { ...entry, content: assistantContent }
+              : entry,
+          ),
+        );
       }
     } catch (error) {
       assistantContent = controller.signal.aborted
-        ? "Ответ остановлен."
+        ? agentCancellationMessage
         : error instanceof Error
           ? `Не удалось получить ответ: ${error.message}`
-          : "Не удалось получить ответ.";
+          : agentFailureMessage;
       if (!controller.signal.aborted) setStreamError(assistantContent);
       setMessages((current) =>
         current.map((entry) =>
@@ -170,9 +290,11 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
     } finally {
       const finalContent =
         assistantContent ||
-        (controller.signal.aborted
-          ? "Ответ остановлен."
-          : "Агент завершил ответ без текста.");
+        (controller.signal.aborted || terminalReason === "cancelled"
+          ? agentCancellationMessage
+          : terminalReason === "completed"
+            ? "Агент завершил ответ без текста."
+            : agentFailureMessage);
       queryClient.setQueryData(["agent-history", role], {
         messages: [
           ...previousMessages,
@@ -189,36 +311,29 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
           ),
         );
       }
-      setStreaming(false);
+      abortRef.current = null;
     }
   }
 
-  const selection = settings.data
-    ? role === "teacher"
+  const aptiloopRole =
+    role === "reviewer"
+      ? "reviewer"
+      : role === "teacher" || role === "codex-expert"
+        ? "tutor"
+        : "evaluator";
+  const roleProfile = settings.data?.ai.roleProfiles.find(
+    (profile) => profile.role === aptiloopRole,
+  );
+  const connection = settings.data?.ai.connections.find(
+    (candidate) => candidate.connectionId === roleProfile?.connectionId,
+  );
+  const selection =
+    roleProfile?.mode === "connection"
       ? {
-          provider: settings.data.teacherProvider,
-          model: settings.data.teacherModel,
+          provider: connection?.displayName ?? "Unavailable",
+          model: roleProfile.modelId ?? "No model",
         }
-      : role === "reviewer"
-        ? {
-            provider: settings.data.reviewerProvider,
-            model: settings.data.reviewerModel,
-          }
-        : role === "interviewer"
-          ? {
-              provider: settings.data.interviewerProvider,
-              model: settings.data.interviewerModel,
-            }
-          : role === "codex-expert"
-            ? {
-                provider: settings.data.codexExpertProvider,
-                model: settings.data.codexExpertModel,
-              }
-            : {
-                provider: settings.data.curatorProvider,
-                model: settings.data.curatorModel,
-              }
-    : { provider: "Mock", model: "loading" };
+      : { provider: "AI Off", model: "Manual path" };
 
   return (
     <section
@@ -244,7 +359,9 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
             </Button>
           ))}
         </div>
-        <Badge variant="success">
+        <Badge
+          variant={roleProfile?.mode === "connection" ? "success" : "outline"}
+        >
           {selection.provider} · {selection.model}
         </Badge>
       </div>
@@ -390,6 +507,54 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
           )}
         </div>
       </div>
+      <AlertDialog
+        open={pendingDisclosure !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDisclosure(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Отправить данные внешнему AI?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Разрешение действует один раз только для указанного запроса.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {pendingDisclosure ? (
+            <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 text-sm">
+              <div>
+                <dt className="font-medium">Получатель</dt>
+                <dd className="text-muted-foreground">
+                  {pendingDisclosure.disclosure.scope.destination}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-medium">Данные</dt>
+                <dd className="text-muted-foreground">
+                  {pendingDisclosure.disclosure.scope.payloadCategories.join(
+                    ", ",
+                  )}{" "}
+                  · {pendingDisclosure.disclosure.scope.byteCount} bytes
+                </dd>
+              </div>
+              <div>
+                <dt className="font-medium">Не отправляется</dt>
+                <dd className="text-muted-foreground">
+                  {pendingDisclosure.disclosure.scope.exclusions.join(", ")}
+                </dd>
+              </div>
+            </dl>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => void cancelDisclosure()}>
+              Не отправлять
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={() => void approveDisclosure()}>
+              Разрешить один раз
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

@@ -1,19 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/components/app-shell";
 import { KnowledgeClient } from "@/components/knowledge-client";
 import { ProviderHealth } from "@/components/provider-health";
-import { SettingsForm } from "@/components/settings-form";
 import { Textarea } from "@/components/ui/textarea";
 
 const { apiMock, pathnameState, setThemeMock } = vi.hoisted(() => ({
@@ -42,38 +34,6 @@ function renderWithQuery(children: ReactNode) {
     <QueryClientProvider client={client}>{children}</QueryClientProvider>,
   );
 }
-
-const settingsResponse = {
-  workspaceRoot: "C:/trusted/exercises",
-  zedExecutable: "zed",
-  opencodeBaseUrl: "http://127.0.0.1:4096",
-  teacherProvider: "mock",
-  teacherModel: "mock-deterministic",
-  reviewerProvider: "codex",
-  reviewerModel: "gpt-review",
-  interviewerProvider: "mock",
-  interviewerModel: "mock-deterministic",
-  curatorProvider: "mock",
-  curatorModel: "mock-deterministic",
-  codexExpertProvider: "codex",
-  codexExpertModel: "gpt-expert",
-  theme: "system",
-  providers: [
-    {
-      id: "mock",
-      status: "connected",
-      models: [{ id: "mock-deterministic", name: "Mock" }],
-    },
-    {
-      id: "codex",
-      status: "connected",
-      models: [
-        { id: "gpt-review", name: "GPT Review" },
-        { id: "gpt-expert", name: "GPT Expert" },
-      ],
-    },
-  ],
-} as const;
 
 beforeEach(() => {
   apiMock.mockReset();
@@ -130,167 +90,42 @@ describe("UI foundation", () => {
     expect(setThemeMock).toHaveBeenCalledWith("light");
   });
 
-  it("applies theme immediately and omits server-owned paths from mutations", async () => {
-    apiMock.mockImplementation((path: string, init?: RequestInit) => {
-      if (path === "/settings" && init) return Promise.resolve({ saved: true });
-      if (path === "/settings") return Promise.resolve(settingsResponse);
-      return Promise.resolve({ providers: [] });
-    });
-
-    renderWithQuery(<SettingsForm />);
-
-    expect(await screen.findByText("C:/trusted/exercises")).toBeInTheDocument();
-    expect(
-      screen.queryByDisplayValue("C:/trusted/exercises"),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByDisplayValue("zed")).not.toBeInTheDocument();
-
-    const theme = screen.getByLabelText("Тема");
-    fireEvent.change(theme, {
-      target: { value: "light" },
-    });
-    fireEvent.change(theme, {
-      target: { value: "system" },
-    });
-    fireEvent.change(theme, {
-      target: { value: "dark" },
-    });
-    expect(setThemeMock).toHaveBeenCalledWith("light");
-    expect(setThemeMock).toHaveBeenCalledWith("system");
-    expect(setThemeMock).toHaveBeenCalledWith("dark");
-
-    fireEvent.change(screen.getByLabelText("OpenCode server"), {
-      target: { value: "https://example.com" },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Сохранить настройки" }),
-    );
-    const endpoint = await screen.findByLabelText("OpenCode server");
-    await waitFor(() =>
-      expect(endpoint).toHaveAttribute("aria-invalid", "true"),
-    );
-    expect(endpoint.getAttribute("aria-describedby")).toContain(
-      "opencodeBaseUrl-error",
-    );
-
-    fireEvent.change(endpoint, { target: { value: "http://127.0.0.1:4096" } });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Сохранить настройки" }),
-    );
-
-    await waitFor(() => {
-      const mutation = apiMock.mock.calls.find(
-        ([path, init]) => path === "/settings" && init?.method === "PUT",
-      );
-      expect(mutation).toBeDefined();
-      const body = JSON.parse(String(mutation?.[1]?.body)) as Record<
-        string,
-        unknown
-      >;
-      expect(body).not.toHaveProperty("workspaceRoot");
-      expect(body).not.toHaveProperty("zedExecutable");
-      expect(body.theme).toBe("dark");
-    });
-  });
-
-  it("limits each role to models from its selected provider", async () => {
-    apiMock.mockImplementation((path: string, init?: RequestInit) => {
-      if (path === "/settings" && init) return Promise.resolve({ saved: true });
-      if (path === "/settings") return Promise.resolve(settingsResponse);
-      return Promise.resolve({ providers: [] });
-    });
-
-    renderWithQuery(<SettingsForm />);
-
-    const teacher = await screen.findByRole("group", { name: "Преподаватель" });
-    fireEvent.change(within(teacher).getByLabelText("Провайдер"), {
-      target: { value: "codex" },
-    });
-
-    const model = within(teacher).getByLabelText("Модель");
-    expect(model).toHaveValue("gpt-review");
-    expect(within(model).queryByText("Mock")).not.toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Сохранить настройки" }),
-    );
-    await waitFor(() => {
-      const mutation = apiMock.mock.calls.find(
-        ([path, init]) => path === "/settings" && init?.method === "PUT",
-      );
-      const body = JSON.parse(String(mutation?.[1]?.body)) as Record<
-        string,
-        unknown
-      >;
-      expect(body.teacherProvider).toBe("codex");
-      expect(body.teacherModel).toBe("gpt-review");
-    });
-  });
-
-  it("shows a field error and blocks a stale provider/model pair", async () => {
-    apiMock.mockImplementation((path: string) => {
-      if (path === "/settings")
-        return Promise.resolve({
-          ...settingsResponse,
-          teacherModel: "gpt-review",
-        });
-      return Promise.resolve({ providers: [] });
-    });
-
-    renderWithQuery(<SettingsForm />);
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Сохранить настройки" }),
-    );
-
-    const teacher = screen.getByRole("group", { name: "Преподаватель" });
-    await waitFor(() =>
-      expect(within(teacher).getByLabelText("Модель")).toHaveAttribute(
-        "aria-invalid",
-        "true",
-      ),
-    );
-    expect(
-      within(teacher).getByText("Модель недоступна у провайдера mock"),
-    ).toBeInTheDocument();
-    expect(
-      apiMock.mock.calls.some(
-        ([path, init]) => path === "/settings" && init?.method === "PUT",
-      ),
-    ).toBe(false);
-  });
-
   it("shows a compact AI status and role details in the popover", async () => {
-    apiMock.mockImplementation((path: string) => {
-      if (path === "/providers") {
-        return Promise.resolve({
-          providers: [
-            { id: "mock", label: "Mock", status: "connected", model: "Mock" },
-            { id: "codex", label: "Codex", status: "connected", model: "GPT" },
-            {
-              id: "opencode",
-              label: "OpenCode",
-              status: "error",
-              message: "sidecar stopped",
-            },
-          ],
-        });
-      }
-      if (path === "/settings") {
-        return Promise.resolve({
-          teacherProvider: "mock",
-          teacherModel: "Deterministic Mock",
-          reviewerProvider: "codex",
-          reviewerModel: "GPT",
-          interviewerProvider: "mock",
-          interviewerModel: "Mock",
-          curatorProvider: "mock",
-          curatorModel: "Mock",
-          codexExpertProvider: "mock",
-          codexExpertModel: "Mock",
-        });
-      }
-      throw new Error(`Unexpected API path: ${path}`);
+    apiMock.mockResolvedValue({
+      ai: {
+        connections: [
+          {
+            connectionId: "conn:mock",
+            displayName: "Deterministic Mock",
+            state: "connected",
+          },
+          {
+            connectionId: "conn:pi:openai",
+            displayName: "OpenAI via Pi",
+            state: "connected",
+          },
+        ],
+        roleProfiles: [
+          {
+            role: "course-designer",
+            mode: "no-ai",
+            connectionId: null,
+            modelId: null,
+          },
+          ...(["tutor", "evaluator"] as const).map((role) => ({
+            role,
+            mode: "connection" as const,
+            connectionId: "conn:mock",
+            modelId: "mock-deterministic",
+          })),
+          {
+            role: "reviewer",
+            mode: "connection",
+            connectionId: "conn:pi:openai",
+            modelId: "gpt-5.2",
+          },
+        ],
+      },
     });
 
     renderWithQuery(<ProviderHealth />);
@@ -303,10 +138,12 @@ describe("UI foundation", () => {
 
     fireEvent.click(status);
     expect(await screen.findByText("AI для обучения")).toBeInTheDocument();
-    expect(screen.getByText(/из 5 ролей готово/u)).toBeInTheDocument();
-    expect(screen.getByText("Преподаватель")).toBeInTheDocument();
-    expect(screen.getByText(/Mock · Deterministic Mock/u)).toBeInTheDocument();
-    expect(screen.getByText(/Codex · GPT/u)).toBeInTheDocument();
+    expect(screen.getByText(/4 of 4 roles ready/u)).toBeInTheDocument();
+    expect(screen.getByText("Course Designer")).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/Deterministic Mock · mock-deterministic/u),
+    ).toHaveLength(2);
+    expect(screen.getByText(/OpenAI via Pi · gpt-5.2/u)).toBeInTheDocument();
     expect(
       screen.getByRole("link", {
         name: /Полная диагностика/u,

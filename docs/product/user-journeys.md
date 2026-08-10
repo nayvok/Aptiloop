@@ -25,7 +25,7 @@ Every role is optional where a manual path is defined. Pi supplies model/runtime
 2. Home reports independent readiness for Aptiloop Core, SQLite, filesystem/workspace root, configured Node/Python environments, external editor, and optional AI providers.
 3. A Core/storage/filesystem problem blocks the affected action and provides local recovery guidance.
 4. An optional AI problem does not masquerade as a Core failure. The user can continue through a complete manual path.
-5. The user selects interface locale `en-US` or `ru-RU`; this does not select a Course locale.
+5. With no saved UI locale, the user explicitly confirms `en-US` or `ru-RU`; the picker is prefilled from a supported browser/OS locale and otherwise defaults to `en-US`. This does not select or prefill a Course locale.
 6. With no installed Course, the primary action is to create one manually or import a Course Pack.
 
 Privacy result: no account, telemetry, upload, provider request, or sharing action occurs during launch.
@@ -36,7 +36,7 @@ Privacy result: no account, telemetry, upload, provider request, or sharing acti
 
 1. From Home empty state or Courses, the user chooses **Create Course** at `/courses/new`.
 2. The user chooses **Create manually** or **Describe a learning goal**. Both produce the same local Draft contract; AI Off keeps the manual path complete.
-3. In guided mode, the user provides a natural-language goal, target outcome, current level, preferred language, time/pacing, tools, accessibility needs, and constraints.
+3. In guided mode, the user provides a natural-language goal, target outcome, current level, primary Course locale, time/pacing, tools, accessibility needs, and constraints. The UI locale remains independent.
 4. Course Designer asks bounded discovery questions and may offer an optional diagnostic through questions or a practical task. Skip remains available. Before any external provider receives content, the transmission review names provider/model, destination, payload categories, selected entities, exclusions, and retention disclosure.
 5. The curriculum proposal shows finite structure and sequencing, prerequisites, sources, capsules, activity/evidence types, Node/Python requirements, trusted check references, estimates, assumptions, and provider/model provenance.
 6. The user edits fields, requests revision, rejects, or explicitly confirms compilation. Confirmation creates only a local Draft and cannot publish.
@@ -174,6 +174,6 @@ Recovery:
 
 **Implemented baseline**
 
-The Dev Learning Harness already demonstrates parts of Journeys 4–6: start/resume, multiple activities, isolated exercise attempt, allowlisted `npm test`, diff-bound read-only review, correction, deterministic summary/mastery, and restart-safe interview/session behavior. It also has a draft Curriculum Editor related to Journey 2 and local flashcard export related to Journey 10.
+The Dev Learning Harness now demonstrates parts of Journeys 1–6 and 10: Course Pack V1 validation/Preview/install/export, immutable Course/session context, deterministic kernel-owned progression and replay, multiple activities, trusted local Node exercise checks, diff-bound read-only review/correction, deterministic summary/mastery/review projections, restart-safe interview/session behavior, and local flashcard export. It also retains the legacy draft Curriculum Editor related to Journey 2. Adaptive Studio, production Course content, complete target navigation/localization, and real Pi/provider roles remain unimplemented.
 
-It does not implement the full first-run Course flow, Course Packs, personal adaptation, target locale separation, target navigation, generic environment/check contracts, Pi typed tools, or complete manual/AI state model. Current E2E is red, so even baseline journeys are not an approval claim.
+It does not implement the complete first-run target Course flow, personal-adaptation application, UI locale separation, target navigation/identity, Adaptive Studio, Pi typed tools/provider roles, or the complete manual/AI state model. M3–M5 local acceptance proves the current Course Pack, deterministic-kernel, and trusted execution slices; it is not production-content, public-distribution, or complete Core Alpha approval.

@@ -43,34 +43,30 @@ afterEach(cleanup);
 
 describe("core learning screens", () => {
   it("shows the connected provider and active model", async () => {
-    apiMock.mockImplementation((path: string) => {
-      if (path === "/providers") {
-        return Promise.resolve({
-          providers: [
-            {
-              id: "mock",
-              label: "Mock",
-              status: "connected",
-              model: "Deterministic Mock",
-            },
-          ],
-        });
-      }
-      if (path === "/settings") {
-        return Promise.resolve({
-          teacherProvider: "mock",
-          teacherModel: "Deterministic Mock",
-          reviewerProvider: "mock",
-          reviewerModel: "Deterministic Mock",
-          interviewerProvider: "mock",
-          interviewerModel: "Deterministic Mock",
-          curatorProvider: "mock",
-          curatorModel: "Deterministic Mock",
-          codexExpertProvider: "mock",
-          codexExpertModel: "Deterministic Mock",
-        });
-      }
-      throw new Error(`Unexpected API path: ${path}`);
+    apiMock.mockResolvedValue({
+      ai: {
+        connections: [
+          {
+            connectionId: "conn:mock",
+            displayName: "Deterministic Mock",
+            state: "connected",
+          },
+        ],
+        roleProfiles: [
+          {
+            role: "course-designer",
+            mode: "no-ai",
+            connectionId: null,
+            modelId: null,
+          },
+          ...(["tutor", "evaluator", "reviewer"] as const).map((role) => ({
+            role,
+            mode: "connection" as const,
+            connectionId: "conn:mock",
+            modelId: "mock-deterministic",
+          })),
+        ],
+      },
     });
 
     renderWithQuery(<ProviderHealth />);
@@ -81,7 +77,8 @@ describe("core learning screens", () => {
     expect(status).toHaveAttribute("data-state", "ready");
     fireEvent.click(status);
     expect(
-      (await screen.findAllByText(/Mock · Deterministic Mock/u)).length,
+      (await screen.findAllByText(/Deterministic Mock · mock-deterministic/u))
+        .length,
     ).toBeGreaterThan(0);
   });
 
@@ -143,7 +140,12 @@ describe("core learning screens", () => {
       criteria: ["Проверены поля"],
       constraints: ["Без any"],
       topics: ["unknown"],
-      workspacePath: "C:/attempts/attempt-1",
+      workspace: {
+        id: "workspace-1",
+        generation: 1,
+        environmentId: "apt.compat.node24.local.v1",
+        trust: "trusted-local-unsandboxed",
+      },
       attempt: {
         id: "attempt-1",
         changed: true,
@@ -159,6 +161,7 @@ describe("core learning screens", () => {
           status: "passed",
           exitCode: 0,
           output: "all tests passed",
+          result: null,
           workspaceCurrent: true,
         },
         latestReview: {
@@ -174,6 +177,7 @@ describe("core learning screens", () => {
             },
           ],
           strengths: ["Чистая функция"],
+          evidenceBundle: null,
         },
       },
     });

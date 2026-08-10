@@ -1,6 +1,6 @@
 # Core Alpha Migration Strategy
 
-Status: **Approved Core Alpha target** for migration safety and target boundaries. Existing legacy and versioned schemas are an **Implemented baseline**. No Course/CourseRevision/Activity/Evidence/ReviewItem migration described here is claimed as implemented.
+Status: M2 additive Course foundations, M3 Course Pack lifecycle, M4 deterministic Learning Kernel persistence, and M5 Execution Fabric identity are an **Implemented baseline**. Legacy removal and PostgreSQL stages remain **Approved Core Alpha target**.
 
 ## Objective
 
@@ -16,6 +16,26 @@ Migrate additively from the legacy curriculum and current versioned-curriculum s
 
 The migration must preserve every old row and stored snapshot, record how each target row was derived, quarantine anything that cannot be mapped safely, avoid automatic database/content merges, and retain a tested compatibility period before removal.
 
+## M2 implemented migration record
+
+**Implemented baseline (2026-08-09):** migrations `0006_course_foundations` and `0007_quarantined_course_compatibility` add the target Course graph, source/capsule, adaptation, session-context, Evidence, Review Item, migration-run, provenance, and quarantine tables without dropping or rewriting source objects. `0008_m2_acceptance_corrections` preserves parent lineage, adds legacy publish guards, and binds an immutable `m2-v2` correction run. `0009_m2_acceptance_hardening` freezes accepted revision metadata, enforces source parent scope and snapshot-envelope identity, and closes remaining target ownership/append-only gaps with an immutable `m2-v3` run. `0010_m2_quarantine_immutability` freezes every quarantined source revision used as compatibility evidence and records the exact approved backup in an immutable `m2-v4` run. Fresh and migrated databases converge on schema SHA-256 `a6a1543e468e3dbb90494bc6e5d5598933e22dd0cf49a9830f82ee695eda5a01` and ledger `0000`–`0010`.
+
+The valuable active database was selected only at `.data/dev-learning-harness.sqlite`, inventoried read-only, and rehearsed on disposable copies before every active write. Four distinct active-source-only rollback artifacts were approved: pre-M2 `.data/approved-backups/2026-08-09T15-00-16Z-pre-m2-active.sqlite` (`501338c295589d8367a31a1082ef7469ca0e22bb91e6a3123abdb94b70220f1b`), pre-`0008` `.data/approved-backups/2026-08-09T16-19-35Z-pre-m2-correction-active.sqlite` (`a09332dde7732b43b2ca6b9734bd5201fc6d71449c7c3d7303824d845418af09`), pre-`0009` `.data/approved-backups/2026-08-09T22-54-00Z-pre-m2-hardening-active.sqlite` (`9dc4b6af0c5e5a9b73cfa3e4f38240703d023f37ada6c3e0fa297dbe4aa22da2`), and pre-`0010` `.data/approved-backups/2026-08-09T23-34-00Z-pre-m2-quarantine-immutability-active.sqlite` (`bc325e8314117a3eb073ae015a5daf72ec3b4ea3f7f74aadfbfbe34a25c57f4d`). Each backup is standalone, healthy, immutable at its cutoff, and logically bound to its migration run.
+
+The active reconciliation is complete as accounting, not as content promotion: 572 source rows equal 2 mapped + 526 quarantined + 44 intentionally unmapped. There are zero invalid provenance statuses and zero target orphans. Existing snapshots and hashes were unchanged. Quarantined records remain source history and cannot become target truth without a later explicit reconciliation. Target read cutover is limited to Course discovery/path and exact session Course context; the default global-current and legacy persistence bridge remain bounded compatibility seams.
+
+There is no down migration. Whole-file recovery from one of the four named approved backups returns exactly to that artifact's cutoff and discards every later write. The operational sequence and observed identities are in [the M2 runbook](m2-course-foundations-runbook.md).
+
+## M3–M5 additive migration record
+
+**Implemented baseline (2026-08-10):** `0011_course_pack_lifecycle` adds immutable manifest, installation, staging, provenance, and quarantine records without allowing raw invalid bytes into active storage. Import is hash-confirmed and transactional; uninstall archives the installation and preserves Course/session/evidence history.
+
+`0012_learning_kernel` adds append-only accepted facts, immutable projection history, a rebuildable current projection, mastery/mistake/review state, and provenance/quarantine. Reconciliation maps only provable legacy progress and quarantines ambiguous summaries. Versioned operations persist kernel facts before derived projections, and replay from one accepted frontier reproduces canonical bytes/hash.
+
+`0013_execution_fabric` adds immutable Environment Pack and trusted-check descriptors, exact environment/check IDs on attempts and test runs, snapshot-bound structured artifacts, immutable review evidence bundles, and execution migration quarantine. Existing `commandId: "test"` maps to the finite app-owned compatibility contract; no attempt or source row is rewritten or deleted.
+
+These migrations use the same explicit inventory, approved non-overwriting backup, exact-ledger admission, transaction rollback, and whole-file recovery discipline established for M2. The current exact schema is `0000`–`0013`; ordinary startup rejects predecessor ledgers, while only the backup-bound migration CLI may advance an admitted exact predecessor.
+
 ## Implemented baseline and known hazards
 
 The current SQLite database contains two overlapping models.
@@ -29,12 +49,12 @@ The current SQLite database contains two overlapping models.
 ### Versioned graph
 
 - `curricula`, `curriculum_versions`, `curriculum_weeks`, `curriculum_days_v2`, and `curriculum_units` are the closest current seams to Course, CourseRevision, and Activity;
-- `session_snapshots` preserves one immutable captured graph per versioned session;
-- `unit_progress`, `hint_usages_v2`, and `versioned_unit_evidence` preserve versioned progress/evidence, but several unit/question relationships are text IDs enforced only in application logic;
+- `session_snapshots` stores one creation-time hashed captured graph per versioned session; M2 immutability guards prevent later repair/rewrite of stored snapshot JSON or hashes;
+- `unit_progress`, `hint_usages_v2`, and `versioned_unit_evidence` remain readable legacy projections, while new versioned operations also emit kernel facts through the M4 adapter;
 - `learning_sessions` still requires a legacy day and optionally references a versioned day;
 - global active-session and `learner_state(id='default')` assumptions remain single-course compatibility constraints.
 
-Migration 0001 already preserves a legacy revision and snapshots, but it also abandons all but the newest globally active session. TypeScript compatibility hooks can rebuild `unit_progress`, infer missing types as `study`, and normalize malformed progress/snapshots. These operations are transaction-protected in flight but have no down migration after commit. This strategy must not repeat silent semantic defaults.
+Migration `0001` historically preserved a legacy revision and snapshots while abandoning all but the newest globally active session. The M2 guards now prohibit snapshot rewrites and the M4 reconciliation refuses to invent missing fact meaning; compatibility rows remain readable but no longer establish target kernel authority.
 
 ## Invariants
 
@@ -59,15 +79,15 @@ Inventory is read-only and precedes selection or backup.
 
 At minimum inspect, when present:
 
-1. `DATABASE_URL`, resolved relative to `DATABASE_PROJECT_ROOT`/repository root and with a leading `file:` handled explicitly;
+1. any historical `DATABASE_URL` or operator path, supplied explicitly to read-only inventory as `--db` rather than opened by runtime;
 2. `.data/dev-learning-harness.sqlite`;
 3. `data/dev-learning-harness.sqlite`;
 4. historical workspace-relative candidates such as `packages/database/.data/dev-learning-harness.sqlite`;
-5. any operator-supplied path from an earlier installation.
+5. any other operator-supplied path from an earlier installation.
 
 Treat each `.sqlite` plus its `-wal` and `-shm` sidecars as one candidate family. A 4 KiB main file with a populated WAL can contain current data; file size alone is not authority.
 
-The current backup helper discovers the configured path plus repository `.data` and `data`. The broader historical-workspace search and operator confirmation are target requirements, not current automatic behavior.
+**Implemented baseline:** `npm run db:inventory` requires explicit `--root`/`--db` inputs, groups main/WAL/SHM families, discovers backup SQLite files recursively without following symlinks, inspects disposable copies, and reports health/migrations plus aggregate raw/tool/review counts without content. Runtime plus writable `db:migrate`/`db:seed` reject every candidate except active `.data/dev-learning-harness.sqlite` before opening; Compose permits exactly `/data/dev-learning-harness.sqlite`, and tests require explicit disposable mode. The approved backup command accepts only the active source after a complete-table preflight and writes a new file under `.data/approved-backups/`. Rich M2 schema/provenance reconciliation remains future.
 
 ### Inventory record
 
@@ -109,13 +129,13 @@ Before any migration write:
 1. stop/quiesce writers and hold the maintenance boundary;
 2. require healthy source `integrity_check` and `foreign_key_check`;
 3. create a timestamped, unique destination different from the source;
-4. use SQLite `VACUUM INTO` or an equivalently consistent SQLite backup API so committed WAL state is included;
+4. use the Node `node:sqlite` online `backup()` API, or an equivalently consistent SQLite backup API, so committed WAL state is included;
 5. refuse an existing destination and never overwrite an earlier backup;
 6. open the backup read-only and require the same health checks;
 7. compare schema fingerprint, table counts, migration markers, snapshots, and selected canonical hashes;
 8. write a backup manifest containing source/backup identity, hashes, counts, tool/app version, timestamp, and verification result.
 
-The existing `createDatabaseBackup` primitive implements the strong source/destination health, same-file, no-overwrite, and `VACUUM INTO` controls. The migration CLI does not currently require it; making preflight backup mandatory is target work.
+The implemented backup boundary restricts source and destination, repeats health/private-payload preflight, uses the Node `node:sqlite` online `backup()` API, refuses overwrite, and binds the produced logical digest to the approved source snapshot. M2 adds explicit `--authorize-m2` maintenance authorization: the migration CLI requires the exact named backup path and file SHA-256, re-verifies stable source/backup identity and lineage, performs an exact recovery-copy rehearsal, and rejects partial, stale, wrong-path, wrong-hash, or already-diverged inputs before writing.
 
 A backup created after migration is useful operationally but is not a pre-migration rollback point.
 
@@ -166,12 +186,12 @@ Backfill in parent-before-child order within bounded transactions and record a r
 
 ### Course and revision mapping
 
-| Source | Target | Rule |
-| --- | --- | --- |
-| `curricula` | `Course` | Deterministic ID from source ID; preserve slug/title/description and record source row hash. |
-| `curriculum_versions` | `CourseRevision` | Preserve revision, status, parent, content hash, and timestamps; reject/quarantine cross-course parents or duplicate revision conflicts. |
-| `curriculum_weeks`, `curriculum_days_v2` | Revision graph/group metadata | Preserve stable IDs, order, titles, and source JSON; do not flatten away provenance. |
-| `curriculum_units` | `Activity` | Preserve stable ID/type/order/payload and exact revision membership; validate finite graph and protected fields. |
+| Source                                       | Target                                             | Rule                                                                                                                                                                                                   |
+| -------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `curricula`                                  | `Course`                                           | Deterministic ID from source ID; preserve slug/title/description and record source row hash.                                                                                                           |
+| `curriculum_versions`                        | `CourseRevision`                                   | Preserve revision, status, parent, content hash, and timestamps; reject/quarantine cross-course parents or duplicate revision conflicts.                                                               |
+| `curriculum_weeks`, `curriculum_days_v2`     | Revision graph/group metadata                      | Preserve stable IDs, order, titles, and source JSON; do not flatten away provenance.                                                                                                                   |
+| `curriculum_units`                           | `Activity`                                         | Preserve stable ID/type/order/payload and exact revision membership; validate finite graph and protected fields.                                                                                       |
 | legacy `curriculum_days/questions/exercises` | Activities in an explicit imported legacy revision | Preserve original IDs and rows. Do not treat legacy live content as the current Course revision. `workspace_path`/allowed operations are historical provenance, not executable target manifest fields. |
 
 Existing `session_snapshots` remain byte-preserved. A target snapshot projection may reference their digest and parse them through a versioned adapter, but the migration must not rewrite the stored JSON/hash. When an old snapshot is malformed, quarantine the projection and keep the bytes.
@@ -276,7 +296,7 @@ Restoring loses all writes after the backup cutoff. After dual-write begins, dec
 
 Tests and migration rehearsals must never use the normal `DATABASE_URL` or any discovered candidate in place. Test setup must create a new temporary directory/file or `:memory:` database, inject its absolute path, and assert it differs canonically from all inventory paths. A persisted-data rehearsal starts from a separate verified copy and produces a disposable output; it never migrates the backup in place.
 
-The audit observed that a disposable SQLite migrate and seed repeated twice succeeded with 7 days and 14 topics. That is baseline evidence for idempotent current setup, not proof that the target migration or real persisted databases are safe.
+The audit observed that a disposable SQLite migrate and seed repeated twice succeeded with 7 days, 14 topics, 5 curriculum versions, and 324 units; integrity and foreign-key checks passed, and the backup CLI produced a non-overwriting integrity-checked copy. That is baseline evidence for idempotent current setup, not proof that the target migration or real persisted databases are safe.
 
 ### Required fixture matrix
 

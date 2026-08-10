@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted product constraint; implementation pending approval gate
+Approved Core Alpha target
 
 ## Date
 
@@ -42,7 +42,7 @@ A Course Pack is a declarative, schema-versioned description of one `Course` and
 
 ## Implementation status
 
-**Implemented baseline:** the repository has versioned curriculum rows, stable unit IDs, published-content guards, immutable session snapshots, protected learner DTOs, and a strict curriculum editor. It does not have Course Pack serialization, bounded import/export, locale separation, pack validation, or pack installation. Current trusted exercise templates remain outside this contract.
+**Implemented baseline:** the repository has versioned curriculum rows, stable unit IDs, published-content guards, creation-time hashed session snapshots, protected learner DTOs, and a strict curriculum editor. Current repair hooks can rewrite older snapshot bytes. It does not have Course Pack serialization, bounded import/export, locale separation, pack validation, or pack installation. Current trusted exercise templates remain outside this contract.
 
 **Approved Core Alpha target:** the declarative contract above is normative; no future package or importer is claimed to exist.
 

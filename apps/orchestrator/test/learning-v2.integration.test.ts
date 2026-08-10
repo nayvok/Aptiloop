@@ -2,13 +2,36 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import {
+  createCurriculumAuthoringRepository,
+  hashCanonicalJson,
+  createLearningKernelRepository,
+  type DatabaseConnection,
+} from "@dlh/database";
+import { learningKernelSha256 } from "@dlh/learning-core";
 import { SessionSnapshotSchema } from "@dlh/shared";
+import type { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { createApp } from "../src/app.js";
 
 const runtimes: Array<ReturnType<typeof createApp>> = [];
 const roots: string[] = [];
+const ClonedRevisionResponseSchema = z.object({
+  version: z.object({ id: z.string() }),
+});
+const RevisionGraphIdentitySchema = z.object({
+  curriculum: z.object({
+    weeks: z.array(
+      z.object({
+        days: z.array(
+          z.object({ units: z.array(z.object({ id: z.string() })) }),
+        ),
+      }),
+    ),
+  }),
+});
 
 afterEach(async () => {
   for (const runtime of runtimes.splice(0)) await runtime.close();
@@ -25,6 +48,7 @@ function createRuntime(databasePath?: string) {
   const created = createApp({
     projectRoot: path.resolve("../.."),
     databasePath: databasePath ?? path.join(root, "test.sqlite"),
+    databaseMode: "disposable",
   });
   runtimes.push(created);
   return {
@@ -33,20 +57,92 @@ function createRuntime(databasePath?: string) {
   };
 }
 
-function request(
-  app: ReturnType<typeof createApp>["app"],
-  pathname: string,
-  init?: RequestInit,
-) {
-  return app.request(pathname, {
+function request(app: Hono, pathname: string, init?: RequestInit) {
+  return app.request(`http://127.0.0.1:8787${pathname}`, {
     ...init,
     headers: {
+      Host: "127.0.0.1:8787",
       "X-DLH-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
       ...init?.headers,
     },
   });
+}
+async function cloneAndPublishActiveRevision(
+  app: Hono,
+  parentRevisionId: string,
+  operationPrefix: string,
+  mutateFirstUnit = false,
+): Promise<string> {
+  const cloned = await request(
+    app,
+    `/api/curriculum-editor/versions/${parentRevisionId}/clone`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        operationId: `${operationPrefix}-clone`,
+        title: `${operationPrefix} revision`,
+      }),
+    },
+  );
+  if (cloned.status !== 201) {
+    throw new Error(`Revision clone failed: ${cloned.status}`);
+  }
+  const clone = ClonedRevisionResponseSchema.parse(await cloned.json());
+  if (mutateFirstUnit) {
+    const graph = RevisionGraphIdentitySchema.parse(
+      await (
+        await request(
+          app,
+          `/api/curriculum-editor/versions/${clone.version.id}`,
+        )
+      ).json(),
+    );
+    const firstUnitId = graph.curriculum.weeks[0]?.days[0]?.units[0]?.id;
+    if (!firstUnitId) throw new Error("Cloned revision has no first unit");
+    const changed = await request(
+      app,
+      `/api/curriculum-editor/versions/${clone.version.id}/units/${firstUnitId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          operationId: `${operationPrefix}-change-unit`,
+          title: `${operationPrefix} changed activity`,
+        }),
+      },
+    );
+    if (changed.status !== 200) {
+      throw new Error(`Revision activity change failed: ${changed.status}`);
+    }
+  }
+  const published = await request(
+    app,
+    `/api/curriculum-editor/versions/${clone.version.id}/publish`,
+    {
+      method: "POST",
+      body: JSON.stringify({ operationId: `${operationPrefix}-publish` }),
+    },
+  );
+  if (published.status !== 200) {
+    throw new Error(`Revision publish failed: ${published.status}`);
+  }
+  return clone.version.id;
+}
+
+type QuarantinedSourceTable =
+  "curriculum_versions" | "curriculum_days_v2" | "session_snapshots";
+
+function sourceRowHash(
+  connection: DatabaseConnection,
+  table: QuarantinedSourceTable,
+  id: string,
+): string {
+  const row = connection.sqlite
+    .prepare(`SELECT * FROM ${table} WHERE id = ?`)
+    .get(id) as Record<string, unknown> | undefined;
+  if (!row) throw new Error(`Missing ${table} source row: ${id}`);
+  return hashCanonicalJson(row);
 }
 
 interface LearnerUnit {
@@ -66,7 +162,20 @@ interface LearnerSession {
   id: string;
   status: string;
   currentStep: string;
-  snapshot: { day: { id: string }; units: LearnerUnit[] };
+  courseContext: {
+    courseId: string;
+    revisionId: string;
+    lessonId: string;
+    sessionSnapshotId: string;
+    snapshotHash: string;
+  };
+  snapshot: {
+    contentHash: string;
+    curriculumId: string;
+    curriculumVersionId: string;
+    day: { id: string };
+    units: LearnerUnit[];
+  };
   unitProgress: Array<{
     unitId: string;
     status: string;
@@ -179,30 +288,24 @@ function completionPayload(unit: LearnerUnit): Record<string, unknown> {
   }
 }
 
-function completePrecedingDaysForDaySeven(
+async function completePrecedingDaysForDaySeven(
   state: ReturnType<typeof createApp>["state"],
   dayIds: readonly string[],
 ) {
-  const legacyDay = state.connection.sqlite
-    .prepare("SELECT id FROM curriculum_days ORDER BY id LIMIT 1")
-    .get() as { id: string };
   const now = Date.now();
-  const insert = state.connection.sqlite.prepare(
-    `INSERT INTO learning_sessions
-     (id, day_id, status, current_step, idempotency_key, started_at,
-      completed_at, updated_at, curriculum_day_v2_id)
-     VALUES (?, ?, 'completed', 'complete', ?, ?, ?, ?, ?)`,
-  );
   for (const [index, dayId] of dayIds.entries()) {
-    insert.run(
-      `day-seven-prerequisite-${index + 1}`,
-      legacyDay.id,
-      `day-seven-prerequisite-operation-${index + 1}`,
-      now,
-      now,
-      now,
+    const detail = await state.repository.startOrResumeVersionedSession({
       dayId,
-    );
+      idempotencyKey: `day-seven-prerequisite-operation-${index + 1}`,
+    });
+    state.connection.sqlite
+      .prepare(
+        `UPDATE learning_sessions
+         SET status = 'completed', current_step = 'complete', completed_at = ?,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(now, now, detail.session.id);
   }
 }
 
@@ -282,6 +385,43 @@ async function startDaySevenAtInterview(
        WHERE session_id = ? AND unit_id = ?`,
     )
     .run(Date.now(), Date.now(), session.id, interviewUnit.id);
+  const kernel = createLearningKernelRepository(runtime.state.connection);
+  const scope = kernel.resolveSessionScope(session.id);
+  const activities = kernel.listActivities(scope);
+  const baseTime = Date.now() - activities.length * 4;
+  let sequence = 0;
+  for (const [index, activity] of activities.entries()) {
+    const sourceId = `interview-fixture-${session.id}-${activity.id}`;
+    const sourceHash = learningKernelSha256({ sourceId });
+    kernel.accept(scope, {
+      operationId: `${sourceId}-start`,
+      factId: `${sourceId}-start-fact`,
+      observedAt: new Date(baseTime + sequence++).toISOString(),
+      provenance: {
+        kind: "learner_submission",
+        sourceId,
+        sourceHash,
+      },
+      body: { type: "progress", activityId: activity.id, transition: "start" },
+    });
+    if (session.snapshot.units[index]?.id === interviewUnit.id) break;
+    kernel.accept(scope, {
+      operationId: `${sourceId}-complete`,
+      factId: `${sourceId}-complete-fact`,
+      observedAt: new Date(baseTime + sequence++).toISOString(),
+      provenance: {
+        kind: "deterministic_evaluator",
+        sourceId,
+        sourceHash,
+        evaluatorVersion: "interview-fixture-v1",
+      },
+      body: {
+        type: "progress",
+        activityId: activity.id,
+        transition: "complete",
+      },
+    });
+  }
   return { session, interviewUnit };
 }
 
@@ -298,7 +438,7 @@ async function startDaySeven(runtime: ReturnType<typeof createRuntime>) {
     (day) => day.stableId === "w1d7-integration-checkpoint",
   );
   if (!daySeven) throw new Error("Day 7 fixture is missing");
-  completePrecedingDaysForDaySeven(
+  await completePrecedingDaysForDaySeven(
     runtime.state,
     days.filter((day) => day.id !== daySeven.id).map((day) => day.id),
   );
@@ -314,6 +454,90 @@ async function startDaySeven(runtime: ReturnType<typeof createRuntime>) {
 }
 
 describe("versioned learning API", () => {
+  it("exposes deterministic kernel state and idempotent learner transitions", async () => {
+    const runtime = createRuntime();
+    const learningPath = (await (
+      await request(runtime.app, "/api/learning/path")
+    ).json()) as {
+      curriculum: { weeks: Array<{ days: Array<{ id: string }> }> };
+    };
+    const day = learningPath.curriculum.weeks[0]?.days[0];
+    if (!day) throw new Error("Seeded learning day is unavailable");
+    const started = await request(runtime.app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId: day.id,
+        operationId: "direct-kernel-session",
+      }),
+    });
+    expect(started.status).toBe(201);
+    const session = ((await started.json()) as { session: LearnerSession })
+      .session;
+    const initial = await request(
+      runtime.app,
+      `/api/learning/sessions/v2/${session.id}/kernel`,
+    );
+    expect(initial.status).toBe(200);
+    const initialBody = (await initial.json()) as {
+      projection: {
+        projectionHash: string;
+        nextAction: { type: string; activityId?: string };
+      };
+    };
+    expect(initialBody.projection.nextAction.type).toBe("activity");
+    const activityId = initialBody.projection.nextAction.activityId;
+    if (!activityId) throw new Error("Kernel did not select an activity");
+    const endpoint = `/api/learning/sessions/v2/${session.id}/kernel/activities/${activityId}/transitions`;
+    const transitionBody = JSON.stringify({
+      operationId: "direct-kernel-start",
+      transition: "start",
+    });
+    const first = await request(runtime.app, endpoint, {
+      method: "POST",
+      body: transitionBody,
+    });
+    expect(first.status, await first.clone().text()).toBe(201);
+    const firstBody = (await first.json()) as {
+      idempotent: boolean;
+      projection: {
+        projectionHash: string;
+        progress: Array<{ unitId: string; status: string }>;
+      };
+    };
+    expect(firstBody.idempotent).toBe(false);
+    expect(firstBody.projection.progress).toContainEqual({
+      unitId: activityId,
+      status: "in_progress",
+    });
+
+    const replay = await request(runtime.app, endpoint, {
+      method: "POST",
+      body: transitionBody,
+    });
+    expect(replay.status, await replay.clone().text()).toBe(200);
+    const replayBody = (await replay.json()) as typeof firstBody;
+    expect(replayBody.idempotent).toBe(true);
+    expect(replayBody.projection.projectionHash).toBe(
+      firstBody.projection.projectionHash,
+    );
+
+    const forgedComplete = await request(runtime.app, endpoint, {
+      method: "POST",
+      body: JSON.stringify({
+        operationId: "direct-kernel-forged-complete",
+        transition: "complete",
+      }),
+    });
+    expect(forgedComplete.status).toBe(400);
+    const factCount = runtime.state.connection.sqlite
+      .prepare(
+        `SELECT COUNT(*) AS count FROM learning_kernel_facts
+         WHERE operation_id = 'kernel:direct-kernel-start'`,
+      )
+      .get() as { count: number };
+    expect(factCount.count).toBe(1);
+  });
+
   it("completes the interview unit only with three persisted answers and a report", async () => {
     const runtime = createRuntime();
     const { session, interviewUnit } = await startDaySevenAtInterview(runtime);
@@ -322,6 +546,7 @@ describe("versioned learning API", () => {
     const forged = await request(runtime.app, endpoint, {
       method: "PATCH",
       body: JSON.stringify({
+        operationId: "day7-interview-forged-complete",
         status: "completed",
         payload: {
           type: "interview",
@@ -341,6 +566,7 @@ describe("versioned learning API", () => {
     const complete = await request(runtime.app, endpoint, {
       method: "PATCH",
       body: JSON.stringify({
+        operationId: "day7-interview-real-complete",
         status: "completed",
         payload: {
           type: "interview",
@@ -366,6 +592,7 @@ describe("versioned learning API", () => {
     const incomplete = await request(runtime.app, endpoint, {
       method: "PATCH",
       body: JSON.stringify({
+        operationId: "day7-interview-incomplete-complete",
         status: "completed",
         payload: {
           type: "interview",
@@ -385,6 +612,7 @@ describe("versioned learning API", () => {
     const missingReport = await request(runtime.app, endpoint, {
       method: "PATCH",
       body: JSON.stringify({
+        operationId: "day7-interview-no-report-complete",
         status: "completed",
         payload: {
           type: "interview",
@@ -405,9 +633,12 @@ describe("versioned learning API", () => {
       const endpoint = `/api/learning/sessions/v2/${session.id}/units/${unit.id}`;
       const started = await request(runtime.app, endpoint, {
         method: "PATCH",
-        body: JSON.stringify({ status: "in_progress" }),
+        body: JSON.stringify({
+          operationId: `day7-start-${unit.id}`,
+          status: "in_progress",
+        }),
       });
-      expect(started.status, `start ${unit.stableId}`).toBe(200);
+      expect(started.status, await started.clone().text()).toBe(200);
 
       let payload = completionPayload(unit);
       if (unit.type === "recall") {
@@ -424,7 +655,7 @@ describe("versioned learning API", () => {
               }),
             },
           );
-          expect(response.status).toBe(201);
+          expect(response.status, await response.clone().text()).toBe(201);
           session = ((await response.json()) as { session: LearnerSession })
             .session;
         }
@@ -507,7 +738,7 @@ describe("versioned learning API", () => {
             }),
           },
         );
-        expect(response.status).toBe(201);
+        expect(response.status, await response.clone().text()).toBe(201);
         session = ((await response.json()) as { session: LearnerSession })
           .session;
         payload = unitProgressPayload(session, unit.id);
@@ -612,7 +843,11 @@ describe("versioned learning API", () => {
 
       const complete = await request(runtime.app, endpoint, {
         method: "PATCH",
-        body: JSON.stringify({ status: "completed", payload }),
+        body: JSON.stringify({
+          operationId: `day7-complete-${unit.id}`,
+          status: "completed",
+          payload,
+        }),
       });
       expect(complete.status, `complete ${unit.stableId}`).toBe(200);
       session = ((await complete.json()) as { session: LearnerSession })
@@ -628,19 +863,115 @@ describe("versioned learning API", () => {
     expect(await current.json()).toEqual({ session: null });
   });
 
-  it("returns a learner-safe path and no current session initially", async () => {
+  it("lists every Course and keeps path responses learner-safe", async () => {
     const { app } = createRuntime();
-    const pathResponse = await request(app, "/api/learning/path");
-    expect(pathResponse.status).toBe(200);
-    const body = (await pathResponse.json()) as Record<string, unknown>;
-    const keys = collectKeys(body);
-    expect(keys).not.toContain("referenceAnswer");
-    expect(keys).not.toContain("evaluationPoints");
-    expect(keys).not.toContain("correctOptionIds");
-    expect(keys).not.toContain("correctQuestionIds");
-    expect(keys).not.toContain("commonMistakes");
-    expect(keys).not.toContain("misconceptions");
-    expect(keys).not.toContain("protectedEvaluation");
+    const coursesResponse = await request(app, "/api/learning/courses");
+    expect(coursesResponse.status).toBe(200);
+    const coursesBody = (await coursesResponse.json()) as {
+      courses: Array<{
+        id: string;
+        stableId: string;
+        title: string;
+        description: string | null;
+        primaryLocale: string;
+        revisions: Array<{
+          id: string;
+          revisionNumber: number;
+          status: string;
+          branchKind: string;
+          contentHash: string;
+        }>;
+      }>;
+    };
+    expect(coursesBody.courses.map((course) => course.id)).toEqual(
+      [...coursesBody.courses.map((course) => course.id)].sort(),
+    );
+    expect(coursesBody.courses.map((course) => course.id)).toEqual(
+      expect.arrayContaining([
+        "curriculum-foundation",
+        "curriculum-legacy-bridge",
+      ]),
+    );
+    for (const course of coursesBody.courses) {
+      expect(
+        course.revisions.map((revision) => revision.revisionNumber),
+      ).toEqual(
+        [...course.revisions.map((revision) => revision.revisionNumber)].sort(
+          (left, right) => left - right,
+        ),
+      );
+    }
+
+    const foundation = coursesBody.courses.find(
+      (course) => course.id === "curriculum-foundation",
+    );
+    const publishedRevision = foundation?.revisions.find(
+      (revision) => revision.status === "published",
+    );
+    if (!foundation || !publishedRevision) {
+      throw new Error("Published foundation Course fixture is missing");
+    }
+    const explicitPathResponse = await request(
+      app,
+      `/api/learning/courses/${foundation.id}/revisions/${publishedRevision.id}/path`,
+    );
+    expect(explicitPathResponse.status).toBe(200);
+    const explicitPath = (await explicitPathResponse.json()) as {
+      courseContext: { courseId: string; revisionId: string };
+      curriculum: { id: string; version: { id: string } };
+    };
+    expect(explicitPath.courseContext).toEqual({
+      courseId: foundation.id,
+      revisionId: publishedRevision.id,
+    });
+    expect(explicitPath.curriculum).toMatchObject({
+      id: foundation.id,
+      version: { id: publishedRevision.id },
+    });
+
+    const compatibilityPathResponse = await request(app, "/api/learning/path");
+    expect(compatibilityPathResponse.status).toBe(200);
+    const compatibilityPath =
+      (await compatibilityPathResponse.json()) as Record<string, unknown>;
+    const keys = collectKeys({ coursesBody, explicitPath, compatibilityPath });
+    for (const forbidden of [
+      "referenceAnswer",
+      "evaluationPoints",
+      "correctOptionIds",
+      "correctQuestionIds",
+      "commonMistakes",
+      "misconceptions",
+      "protectedEvaluation",
+      "protectedMaterial",
+      "path",
+      "command",
+      "provider",
+      "credential",
+      "executable",
+    ]) {
+      expect(keys).not.toContain(forbidden);
+    }
+
+    const mismatched = await request(
+      app,
+      `/api/learning/courses/curriculum-legacy-bridge/revisions/${publishedRevision.id}/path`,
+    );
+    expect(mismatched.status).toBe(400);
+    const legacy = coursesBody.courses.find(
+      (course) => course.id === "curriculum-legacy-bridge",
+    );
+    if (!legacy) throw new Error("Archived legacy Course fixture is missing");
+    const archivedRevision = legacy.revisions.find(
+      (revision) => revision.status === "archived",
+    );
+    if (!archivedRevision) {
+      throw new Error("Archived legacy Course fixture is missing");
+    }
+    const archived = await request(
+      app,
+      `/api/learning/courses/${legacy.id}/revisions/${archivedRevision.id}/path`,
+    );
+    expect(archived.status).toBe(400);
 
     const current = await request(app, "/api/learning/sessions/current");
     expect(current.status).toBe(200);
@@ -648,7 +979,7 @@ describe("versioned learning API", () => {
   });
 
   it("rejects a locked day and resumes the active day idempotently", async () => {
-    const { app } = createRuntime();
+    const { app, state } = createRuntime();
     const pathBody = (await (
       await request(app, "/api/learning/path")
     ).json()) as {
@@ -662,7 +993,8 @@ describe("versioned learning API", () => {
     });
     expect(locked.status).toBe(400);
     expect(await locked.json()).toEqual({
-      error: "Learning day is locked until preceding days are completed",
+      error:
+        "Learning day is locked until its declared prerequisites are completed",
     });
 
     const first = await request(app, "/api/learning/sessions/v2", {
@@ -672,6 +1004,18 @@ describe("versioned learning API", () => {
     expect(first.status).toBe(201);
     const firstSession = ((await first.json()) as { session: LearnerSession })
       .session;
+    const snapshotBinding = state.connection.sqlite
+      .prepare(
+        "SELECT id, content_hash FROM session_snapshots WHERE session_id = ?",
+      )
+      .get(firstSession.id) as { id: string; content_hash: string };
+    expect(firstSession.courseContext).toEqual({
+      courseId: firstSession.snapshot.curriculumId,
+      revisionId: firstSession.snapshot.curriculumVersionId,
+      lessonId: firstSession.snapshot.day.id,
+      sessionSnapshotId: snapshotBinding.id,
+      snapshotHash: snapshotBinding.content_hash,
+    });
 
     const replay = await request(app, "/api/learning/sessions/v2", {
       method: "POST",
@@ -681,6 +1025,7 @@ describe("versioned learning API", () => {
     const replaySession = ((await replay.json()) as { session: LearnerSession })
       .session;
     expect(replaySession.id).toBe(firstSession.id);
+    expect(replaySession.courseContext).toEqual(firstSession.courseContext);
 
     const current = (
       (await (await request(app, "/api/learning/sessions/current")).json()) as {
@@ -689,74 +1034,641 @@ describe("versioned learning API", () => {
     ).session;
     expect(current.id).toBe(firstSession.id);
     expect(current.status).toBe("active");
+    expect(current.courseContext).toEqual(firstSession.courseContext);
   });
 
-  it("keeps an active session resumable after a newer curriculum revision is published", async () => {
+  it("rejects a frozen legacy-v1 target before creating a session", async () => {
     const { app, state } = createRuntime();
+    const identifiers = [
+      "legacy-v1",
+      "legacy-start-week",
+      "legacy-start-lesson",
+      "legacy-start-activity",
+    ][Symbol.iterator]();
+    const authoring = createCurriculumAuthoringRepository(state.connection, {
+      id: () => {
+        const next = identifiers.next();
+        if (next.done) throw new Error("Legacy fixture exhausted IDs");
+        return next.value;
+      },
+      now: () => 10_000,
+    });
+    const draft = await authoring.createDraft({
+      curriculum: {
+        id: "legacy-start-course",
+        slug: "legacy-start-course",
+        title: "Legacy start Course",
+      },
+      title: "Frozen legacy revision",
+    });
+    const week = await authoring.addWeek({
+      versionId: draft.id,
+      stableId: "legacy-start-week",
+      title: "Legacy week",
+    });
+    const lesson = await authoring.addDay({
+      versionId: draft.id,
+      weekId: week.id,
+      stableId: "legacy-start-lesson",
+      title: "Legacy lesson",
+      goal: "Stay read-only",
+      estimatedMinutes: 10,
+      depthLevel: "foundation",
+    });
+    await authoring.addUnit({
+      versionId: draft.id,
+      dayId: lesson.id,
+      stableId: "legacy-start-activity",
+      type: "briefing",
+      title: "Legacy activity",
+      completionCriteria: [{ type: "acknowledgement" }],
+      depthLevel: "foundation",
+      payload: { type: "briefing", scope: [] },
+    });
+    await authoring.publishVersion(draft.id);
+    const countSessions = () =>
+      z
+        .object({ count: z.number().int().nonnegative() })
+        .parse(
+          state.connection.sqlite
+            .prepare("SELECT count(*) AS count FROM learning_sessions")
+            .get(),
+        ).count;
+    const before = countSessions();
+
+    const response = await request(app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId: lesson.id,
+        operationId: "reject-frozen-legacy-target",
+      }),
+    });
+
+    expect(response.status).toBe(410);
+    expect(await response.json()).toEqual({
+      error:
+        "Legacy learning mutations are frozen; use /api/learning/sessions/v2",
+    });
+    expect(countSessions()).toBe(before);
+  });
+
+  it("resumes only explicitly quarantined legacy session bindings", async () => {
+    const { app, state } = createRuntime();
+    const pathBody = z
+      .object({
+        curriculum: z.object({
+          weeks: z.array(
+            z.object({ days: z.array(z.object({ id: z.string() })) }),
+          ),
+        }),
+      })
+      .parse(await (await request(app, "/api/learning/path")).json());
+    const lessonId = pathBody.curriculum.weeks[0]!.days[0]!.id;
+    const startedResponse = await request(app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId: lessonId,
+        operationId: "quarantined-session-compatibility",
+      }),
+    });
+    expect(startedResponse.status).toBe(201);
+    const sessionResponseSchema = z.object({
+      session: z.object({
+        id: z.string(),
+        courseContext: z.object({
+          courseId: z.string(),
+          revisionId: z.string(),
+          lessonId: z.string(),
+          sessionSnapshotId: z.string(),
+          snapshotHash: z.string(),
+        }),
+      }),
+    });
+    const session = sessionResponseSchema.parse(
+      await startedResponse.json(),
+    ).session;
+
+    expect(() =>
+      state.connection.sqlite
+        .prepare("DELETE FROM session_course_contexts WHERE session_id = ?")
+        .run(session.id),
+    ).toThrow(/immutable/u);
+    state.connection.sqlite.exec(
+      "DROP TRIGGER session_course_contexts_immutable_delete_guard",
+    );
     state.connection.sqlite
-      .prepare(
-        `UPDATE curricula
-         SET active_version_id = 'curriculum-foundation-v2-r2'
-         WHERE id = 'curriculum-foundation'`,
-      )
-      .run();
-    const revisionTwoPath = (await (
+      .prepare("DELETE FROM session_course_contexts WHERE session_id = ?")
+      .run(session.id);
+    const unaccounted = await request(app, "/api/learning/sessions/current");
+    expect(unaccounted.status).toBe(400);
+    expect(await unaccounted.json()).toEqual({
+      error: "Learning session has no Course context",
+    });
+
+    const snapshot = z
+      .object({ id: z.string() })
+      .parse(
+        state.connection.sqlite
+          .prepare("SELECT id FROM session_snapshots WHERE session_id = ?")
+          .get(session.id),
+      );
+    const run = z
+      .object({ id: z.string(), source_database_digest: z.string() })
+      .parse(
+        state.connection.sqlite
+          .prepare(
+            `SELECT id, source_database_digest FROM migration_runs
+             WHERE transform_version = 'm2-v1'`,
+          )
+          .get(),
+      );
+    const insertProvenance = state.connection.sqlite.prepare(
+      `INSERT INTO migration_provenance
+       (id, run_id, source_database_digest, source_table, source_primary_key,
+        source_row_hash, target_entity_type, target_id, transform_version,
+        status, reason_code, diagnostic, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 'm2-v1', 'quarantined', ?, ?, ?)`,
+    );
+    const sources = [
+      [
+        "curriculum_versions",
+        session.courseContext.revisionId,
+        "CROSS_SCOPE_PARENT_REVISION",
+      ],
+      ["curriculum_days_v2", lessonId, "MALFORMED_LESSON"],
+      ["session_snapshots", snapshot.id, "MALFORMED_SESSION_CONTEXT"],
+    ] as const;
+    sources.forEach(([sourceTable, sourceId, reasonCode], index) => {
+      insertProvenance.run(
+        `compatibility-provenance-${index}`,
+        run.id,
+        run.source_database_digest,
+        sourceTable,
+        sourceId,
+        sourceRowHash(state.connection, sourceTable, sourceId),
+        reasonCode,
+        "Explicit test quarantine for legacy compatibility",
+        index + 1,
+      );
+    });
+
+    const compatible = await request(app, "/api/learning/sessions/current");
+    expect(compatible.status).toBe(200);
+    const compatibleSession = sessionResponseSchema.parse(
+      await compatible.json(),
+    ).session;
+    expect(compatibleSession.courseContext).toEqual(session.courseContext);
+  });
+
+  it("fails closed when resume bindings lose their snapshot hash or activity IDs", async () => {
+    const { app, state } = createRuntime();
+    const pathBody = (await (
       await request(app, "/api/learning/path")
     ).json()) as {
-      curriculum: {
-        weeks: Array<{
-          days: Array<{ id: string; stableId: string }>;
-        }>;
-      };
+      curriculum: { weeks: Array<{ days: Array<{ id: string }> }> };
     };
-    const revisionTwoDay = revisionTwoPath.curriculum.weeks[0]!.days[0]!;
+    const lesson = pathBody.curriculum.weeks[0]!.days[0]!;
     const started = await request(app, "/api/learning/sessions/v2", {
       method: "POST",
       body: JSON.stringify({
-        dayId: revisionTwoDay.id,
-        operationId: "revision-two-session",
+        dayId: lesson.id,
+        operationId: "resume-integrity-session",
       }),
     });
     expect(started.status).toBe(201);
-    const startedSession = (await started.json()) as {
-      session: { id: string };
+    const startedBody = (await started.json()) as {
+      session: LearnerSession;
     };
+    const session = startedBody.session;
+    const sourceSnapshot = state.connection.sqlite
+      .prepare(
+        "SELECT content_hash FROM session_snapshots WHERE session_id = ?",
+      )
+      .get(session.id) as { content_hash: string };
+
+    state.connection.sqlite.exec(
+      "DROP TRIGGER session_snapshots_immutable_update_guard",
+    );
+    state.connection.sqlite
+      .prepare(
+        "UPDATE session_snapshots SET content_hash = ? WHERE session_id = ?",
+      )
+      .run("0".repeat(64), session.id);
+    const hashMismatch = await request(
+      app,
+      `/api/learning/sessions/v2/${session.id}`,
+    );
+    expect(hashMismatch.status).toBe(400);
 
     state.connection.sqlite
       .prepare(
-        `UPDATE curricula
-         SET active_version_id = 'curriculum-foundation-v2-r3'
-         WHERE id = 'curriculum-foundation'`,
+        "UPDATE session_snapshots SET content_hash = ? WHERE session_id = ?",
       )
-      .run();
-    const revisionThreePath = (await (
+      .run(sourceSnapshot.content_hash, session.id);
+    const firstProgress = state.connection.sqlite
+      .prepare(
+        `SELECT id FROM unit_progress
+         WHERE session_id = ? ORDER BY id LIMIT 1`,
+      )
+      .get(session.id) as { id: string };
+    state.connection.sqlite
+      .prepare("UPDATE unit_progress SET unit_id = ? WHERE id = ?")
+      .run("cross-scope-activity", firstProgress.id);
+    const activityMismatch = await request(
+      app,
+      `/api/learning/sessions/v2/${session.id}`,
+    );
+    expect(activityMismatch.status).toBe(400);
+  });
+
+  it("reads only an exact quarantined compatibility path after the current session ends", async () => {
+    const { app, state } = createRuntime();
+    const initialPath = z
+      .object({
+        courseContext: z.object({
+          courseId: z.string(),
+          revisionId: z.string(),
+        }),
+        curriculum: z.object({
+          weeks: z.array(
+            z.object({ days: z.array(z.object({ id: z.string() })) }),
+          ),
+        }),
+      })
+      .parse(await (await request(app, "/api/learning/path")).json());
+    const lessonId = initialPath.curriculum.weeks[0]!.days[0]!.id;
+    const started = await request(app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId: lessonId,
+        operationId: "quarantined-path-current-session",
+      }),
+    });
+    expect(started.status).toBe(201);
+    const session = z
+      .object({
+        session: z.object({
+          id: z.string(),
+          courseContext: z.object({
+            courseId: z.string(),
+            revisionId: z.string(),
+            lessonId: z.string(),
+            sessionSnapshotId: z.string(),
+          }),
+        }),
+      })
+      .parse(await started.json()).session;
+
+    state.connection.sqlite.exec(
+      "DROP TRIGGER session_course_contexts_immutable_delete_guard",
+    );
+    state.connection.sqlite
+      .prepare("DELETE FROM session_course_contexts WHERE session_id = ?")
+      .run(session.id);
+    const endedAt = Date.now();
+    state.connection.sqlite
+      .prepare(
+        `UPDATE learning_sessions
+         SET status = 'abandoned', updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(endedAt, session.id);
+    state.connection.sqlite
+      .prepare(
+        `UPDATE learner_state
+         SET current_learning_session_id = NULL, updated_at = ?
+         WHERE id = 'default'`,
+      )
+      .run(endedAt);
+    expect(
+      await (await request(app, "/api/learning/sessions/current")).json(),
+    ).toEqual({ session: null });
+
+    state.connection.sqlite.exec(
+      `PRAGMA foreign_keys = OFF;
+       DROP TRIGGER course_revisions_accepted_delete_guard;`,
+    );
+    state.connection.sqlite
+      .prepare("DELETE FROM course_revisions WHERE id = ?")
+      .run(session.courseContext.revisionId);
+    state.connection.sqlite.exec("PRAGMA foreign_keys = ON;");
+    const unaccounted = await request(app, "/api/learning/path");
+    expect(unaccounted.status).toBe(404);
+    expect(await unaccounted.json()).toEqual({
+      error: `Unknown Course revision: ${session.courseContext.revisionId}`,
+    });
+
+    const migrationRun = z
+      .object({ id: z.string(), source_database_digest: z.string() })
+      .parse(
+        state.connection.sqlite
+          .prepare(
+            `SELECT id, source_database_digest FROM migration_runs
+             WHERE transform_version = 'm2-v1'`,
+          )
+          .get(),
+      );
+    const insertProvenance = state.connection.sqlite.prepare(
+      `INSERT INTO migration_provenance
+       (id, run_id, source_database_digest, source_table, source_primary_key,
+        source_row_hash, target_entity_type, target_id, transform_version,
+        status, reason_code, diagnostic, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 'm2-v1', 'quarantined', ?, ?, ?)`,
+    );
+    const sources = [
+      [
+        "curriculum_versions",
+        session.courseContext.revisionId,
+        "CROSS_SCOPE_PARENT_REVISION",
+      ],
+      ["curriculum_days_v2", lessonId, "MALFORMED_LESSON"],
+      [
+        "session_snapshots",
+        session.courseContext.sessionSnapshotId,
+        "MALFORMED_SESSION_CONTEXT",
+      ],
+    ] as const;
+    sources.forEach(([sourceTable, sourceId, reasonCode], index) => {
+      insertProvenance.run(
+        `quarantined-path-provenance-${index}`,
+        migrationRun.id,
+        migrationRun.source_database_digest,
+        sourceTable,
+        sourceId,
+        sourceRowHash(state.connection, sourceTable, sourceId),
+        reasonCode,
+        "Explicit test quarantine for exact legacy path compatibility",
+        endedAt + index + 1,
+      );
+    });
+
+    const compatible = await request(app, "/api/learning/path");
+    expect(compatible.status).toBe(200);
+    const compatiblePath = z
+      .object({
+        courseContext: z.object({
+          courseId: z.string(),
+          revisionId: z.string(),
+        }),
+        curriculum: z.object({
+          id: z.string(),
+          version: z.object({ id: z.string() }),
+        }),
+      })
+      .parse(await compatible.json());
+    expect(compatiblePath.courseContext).toEqual({
+      courseId: session.courseContext.courseId,
+      revisionId: session.courseContext.revisionId,
+    });
+    expect(compatiblePath.curriculum).toMatchObject({
+      id: session.courseContext.courseId,
+      version: { id: session.courseContext.revisionId },
+    });
+
+    state.connection.sqlite.exec(
+      `DROP TRIGGER curriculum_versions_quarantined_update_guard;
+       DROP TRIGGER curriculum_versions_published_update_guard;`,
+    );
+    state.connection.sqlite
+      .prepare(
+        `UPDATE curriculum_versions SET updated_at = updated_at + 1
+         WHERE id = ?`,
+      )
+      .run(session.courseContext.revisionId);
+    const tampered = await request(app, "/api/learning/path");
+    expect(tampered.status).toBe(404);
+    expect(await tampered.json()).toEqual({
+      error: `Unknown Course revision: ${session.courseContext.revisionId}`,
+    });
+  });
+
+  it("keeps an active session bound to its exact Course revision", async () => {
+    const { app } = createRuntime();
+    const initialPath = (await (
       await request(app, "/api/learning/path")
     ).json()) as {
+      courseContext: { courseId: string; revisionId: string };
       curriculum: {
-        version: { revision: number };
+        version: { id: string; revision: number };
         weeks: Array<{
           days: Array<{
             id: string;
             stableId: string;
-            status: string;
-            sessionId: string | null;
-            units: Array<{ stableId: string; status: string }>;
+            units: Array<{ id: string; stableId: string; status: string }>;
           }>;
         }>;
       };
     };
-    const resumedDay = revisionThreePath.curriculum.weeks[0]!.days[0]!;
-    expect(revisionThreePath.curriculum.version.revision).toBe(3);
-    expect(resumedDay.id).not.toBe(revisionTwoDay.id);
-    expect(resumedDay.stableId).toBe(revisionTwoDay.stableId);
+    const initialDay = initialPath.curriculum.weeks[0]!.days[0]!;
+    const started = await request(app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId: initialDay.id,
+        operationId: "pinned-revision-session",
+      }),
+    });
+    expect(started.status).toBe(201);
+    const startedSession = (
+      (await started.json()) as { session: LearnerSession }
+    ).session;
+
+    const nextRevisionId = await cloneAndPublishActiveRevision(
+      app,
+      initialPath.courseContext.revisionId,
+      "pinned-next",
+    );
+    const resumedPath = (await (
+      await request(app, "/api/learning/path")
+    ).json()) as typeof initialPath;
+    const resumedDay = resumedPath.curriculum.weeks[0]!.days[0]!;
+    expect(resumedPath.courseContext).toEqual({
+      courseId: startedSession.courseContext.courseId,
+      revisionId: startedSession.courseContext.revisionId,
+    });
+    expect(resumedDay.id).toBe(initialDay.id);
     expect(resumedDay).toMatchObject({
       status: "in_progress",
-      sessionId: startedSession.session.id,
+      sessionId: startedSession.id,
     });
     expect(resumedDay.units[0]?.status).toBe("ready");
     expect(
       resumedDay.units.slice(1).every((unit) => unit.status === "locked"),
     ).toBe(true);
+
+    const nextRevisionResponse = await request(
+      app,
+      `/api/learning/courses/${initialPath.courseContext.courseId}/revisions/${nextRevisionId}/path`,
+    );
+    expect(nextRevisionResponse.status).toBe(200);
+    const nextRevisionPath =
+      (await nextRevisionResponse.json()) as typeof initialPath;
+    const nextRevisionDay = nextRevisionPath.curriculum.weeks[0]!.days[0]!;
+    expect(nextRevisionPath.courseContext.revisionId).toBe(nextRevisionId);
+    expect(nextRevisionDay.id).not.toBe(initialDay.id);
+    expect(nextRevisionDay.stableId).toBe(initialDay.stableId);
+
+    const crossRevisionActivity = await request(
+      app,
+      `/api/learning/sessions/v2/${startedSession.id}/units/${nextRevisionDay.units[0]!.id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          operationId: "cross-revision-activity-start",
+          status: "in_progress",
+        }),
+      },
+    );
+    expect(crossRevisionActivity.status).toBe(404);
+    const unchanged = (await (
+      await request(app, `/api/learning/sessions/v2/${startedSession.id}`)
+    ).json()) as { session: LearnerSession };
+    expect(unchanged.session.courseContext).toEqual(
+      startedSession.courseContext,
+    );
+    expect(unchanged.session.unitProgress[0]?.status).toBe("ready");
+  });
+
+  it("does not transfer changed lesson completion across Course revisions", async () => {
+    const { app, state } = createRuntime();
+    const completeSession = (sessionId: string) => {
+      const completedAt = Date.now();
+      state.connection.sqlite
+        .prepare(
+          `UPDATE learning_sessions
+           SET status = 'completed', current_step = 'complete', completed_at = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(completedAt, completedAt, sessionId);
+    };
+    const RevisionPathSchema = z.object({
+      courseContext: z.object({
+        courseId: z.string(),
+        revisionId: z.string(),
+      }),
+      curriculum: z.object({
+        version: z.object({
+          id: z.string(),
+          revision: z.number(),
+          contentHash: z.string(),
+        }),
+        weeks: z.array(
+          z.object({
+            days: z.array(
+              z.object({
+                id: z.string(),
+                stableId: z.string(),
+                status: z.string(),
+                units: z.array(
+                  z.object({
+                    id: z.string(),
+                    stableId: z.string(),
+                    title: z.string(),
+                    status: z.string(),
+                  }),
+                ),
+              }),
+            ),
+          }),
+        ),
+      }),
+    });
+    const SessionIdResponseSchema = z.object({
+      session: z.object({ id: z.string() }),
+    });
+
+    const sourceResponse = await request(app, "/api/learning/path");
+    expect(sourceResponse.status).toBe(200);
+    const sourcePath = RevisionPathSchema.parse(await sourceResponse.json());
+    const sourceDays = sourcePath.curriculum.weeks[0]!.days;
+    const sourceDayOne = sourceDays[0]!;
+    const sourceStarted = await request(app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId: sourceDayOne.id,
+        operationId: "complete-source-revision-day-one",
+      }),
+    });
+    expect(sourceStarted.status).toBe(201);
+    const sourceSession = SessionIdResponseSchema.parse(
+      await sourceStarted.json(),
+    ).session;
+    completeSession(sourceSession.id);
+
+    const nextRevisionId = await cloneAndPublishActiveRevision(
+      app,
+      sourcePath.courseContext.revisionId,
+      "isolated-next",
+      true,
+    );
+    const nextResponse = await request(app, "/api/learning/path");
+    expect(nextResponse.status).toBe(200);
+    const nextPath = RevisionPathSchema.parse(await nextResponse.json());
+    const nextDays = nextPath.curriculum.weeks[0]!.days;
+    const nextDayOne = nextDays[0]!;
+    const nextDayTwo = nextDays[1]!;
+
+    expect(nextPath.courseContext.revisionId).toBe(nextRevisionId);
+    expect(nextPath.curriculum.version.contentHash).not.toBe(
+      sourcePath.curriculum.version.contentHash,
+    );
+    expect(nextDayOne.id).not.toBe(sourceDayOne.id);
+    expect(nextDayOne.stableId).toBe(sourceDayOne.stableId);
+    expect(nextDayOne.units[0]!.title).not.toBe(sourceDayOne.units[0]!.title);
+    expect(nextDayOne.status).toBe("available");
+    expect(nextDayTwo.status).toBe("locked");
+
+    const crossRevisionUnlock = await request(
+      app,
+      "/api/learning/sessions/v2",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          dayId: nextDayTwo.id,
+          operationId: "cross-revision-day-two",
+        }),
+      },
+    );
+    expect(crossRevisionUnlock.status).toBe(400);
+    expect(await crossRevisionUnlock.json()).toEqual({
+      error:
+        "Learning day is locked until its declared prerequisites are completed",
+    });
+
+    const nextStarted = await request(app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId: nextDayOne.id,
+        operationId: "complete-next-revision-day-one",
+      }),
+    });
+    expect(nextStarted.status).toBe(201);
+    const nextSession = SessionIdResponseSchema.parse(
+      await nextStarted.json(),
+    ).session;
+    completeSession(nextSession.id);
+
+    const exactRevisionPath = RevisionPathSchema.parse(
+      await (await request(app, "/api/learning/path")).json(),
+    );
+    expect(exactRevisionPath.curriculum.weeks[0]!.days[0]!.status).toBe(
+      "completed",
+    );
+    expect(exactRevisionPath.curriculum.weeks[0]!.days[1]!.status).toBe(
+      "available",
+    );
+    const exactRevisionUnlock = await request(
+      app,
+      "/api/learning/sessions/v2",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          dayId: nextDayTwo.id,
+          operationId: "exact-revision-day-two",
+        }),
+      },
+    );
+    expect(exactRevisionUnlock.status).toBe(201);
   });
 
   it("enforces evidence, unlocks units, persists reloads, and completes safely", async () => {
@@ -787,7 +1699,13 @@ describe("versioned learning API", () => {
     const lockedStart = await request(
       firstRuntime.app,
       `/api/learning/sessions/v2/${session.id}/units/${lockedUnit.id}`,
-      { method: "PATCH", body: JSON.stringify({ status: "in_progress" }) },
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          operationId: "locked-activity-start",
+          status: "in_progress",
+        }),
+      },
     );
     expect(lockedStart.status).toBe(400);
     expect(await lockedStart.json()).toEqual({
@@ -798,14 +1716,26 @@ describe("versioned learning API", () => {
     const startedUnit = await request(
       firstRuntime.app,
       `/api/learning/sessions/v2/${session.id}/units/${firstUnit.id}`,
-      { method: "PATCH", body: JSON.stringify({ status: "in_progress" }) },
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          operationId: "first-activity-start",
+          status: "in_progress",
+        }),
+      },
     );
-    expect(startedUnit.status).toBe(200);
+    expect(startedUnit.status, await startedUnit.clone().text()).toBe(200);
 
     const missingEvidence = await request(
       firstRuntime.app,
       `/api/learning/sessions/v2/${session.id}/units/${firstUnit.id}`,
-      { method: "PATCH", body: JSON.stringify({ status: "completed" }) },
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          operationId: "first-activity-missing-evidence-complete",
+          status: "completed",
+        }),
+      },
     );
     expect(missingEvidence.status).toBe(400);
     expect(await missingEvidence.json()).toEqual({
@@ -818,6 +1748,7 @@ describe("versioned learning API", () => {
       {
         method: "PATCH",
         body: JSON.stringify({
+          operationId: "first-activity-complete",
           status: "completed",
           payload: completionPayload(firstUnit),
         }),
@@ -858,7 +1789,13 @@ describe("versioned learning API", () => {
       const start = await request(
         restartedRuntime.app,
         `/api/learning/sessions/v2/${session.id}/units/${unit.id}`,
-        { method: "PATCH", body: JSON.stringify({ status: "in_progress" }) },
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            operationId: `day1-start-${unit.id}`,
+            status: "in_progress",
+          }),
+        },
       );
       expect(start.status, `start ${unit.stableId}`).toBe(200);
       session = ((await start.json()) as { session: LearnerSession }).session;
@@ -874,7 +1811,11 @@ describe("versioned learning API", () => {
           `/api/learning/sessions/v2/${session.id}/units/${unit.id}`,
           {
             method: "PATCH",
-            body: JSON.stringify({ status: "completed", payload }),
+            body: JSON.stringify({
+              operationId: `day1-forged-complete-${unit.id}`,
+              status: "completed",
+              payload,
+            }),
           },
         );
         expect(forged.status, `forged ${unit.stableId}`).toBe(400);
@@ -926,6 +1867,7 @@ describe("versioned learning API", () => {
           {
             method: "PATCH",
             body: JSON.stringify({
+              operationId: `day1-incomplete-recall-${unit.id}`,
               status: "completed",
               payload: unitProgressPayload(firstBody.session, unit.id),
             }),
@@ -1060,6 +2002,7 @@ describe("versioned learning API", () => {
           {
             method: "PATCH",
             body: JSON.stringify({
+              operationId: `day1-incomplete-teacher-${unit.id}`,
               status: "completed",
               payload: firstTurnPayload,
             }),
@@ -1151,6 +2094,7 @@ describe("versioned learning API", () => {
             body: JSON.stringify({ operationId: "day1-quiz", answers }),
           },
         );
+        expect(retriedQuiz.status, await retriedQuiz.clone().text()).toBe(201);
         const retriedBody = (await retriedQuiz.json()) as typeof quizBody;
         expect(retriedBody.attempt).toEqual(quizBody.attempt);
         const evidenceCount = restartedRuntime.state.connection.sqlite
@@ -1239,6 +2183,7 @@ describe("versioned learning API", () => {
           {
             method: "PATCH",
             body: JSON.stringify({
+              operationId: `day1-stale-test-${unit.id}`,
               status: "completed",
               payload: {
                 type: "exercise",
@@ -1298,6 +2243,7 @@ describe("versioned learning API", () => {
           {
             method: "PATCH",
             body: JSON.stringify({
+              operationId: `day1-stale-review-${unit.id}`,
               status: "completed",
               payload: {
                 type: "review",
@@ -1330,6 +2276,7 @@ describe("versioned learning API", () => {
           {
             method: "PATCH",
             body: JSON.stringify({
+              operationId: `day1-fake-summary-${unit.id}`,
               status: "completed",
               payload: { type: "summary", summaryId: "fake-summary-id" },
             }),
@@ -1362,6 +2309,7 @@ describe("versioned learning API", () => {
         {
           method: "PATCH",
           body: JSON.stringify({
+            operationId: `day1-complete-${unit.id}`,
             status: "completed",
             payload,
           }),

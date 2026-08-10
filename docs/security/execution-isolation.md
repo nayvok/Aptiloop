@@ -1,12 +1,12 @@
 # Execution Isolation and Trusted Checks
 
-**Document status:** Implemented baseline audit plus Approved Core Alpha target. Current native execution is not a sandbox. Untrusted executable content is Future and prohibited for Core Alpha.
+**Document status:** M5 trusted local-native Execution Fabric, Node/Python contracts, and compatibility migration are an **Implemented baseline**. Native execution is not a sandbox. Untrusted executable content and isolated server/remote backends are **Future**.
 
 ## 1. Baseline boundary
 
-The Implemented baseline practice path copies a repository-controlled template into a per-attempt directory, establishes a Git baseline, accepts only server-owned `commandId: "test"`, launches with `shell: false`, sanitizes the exercise environment, bounds output/runtime, and terminates the process tree on cancellation or limits. Canonical containment rejects traversal and link/reparse escape. Review requires passed, fresh, non-truncated full-diff SHA-256 evidence.
+The Implemented baseline practice path copies a repository-controlled template into a per-attempt directory, establishes a Git baseline, and accepts only operation/entity IDs plus the literal compatibility command ID `test`. The M5 Fabric resolves that to immutable environment/check descriptors and an app-owned `shell: false` plan, validates exact attempt ownership and complete-workspace freshness, supplies a minimal environment, bounds output/runtime, and terminates the process tree on cancellation or limits. Canonical containment rejects traversal and link/reparse escape. Review requires a passing non-truncated result bound to the current Git-visible patch SHA-256 and persists an immutable evidence bundle.
 
-Those are positive controls for trusted templates. The test process and its JavaScript dependencies still execute with the local user's native authority. An allowlist prevents browser-selected commands; it does not isolate malicious code. The current path must never consume an untrusted Course Pack, AI-authored executable, arbitrary dependency, or learner-selected command.
+Those controls make execution auditable and reject browser/pack/model command authority; they do not isolate malicious Node/Python code from the local account or network. The compatibility npm contract also preserves learner-template script authority. No imported Course Pack, arbitrary dependency, AI-authored executable, learner-selected command, or untrusted user may enter this backend.
 
 ## 2. Approved Core Alpha Execution Fabric
 
@@ -26,13 +26,13 @@ No arbitrary AI filesystem, shell, network, or edit tool is part of the Fabric.
 
 ### Node contract
 
-**Approved Core Alpha target:** the registry pins the Node major/runtime identity, package/dependency identity, entry/check plan, permitted input/output files, and resource limits. Dependency installation and package lifecycle scripts are not performed from Course Pack or attempt content. The child receives a minimal environment, no provider/application credentials, and no shell command string. Results identify the check contract version and runtime observed.
+**Implemented baseline:** the Core Node registry pins Node major 24, the exact built-in `node --test` plan, `package-lock.json` lockfileVersion 3, a minimal environment, the input snapshot hash, and fixed time/output limits. The separate compatibility npm contract is explicitly less isolated and retained only for existing trusted repository templates.
 
 ### Python contract
 
-**Approved Core Alpha target:** the registry pins the Python interpreter contract, isolated environment/dependency identity, module/check plan, permitted input/output files, and resource limits. It does not evaluate pack-supplied `requirements.txt`, setup hooks, arbitrary modules, or shell commands. Like Node, the child receives a minimal secret-free environment. In the approved local-native backend, either runtime may use the explicit `inherit-local-trusted` network policy and must be labeled trusted-only/unsandboxed. A backend may claim isolation only when its declared `network: deny` policy passes the complete network-denial suite.
+**Implemented baseline:** the Core Python registry pins the Python 3 contract, exact isolated `-I -B -m unittest discover` plan, an app-owned empty `requirements.lock`, user-site/bytecode-disabling environment, the input snapshot hash, and fixed time/output limits. It does not install or evaluate pack-supplied dependencies, setup hooks, modules, commands, or paths.
 
-Exact supported versions and quota values are Proposed pending owner approval. Fail-closed identity, command, path, environment, resource, cleanup, and evidence properties are required before either local-native runtime is approved; enforced no-network behavior is required only for a backend that claims isolation and remains a **Future** gate for untrusted execution.
+Both accepted local-native contracts use `inherit-local-trusted` network policy and remain visibly trusted-only/unsandboxed. Their current 120-second/1 MB process limits reuse the existing proven runner; memory, disk, and process-count quotas require a future isolated backend. Enforced no-network behavior is required only for a separately approved backend that claims isolation.
 
 ## 4. Control records
 

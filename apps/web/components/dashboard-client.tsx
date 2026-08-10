@@ -205,14 +205,18 @@ const blockColorClasses: Record<
   },
 };
 
-export function DashboardClient() {
+export function DashboardClient({
+  pathEndpoint = "/learning/path",
+}: {
+  pathEndpoint?: string;
+}) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [detailDayId, setDetailDayId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const query = useQuery({
-    queryKey: ["learning-path"],
-    queryFn: async () => learningPathSchema.parse(await api("/learning/path")),
+    queryKey: ["learning-path", pathEndpoint],
+    queryFn: async () => learningPathSchema.parse(await api(pathEndpoint)),
   });
   const start = useMutation({
     mutationFn: (dayId: string) =>

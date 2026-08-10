@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import {
   ArticleIcon,
   BrainIcon,
+  BooksIcon,
   CardsIcon,
   CodeIcon,
   GearSixIcon,
@@ -23,6 +24,7 @@ import { ProviderHealth } from "@/components/provider-health";
 
 const nav = [
   { href: "/", label: "Путь", icon: HouseIcon },
+  { href: "/courses", label: "Курсы", icon: BooksIcon },
   { href: "/session", label: "Занятие", icon: PathIcon },
   { href: "/exercise", label: "Практика", icon: CodeIcon },
   { href: "/knowledge", label: "Карта знаний", icon: BrainIcon },

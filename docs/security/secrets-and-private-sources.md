@@ -1,17 +1,17 @@
 # Secrets, Private Sources, and Local Data Lifecycle
 
-**Document status:** Approved Core Alpha target with Implemented baseline gaps. Target controls are not claimed as implemented.
+**Document status:** Approved Core Alpha target. **Implemented baseline:** M1 adds external-provider containment, raw/tool no-store persistence, read-only SQLite-family inventory, and approved quarantine/backup disposition. M6 additionally stores only opaque credential references, exact hash-scoped immutable disclosure decisions, minimized provider-turn provenance, and exact one-time disclosure UI for active chat/interview/review callers; environment and unrelated private-context sentinels are verified absent from provider inputs. Authenticated external provider smoke remains an acceptance blocker and no production real-provider readiness is claimed.
 
 ## 1. Data classes
 
-| Class | Examples | Default handling |
-| --- | --- | --- |
-| Secret | provider tokens, passwords, cookies, authorization headers, private keys, auth-store material | memory or provider-owned credential store only; never Course Pack, transcript, tool event, log, SQLite, backup, export, or model context |
-| Private learner data | answers, interviews, mistakes, mastery, flashcard decisions, transcripts, code/diffs/tests/reviews | local-only plaintext baseline; minimize, no-store over HTTP, explicit export/delete/retention |
-| Private source | local document, licensed/internal material, notes, source credentials, private URL content | local Source Snapshot/Knowledge Capsule; no fetch/upload/share without a separate explicit action |
-| Local operational data | filesystem paths, DB/attempt roots, provider/model IDs, runtime diagnostics | minimize and disclose only where required; paths are private by default |
-| Public Course content | owner-approved pack manifest/content/provenance | still untrusted for rendering/import; no execution authority |
-| Security audit data | tool name/status/operation ID, bounded failure code | allowlisted and bounded; no raw tool input/output or secret value |
+| Class                  | Examples                                                                                           | Default handling                                                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Secret                 | provider tokens, passwords, cookies, authorization headers, private keys, auth-store material      | memory or provider-owned credential store only; never Course Pack, transcript, tool event, log, SQLite, backup, export, or model context |
+| Private learner data   | answers, interviews, mistakes, mastery, flashcard decisions, transcripts, code/diffs/tests/reviews | local-only plaintext baseline; minimize, no-store over HTTP, explicit export/delete/retention                                            |
+| Private source         | local document, licensed/internal material, notes, source credentials, private URL content         | local Source Snapshot/Knowledge Capsule; no fetch/upload/share without a separate explicit action                                        |
+| Local operational data | filesystem paths, DB/attempt roots, provider/model IDs, runtime diagnostics                        | minimize and disclose only where required; paths are private by default                                                                  |
+| Public Course content  | owner-approved pack manifest/content/provenance                                                    | still untrusted for rendering/import; no execution authority                                                                             |
+| Security audit data    | tool name/status/operation ID, bounded failure code                                                | allowlisted and bounded; no raw tool input/output or secret value                                                                        |
 
 Classification follows the most sensitive constituent. A Knowledge Capsule derived from a private Source Snapshot remains private unless an explicit declassification workflow exists.
 
@@ -23,9 +23,11 @@ A Source Snapshot captures stable local evidence and provenance. It is not a liv
 
 ## 3. Implemented baseline
 
-Positive controls observed: loopback/single-user defaults; `.data`, SQLite, and `.env` Git exclusions; no intended credential columns; OpenCode endpoint restricted to loopback and password converted to an in-memory Authorization header; client SSE suppression of raw provider event fields; exercise child environment allowlisting; non-root containers; foreign keys/WAL; and non-overwriting integrity/FK-checked backups.
+Positive controls observed: loopback/single-user defaults; `.data`, SQLite, and `.env` Git exclusions; no secret-value columns; Mock-only legacy learning-provider policy; external Codex/OpenCode/Pi blocking; no automatic sidecar launch; allowlisted Codex child environment; OpenCode provider input/output discard; browser event allowlisting; repository literals `[]`/`NULL` for tool/raw message data and `NULL` review raw response; API-wide `no-store`; exercise child environment allowlisting; non-root containers; active-source-only approved backups; and Course Pack export schemas that exclude private learner/runtime state. The M6 storage contract adds only `credentialRef`, never credentials, and immutable disclosure metadata bound to provider, model, destination, entity IDs, payload categories, byte count, payload SHA-256, expiry, and explicit lifecycle events. Provider-turn provenance stores bounded identities/outcome metadata rather than the disclosed payload.
 
-Gaps observed: Codex inherits the full orchestrator environment; OpenCode raw tool input/output may persist; learner/AI/private operational data is plaintext in SQLite/WAL/backups; no complete retention/export/delete contract or owner-only cross-platform storage enforcement was found; and Markdown can trigger external resource fetches. Database integrity checks do not provide confidentiality.
+Remaining gaps: disclosure preview/approval UI is not wired to a real-provider learning route; role context builders and environment/context/persistence sentinel matrices are incomplete; learner/AI/private operational data is plaintext in SQLite/WAL/backups; logical SQL inventory cannot prove byte absence from free pages, WAL/SHM, storage snapshots, or external copies; no complete retention/export/delete or owner-only cross-platform permission enforcement exists; and Markdown can trigger external resource fetches. Integrity checks do not provide confidentiality.
+
+The 2026-08-08 inventory found six live families and eleven existing backups with zero logical non-empty raw/tool rows. `.data/dev-learning-harness.sqlite` is active; the other five families and every old backup are preserved and quarantined from runtime/restore/approved-backup use until M2, with `.data/m0-baseline/` protected unchanged. No cleanup migration or user-data mutation was justified. New approved backups require an active-only read-only preflight and a fresh destination under `.data/approved-backups/`; see the [M1 inventory/runbook](../audits/2026-08-08-m1-safety-boundary-inventory.md).
 
 ## 4. Secret lifecycle
 
@@ -45,7 +47,7 @@ Gaps observed: Codex inherits the full orchestrator environment; OpenCode raw to
 
 - **Attack path:** provider or execution child inherits root environment and reads cross-provider/application secrets.
 - **Impact:** credential disclosure, account/cost abuse, and lateral access.
-- **Existing mitigation:** Implemented baseline exercise child environment is allowlisted; Codex output has best-effort redaction. Codex full environment inheritance remains SEC-CRED-001.
+- **Existing mitigation:** Implemented baseline exercise children and Codex adapter children use explicit allowlists; unrelated database/OpenCode/GitHub secrets are excluded. Codex/OpenCode learning roles and automatic sidecar launch are blocked.
 - **Source fix:** dedicated minimal environment builders for every provider/runtime; deny secret-shaped and cross-provider variables; narrowly scope auth-store paths; no host credential mounts for Future untrusted execution.
 - **Test:** varied sentinel names/values in parent environment; capture child environment and all outputs/storage/backups; sentinel is absent while required runtime discovery still works.
 
@@ -53,7 +55,7 @@ Gaps observed: Codex inherits the full orchestrator environment; OpenCode raw to
 
 - **Attack path:** provider tool input/output/error contains secret/private content and is persisted verbatim or copied into backup/export.
 - **Impact:** durable plaintext disclosure and multiplied copies.
-- **Existing mitigation:** Implemented baseline browser SSE minimizes raw tool fields; Reviewer OpenCode tools are denied; Codex tool notifications are reduced. OpenCode persistence remains SEC-AI-002.
+- **Existing mitigation:** Implemented baseline external learning roles are blocked; OpenCode normalization discards provider tool input/output; browser events expose only an allowlist; new messages store only `tool_events_json='[]'`/`raw_event_json=NULL`, and new reviews store `raw_response=NULL`. Read-only inventory found zero logical non-empty legacy rows, so no destructive cleanup was applied.
 - **Source fix:** remove general tools and persist only a typed bounded audit envelope; field-specific redaction occurs before any log/SSE/DB write; raw provider protocol is never stored.
 - **Test:** nested/encoded/split sentinel fixtures; assert absence from all messages, tool JSON, reviews, logs, WAL, backups, and exports; approved audit metadata remains.
 
@@ -61,8 +63,8 @@ Gaps observed: Codex inherits the full orchestrator environment; OpenCode raw to
 
 - **Attack path:** Tutor/Designer/Evaluator/Reviewer context builder automatically includes private sources, broad history, code, paths, or answers when a real provider is selected.
 - **Impact:** unapproved external disclosure, provider retention, and possible contractual/privacy breach.
-- **Existing mitigation:** Implemented baseline runs locally by default and does not expose credentials/raw protocol to the browser; no complete point-of-disclosure consent contract was observed.
-- **Source fix:** privacy-tag every context item; preview recipient/provider and selected data classes; require an explicit scoped action; construct the minimum capsule; record only decision metadata, not secret/private payload duplication.
+- **Existing mitigation:** **Implemented baseline.** Legacy external learning roles remain blocked. M6 persists immutable scoped disclosure operations/events and requires Provider Hub resolution to match the approved provider, model, role, destination-bound payload hash, and unexpired operation before an external turn can resolve. The disclosed payload is not copied into the decision record. Point-of-disclosure UI and production context minimization are not yet complete.
+- **Source fix:** finish privacy labels, preview recipient/provider and selected data classes, explicit scoped UI action, minimum context capsule construction, and one-time disclosure consumption on successful dispatch.
 - **Test:** default provider request excludes every private class; selecting specific synthetic items includes only those items; cancellation/denial sends nothing; changing provider or scope requires a new action.
 
 ### DATA-CTRL-004 — Source acquisition and external fetch
@@ -77,7 +79,7 @@ Gaps observed: Codex inherits the full orchestrator environment; OpenCode raw to
 
 - **Attack path:** local account, shared/synced directory, backup agent, or HTTP cache reads SQLite/WAL/backups/private API responses.
 - **Impact:** learner/source/path/code/provider-history disclosure.
-- **Existing mitigation:** Implemented baseline local single-user scope, Git ignores, non-root container, and private named volumes reduce exposure; files remain plaintext and OS-default permissions are not a confidentiality policy.
+- **Existing mitigation:** Implemented baseline local single-user scope, Git ignores, non-root containers, API-wide `Cache-Control: no-store`, explicit candidate inventory, and private named volumes reduce exposure; files remain plaintext and OS-default permissions are not a confidentiality policy.
 - **Source fix:** POSIX 0700 data/backup directories and 0600 DB/WAL/backups; Windows owner-only ACL guidance/enforcement; private API `Cache-Control: no-store`; reject unsafe shared profile roots; decide encryption requirements before portable/shared use.
 - **Test:** mode/ACL integration checks, unsafe-root rejection, no-store headers, sync/export fixture, and proof that integrity checks are not represented as encryption.
 
@@ -93,7 +95,7 @@ Gaps observed: Codex inherits the full orchestrator environment; OpenCode raw to
 
 - **Attack path:** a verified plaintext backup is placed in a broadly readable/synced location or contains secrets/raw tool data; restore reintroduces them.
 - **Impact:** disclosure and repeated compromise after recovery.
-- **Existing mitigation:** Implemented baseline backups are non-overwriting and pass integrity/foreign-key checks.
+- **Existing mitigation:** Implemented baseline approved backups are active-source-only, preflighted, non-overwriting, stored separately under `.data/approved-backups/`, and pass integrity/foreign-key checks. Eleven historical backups remain unchanged and quarantined, not approved restore sources.
 - **Source fix:** private destination permissions, explicit destination/privacy warning, minimization before backup, inventory/retention metadata, and restore-time schema/security migration. Encryption, if approved, is a separate confidentiality control with recovery-key design.
 - **Test:** permissions/destination checks; secret sentinel absent; corrupt backup rejected; restore preserves data and applies cleanup migrations; retention never overwrites an existing backup.
 
@@ -101,9 +103,9 @@ Gaps observed: Codex inherits the full orchestrator environment; OpenCode raw to
 
 - **Attack path:** a Course Pack, diagnostic bundle, flashcard export, or support report silently includes private sources, paths, learner history, attempts, credentials, or tool payloads.
 - **Impact:** accidental disclosure through a portable artifact.
-- **Existing mitigation:** Implemented baseline flashcard export is local and credentials have no intended schema; no generalized safe export was observed.
-- **Source fix:** separate public Course Pack, learner-data export, and diagnostic bundle schemas; default to minimum; preview field classes and destination; private inclusion requires an explicit additional selection; secret fields are impossible by schema.
-- **Test:** golden export inventories, synthetic secret/private sentinels, default/public/private variants, cancellation, and archive-content inspection.
+- **Existing mitigation:** M3 canonical Course Pack export is Course-scoped and schema-closed: learner evidence, mastery, transcripts, workspaces, provider sessions, credentials, UI settings, absolute paths, and unrelated adaptations have no export field. Flashcard export remains a separate explicit local action.
+- **Residual/source fix:** generalized learner-data and diagnostic/support exports are still unimplemented. Keep those as distinct previewed schemas with minimum defaults and explicit private inclusion; secret-shaped fields must remain impossible.
+- **Test:** Course Pack export/re-import hash parity and forbidden-field tests are implemented. Future learner/diagnostic exports require golden inventories, synthetic secret/private sentinels, cancellation, destination disclosure, and archive/content inspection.
 
 ## 6. Storage and sharing gates
 

@@ -7,6 +7,8 @@ services:
       dockerfile: apps/orchestrator/Dockerfile
     environment:
       HOST: 0.0.0.0
+      # Wildcard binding is container-internal; host publication stays loopback-only.
+      ORCHESTRATOR_BIND_MODE: container-loopback-published
       PORT: 8787
       WEB_ORIGIN: http://127.0.0.1:3000
       DATABASE_URL: /data/dev-learning-harness.sqlite
@@ -38,8 +40,10 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         ORCHESTRATOR_URL: http://orchestrator:8787
+        ORCHESTRATOR_BIND_MODE: container-loopback-published
     environment:
       ORCHESTRATOR_URL: http://orchestrator:8787
+      ORCHESTRATOR_BIND_MODE: container-loopback-published
       HOSTNAME: 0.0.0.0
       PORT: 3000
     depends_on:

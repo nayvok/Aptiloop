@@ -2,17 +2,29 @@ import { createHash } from "node:crypto";
 
 import {
   CurriculumAuthoringRepository,
+  hashCanonicalJson,
+  type CourseFoundationRepository,
+  createLearningKernelRepository,
+  type CourseFoundationRevision,
   type DatabaseConnection,
   type LearningRepository,
   type VersionedSessionDetail,
+  withAsyncTransaction,
+  withTransaction,
+  type LearningKernelRepository,
 } from "@dlh/database";
 import {
   applyMasteryEvidenceBatch,
   createUnitProgression,
   createEmptyMasteryProfile,
+  learningKernelSha256,
   deriveDaySummary,
   isLessonComplete,
+  resolveExplicitUnitDefinitions,
   transitionUnitProgression,
+  type LearningKernelEvidenceBody,
+  type LearningKernelFactProvenance,
+  type LearningKernelScope,
   type DaySummary,
   type EvidenceType,
   type HintLevel,
@@ -22,6 +34,8 @@ import {
   type UnitProgressionEvent,
 } from "@dlh/learning-core";
 import {
+  CourseEntityIdSchema,
+  UnitUnlockRuleSchema,
   CurriculumUnitSchema,
   SessionSnapshotSchema,
   UnitProgressPayloadSchema,
@@ -34,10 +48,16 @@ import {
 } from "@dlh/shared";
 import type { Hono } from "hono";
 import { z } from "zod";
+import {
+  assertLearningRevisionMutationAllowed,
+  assertLearningSessionMutationAllowed,
+} from "./learning-session-policy.js";
 
 interface VersionedLearningState {
   connection: DatabaseConnection;
   repository: LearningRepository;
+  courseFoundationRepository: CourseFoundationRepository;
+  now?: () => number;
 }
 
 const startSessionSchema = z
@@ -49,7 +69,7 @@ const startSessionSchema = z
 
 const updateUnitSchema = z
   .object({
-    operationId: z.string().trim().min(1).max(200).optional(),
+    operationId: z.string().trim().min(1).max(200),
     status: UnitStatusSchema.exclude(["locked"]),
     payload: UnitProgressPayloadSchema.optional(),
   })
@@ -105,6 +125,17 @@ const codeReadingAttemptSchema = z
   .strict();
 
 const summaryRequestSchema = z
+  .object({ operationId: operationIdSchema })
+  .strict();
+
+const kernelTransitionSchema = z
+  .object({
+    operationId: operationIdSchema,
+    transition: z.enum(["start", "pause"]),
+  })
+  .strict();
+
+const kernelReviewDismissSchema = z
   .object({ operationId: operationIdSchema })
   .strict();
 
@@ -184,181 +215,179 @@ export function registerVersionedLearningRoutes(
   app: Hono,
   state: VersionedLearningState,
 ): void {
+  const kernelRepository = createLearningKernelRepository(
+    state.connection,
+    state.now === undefined ? {} : { now: state.now },
+  );
+  const observedAt = () => new Date(state.now?.() ?? Date.now()).toISOString();
+  app.use("/api/learning/sessions/v2/:id/*", async (context, next) => {
+    if (context.req.method !== "GET" && context.req.method !== "HEAD") {
+      assertLearningSessionMutationAllowed(
+        state.connection,
+        context.req.param("id"),
+      );
+      await requireVerifiedSessionDetail(state, context.req.param("id"));
+    }
+    await next();
+  });
+
+  app.get("/api/learning/courses", async (context) => {
+    return context.json({ courses: await readCourseCollection(state) });
+  });
+
+  app.get(
+    "/api/learning/courses/:courseId/revisions/:revisionId/path",
+    async (context) => {
+      const courseId = CourseEntityIdSchema.parse(
+        context.req.param("courseId"),
+      );
+      const revisionId = CourseEntityIdSchema.parse(
+        context.req.param("revisionId"),
+      );
+      return context.json(await readLearnerPath(state, courseId, revisionId));
+    },
+  );
+
   app.get("/api/learning/path", async (context) => {
-    const active = state.connection.sqlite
-      .prepare(
-        `SELECT c.id, c.slug, c.title, c.description, c.active_version_id
-         FROM curricula c
-         JOIN curriculum_versions v ON v.id = c.active_version_id
-         WHERE v.status = 'published'
-         ORDER BY c.updated_at DESC, c.id
-         LIMIT 1`,
-      )
-      .get() as
-      | {
-          id: string;
-          slug: string;
-          title: string;
-          description: string | null;
-          active_version_id: string;
-        }
-      | undefined;
-    if (!active) return context.json({ curriculum: null });
-
-    const authoring = new CurriculumAuthoringRepository(state.connection);
-    const graph = await authoring.getVersionGraph(active.active_version_id);
-    const latestSessions = latestSessionsByDayStableId(state.connection);
-    const completedDayStableIds = completedVersionedDayStableIds(
-      state.connection,
+    const target = await readCompatibilityCourseTarget(state);
+    return context.json(
+      target
+        ? await readLearnerPath(state, target.courseId, target.revisionId)
+        : { curriculum: null, courseContext: null },
     );
-    const current = await state.repository.getCurrentVersionedSession();
-    const orderedDayStableIds = graph.weeks.flatMap((week) =>
-      week.days.map((day) => day.stableId),
-    );
-
-    return context.json({
-      curriculum: {
-        id: active.id,
-        slug: active.slug,
-        title: active.title,
-        description: active.description,
-        version: {
-          id: graph.version.id,
-          revision: graph.version.revision,
-          contentHash: graph.version.contentHash,
-          status: graph.version.status,
-        },
-        weeks: graph.weeks.map((week) => ({
-          id: week.id,
-          stableId: week.stableId,
-          order: week.orderIndex + 1,
-          title: week.title,
-          description: week.description,
-          days: week.days.map((day) => {
-            const units = day.units.map((unit) =>
-              CurriculumUnitSchema.parse({
-                id: unit.id,
-                stableId: unit.stableId,
-                type: unit.type,
-                order: unit.orderIndex + 1,
-                title: unit.title,
-                description: unit.description ?? unit.title,
-                estimatedMinutes: unit.estimatedMinutes ?? 0,
-                objectives: unit.objectives,
-                checklist: unit.checklist,
-                sources: unit.sources,
-                questions: unit.questions,
-                misconceptions: unit.misconceptions,
-                referenceAnswer: unit.referenceAnswer,
-                completionCriteria: unit.completionCriteria,
-                unlockRules: unit.unlockRules,
-                optional: unit.optional,
-                depthLevel: unit.depthLevel ?? "foundation",
-                payload: unit.payload,
-              }),
-            );
-            const session = latestSessions.get(day.stableId);
-            const currentDay = current?.snapshot.day.stableId === day.stableId;
-            const dayIndex = orderedDayStableIds.indexOf(day.stableId);
-            const precedingDaysCompleted = orderedDayStableIds
-              .slice(0, dayIndex)
-              .every((stableId) => completedDayStableIds.has(stableId));
-            const dayStatus = completedDayStableIds.has(day.stableId)
-              ? "completed"
-              : currentDay
-                ? "in_progress"
-                : dayIndex === 0 || precedingDaysCompleted
-                  ? "available"
-                  : "locked";
-            const sessionProgress =
-              currentDay && current
-                ? new Map(
-                    current.unitProgress.flatMap((item) => {
-                      const snapshotUnit = current.snapshot.units.find(
-                        (unit) => unit.id === item.unitId,
-                      );
-                      return snapshotUnit
-                        ? [[snapshotUnit.stableId, item]]
-                        : [];
-                    }),
-                  )
-                : null;
-            const initial = new Map(
-              createUnitProgression(toDefinitions(units)).map((item) => [
-                item.unitId,
-                item.status,
-              ]),
-            );
-            return {
-              id: day.id,
-              stableId: day.stableId,
-              order: day.orderIndex + 1,
-              title: day.title,
-              description: day.description ?? day.title,
-              goal: day.goal,
-              estimatedMinutes: day.estimatedMinutes,
-              prerequisites: day.prerequisites,
-              expectedOutcomes: day.expectedOutcomes,
-              depthLevel: day.depthLevel,
-              outOfScope: day.outOfScope,
-              topics: day.topics,
-              status: dayStatus,
-              sessionId: currentDay
-                ? current.session.id
-                : (session?.id ?? null),
-              units: units.map((unit) => ({
-                ...toLearnerUnit(unit),
-                status:
-                  session?.status === "completed"
-                    ? unit.optional
-                      ? "skipped"
-                      : "completed"
-                    : (sessionProgress?.get(unit.stableId)?.status ??
-                      initial.get(unit.id) ??
-                      "locked"),
-              })),
-            };
-          }),
-        })),
-      },
-    });
   });
 
   app.get("/api/learning/sessions/current", async (context) => {
     const current = await state.repository.getCurrentVersionedSession();
     return context.json({
-      session: current ? toLearnerSession(current) : null,
+      session: current ? await toLearnerSession(state, current) : null,
     });
   });
 
   app.post("/api/learning/sessions/v2", async (context) => {
     const body = startSessionSchema.parse(await context.req.json());
     const current = await state.repository.getCurrentVersionedSession();
-    if (current?.snapshot.day.id === body.dayId) {
-      return context.json({ session: toLearnerSession(current) }, 201);
+    if (current) {
+      await requireSessionCourseContext(state, current);
+      if (current.snapshot.day.id === body.dayId) {
+        return context.json(
+          { session: await toLearnerSession(state, current) },
+          201,
+        );
+      }
     }
-    assertDayCanStart(state.connection, body.dayId);
+    const target = await requireCourseTargetForLesson(state, body.dayId);
+    assertLearningRevisionMutationAllowed(target.revisionId);
+    await assertDayCanStart(state, target);
     const detail = await state.repository.startOrResumeVersionedSession({
       dayId: body.dayId,
       idempotencyKey: body.operationId
         ? `learning-v2:${body.operationId}`
         : `learning-v2:day:${body.dayId}:active`,
     });
-    return context.json({ session: toLearnerSession(detail) }, 201);
+    return context.json(
+      { session: await toLearnerSession(state, detail) },
+      201,
+    );
   });
 
   app.get("/api/learning/sessions/v2/:id", async (context) => {
-    const detail = await state.repository.getVersionedSession(
+    const detail = await requireVerifiedSessionDetail(
+      state,
       context.req.param("id"),
     );
-    return context.json({ session: toLearnerSession(detail) });
+    return context.json({ session: await toLearnerSession(state, detail) });
   });
+
+  app.get("/api/learning/sessions/v2/:id/kernel", (context) => {
+    const scope = kernelRepository.resolveSessionScope(context.req.param("id"));
+    return context.json({
+      scope,
+      projection: kernelRepository.reproject(scope, observedAt()),
+    });
+  });
+
+  app.post(
+    "/api/learning/sessions/v2/:id/kernel/activities/:activityId/transitions",
+    async (context) => {
+      const body = kernelTransitionSchema.parse(await context.req.json());
+      const activityId = operationIdSchema.parse(
+        context.req.param("activityId"),
+      );
+      const scope = kernelRepository.resolveSessionScope(
+        context.req.param("id"),
+      );
+      const operationId = `kernel:${body.operationId}`;
+      const at =
+        readKernelFactObservedAt(state.connection, operationId) ?? observedAt();
+      const result = kernelRepository.accept(scope, {
+        operationId,
+        factId: `kernel-fact:${body.operationId}`,
+        observedAt: at,
+        provenance: learnerKernelProvenance(body.operationId, {
+          scope,
+          activityId,
+          transition: body.transition,
+          observedAt: at,
+        }),
+        body: {
+          type: "progress",
+          activityId,
+          transition: body.transition,
+        },
+      });
+      return context.json(
+        { idempotent: result.idempotent, projection: result.projection },
+        result.accepted ? 201 : 200,
+      );
+    },
+  );
+
+  app.post(
+    "/api/learning/sessions/v2/:id/kernel/activities/:activityId/reviews/:reviewItemId/dismiss",
+    async (context) => {
+      const body = kernelReviewDismissSchema.parse(await context.req.json());
+      const activityId = operationIdSchema.parse(
+        context.req.param("activityId"),
+      );
+      const reviewItemId = operationIdSchema.parse(
+        context.req.param("reviewItemId"),
+      );
+      const scope = kernelRepository.resolveSessionScope(
+        context.req.param("id"),
+      );
+      const operationId = `kernel:${body.operationId}`;
+      const at =
+        readKernelFactObservedAt(state.connection, operationId) ?? observedAt();
+      const result = kernelRepository.accept(scope, {
+        operationId,
+        factId: `kernel-fact:${body.operationId}`,
+        observedAt: at,
+        provenance: learnerKernelProvenance(body.operationId, {
+          scope,
+          activityId,
+          reviewItemId,
+          observedAt: at,
+        }),
+        body: {
+          type: "review",
+          activityId,
+          reviewItemId,
+          transition: "dismiss",
+        },
+      });
+      return context.json(
+        { idempotent: result.idempotent, projection: result.projection },
+        result.accepted ? 201 : 200,
+      );
+    },
+  );
 
   app.get(
     "/api/learning/sessions/v2/:id/teacher-transcript",
     async (context) => {
       const sessionId = context.req.param("id");
-      await state.repository.getVersionedSession(sessionId);
+      await requireVerifiedSessionDetail(state, sessionId);
       const messages = state.connection.sqlite
         .prepare(
           `SELECT m.id, m.role, m.content
@@ -387,213 +416,284 @@ export function registerVersionedLearningRoutes(
 
   app.post(
     "/api/learning/sessions/v2/:id/units/:unitId/recall-attempts",
-    async (context) => {
-      const body = recallAttemptSchema.parse(await context.req.json());
-      const sessionId = context.req.param("id");
-      const unitId = context.req.param("unitId");
-      const unit = requireEvidenceTarget(
-        await state.repository.getVersionedSession(sessionId),
-        unitId,
-        "recall",
-      );
-      if (!unit.questions.some((question) => question.id === body.questionId)) {
-        throw new Error("Unknown recall question");
-      }
-      const recorded = await state.repository.recordVersionedUnitEvidence({
-        sessionId,
-        unitId,
-        evidenceType: "recall-attempt",
-        operationId: body.operationId,
-        questionId: body.questionId,
-        payload: { answer: body.answer },
-      });
-      const attempts = await state.repository.listVersionedUnitEvidence(
-        sessionId,
-        { unitId, evidenceType: "recall-attempt" },
-      );
-      const firstByQuestion = firstRecallEvidenceByQuestion(unit, attempts);
-      const first = firstByQuestion.get(body.questionId);
-      if (!first) throw new Error("Persisted recall attempt disappeared");
-      const answers = unit.questions.flatMap((question) => {
-        const evidence = firstByQuestion.get(question.id);
-        return evidence
-          ? [
-              {
-                questionId: question.id,
-                firstAttemptId: evidence.id,
-                draft: evidenceString(evidence.payload, "answer"),
-              },
-            ]
-          : [];
-      });
-      const legacyFirst = answers[0];
-      await state.repository.updateUnitProgress({
-        sessionId,
-        unitId,
-        status: "in_progress",
-        progress: {
-          type: "recall",
-          answers,
-          firstAttemptId: legacyFirst?.firstAttemptId ?? null,
-          draft: legacyFirst?.draft ?? "",
-        },
-      });
-      return context.json(
-        {
-          evidence: {
-            id: recorded.id,
-            isFirstAttempt: recorded.id === first.id,
-            questionId: body.questionId,
+    async (context) =>
+      withAsyncTransaction(state.connection, async () => {
+        const body = recallAttemptSchema.parse(await context.req.json());
+        const sessionId = context.req.param("id");
+        const unitId = context.req.param("unitId");
+        const unit = requireEvidenceTarget(
+          await state.repository.getVersionedSession(sessionId),
+          unitId,
+          "recall",
+        );
+        if (
+          !unit.questions.some((question) => question.id === body.questionId)
+        ) {
+          throw new Error("Unknown recall question");
+        }
+        const recorded = await state.repository.recordVersionedUnitEvidence({
+          sessionId,
+          unitId,
+          evidenceType: "recall-attempt",
+          operationId: body.operationId,
+          questionId: body.questionId,
+          payload: { answer: body.answer },
+        });
+        acceptKernelLearnerEvidence(kernelRepository, state.connection, {
+          sessionId,
+          activityId: unit.stableId,
+          operationId: body.operationId,
+          sourceId: recorded.id,
+          observedAt: toObservedAt(recorded.createdAt),
+          source: recorded,
+          body: {
+            type: "evidence",
+            dimension: "understanding",
+            evidenceType: "recall",
+            outcome: "unverified",
+            hintLevel: readLegacyHintLevel(state.connection, sessionId, unitId),
           },
-          session: toLearnerSession(
-            await state.repository.getVersionedSession(sessionId),
-          ),
-        },
-        201,
-      );
-    },
+        });
+        const attempts = await state.repository.listVersionedUnitEvidence(
+          sessionId,
+          { unitId, evidenceType: "recall-attempt" },
+        );
+        const firstByQuestion = firstRecallEvidenceByQuestion(unit, attempts);
+        const first = firstByQuestion.get(body.questionId);
+        if (!first) throw new Error("Persisted recall attempt disappeared");
+        const answers = unit.questions.flatMap((question) => {
+          const evidence = firstByQuestion.get(question.id);
+          return evidence
+            ? [
+                {
+                  questionId: question.id,
+                  firstAttemptId: evidence.id,
+                  draft: evidenceString(evidence.payload, "answer"),
+                },
+              ]
+            : [];
+        });
+        const legacyFirst = answers[0];
+        await state.repository.updateUnitProgress({
+          sessionId,
+          unitId,
+          status: "in_progress",
+          progress: {
+            type: "recall",
+            answers,
+            firstAttemptId: legacyFirst?.firstAttemptId ?? null,
+            draft: legacyFirst?.draft ?? "",
+          },
+        });
+        return context.json(
+          {
+            evidence: {
+              id: recorded.id,
+              isFirstAttempt: recorded.id === first.id,
+              questionId: body.questionId,
+            },
+            session: await toLearnerSession(
+              state,
+              await state.repository.getVersionedSession(sessionId),
+            ),
+          },
+          201,
+        );
+      }),
   );
 
   app.post(
     "/api/learning/sessions/v2/:id/units/:unitId/quiz-attempts",
-    async (context) => {
-      const body = quizAttemptSchema.parse(await context.req.json());
-      const sessionId = context.req.param("id");
-      const unitId = context.req.param("unitId");
-      requireEvidenceTarget(
-        await state.repository.getVersionedSession(sessionId),
-        unitId,
-        "quiz",
-      );
-      const privateUnit = requirePrivateUnit(
-        readPrivateSnapshot(state.connection, sessionId),
-        unitId,
-        "quiz",
-      );
-      const submitted = [];
-      for (const answer of body.answers) {
-        const question = privateUnit.questions.find(
-          (candidate) => candidate.id === answer.questionId,
-        );
-        if (!question) throw new Error("Unknown quiz question");
-        if (
-          !question.options.some(
-            (option) => option.id === answer.selectedOptionId,
-          )
-        ) {
-          throw new Error("Unknown public quiz option");
-        }
-        const correct = question.correctOptionIds.includes(
-          answer.selectedOptionId,
-        );
-        const evidence = await state.repository.recordVersionedUnitEvidence({
-          sessionId,
+    async (context) =>
+      withAsyncTransaction(state.connection, async () => {
+        const body = quizAttemptSchema.parse(await context.req.json());
+        const sessionId = context.req.param("id");
+        const unitId = context.req.param("unitId");
+        const unit = requireEvidenceTarget(
+          await state.repository.getVersionedSession(sessionId),
           unitId,
-          evidenceType: "quiz-answer",
-          operationId: quizAnswerOperationId(
+          "quiz",
+        );
+        const privateUnit = requirePrivateUnit(
+          readPrivateSnapshot(state.connection, sessionId),
+          unitId,
+          "quiz",
+        );
+        const submitted = [];
+        for (const answer of body.answers) {
+          const question = privateUnit.questions.find(
+            (candidate) => candidate.id === answer.questionId,
+          );
+          if (!question) throw new Error("Unknown quiz question");
+          if (
+            !question.options.some(
+              (option) => option.id === answer.selectedOptionId,
+            )
+          ) {
+            throw new Error("Unknown public quiz option");
+          }
+          const correct = question.correctOptionIds.includes(
+            answer.selectedOptionId,
+          );
+          const answerOperationId = quizAnswerOperationId(
             body.operationId,
             answer.questionId,
-          ),
-          questionId: answer.questionId,
-          payload: { selectedOptionId: answer.selectedOptionId },
-          correctness: correct ? 1 : 0,
-        });
-        submitted.push({
-          questionId: answer.questionId,
-          correct,
-          evidenceId: evidence.id,
-        });
-      }
-      const evidence = await state.repository.listVersionedUnitEvidence(
-        sessionId,
-        { unitId, evidenceType: "quiz-answer" },
-      );
-      const latestByQuestion = new Map(
-        evidence
-          .filter((item) => item.questionId !== null)
-          .map((item) => [item.questionId!, item]),
-      );
-      const attemptedQuestionIds = [...latestByQuestion.keys()];
-      const correctQuestionIds = attemptedQuestionIds.filter(
-        (questionId) => latestByQuestion.get(questionId)?.correctness === 1,
-      );
-      const score =
-        attemptedQuestionIds.length === 0
-          ? null
-          : correctQuestionIds.length / attemptedQuestionIds.length;
-      await state.repository.updateUnitProgress({
-        sessionId,
-        unitId,
-        status: "in_progress",
-        progress: {
-          type: "quiz",
-          attemptedQuestionIds,
-          correctQuestionIds,
-          score,
-        },
-      });
-      return context.json(
-        {
-          attempt: {
-            operationId: body.operationId,
+          );
+          const evidence = await state.repository.recordVersionedUnitEvidence({
+            sessionId,
+            unitId,
+            evidenceType: "quiz-answer",
+            operationId: answerOperationId,
+            questionId: answer.questionId,
+            payload: { selectedOptionId: answer.selectedOptionId },
+            correctness: correct ? 1 : 0,
+          });
+          const occurredAt = toObservedAt(evidence.createdAt);
+          const kernelBody = {
+            type: "evidence" as const,
+            dimension: "understanding" as const,
+            evidenceType: "recall" as const,
+            outcome: "unverified" as const,
+            hintLevel: readLegacyHintLevel(state.connection, sessionId, unitId),
+          };
+          const learnerFactId = acceptKernelLearnerEvidence(
+            kernelRepository,
+            state.connection,
+            {
+              sessionId,
+              activityId: unit.stableId,
+              operationId: answerOperationId,
+              sourceId: evidence.id,
+              observedAt: occurredAt,
+              source: evidence,
+              body: kernelBody,
+            },
+          );
+          acceptKernelEvaluatorEvidence(kernelRepository, state.connection, {
+            sessionId,
+            activityId: unit.stableId,
+            operationId: answerOperationId,
+            sourceId: evidence.id,
+            observedAt: occurredAt,
+            source: { evidence, correct },
+            body: kernelBody,
+            basisFactId: learnerFactId,
+            outcome: correct ? "correct" : "incorrect",
+          });
+          submitted.push({
+            questionId: answer.questionId,
+            correct,
+            evidenceId: evidence.id,
+          });
+        }
+        const evidence = await state.repository.listVersionedUnitEvidence(
+          sessionId,
+          { unitId, evidenceType: "quiz-answer" },
+        );
+        const latestByQuestion = new Map(
+          evidence
+            .filter((item) => item.questionId !== null)
+            .map((item) => [item.questionId!, item]),
+        );
+        const attemptedQuestionIds = [...latestByQuestion.keys()];
+        const correctQuestionIds = attemptedQuestionIds.filter(
+          (questionId) => latestByQuestion.get(questionId)?.correctness === 1,
+        );
+        const score =
+          attemptedQuestionIds.length === 0
+            ? null
+            : correctQuestionIds.length / attemptedQuestionIds.length;
+        await state.repository.updateUnitProgress({
+          sessionId,
+          unitId,
+          status: "in_progress",
+          progress: {
+            type: "quiz",
+            attemptedQuestionIds,
+            correctQuestionIds,
             score,
-            results: submitted.map(({ questionId, correct }) => ({
-              questionId,
-              correct,
-            })),
           },
-          session: toLearnerSession(
-            await state.repository.getVersionedSession(sessionId),
-          ),
-        },
-        201,
-      );
-    },
+        });
+        return context.json(
+          {
+            attempt: {
+              operationId: body.operationId,
+              score,
+              results: submitted.map(({ questionId, correct }) => ({
+                questionId,
+                correct,
+              })),
+            },
+            session: await toLearnerSession(
+              state,
+              await state.repository.getVersionedSession(sessionId),
+            ),
+          },
+          201,
+        );
+      }),
   );
 
   app.post(
     "/api/learning/sessions/v2/:id/units/:unitId/code-reading-attempts",
-    async (context) => {
-      const body = codeReadingAttemptSchema.parse(await context.req.json());
-      const sessionId = context.req.param("id");
-      const unitId = context.req.param("unitId");
-      requireEvidenceTarget(
-        await state.repository.getVersionedSession(sessionId),
-        unitId,
-        "code-reading",
-      );
-      const evidence = await state.repository.recordVersionedUnitEvidence({
-        sessionId,
-        unitId,
-        evidenceType: "code-reading-attempt",
-        operationId: body.operationId,
-        payload: {
-          prediction: body.prediction,
-          explanation: body.explanation,
-          verbalFix: body.verbalFix,
-        },
-      });
-      await state.repository.updateUnitProgress({
-        sessionId,
-        unitId,
-        status: "in_progress",
-        progress: {
-          type: "code-reading",
-          prediction: body.prediction,
-          explanation: body.explanation,
-          verbalFix: body.verbalFix,
-        },
-      });
-      return context.json(
-        {
-          evidence: { id: evidence.id },
-          session: toLearnerSession(
-            await state.repository.getVersionedSession(sessionId),
-          ),
-        },
-        201,
-      );
-    },
+    async (context) =>
+      withAsyncTransaction(state.connection, async () => {
+        const body = codeReadingAttemptSchema.parse(await context.req.json());
+        const sessionId = context.req.param("id");
+        const unitId = context.req.param("unitId");
+        const unit = requireEvidenceTarget(
+          await state.repository.getVersionedSession(sessionId),
+          unitId,
+          "code-reading",
+        );
+        const evidence = await state.repository.recordVersionedUnitEvidence({
+          sessionId,
+          unitId,
+          evidenceType: "code-reading-attempt",
+          operationId: body.operationId,
+          payload: {
+            prediction: body.prediction,
+            explanation: body.explanation,
+            verbalFix: body.verbalFix,
+          },
+        });
+        acceptKernelLearnerEvidence(kernelRepository, state.connection, {
+          sessionId,
+          activityId: unit.stableId,
+          operationId: body.operationId,
+          sourceId: evidence.id,
+          observedAt: toObservedAt(evidence.createdAt),
+          source: evidence,
+          body: {
+            type: "evidence",
+            dimension: "codeReading",
+            evidenceType: "code_reading",
+            outcome: "unverified",
+            hintLevel: readLegacyHintLevel(state.connection, sessionId, unitId),
+          },
+        });
+        await state.repository.updateUnitProgress({
+          sessionId,
+          unitId,
+          status: "in_progress",
+          progress: {
+            type: "code-reading",
+            prediction: body.prediction,
+            explanation: body.explanation,
+            verbalFix: body.verbalFix,
+          },
+        });
+        return context.json(
+          {
+            evidence: { id: evidence.id },
+            session: await toLearnerSession(
+              state,
+              await state.repository.getVersionedSession(sessionId),
+            ),
+          },
+          201,
+        );
+      }),
   );
 
   app.get(
@@ -601,12 +701,12 @@ export function registerVersionedLearningRoutes(
     async (context) => {
       const sessionId = context.req.param("id");
       const unitId = context.req.param("unitId");
-      const detail = await state.repository.getVersionedSession(sessionId);
+      const detail = await requireVerifiedSessionDetail(state, sessionId);
       const persisted = readPersistedSummary(state.connection, detail, unitId);
       return context.json({
         summary: persisted.summary,
         evidence: { id: persisted.evidenceId },
-        session: toLearnerSession(detail),
+        session: await toLearnerSession(state, detail),
       });
     },
   );
@@ -678,7 +778,8 @@ export function registerVersionedLearningRoutes(
         {
           summary,
           evidence: { id: evidenceId },
-          session: toLearnerSession(
+          session: await toLearnerSession(
+            state,
             await state.repository.getVersionedSession(sessionId),
           ),
         },
@@ -687,30 +788,56 @@ export function registerVersionedLearningRoutes(
     },
   );
 
-  app.patch("/api/learning/sessions/v2/:id/units/:unitId", async (context) => {
-    const body = updateUnitSchema.parse(await context.req.json());
-    const sessionId = context.req.param("id");
-    const unitId = context.req.param("unitId");
-    const detail = await state.repository.getVersionedSession(sessionId);
-    if (detail.session.status !== "active") {
-      throw new Error("Only an active session can change unit progress");
-    }
-    const unit = detail.snapshot.units.find(
-      (candidate) => candidate.id === unitId,
-    );
-    const current = detail.unitProgress.find(
-      (candidate) => candidate.unitId === unitId,
-    );
-    if (!unit || !current) throw new Error("Unknown session unit");
-    if (body.payload && body.payload.type !== unit.type) {
-      throw new Error("Unit progress payload type must match its unit type");
-    }
-    const payload = isServerOwnedEvidenceUnit(unit.type)
-      ? current.payload
-      : (body.payload ?? current.payload);
+  app.patch("/api/learning/sessions/v2/:id/units/:unitId", async (context) =>
+    withAsyncTransaction(state.connection, async () => {
+      const body = updateUnitSchema.parse(await context.req.json());
+      const sessionId = context.req.param("id");
+      const unitId = context.req.param("unitId");
+      const detail = await state.repository.getVersionedSession(sessionId);
+      if (detail.session.status !== "active") {
+        throw new Error("Only an active session can change unit progress");
+      }
+      const unit = detail.snapshot.units.find(
+        (candidate) => candidate.id === unitId,
+      );
+      const current = detail.unitProgress.find(
+        (candidate) => candidate.unitId === unitId,
+      );
+      if (!unit || !current) throw new Error("Unknown session unit");
+      if (body.payload && body.payload.type !== unit.type) {
+        throw new Error("Unit progress payload type must match its unit type");
+      }
+      const payload = isServerOwnedEvidenceUnit(unit.type)
+        ? current.payload
+        : (body.payload ?? current.payload);
 
-    if (body.status === current.status) {
-      if (current.status === "completed") {
+      if (body.status === current.status) {
+        if (current.status === "completed") {
+          await assertCompletionCriteria(
+            state.connection,
+            state.repository,
+            sessionId,
+            unit,
+            payload,
+            detail.unitProgress,
+            detail.snapshot.units,
+          );
+        }
+        await state.repository.updateUnitProgress({
+          sessionId,
+          unitId,
+          status: current.status,
+          progress: payload,
+        });
+        const unchanged = await state.repository.getVersionedSession(sessionId);
+        return context.json({
+          session: await toLearnerSession(state, unchanged),
+        });
+      }
+
+      const event = transitionEvent(current.status, body.status, unitId);
+      if (!event) throw new Error("Unit transition is not allowed");
+      if (event.type === "complete") {
         await assertCompletionCriteria(
           state.connection,
           state.repository,
@@ -721,54 +848,783 @@ export function registerVersionedLearningRoutes(
           detail.snapshot.units,
         );
       }
-      await state.repository.updateUnitProgress({
-        sessionId,
-        unitId,
-        status: current.status,
-        progress: payload,
-      });
-      const unchanged = await state.repository.getVersionedSession(sessionId);
-      return context.json({ session: toLearnerSession(unchanged) });
-    }
+      const definitions = toDefinitions(detail.snapshot.units);
+      const transition = transitionUnitProgression(
+        definitions,
+        detail.unitProgress.map((item) => ({
+          unitId: item.unitId,
+          status: item.status,
+        })),
+        event,
+      );
+      if (!transition.valid) {
+        throw new Error(`Unit transition rejected: ${transition.reason}`);
+      }
 
-    const event = transitionEvent(current.status, body.status, unitId);
-    if (!event) throw new Error("Unit transition is not allowed");
-    if (event.type === "complete") {
-      await assertCompletionCriteria(
+      const lessonComplete = isLessonComplete(definitions, transition.progress);
+      persistTransition(
         state.connection,
-        state.repository,
-        sessionId,
-        unit,
+        detail,
+        transition.progress,
+        unitId,
         payload,
-        detail.unitProgress,
-        detail.snapshot.units,
+        lessonComplete,
+      );
+      acceptLegacyKernelProgress(kernelRepository, state.connection, {
+        sessionId,
+        stableActivityId: unit.stableId,
+        operationId: body.operationId,
+        transition: event.type,
+        observedAt: observedAt(),
+        source: { current, target: body.status, payload },
+      });
+      const updated = await state.repository.getVersionedSession(sessionId);
+      return context.json({ session: await toLearnerSession(state, updated) });
+    }),
+  );
+}
+
+interface PathCourseTarget {
+  courseId: string;
+  revisionId: string;
+}
+
+async function readCourseCollection(state: VersionedLearningState) {
+  const courses = await state.courseFoundationRepository.listCourses();
+  return courses
+    .map((course) => ({
+      id: course.id,
+      stableId: course.stableId,
+      title: course.title,
+      description: course.description,
+      primaryLocale: course.primaryLocale,
+      revisions: [...course.revisions]
+        .sort(
+          (left, right) =>
+            left.revisionNumber - right.revisionNumber ||
+            (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+        )
+        .map((revision) => ({
+          id: revision.id,
+          revisionNumber: revision.revisionNumber,
+          status: revision.status,
+          branchKind: revision.branchKind,
+          contentHash: revision.contentHash,
+        })),
+    }))
+    .sort((left, right) =>
+      left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+    );
+}
+
+async function requireOwnedCourseRevision(
+  state: VersionedLearningState,
+  courseId: string,
+  revisionId: string,
+  publishedOnly: boolean,
+): Promise<CourseFoundationRevision> {
+  const target =
+    await state.courseFoundationRepository.getCourseRevision(revisionId);
+  if (!target) throw new Error(`Unknown Course revision: ${revisionId}`);
+  if (
+    target.course.id !== courseId ||
+    target.revision.id !== revisionId ||
+    target.revision.courseId !== courseId
+  ) {
+    throw new Error("Course and revision IDs do not match");
+  }
+  if (publishedOnly && target.revision.status !== "published") {
+    throw new Error("Course path requires a published revision");
+  }
+  assertFoundationRevisionOwnership(target);
+  return target;
+}
+
+function assertFoundationRevisionOwnership(
+  target: CourseFoundationRevision,
+): void {
+  const lessonIds = new Set(target.lessons.map((lesson) => lesson.id));
+  if (lessonIds.size !== target.lessons.length) {
+    throw new Error("Course revision contains duplicate lesson IDs");
+  }
+  const revisionActivityIds = new Set<string>();
+  for (const lesson of target.lessons) {
+    if (
+      lesson.courseId !== target.course.id ||
+      lesson.revisionId !== target.revision.id ||
+      lesson.prerequisiteLessonIds.some(
+        (prerequisiteId) => !lessonIds.has(prerequisiteId),
+      )
+    ) {
+      throw new Error("Course revision contains an invalid lesson scope");
+    }
+    const lessonActivityIds = new Set(
+      lesson.activities.map((activity) => activity.id),
+    );
+    if (lessonActivityIds.size !== lesson.activities.length) {
+      throw new Error("Course lesson contains duplicate activity IDs");
+    }
+    for (const entryActivityId of lesson.entryActivityIds) {
+      if (!lessonActivityIds.has(entryActivityId)) {
+        throw new Error("Course lesson entry activity is out of scope");
+      }
+    }
+    for (const activity of lesson.activities) {
+      if (
+        activity.courseId !== target.course.id ||
+        activity.revisionId !== target.revision.id ||
+        activity.lessonId !== lesson.id ||
+        revisionActivityIds.has(activity.id)
+      ) {
+        throw new Error("Course revision contains an invalid activity scope");
+      }
+      revisionActivityIds.add(activity.id);
+      if (
+        activity.prerequisiteActivityIds.some(
+          (prerequisiteId) => !lessonActivityIds.has(prerequisiteId),
+        )
+      ) {
+        throw new Error("Course activity prerequisite is out of lesson scope");
+      }
+    }
+  }
+}
+
+function requireTargetLesson(
+  target: CourseFoundationRevision,
+  expectedLesson: {
+    readonly id: string;
+    readonly prerequisites: readonly unknown[];
+    readonly units: readonly {
+      readonly id: string;
+      readonly stableId: string;
+      readonly type: string;
+      readonly optional: boolean;
+      readonly unlockRules: readonly unknown[];
+    }[];
+  },
+  lessonIdByStableId: ReadonlyMap<string, string>,
+) {
+  const lesson = target.lessons.find(
+    (candidate) => candidate.id === expectedLesson.id,
+  );
+  if (!lesson) throw new Error("Course revision does not own the lesson");
+  const expectedDefinitions = resolveExplicitUnitDefinitions(
+    expectedLesson.units.map((activity) => ({
+      id: activity.id,
+      stableId: activity.stableId,
+      optional: activity.optional,
+      prerequisiteStableIds: UnitUnlockRuleSchema.array()
+        .parse(activity.unlockRules)
+        .map((rule) => rule.unitId),
+    })),
+  );
+  const expectedPrerequisitesByActivityId = new Map(
+    expectedDefinitions.map((definition) => [
+      definition.id,
+      definition.prerequisiteUnitIds ?? [],
+    ]),
+  );
+  const expectedLessonPrerequisites = CourseEntityIdSchema.array()
+    .parse(expectedLesson.prerequisites)
+    .map((stableId) => {
+      const id = lessonIdByStableId.get(stableId);
+      if (id === undefined) {
+        throw new Error(`Unknown source lesson prerequisite: ${stableId}`);
+      }
+      return id;
+    });
+  if (
+    !sameStringSequence(
+      [...lesson.prerequisiteLessonIds].sort(),
+      expectedLessonPrerequisites.sort(),
+    ) ||
+    !sameStringSequence(
+      lesson.activities.map((activity) => activity.id),
+      expectedLesson.units.map((activity) => activity.id),
+    ) ||
+    lesson.activities.some((activity, index) => {
+      const expected = expectedLesson.units[index];
+      return (
+        expected === undefined ||
+        activity.type !== expected.type ||
+        !sameStringSequence(
+          [...activity.prerequisiteActivityIds].sort(),
+          [
+            ...(expectedPrerequisitesByActivityId.get(activity.id) ?? []),
+          ].sort(),
+        )
+      );
+    })
+  ) {
+    throw new Error("Course lesson graph does not match the source lesson");
+  }
+  return lesson;
+}
+
+interface VerifiedCourseLessonTarget extends PathCourseTarget {
+  readonly revision: CourseFoundationRevision;
+  readonly lesson: CourseFoundationRevision["lessons"][number];
+}
+
+async function requireCourseTargetForLesson(
+  state: VersionedLearningState,
+  lessonId: string,
+): Promise<VerifiedCourseLessonTarget> {
+  const source = state.connection.sqlite
+    .prepare(
+      `SELECT lesson.version_id, revision.curriculum_id
+       FROM curriculum_days_v2 lesson
+       JOIN curriculum_versions revision ON revision.id = lesson.version_id
+       JOIN curricula course ON course.id = revision.curriculum_id
+       WHERE lesson.id = ? AND revision.status = 'published'
+         AND course.active_version_id = revision.id`,
+    )
+    .get(lessonId) as { version_id: string; curriculum_id: string } | undefined;
+  if (!source) throw new Error(`Unknown Course lesson: ${lessonId}`);
+  const ownedTarget = await requireOwnedCourseRevision(
+    state,
+    source.curriculum_id,
+    source.version_id,
+    true,
+  );
+  const graph = await new CurriculumAuthoringRepository(
+    state.connection,
+  ).getVersionGraph(source.version_id);
+  const sourceLessons = graph.weeks.flatMap((week) => week.days);
+  const sourceLesson = sourceLessons.find((lesson) => lesson.id === lessonId);
+  if (sourceLesson === undefined) {
+    throw new Error("Published curriculum graph is incomplete");
+  }
+  const lesson = requireTargetLesson(
+    ownedTarget,
+    sourceLesson,
+    new Map(
+      sourceLessons.map((candidate) => [candidate.stableId, candidate.id]),
+    ),
+  );
+  return {
+    courseId: source.curriculum_id,
+    revisionId: source.version_id,
+    revision: ownedTarget,
+    lesson,
+  };
+}
+
+async function readCompatibilityCourseTarget(
+  state: VersionedLearningState,
+): Promise<PathCourseTarget | null> {
+  const current = await state.repository.getCurrentVersionedSession();
+  if (current) {
+    const context = await requireSessionCourseContext(state, current);
+    return { courseId: context.courseId, revisionId: context.revisionId };
+  }
+
+  const mappings = state.connection.sqlite
+    .prepare(
+      `SELECT course.id AS course_id, course.active_version_id AS revision_id
+       FROM curricula course
+       JOIN curriculum_versions revision
+         ON revision.id = course.active_version_id
+       WHERE revision.status = 'published'
+       ORDER BY course.updated_at DESC, course.id, revision.revision, revision.id`,
+    )
+    .all() as Array<{ course_id: string; revision_id: string }>;
+  const mapping = mappings[0];
+  if (!mapping) return null;
+  const target = await state.courseFoundationRepository.getCourseRevision(
+    mapping.revision_id,
+  );
+  if (target !== null) {
+    await requireOwnedCourseRevision(
+      state,
+      mapping.course_id,
+      mapping.revision_id,
+      true,
+    );
+  } else if (
+    !hasQuarantinedRevisionCompatibility(
+      state,
+      mapping.course_id,
+      mapping.revision_id,
+    )
+  ) {
+    throw new Error(`Unknown Course revision: ${mapping.revision_id}`);
+  }
+  return { courseId: mapping.course_id, revisionId: mapping.revision_id };
+}
+
+async function readLearnerPath(
+  state: VersionedLearningState,
+  courseId: string,
+  revisionId: string,
+) {
+  const currentDetail = await state.repository.getCurrentVersionedSession();
+  const currentContext = currentDetail
+    ? await requireSessionCourseContext(state, currentDetail)
+    : null;
+  const pinnedToCurrentSession =
+    currentDetail !== null &&
+    currentContext !== null &&
+    currentContext.courseId === courseId &&
+    currentContext.revisionId === revisionId;
+  const candidateTarget =
+    await state.courseFoundationRepository.getCourseRevision(revisionId);
+  const target =
+    candidateTarget === null
+      ? null
+      : await requireOwnedCourseRevision(state, courseId, revisionId, false);
+  if (
+    target !== null &&
+    target.revision.status !== "published" &&
+    (!pinnedToCurrentSession || target.revision.status !== "archived")
+  ) {
+    throw new Error("Course path requires a published revision");
+  }
+  if (
+    target === null &&
+    !hasQuarantinedRevisionCompatibility(state, courseId, revisionId)
+  ) {
+    throw new Error(`Unknown Course revision: ${revisionId}`);
+  }
+  const sourceCourse = state.connection.sqlite
+    .prepare(
+      `SELECT course.id, course.slug, course.title, course.description
+       FROM curricula course
+       JOIN curriculum_versions revision
+         ON revision.id = ? AND revision.curriculum_id = course.id
+       WHERE course.id = ? AND revision.status IN ('published', 'archived')`,
+    )
+    .get(revisionId, courseId) as
+    | {
+        id: string;
+        slug: string;
+        title: string;
+        description: string | null;
+      }
+    | undefined;
+  if (!sourceCourse) {
+    throw new Error("Course revision has no compatible published source");
+  }
+
+  const authoring = new CurriculumAuthoringRepository(state.connection);
+  const graph = await authoring.getVersionGraph(revisionId);
+  if (
+    graph.version.curriculumId !== courseId ||
+    graph.version.id !== revisionId ||
+    (graph.version.status !== "published" &&
+      (!pinnedToCurrentSession || graph.version.status !== "archived")) ||
+    (target !== null &&
+      (graph.version.revision !== target.revision.revisionNumber ||
+        graph.version.contentHash !== target.revision.contentHash))
+  ) {
+    throw new Error("Course revision does not match its compatible source");
+  }
+  const sourceLessons = graph.weeks.flatMap((week) => week.days);
+  if (
+    target !== null &&
+    !sameStringSequence(
+      target.lessons.map((lesson) => lesson.id),
+      sourceLessons.map((lesson) => lesson.id),
+    )
+  ) {
+    throw new Error("Course lessons do not match the compatible source");
+  }
+  if (target !== null) {
+    const lessonIdByStableId = new Map(
+      sourceLessons.map((lesson) => [lesson.stableId, lesson.id]),
+    );
+    for (const lesson of sourceLessons) {
+      requireTargetLesson(target, lesson, lessonIdByStableId);
+    }
+  }
+
+  const latestSessions = await latestSessionsByDayStableId(
+    state,
+    courseId,
+    revisionId,
+  );
+  const completedDayStableIds = await completedVersionedDayStableIds(
+    state,
+    courseId,
+    revisionId,
+  );
+  const current = pinnedToCurrentSession ? currentDetail : null;
+
+  return {
+    courseContext: { courseId, revisionId },
+    curriculum: {
+      id: sourceCourse.id,
+      slug: sourceCourse.slug,
+      title: sourceCourse.title,
+      description: sourceCourse.description,
+      version: {
+        id: graph.version.id,
+        revision: graph.version.revision,
+        contentHash: graph.version.contentHash,
+        status: graph.version.status,
+      },
+      weeks: graph.weeks.map((week) => ({
+        id: week.id,
+        stableId: week.stableId,
+        order: week.orderIndex + 1,
+        title: week.title,
+        description: week.description,
+        days: week.days.map((day) => {
+          const units = day.units.map((unit) =>
+            CurriculumUnitSchema.parse({
+              id: unit.id,
+              stableId: unit.stableId,
+              type: unit.type,
+              order: unit.orderIndex + 1,
+              title: unit.title,
+              description: unit.description ?? unit.title,
+              estimatedMinutes: unit.estimatedMinutes ?? 0,
+              objectives: unit.objectives,
+              checklist: unit.checklist,
+              sources: unit.sources,
+              questions: unit.questions,
+              misconceptions: unit.misconceptions,
+              referenceAnswer: unit.referenceAnswer,
+              completionCriteria: unit.completionCriteria,
+              unlockRules: unit.unlockRules,
+              optional: unit.optional,
+              depthLevel: unit.depthLevel ?? "foundation",
+              payload: unit.payload,
+            }),
+          );
+          const session = latestSessions.get(day.stableId);
+          const currentDay =
+            current !== null && current.snapshot.day.id === day.id;
+          const prerequisitesCompleted = CourseEntityIdSchema.array()
+            .parse(day.prerequisites)
+            .every((stableId) => completedDayStableIds.has(stableId));
+          const dayStatus = completedDayStableIds.has(day.stableId)
+            ? "completed"
+            : currentDay
+              ? "in_progress"
+              : prerequisitesCompleted
+                ? "available"
+                : "locked";
+          const sessionProgress =
+            currentDay && current
+              ? new Map(
+                  current.unitProgress.flatMap((item) => {
+                    const snapshotUnit = current.snapshot.units.find(
+                      (unit) => unit.id === item.unitId,
+                    );
+                    return snapshotUnit ? [[snapshotUnit.stableId, item]] : [];
+                  }),
+                )
+              : null;
+          const initial = new Map(
+            createUnitProgression(toDefinitions(units)).map((item) => [
+              item.unitId,
+              item.status,
+            ]),
+          );
+          return {
+            id: day.id,
+            stableId: day.stableId,
+            order: day.orderIndex + 1,
+            title: day.title,
+            description: day.description ?? day.title,
+            goal: day.goal,
+            estimatedMinutes: day.estimatedMinutes,
+            prerequisites: day.prerequisites,
+            expectedOutcomes: day.expectedOutcomes,
+            depthLevel: day.depthLevel,
+            outOfScope: day.outOfScope,
+            topics: day.topics,
+            status: dayStatus,
+            sessionId:
+              currentDay && current
+                ? current.session.id
+                : (session?.id ?? null),
+            units: units.map((unit) => ({
+              ...toLearnerUnit(unit),
+              status:
+                session?.status === "completed"
+                  ? unit.optional
+                    ? "skipped"
+                    : "completed"
+                  : (sessionProgress?.get(unit.stableId)?.status ??
+                    initial.get(unit.id) ??
+                    "locked"),
+            })),
+          };
+        }),
+      })),
+    },
+  };
+}
+
+async function requireVerifiedSessionDetail(
+  state: VersionedLearningState,
+  sessionId: string,
+): Promise<VersionedSessionDetail> {
+  const detail = await state.repository.getVersionedSession(sessionId);
+  await requireSessionCourseContext(state, detail);
+  return detail;
+}
+
+async function requireSessionCourseContext(
+  state: VersionedLearningState,
+  detail: VersionedSessionDetail,
+) {
+  const persistedContext =
+    await state.courseFoundationRepository.getSessionContext(detail.session.id);
+  const sourceSnapshot = state.connection.sqlite
+    .prepare(
+      `SELECT id, curriculum_id, curriculum_version_id, curriculum_day_id,
+              content_hash, snapshot_json
+       FROM session_snapshots WHERE session_id = ?`,
+    )
+    .get(detail.session.id) as
+    | {
+        id: string;
+        curriculum_id: string | null;
+        curriculum_version_id: string | null;
+        curriculum_day_id: string | null;
+        content_hash: string;
+        snapshot_json: string;
+      }
+    | undefined;
+  if (!sourceSnapshot) {
+    throw new Error("Learning session source snapshot is missing");
+  }
+  const compatibilityContext =
+    persistedContext === null &&
+    sourceSnapshot.curriculum_id !== null &&
+    sourceSnapshot.curriculum_version_id !== null &&
+    sourceSnapshot.curriculum_day_id !== null &&
+    hasQuarantinedSessionCompatibility(
+      state,
+      detail.session.id,
+      sourceSnapshot.curriculum_id,
+      sourceSnapshot.curriculum_version_id,
+      sourceSnapshot.curriculum_day_id,
+    )
+      ? {
+          courseId: sourceSnapshot.curriculum_id,
+          revisionId: sourceSnapshot.curriculum_version_id,
+          lessonId: sourceSnapshot.curriculum_day_id,
+          sessionSnapshotId: sourceSnapshot.id,
+          snapshotHash: sourceSnapshot.content_hash,
+        }
+      : null;
+  const context = persistedContext ?? compatibilityContext;
+  if (context === null) {
+    throw new Error("Learning session has no Course context");
+  }
+  const storedSnapshot = SessionSnapshotSchema.parse(
+    JSON.parse(sourceSnapshot.snapshot_json),
+  );
+  const { contentHash: embeddedHash, ...snapshotCore } = storedSnapshot;
+  if (
+    sourceSnapshot.id !== context.sessionSnapshotId ||
+    sourceSnapshot.curriculum_id !== context.courseId ||
+    sourceSnapshot.curriculum_version_id !== context.revisionId ||
+    sourceSnapshot.curriculum_day_id !== context.lessonId ||
+    sourceSnapshot.content_hash !== context.snapshotHash ||
+    embeddedHash !== context.snapshotHash ||
+    (persistedContext !== null &&
+      hashCanonicalJson(snapshotCore) !== context.snapshotHash) ||
+    detail.snapshot.contentHash !== context.snapshotHash ||
+    detail.snapshot.curriculumId !== context.courseId ||
+    detail.snapshot.curriculumVersionId !== context.revisionId ||
+    detail.snapshot.day.id !== context.lessonId ||
+    detail.session.curriculumDayV2Id !== context.lessonId
+  ) {
+    throw new Error(
+      "Learning session Course context does not match its snapshot",
+    );
+  }
+
+  if (persistedContext !== null) {
+    const target = await requireOwnedCourseRevision(
+      state,
+      context.courseId,
+      context.revisionId,
+      false,
+    );
+    const lesson = requireTargetLesson(
+      target,
+      {
+        id: context.lessonId,
+        prerequisites: storedSnapshot.day.prerequisites,
+        units: storedSnapshot.units,
+      },
+      new Map(
+        target.lessons.map((candidate) => [candidate.stableId, candidate.id]),
+      ),
+    );
+    const activityIds = lesson.activities.map((activity) => activity.id);
+    if (
+      !sameStringSequence(
+        activityIds,
+        detail.snapshot.units.map((unit) => unit.id),
+      ) ||
+      !sameStringSet(
+        activityIds,
+        detail.unitProgress.map((progress) => progress.unitId),
+      ) ||
+      lesson.activities.some((activity, index) => {
+        const snapshotUnit = detail.snapshot.units[index];
+        const progress = detail.unitProgress.find(
+          (candidate) => candidate.unitId === activity.id,
+        );
+        return (
+          snapshotUnit?.type !== activity.type ||
+          progress?.unitType !== activity.type
+        );
+      })
+    ) {
+      throw new Error(
+        "Learning session activities do not match its Course lesson",
       );
     }
-    const definitions = toDefinitions(detail.snapshot.units);
-    const transition = transitionUnitProgression(
-      definitions,
-      detail.unitProgress.map((item) => ({
-        unitId: item.unitId,
-        status: item.status,
-      })),
-      event,
-    );
-    if (!transition.valid) {
-      throw new Error(`Unit transition rejected: ${transition.reason}`);
-    }
+  }
 
-    const lessonComplete = isLessonComplete(definitions, transition.progress);
-    persistTransition(
-      state.connection,
-      detail,
-      transition.progress,
-      unitId,
-      payload,
-      lessonComplete,
-    );
-    const updated = await state.repository.getVersionedSession(sessionId);
-    return context.json({ session: toLearnerSession(updated) });
-  });
+  return {
+    courseId: context.courseId,
+    revisionId: context.revisionId,
+    lessonId: context.lessonId,
+    sessionSnapshotId: context.sessionSnapshotId,
+    snapshotHash: context.snapshotHash,
+  };
+}
+
+type QuarantinedSourceTable =
+  "curriculum_versions" | "curriculum_days_v2" | "session_snapshots";
+
+function matchesQuarantinedSourceRow(
+  state: VersionedLearningState,
+  table: QuarantinedSourceTable,
+  sourcePrimaryKey: string,
+  sourceRowHash: string,
+): boolean {
+  const row = state.connection.sqlite
+    .prepare(`SELECT * FROM ${table} WHERE id = ?`)
+    .get(sourcePrimaryKey) as Record<string, unknown> | undefined;
+  return row !== undefined && hashCanonicalJson(row) === sourceRowHash;
+}
+
+function hasQuarantinedRevisionCompatibility(
+  state: VersionedLearningState,
+  courseId: string,
+  revisionId: string,
+): boolean {
+  const provenance = state.connection.sqlite
+    .prepare(
+      `SELECT provenance.source_row_hash
+       FROM migration_provenance provenance
+       JOIN curriculum_versions revision
+         ON revision.id = provenance.source_primary_key
+        AND revision.id = ?
+        AND revision.curriculum_id = ?
+       WHERE provenance.transform_version = 'm2-v1'
+         AND provenance.source_table = 'curriculum_versions'
+         AND provenance.status = 'quarantined'`,
+    )
+    .get(revisionId, courseId) as { source_row_hash: string } | undefined;
+  return (
+    provenance !== undefined &&
+    matchesQuarantinedSourceRow(
+      state,
+      "curriculum_versions",
+      revisionId,
+      provenance.source_row_hash,
+    )
+  );
+}
+
+function hasQuarantinedSessionCompatibility(
+  state: VersionedLearningState,
+  sessionId: string,
+  courseId: string,
+  revisionId: string,
+  lessonId?: string,
+): boolean {
+  const provenance = state.connection.sqlite
+    .prepare(
+      `SELECT revision_provenance.source_row_hash AS revision_row_hash,
+              lesson_provenance.source_row_hash AS lesson_row_hash,
+              snapshot_provenance.source_row_hash AS snapshot_row_hash,
+              lesson.id AS lesson_id, snapshot.id AS snapshot_id
+       FROM session_snapshots snapshot
+       JOIN curriculum_versions revision
+         ON revision.id = snapshot.curriculum_version_id
+        AND revision.curriculum_id = snapshot.curriculum_id
+       JOIN curriculum_days_v2 lesson
+         ON lesson.id = snapshot.curriculum_day_id
+        AND lesson.version_id = revision.id
+       JOIN migration_provenance revision_provenance
+         ON revision_provenance.transform_version = 'm2-v1'
+        AND revision_provenance.source_table = 'curriculum_versions'
+        AND revision_provenance.source_primary_key = revision.id
+        AND revision_provenance.status = 'quarantined'
+       JOIN migration_provenance lesson_provenance
+         ON lesson_provenance.transform_version = 'm2-v1'
+        AND lesson_provenance.source_table = 'curriculum_days_v2'
+        AND lesson_provenance.source_primary_key = lesson.id
+        AND lesson_provenance.status = 'quarantined'
+       JOIN migration_provenance snapshot_provenance
+         ON snapshot_provenance.transform_version = 'm2-v1'
+        AND snapshot_provenance.source_table = 'session_snapshots'
+        AND snapshot_provenance.source_primary_key = snapshot.id
+        AND snapshot_provenance.status = 'quarantined'
+       WHERE snapshot.session_id = ?
+         AND snapshot.curriculum_id = ?
+         AND snapshot.curriculum_version_id = ?
+         AND (? IS NULL OR snapshot.curriculum_day_id = ?)`,
+    )
+    .get(
+      sessionId,
+      courseId,
+      revisionId,
+      lessonId ?? null,
+      lessonId ?? null,
+    ) as
+    | {
+        revision_row_hash: string;
+        lesson_row_hash: string;
+        snapshot_row_hash: string;
+        lesson_id: string;
+        snapshot_id: string;
+      }
+    | undefined;
+  return (
+    provenance !== undefined &&
+    matchesQuarantinedSourceRow(
+      state,
+      "curriculum_versions",
+      revisionId,
+      provenance.revision_row_hash,
+    ) &&
+    matchesQuarantinedSourceRow(
+      state,
+      "curriculum_days_v2",
+      provenance.lesson_id,
+      provenance.lesson_row_hash,
+    ) &&
+    matchesQuarantinedSourceRow(
+      state,
+      "session_snapshots",
+      provenance.snapshot_id,
+      provenance.snapshot_row_hash,
+    )
+  );
+}
+
+function sameStringSequence(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function requireCurrentSummaryTarget(
@@ -1338,65 +2194,71 @@ function evidenceString(payload: unknown, key: string): string {
   return value;
 }
 
-function completedVersionedDayStableIds(
-  connection: DatabaseConnection,
-): Set<string> {
-  const rows = connection.sqlite
+async function completedVersionedDayStableIds(
+  state: VersionedLearningState,
+  courseId: string,
+  revisionId: string,
+): Promise<Set<string>> {
+  const rows = state.connection.sqlite
     .prepare(
-      `SELECT DISTINCT day.stable_id AS stable_id
+      `SELECT session.id, day.id AS lesson_id, day.stable_id AS stable_id,
+              revision.id AS revision_id
        FROM learning_sessions session
        JOIN curriculum_days_v2 day ON day.id = session.curriculum_day_v2_id
-       WHERE session.status = 'completed'`,
+       JOIN curriculum_versions revision ON revision.id = day.version_id
+       WHERE session.status = 'completed' AND revision.curriculum_id = ?
+         AND revision.id = ?
+       ORDER BY session.updated_at DESC, session.id DESC`,
     )
-    .all() as Array<{ stable_id: string }>;
-  return new Set(rows.map((row) => row.stable_id));
+    .all(courseId, revisionId) as Array<{
+    id: string;
+    lesson_id: string;
+    stable_id: string;
+    revision_id: string;
+  }>;
+  const completed = new Set<string>();
+  for (const row of rows) {
+    const detail = await state.repository.getVersionedSession(row.id);
+    const context = await requireSessionCourseContext(state, detail);
+    if (
+      context.courseId !== courseId ||
+      context.revisionId !== revisionId ||
+      context.revisionId !== row.revision_id ||
+      context.lessonId !== row.lesson_id
+    ) {
+      throw new Error("Completed session has an invalid Course lesson scope");
+    }
+    completed.add(row.stable_id);
+  }
+  return completed;
 }
 
-function assertDayCanStart(
-  connection: DatabaseConnection,
-  dayId: string,
-): void {
-  const day = connection.sqlite
-    .prepare(
-      `SELECT d.version_id, d.order_index AS day_order,
-              w.order_index AS week_order
-       FROM curriculum_days_v2 d
-       JOIN curriculum_weeks w ON w.id = d.week_id
-       JOIN curriculum_versions v ON v.id = d.version_id
-       JOIN curricula c ON c.id = v.curriculum_id
-       WHERE d.id = ? AND v.status = 'published'
-         AND c.active_version_id = v.id`,
-    )
-    .get(dayId) as
-    { version_id: string; day_order: number; week_order: number } | undefined;
-  if (!day) {
-    throw new Error(`Unknown active published curriculum day: ${dayId}`);
-  }
-
-  const incompletePredecessor = connection.sqlite
-    .prepare(
-      `SELECT previous.id
-       FROM curriculum_days_v2 previous
-       JOIN curriculum_weeks previous_week ON previous_week.id = previous.week_id
-       WHERE previous.version_id = ?
-         AND (previous_week.order_index < ? OR
-              (previous_week.order_index = ? AND previous.order_index < ?))
-         AND NOT EXISTS (
-           SELECT 1
-           FROM learning_sessions session
-           JOIN curriculum_days_v2 completed_day
-             ON completed_day.id = session.curriculum_day_v2_id
-           WHERE completed_day.stable_id = previous.stable_id
-             AND session.status = 'completed'
-         )
-       ORDER BY previous_week.order_index, previous.order_index
-       LIMIT 1`,
-    )
-    .get(day.version_id, day.week_order, day.week_order, day.day_order) as
-    { id: string } | undefined;
-  if (incompletePredecessor) {
+async function assertDayCanStart(
+  state: VersionedLearningState,
+  target: VerifiedCourseLessonTarget,
+): Promise<void> {
+  const stableIdByLessonId = new Map(
+    target.revision.lessons.map((lesson) => [lesson.id, lesson.stableId]),
+  );
+  const prerequisiteStableIds = target.lesson.prerequisiteLessonIds.map(
+    (prerequisiteId) => {
+      const stableId = stableIdByLessonId.get(prerequisiteId);
+      if (stableId === undefined) {
+        throw new Error(
+          `Course prerequisite is outside the pinned revision: ${prerequisiteId}`,
+        );
+      }
+      return stableId;
+    },
+  );
+  const completed = await completedVersionedDayStableIds(
+    state,
+    target.courseId,
+    target.revisionId,
+  );
+  if (prerequisiteStableIds.some((stableId) => !completed.has(stableId))) {
     throw new Error(
-      "Learning day is locked until preceding days are completed",
+      "Learning day is locked until its declared prerequisites are completed",
     );
   }
 }
@@ -1410,8 +2272,7 @@ function persistTransition(
   lessonComplete: boolean,
 ): void {
   const now = Date.now();
-  connection.sqlite.exec("BEGIN IMMEDIATE");
-  try {
+  withTransaction(connection, () => {
     const updateProgress = connection.sqlite.prepare(
       `UPDATE unit_progress
        SET status = ?, progress_json = ?,
@@ -1494,48 +2355,56 @@ function persistTransition(
         )
         .run(now, detail.session.id);
     }
-    connection.sqlite.exec("COMMIT");
-  } catch (error) {
-    connection.sqlite.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
-function latestSessionsByDayStableId(
-  connection: DatabaseConnection,
-): Map<string, { id: string; status: string }> {
-  const rows = connection.sqlite
+async function latestSessionsByDayStableId(
+  state: VersionedLearningState,
+  courseId: string,
+  revisionId: string,
+): Promise<Map<string, { id: string; status: string }>> {
+  const rows = state.connection.sqlite
     .prepare(
-      `SELECT day.stable_id AS stable_id, session.id, session.status
+      `SELECT day.id AS lesson_id, day.stable_id AS stable_id,
+              session.id, session.status
        FROM learning_sessions session
        JOIN curriculum_days_v2 day ON day.id = session.curriculum_day_v2_id
-       ORDER BY session.updated_at DESC`,
+       JOIN curriculum_versions revision ON revision.id = day.version_id
+       WHERE revision.curriculum_id = ? AND revision.id = ?
+       ORDER BY session.updated_at DESC, session.id DESC`,
     )
-    .all() as Array<{ stable_id: string; id: string; status: string }>;
+    .all(courseId, revisionId) as Array<{
+    lesson_id: string;
+    stable_id: string;
+    id: string;
+    status: string;
+  }>;
   const result = new Map<string, { id: string; status: string }>();
   for (const row of rows) {
-    if (!result.has(row.stable_id)) {
-      result.set(row.stable_id, { id: row.id, status: row.status });
+    if (result.has(row.stable_id)) continue;
+    const detail = await state.repository.getVersionedSession(row.id);
+    const context = await requireSessionCourseContext(state, detail);
+    if (
+      context.courseId !== courseId ||
+      context.revisionId !== revisionId ||
+      context.lessonId !== row.lesson_id
+    ) {
+      throw new Error("Path session has an invalid Course revision scope");
     }
+    result.set(row.stable_id, { id: row.id, status: row.status });
   }
   return result;
 }
 
 function toDefinitions(units: readonly CurriculumUnit[]): UnitDefinition[] {
-  const idByStableId = new Map(units.map((unit) => [unit.stableId, unit.id]));
-  return units.map((unit) => ({
-    id: unit.id,
-    optional: unit.optional,
-    ...(unit.unlockRules.length
-      ? {
-          prerequisiteUnitIds: unit.unlockRules.map((rule) => {
-            const id = idByStableId.get(rule.unitId);
-            if (!id) throw new Error(`Unknown unlock unit: ${rule.unitId}`);
-            return id;
-          }),
-        }
-      : {}),
-  }));
+  return resolveExplicitUnitDefinitions(
+    units.map((unit) => ({
+      id: unit.id,
+      stableId: unit.stableId,
+      optional: unit.optional,
+      prerequisiteStableIds: unit.unlockRules.map((rule) => rule.unitId),
+    })),
+  );
 }
 
 function transitionEvent(
@@ -2054,26 +2923,252 @@ function toLearnerUnit(unit: CurriculumUnit) {
   };
 }
 
-function toLearnerSession(detail: VersionedSessionDetail) {
+async function toLearnerSession(
+  state: VersionedLearningState,
+  detail: VersionedSessionDetail,
+) {
+  const courseContext = await requireSessionCourseContext(state, detail);
   return {
     ...detail.session,
+    courseContext,
     snapshot: {
       ...detail.snapshot,
       units: detail.snapshot.units.map(toLearnerUnit),
     },
-    unitProgress: detail.unitProgress.map((progress) =>
-      progress.payload.type === "quiz"
-        ? {
-            ...progress,
-            payload: {
-              type: "quiz" as const,
-              attemptedQuestionIds: progress.payload.attemptedQuestionIds,
-              score: progress.payload.score,
-            },
-          }
-        : progress,
-    ),
+    unitProgress: detail.unitProgress.map((progress) => {
+      if (progress.payload.type !== "quiz") return progress;
+      return {
+        ...progress,
+        payload: {
+          type: "quiz" as const,
+          attemptedQuestionIds: progress.payload.attemptedQuestionIds,
+          score: progress.payload.score,
+        },
+      };
+    }),
   };
+}
+
+function learnerKernelProvenance(
+  sourceId: string,
+  value: unknown,
+): LearningKernelFactProvenance {
+  return {
+    kind: "learner_submission",
+    sourceId,
+    sourceHash: learningKernelSha256(value),
+  };
+}
+
+interface LegacyKernelEvidenceInput {
+  readonly sessionId: string;
+  readonly activityId: string;
+  readonly operationId: string;
+  readonly sourceId: string;
+  readonly observedAt: string;
+  readonly source: unknown;
+  readonly body: Omit<
+    LearningKernelEvidenceBody,
+    "activityId" | "knowledgeNodeIds" | "basisFactIds"
+  >;
+}
+
+function acceptKernelLearnerEvidence(
+  repository: LearningKernelRepository,
+  connection: DatabaseConnection,
+  input: LegacyKernelEvidenceInput,
+): string {
+  const operationId = `kernel:${input.operationId}:learner`;
+  const existingFactId = readKernelFactId(connection, operationId);
+  if (existingFactId) return existingFactId;
+  const scope = repository.resolveSessionScope(input.sessionId);
+  const activity = resolveLegacyKernelActivity(
+    connection,
+    scope,
+    input.activityId,
+  );
+  repository.accept(scope, {
+    operationId,
+    factId: `kernel-fact:${input.sourceId}:learner`,
+    observedAt: input.observedAt,
+    provenance: learnerKernelProvenance(input.sourceId, input.source),
+    body: {
+      ...input.body,
+      activityId: activity.id,
+      knowledgeNodeIds: activity.knowledgeNodeIds,
+      basisFactIds: [],
+    },
+  });
+  return `kernel-fact:${input.sourceId}:learner`;
+}
+
+function acceptKernelEvaluatorEvidence(
+  repository: LearningKernelRepository,
+  connection: DatabaseConnection,
+  input: LegacyKernelEvidenceInput & {
+    readonly basisFactId: string;
+    readonly outcome: "correct" | "incorrect";
+  },
+): void {
+  const operationId = `kernel:${input.operationId}:evaluator`;
+  if (readKernelFactId(connection, operationId)) return;
+  const scope = repository.resolveSessionScope(input.sessionId);
+  const activity = resolveLegacyKernelActivity(
+    connection,
+    scope,
+    input.activityId,
+  );
+  const evaluation = {
+    sourceId: input.sourceId,
+    basisFactId: input.basisFactId,
+    outcome: input.outcome,
+    evaluatorVersion: "legacy-quiz-key-v1",
+  };
+  repository.accept(scope, {
+    operationId,
+    factId: `kernel-fact:${input.sourceId}:verified`,
+    observedAt: input.observedAt,
+    provenance: {
+      kind: "deterministic_evaluator",
+      sourceId: input.sourceId,
+      sourceHash: learningKernelSha256(input.source),
+      evaluatorVersion: evaluation.evaluatorVersion,
+      checkFactId: input.basisFactId,
+    },
+    body: {
+      ...input.body,
+      activityId: activity.id,
+      knowledgeNodeIds: activity.knowledgeNodeIds,
+      basisFactIds: [input.basisFactId],
+      outcome: input.outcome,
+      ...(input.outcome === "incorrect"
+        ? { errorFamily: "legacy-quiz-answer" }
+        : {}),
+    },
+  });
+}
+
+function readKernelFactId(
+  connection: DatabaseConnection,
+  operationId: string,
+): string | null {
+  const row = connection.sqlite
+    .prepare(`SELECT id FROM learning_kernel_facts WHERE operation_id = ?`)
+    .get(operationId) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+function readKernelFactObservedAt(
+  connection: DatabaseConnection,
+  operationId: string,
+): string | null {
+  const row = connection.sqlite
+    .prepare(
+      `SELECT occurred_at FROM learning_kernel_facts WHERE operation_id = ?`,
+    )
+    .get(operationId) as { occurred_at: number } | undefined;
+  return row ? new Date(row.occurred_at).toISOString() : null;
+}
+
+function resolveLegacyKernelActivity(
+  connection: DatabaseConnection,
+  scope: LearningKernelScope,
+  stableActivityId: string,
+): { readonly id: string; readonly knowledgeNodeIds: readonly string[] } {
+  const row = connection.sqlite
+    .prepare(
+      `SELECT activity.id,
+              CASE WHEN activity.knowledge_node_ids_json = '[]'
+                   THEN lesson.topics_json
+                   ELSE activity.knowledge_node_ids_json END AS knowledge_node_ids_json
+       FROM course_activities activity
+       JOIN course_lessons lesson
+         ON lesson.course_id = activity.course_id
+        AND lesson.revision_id = activity.revision_id
+        AND lesson.id = activity.lesson_id
+       WHERE activity.course_id = ? AND activity.revision_id = ?
+         AND activity.stable_id = ?`,
+    )
+    .get(scope.courseId, scope.revisionId, stableActivityId) as
+    { id: string; knowledge_node_ids_json: string } | undefined;
+  if (!row) throw new Error("Session activity has no Course activity mapping");
+  return {
+    id: row.id,
+    knowledgeNodeIds: z
+      .array(operationIdSchema)
+      .parse(JSON.parse(row.knowledge_node_ids_json)),
+  };
+}
+
+function toObservedAt(value: unknown): string {
+  const date =
+    typeof value === "string" || typeof value === "number"
+      ? new Date(value)
+      : new Date();
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Evidence timestamp is invalid");
+  }
+  return date.toISOString();
+}
+
+function readLegacyHintLevel(
+  connection: DatabaseConnection,
+  sessionId: string,
+  unitId: string,
+): HintLevel {
+  const row = connection.sqlite
+    .prepare(
+      `SELECT COALESCE(MAX(level), 0) AS level
+       FROM hint_usages_v2
+       WHERE session_id = ? AND unit_id = ?`,
+    )
+    .get(sessionId, unitId) as { level: number };
+  return z.number().int().min(0).max(5).parse(row.level) as HintLevel;
+}
+interface LegacyKernelProgressInput {
+  readonly sessionId: string;
+  readonly stableActivityId: string;
+  readonly operationId: string;
+  readonly transition: "start" | "pause" | "complete" | "skip";
+  readonly observedAt: string;
+  readonly source: unknown;
+}
+
+function acceptLegacyKernelProgress(
+  repository: LearningKernelRepository,
+  connection: DatabaseConnection,
+  input: LegacyKernelProgressInput,
+): void {
+  const scope = repository.resolveSessionScope(input.sessionId);
+  const activity = resolveLegacyKernelActivity(
+    connection,
+    scope,
+    input.stableActivityId,
+  );
+  const sourceHash = learningKernelSha256(input.source);
+  repository.accept(scope, {
+    operationId: `kernel:${input.operationId}:progress`,
+    factId: `kernel-fact:${input.operationId}:progress`,
+    observedAt: input.observedAt,
+    provenance:
+      input.transition === "complete"
+        ? {
+            kind: "deterministic_evaluator",
+            sourceId: input.operationId,
+            sourceHash,
+            evaluatorVersion: "legacy-completion-criteria-v1",
+          }
+        : {
+            kind: "learner_submission",
+            sourceId: input.operationId,
+            sourceHash,
+          },
+    body: {
+      type: "progress",
+      activityId: activity.id,
+      transition: input.transition,
+    },
+  });
 }
 
 function isServerOwnedEvidenceUnit(

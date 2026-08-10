@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createUnitProgression,
+  resolveExplicitUnitDefinitions,
   isLessonComplete,
   transitionUnitProgression,
   type UnitDefinition,
@@ -28,6 +29,38 @@ describe("unit progression", () => {
       "locked",
     ]);
     expect(isLessonComplete(units, state)).toBe(false);
+  });
+
+  it("resolves explicit authored entry and prerequisite edges", () => {
+    const definitions = resolveExplicitUnitDefinitions([
+      {
+        id: "optional-entry-id",
+        stableId: "optional-entry",
+        optional: true,
+        prerequisiteStableIds: [],
+      },
+      {
+        id: "required-followup-id",
+        stableId: "required-followup",
+        optional: false,
+        prerequisiteStableIds: ["optional-entry"],
+      },
+    ]);
+    expect(definitions).toEqual([
+      {
+        id: "optional-entry-id",
+        optional: true,
+        prerequisiteUnitIds: [],
+      },
+      {
+        id: "required-followup-id",
+        optional: false,
+        prerequisiteUnitIds: ["optional-entry-id"],
+      },
+    ]);
+    expect(
+      createUnitProgression(definitions).map(({ status }) => status),
+    ).toEqual(["ready", "locked"]);
   });
 
   it("cannot start a locked unit", () => {
@@ -99,6 +132,22 @@ describe("unit progression", () => {
         { id: "a", optional: false, prerequisiteUnitIds: ["missing"] },
       ]),
     ).toThrow("unknown prerequisite");
+    expect(() =>
+      resolveExplicitUnitDefinitions([
+        {
+          id: "a",
+          stableId: "a",
+          optional: false,
+          prerequisiteStableIds: ["missing"],
+        },
+      ]),
+    ).toThrow("unknown prerequisite stable ID");
+    expect(() =>
+      createUnitProgression([
+        { id: "a", optional: false, prerequisiteUnitIds: ["b"] },
+        { id: "b", optional: false, prerequisiteUnitIds: ["a"] },
+      ]),
+    ).toThrow("cyclic unit prerequisites");
     expect(
       transitionUnitProgression(
         [{ id: "a", optional: false }],

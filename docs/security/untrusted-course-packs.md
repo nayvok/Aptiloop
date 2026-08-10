@@ -1,6 +1,6 @@
 # Untrusted Course Packs
 
-**Document status:** Approved Core Alpha target. Import is Future relative to the Implemented baseline; no current Course Pack importer was observed. This specification does not claim implementation.
+**Document status:** The M3 single-document Course Pack V1 importer and lifecycle are an **Implemented baseline**. Archive/directory transport, registries/signatures, untrusted executable content, and production Course distribution remain **Future**.
 
 ## 1. Security objective
 
@@ -10,7 +10,7 @@ The top entity is `Course`. Installation creates or reuses immutable Course revi
 
 ## 2. Allowed and forbidden capabilities
 
-**Approved Core Alpha target — allowed declarative fields:**
+**Implemented baseline — allowed declarative fields:**
 
 - stable pack, Course, revision, activity, topic, source, and capsule IDs;
 - schema version, pack version, content hash, author/provenance declarations, primary course locale, and optional translations;
@@ -20,7 +20,7 @@ The top entity is `Course`. Installation creates or reuses immutable Course revi
 - references to Aptiloop-owned trusted check IDs plus typed, bounded input fixtures; a reference is not a command;
 - minimum Core capability/runtime contract identifiers selected from an application allowlist.
 
-**Approved Core Alpha target — prohibited anywhere, including extensions and unknown fields:**
+**Implemented baseline — prohibited anywhere, including extensions and unknown fields:**
 
 - executable names, commands, arguments, current directories, shell strings, package scripts, lifecycle hooks, arbitrary test commands, or process environment entries;
 - JavaScript, Python, WebAssembly, native binaries, macros, templates that evaluate code, plugins, dynamic imports, provider adapters, or install hooks;
@@ -34,10 +34,10 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 
 ## 3. Import pipeline
 
-**Approved Core Alpha target:**
+**Implemented baseline:**
 
 1. **Receive one document as bytes.** Accept only an explicitly selected V1 JSON file and place its bytes in a fresh private staging area outside active Course storage. Directory/archive transport is Future.
-2. **Bound before parsing.** Enforce input bytes, JSON nesting, object/array item counts, string lengths, total decoded text, and parse time. Numeric defaults are Proposed pending owner approval and must be threat-tested before release.
+2. **Bound before parsing.** Enforce input bytes, JSON nesting, object/array item counts, string lengths, total decoded text, and parse time. Concrete ceilings are milestone-owned implementation parameters in a versioned limits profile; M3 acceptance requires security review, documented rationale, and boundary tests for every threshold. They are not an additional owner scope decision unless implementation requires a new capability or material security tradeoff.
 3. **Decode and parse strictly.** Require UTF-8, reject BOM/encoding ambiguity where unsupported, duplicate JSON keys, non-object roots, non-finite numbers, unsupported schema versions, and unknown fields.
 4. **Reject authority-bearing values.** Reject commands, scripts, plugins, secrets, credential-like values, unsafe URLs, active content, and local/absolute/drive/UNC/device/traversal/path-resolution fields before semantic import.
 5. **Validate the closed model.** Reject unknown activity kinds, cycles, missing references, unreachable required nodes, locale inconsistencies, protected-answer leakage, required AI-only paths, and forbidden capability fields.
@@ -53,32 +53,32 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 
 - **Attack path:** crafted bytes exploit encoding ambiguity, duplicate keys, extreme nesting/item/string counts, parser time/memory, path-shaped values, or partial staging to alter meaning or exhaust resources.
 - **Impact:** validation bypass, inconsistent hashes, storage exhaustion, denial of service, or unintended host-path access.
-- **Existing mitigation:** current shared schemas are strict and bounded, and path helpers protect trusted exercise copies; no pack importer exists.
-- **Source fix:** create one byte-bounded UTF-8/JSON importer with duplicate-key detection, closed schema, semantic path-value rejection, canonical hashing, private staging, transactional persistence, and deterministic cleanup. Do not accept archive/directory transport in V1.
+- **Existing mitigation:** the implemented byte-bounded UTF-8/strict-JSON importer rejects duplicate keys and excess limits, applies closed schema and semantic path-value checks, hashes canonical content, uses private expiring staging, commits transactionally, and removes invalid/expired staging bytes. V1 accepts no archive or directory transport.
+- **Residual:** local resource exhaustion is bounded but native process isolation is irrelevant to parsing; future format/limit changes require the same boundary suite and review.
 - **Test:** invalid/ambiguous encodings, duplicate keys, deep/wide/large/slow documents, forbidden path values, interrupted import, rollback, cleanup, canonical hash parity, and cross-platform deterministic results.
 
 ### PACK-CTRL-002 — Declarative-only schema
 
 - **Attack path:** a pack hides commands, scripts, plugins, environment entries, executable content, or provider/tool permissions in optional/unknown fields.
 - **Impact:** local execution, secret access, nondeterminism, or privilege expansion.
-- **Existing mitigation:** current authoring schemas are strict and bounded; current native execution resolves only bundled trusted templates. There is no importer.
-- **Source fix:** exact versioned schemas reject unknown fields and every executable/capability-bearing field. Convert supported data into app-owned domain objects; never deserialize behavior.
+- **Existing mitigation:** Course Pack V1 is exact and strict; recursive semantic validation rejects unknown/authority-bearing fields, command/script/plugin/credential-shaped data, active content, unsafe URLs, and local/path-shaped values. Persistence receives only the validated declarative model, and M5 execution resolves only app-owned trusted IDs.
+- **Residual:** validation does not certify content quality, correctness, ownership, or licensing. Those remain independent publication gates.
 - **Test:** fixtures containing command/argv/cwd/env/scripts/hooks/plugins/binaries/Wasm/dynamic templates/provider RPC/general tool fields must fail before database or filesystem publication.
 
 ### PACK-CTRL-003 — Execution separation
 
 - **Attack path:** an imported activity references a package script or creates files later consumed by the native `npm test` path.
 - **Impact:** arbitrary code with local-user authority and access to host data/credentials/network.
-- **Existing mitigation:** Implemented baseline native execution accepts a server-owned `test` operation for repository-controlled templates, with isolated attempts, sanitized environment, `shell: false`, caps, and cleanup. It is trusted execution, not a sandbox.
-- **Source fix:** imported packs may reference only pre-installed Aptiloop-owned trusted check IDs whose inputs are pure bounded data. No imported file may become code, dependency, command, or working directory. Keep untrusted execution outside Core Alpha.
-- **Test:** graph/import integration test proves every imported object is unreachable from `AllowedProcessRunner`; replacing a check ID or fixture with path/command content fails schema validation.
+- **Existing mitigation:** M5 resolves only exact app-owned Environment Pack/check IDs. The compatibility native check remains reachable only from repository-controlled attempts; Course Pack validation accepts no executable/path/dependency fixture and rejects unknown runtime requirements before installation. Process requests carry IDs, never plans.
+- **Residual:** trusted local-native checks still have local-user/network authority, so imported Course bytes must remain unreachable from their workspaces. A future untrusted execution product needs independent isolation; an allowlist is not a sandbox.
+- **Test:** Course Pack suites reject command/argv/cwd/env/script/path/fixture values and unknown requirements; Execution Fabric suites prove exact/collision-safe ID resolution and never accept pack/browser executable configuration.
 
 ### PACK-CTRL-004 — Graph and Learning Kernel integrity
 
 - **Attack path:** a pack supplies cycles, missing prerequisites, duplicate IDs, mutable revisions, protected answers in learner fields, or its own mastery/state transitions.
 - **Impact:** deadlocked activities, answer disclosure, overwritten history, or nondeterministic/forged adaptation.
-- **Existing mitigation:** Implemented baseline v2 uses immutable snapshots, learner redaction, typed evidence, a finite progression machine, and deterministic summary/mastery; legacy bypass paths remain a separate finding.
-- **Source fix:** validate a finite, referentially complete graph; keep published revisions immutable; separate protected evaluation data; prohibit pack-authored state/mastery code; route all evidence through the Learning Kernel.
+- **Existing mitigation:** M3 validates finite referentially complete graphs, stable identities, learner/protected separation, and immutable collision behavior before transactional install. M4 routes accepted facts through the deterministic kernel; pack content cannot carry progression/mastery state, and the same fact frontier replays to the same canonical projection hash.
+- **Residual:** legacy rows without complete fact meaning stay compatibility history or immutable quarantine; production Course quality/correctness remains an independent gate.
 - **Test:** cycle/unreachable/duplicate/dangling tests; protected-field DTO tests; immutable revision and idempotent import tests; deterministic replay from imported content; rejection of mastery/state fields.
 
 ### PACK-CTRL-005 — Source and Markdown privacy
@@ -93,9 +93,9 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 
 - **Attack path:** a modified pack reuses a trusted identity/version, omits origin/license data, overwrites a revision, or exploits nondeterministic canonicalization.
 - **Impact:** content substitution, loss of auditability, licensing ambiguity, and corrupted historical evidence.
-- **Existing mitigation:** Implemented baseline Course-like curriculum revisions and snapshots have stable IDs/content hashes, but current source models lack complete author/license/attribution fields.
-- **Source fix:** require provenance and content-term fields, deterministic canonicalization, immutable hashes, collision rejection, and transactional non-overwrite. Publisher signatures, if introduced, identify a signer but do not elevate capabilities.
-- **Test:** golden canonical hashes across platforms; changed-byte/same-version rejection; missing provenance/license validation; immutable revision and deterministic re-import tests.
+- **Existing mitigation:** M3 requires author/provenance/terms claims, canonicalizes and hashes one finalized document, rejects hash/identity collisions, stores immutable validation/provenance records, and never overwrites an installed revision. Validation confirms presence/shape; it does not certify legal truth.
+- **Residual:** there is no approved production Course, publisher signature/trust service, or completed legal review.
+- **Test:** golden canonical hashes; changed-content/same-identity rejection; missing provenance/terms validation; immutable revision and deterministic re-import tests.
 
 ## 5. Installation and publication gates
 

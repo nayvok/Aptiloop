@@ -1,0 +1,48 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "dev-high-tool": {
+      "name": "dev-high-tool",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        {
+          "source": 3001,
+          "name": "dev-high-tool",
+          "dependency": "dev-high-tool",
+          "title": "Development high fixture advisory",
+          "url": "https://github.com/advisories/GHSA-4444-5555-6666",
+          "severity": "high",
+          "cwe": ["CWE-000"],
+          "cvss": {
+            "score": 8,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+          },
+          "range": "<2.0.0"
+        }
+      ],
+      "effects": [],
+      "range": "<2.0.0",
+      "nodes": ["node_modules/dev-high-tool"],
+      "fixAvailable": false
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 1,
+      "critical": 0,
+      "total": 1
+    },
+    "dependencies": {
+      "prod": 2,
+      "dev": 1,
+      "optional": 0,
+      "peer": 0,
+      "peerOptional": 0,
+      "total": 3
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # AI Runtime and Tool Boundaries
 
-**Document status:** Approved Core Alpha target with Implemented baseline findings. Pi integration and the final role/tool surface are not claimed as implemented.
+**Document status:** Approved Core Alpha target with a partial evidenced **Implemented baseline**. M1 still blocks every external legacy learning role and permits deterministic Mock only. The M6 foundation now supplies the constrained Pi adapter, Provider Hub resolution, finite Aptiloop role/tool policies, strict tool input/output validation, immutable disclosure decisions, and minimized provider-turn provenance; the legacy learning route, disclosure UI, context builders, cumulative budgets, authenticated provider smoke, and final role/tool adversarial matrix are not yet migrated or claimed complete.
 
 ## 1. Ownership boundary
 
@@ -10,11 +10,11 @@ Course Designer, Tutor, Evaluator, and Reviewer are Aptiloop roles; they are not
 
 **Approved Core Alpha target:** no AI receives arbitrary filesystem, shell, process, network, HTTP, edit, patch, plugin, secret, provider-RPC, or database tools. Every effect is an Aptiloop-owned typed tool with strict input/output schema, per-role allowlist, server-side authorization, bounded result, audit metadata, and deterministic application semantics.
 
-Reviewer is read-only and has no patch/apply authority. A review is advice/evidence for the application; it does not mutate learner work.
+Reviewer is evidence-only: it receives only the bounded app-built review capsule, has no local filesystem/general tools or patch/apply authority, and returns typed advice/evidence without mutating learner work.
 
 ## 2. Pi evidence and constraints
 
-The runtime research baseline is official `earendil-works/pi` commit [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328), package version 0.84.1:
+The runtime research distinguishes the official published v0.84.1 [tag commit `53fa77ccd8a279eb87e92294ef3687b03ff80112`](https://github.com/earendil-works/pi/tree/53fa77ccd8a279eb87e92294ef3687b03ff80112) from separately inspected post-release source at [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328), whose package manifests still say 0.84.1:
 
 - [`@earendil-works/pi-ai`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai) provides provider/model/auth/stream contracts and typed tool schemas.
 - [`@earendil-works/pi-agent-core`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328/packages/agent) provides the agent loop, validation, tool execution, events, abort, and hooks.
@@ -29,18 +29,18 @@ Pi is MIT-licensed at the researched revision; project licensing still requires 
 
 ## 3. Role capability matrix
 
-| Capability | Course Designer | Tutor | Evaluator | Reviewer |
-| --- | --- | --- | --- | --- |
-| Read an application-supplied bounded context capsule | Allowed | Allowed | Allowed | Allowed |
-| Return a typed draft/proposal/result | Allowed | Allowed | Allowed | Allowed |
-| Mutate a draft directly | Denied; app applies an explicitly accepted proposal | Denied | Denied | Denied |
-| Publish Course revision | Denied | Denied | Denied | Denied |
-| Write learning state/mastery/evidence | Denied | Denied | Denied | Denied |
-| Apply learner-code patch | Denied | Denied | Denied | Denied |
-| Arbitrary filesystem/shell/network/edit/provider tool | Denied | Denied | Denied | Denied |
-| Invoke a trusted check | Denied directly; application may dispatch after user action | Denied directly | Denied directly | Denied directly |
+| Capability                                            | Course Designer                                             | Tutor           | Evaluator       | Reviewer        |
+| ----------------------------------------------------- | ----------------------------------------------------------- | --------------- | --------------- | --------------- |
+| Read an application-supplied bounded context capsule  | Allowed                                                     | Allowed         | Allowed         | Allowed         |
+| Return a typed draft/proposal/result                  | Allowed                                                     | Allowed         | Allowed         | Allowed         |
+| Mutate a draft directly                               | Denied; app applies an explicitly accepted proposal         | Denied          | Denied          | Denied          |
+| Publish Course revision                               | Denied                                                      | Denied          | Denied          | Denied          |
+| Write learning state/mastery/evidence                 | Denied                                                      | Denied          | Denied          | Denied          |
+| Apply learner-code patch                              | Denied                                                      | Denied          | Denied          | Denied          |
+| Arbitrary filesystem/shell/network/edit/provider tool | Denied                                                      | Denied          | Denied          | Denied          |
+| Invoke a trusted check                                | Denied directly; application may dispatch after user action | Denied directly | Denied directly | Denied directly |
 
-Tools should describe domain operations, not infrastructure. Examples are bounded requests such as `propose_course_revision`, `propose_tutor_turn`, `submit_evaluation_result`, and `submit_review_result`. These names do not imply current implementation.
+These domain tool names are now the closed implemented baseline registry in `packages/shared/src/provider-hub.ts` and `packages/agent-core/src/typed-tool-host.ts`; role-specific service handlers and full orchestrator cutover remain M6 work.
 
 ## 4. Provider resolution and Mock policy
 
@@ -50,21 +50,23 @@ There is no silent real-provider-to-Mock fallback. Mock is permitted only for te
 
 Private data is sent to a real provider only after a separate explicit user action that identifies provider, data classes, scope, and purpose. General consent to “use AI” is not consent to upload private sources, learner history, code, paths, or credentials.
 
+**Implemented baseline:** the orchestrator owns a fixed Mock-only learning profile for Teacher, Reviewer, Interviewer, Curator, and Codex Expert. Browser bodies cannot select provider/model, real-provider failure cannot substitute Mock, and `npm start` launches no sidecar. The Codex/OpenCode adapters remain readable legacy boundaries for later migration but are not learning capabilities.
+
 ## 5. Control records
 
 ### AI-CTRL-001 — Tool authorization
 
 - **Attack path:** learner/private-source prompt injection causes a non-review provider role to call general file/shell/edit/network tools rooted at the project.
 - **Impact:** local mutation, command effects, private-data/credential access, and Learning Kernel compromise.
-- **Existing mitigation:** Implemented baseline browser API exposes no direct arbitrary command/apply route; Reviewer alone has read-only/deny-write provider policies and a diff invariant. Non-review Codex/OpenCode authority remains High finding SEC-AI-001.
-- **Source fix:** construct every role from an Aptiloop-owned deny-by-default tool registry; do not import coding-agent tools; adapter/provider settings must disable built-ins; only strict domain tools are admitted.
+- **Existing mitigation:** **Implemented baseline.** M1 blocks Codex/OpenCode/Pi for every legacy learning role and preserves only deterministic Mock. The M6 tool host now admits only the closed Aptiloop tool-name registry per role, validates strict arguments/results, and the Pi adapter rejects any tool name not installed by the app. No `pi-coding-agent` or general read/bash/edit/write tool package is installed. This remains foundational until all role handlers/context scopes and adversarial tests are complete.
+- **Source fix:** complete role-specific handlers, scope re-resolution, byte/event/deadline budgets, and orchestrator cutover without adding provider-native or general tools.
 - **Test:** matrix every role/provider; malicious prompts request shell/file/network/edit actions; assert no such tool is registered/called and repository/attempt hashes remain unchanged.
 
 ### AI-CTRL-002 — Typed arguments and result validation
 
 - **Attack path:** model returns unknown fields, wrong IDs, oversized arrays/text, protected answer material, forged evidence, or malformed JSON that the app treats as authoritative.
 - **Impact:** state corruption, answer leakage, resource exhaustion, or false review/evaluation.
-- **Existing mitigation:** Implemented baseline uses strict Zod at HTTP/domain boundaries and structured review validation; Pi validates typed tool arguments. Free assistant output has no general schema guarantee.
+- **Existing mitigation:** **Implemented baseline.** Existing HTTP/domain boundaries remain strict; the M6 Aptiloop tool host now validates both tool arguments and outputs against app-owned Zod contracts. Free assistant output still has no general schema guarantee and cannot become deterministic evidence.
 - **Source fix:** require role-specific result tools or adapter parsing plus application validation; reject unknown/oversized fields, verify server-owned IDs/revision/operation, and never infer trusted evidence from prose.
 - **Test:** malformed/unknown/oversized/protected/forged fixtures across every role; no DB/state change; bounded diagnostic only.
 
@@ -72,45 +74,47 @@ Private data is sent to a real provider only after a separate explicit user acti
 
 - **Attack path:** provider emits many small deltas/tool events or an oversized result within timeout.
 - **Impact:** memory/CPU/disk exhaustion, slow rendering, huge SQLite/backups, or partial trusted result.
-- **Existing mitigation:** Implemented baseline has input limits, provider deadlines, and some per-item/process limits, but no complete per-turn cumulative budget (SEC-AI-003).
-- **Source fix:** common byte/event/tool/array/string/persistence/render budgets with bounded buffers and fail-closed abort; no partial review/evaluation is trusted.
-- **Test:** malicious providers cross each cumulative threshold; assert abort, cleanup, bounded SSE/DB, and zero trusted result.
+- **Existing mitigation:** **Implemented baseline.** The common Provider Hub runner enforces persisted cumulative input/output/event/tool/deadline budgets, bounded normalized events, and fail-closed cancellation. Invalid or over-budget output cannot become an authoritative review/evaluation result.
+- **Source fix:** complete; retain the common runner as the only active role dispatch path.
+- **Test:** malicious providers cross UTF-8 output, superseded-delta cumulative output, event, and tool-call thresholds; tests assert cancellation, bounded SSE/DB persistence, and zero trusted result.
 
 ### AI-CTRL-004 — Provider selection and explicit failure
 
 - **Attack path:** browser overrides role provider/model, or an unavailable/misconfigured real provider silently becomes Mock.
 - **Impact:** policy bypass, unexpected disclosure/cost, false provenance, and invalid production evidence.
-- **Existing mitigation:** Implemented baseline has provider status/model discovery and no automatic external-to-Mock turn fallback; current browser agent stream can supply provider/model overrides.
-- **Source fix:** central server Provider Hub resolves role/profile/model and validates any user selection; persist explicit provenance; return distinct unavailable/auth/policy/transport failure. Mock requires explicit dev/test configuration.
-- **Test:** forged/unavailable provider/model is rejected; refresh/auth failure does not use ambient/Mock fallback; event and persisted result identify actual provider/model; Mock is unavailable in production mode.
+- **Existing mitigation:** **Implemented baseline.** Active learning chat, interview, and evidence-only review resolve one exact persisted connection/model through `ProviderHub`, reject AI Off/auth/capability/model/policy/disclosure failures with structured codes, and never substitute another provider/model or Mock. Browser provider/model overrides and flattened role settings are retired; Mock is disabled outside test/development composition.
+- **Source fix:** complete for active M6 callers; retain explicit provenance/failure behavior as new roles are added.
+- **Test:** forged/unavailable provider/model is rejected; refresh/auth failure does not use ambient/Mock fallback; event and persisted result identify the actual provider/model; Mock is unavailable in production mode.
 
-### AI-CTRL-005 — Reviewer read-only/no patches
+### AI-CTRL-005 — Reviewer evidence-only/no patches
 
-- **Attack path:** Reviewer obtains edit/apply/tool authority or its response directly changes learner files.
-- **Impact:** unreviewed mutation and false completion of the correction loop.
-- **Existing mitigation:** Implemented baseline Codex Reviewer is read-only/network-off, OpenCode Reviewer denies mutation tools, no apply route exists, and orchestrator checks the diff before/after.
-- **Source fix:** preserve these invariants in Pi role construction; pass only serialized bounded evidence; accept only typed review result; never expose patch/apply or filesystem handles.
-- **Test:** reviewer requests tools/returns patch-shaped output/attempts mutation; no tool is available, diff unchanged, response remains advice, and invalid output cannot approve.
+- **Attack path:** Reviewer obtains local-read, edit/apply, or general-tool authority, or its response directly changes learner files.
+- **Impact:** private local-file disclosure, unreviewed mutation, and false completion of the correction loop.
+- **Existing mitigation:** **Implemented baseline.** Reviewer receives only the complete immutable evidence capsule after passing freshness gates, resolves through the constrained Hub role, has no local-read/edit/apply/general-tool authority, returns a strictly parsed typed result, and is checked against canonical workspace snapshots before and after. Invalid output cannot persist an authoritative review.
+- **Source fix:** complete for the current evidence-only Reviewer; keep all future review inputs capsule-bound and read-only.
+- **Test:** malicious event/output/tool cases fail closed; sentinels outside the capsule are absent; the workspace manifest remains unchanged; only canonical advice/result fields persist.
 
 ### AI-CTRL-006 — Secret and private-context minimization
 
 - **Attack path:** full environment, raw tool result, local path, private source, or broad learner history enters provider context or persistence without explicit disclosure.
 - **Impact:** credential/private-data exposure and long-lived copies at provider or in SQLite/backups.
-- **Existing mitigation:** Implemented baseline client SSE minimizes events; Codex redacts some output; provider credentials are intended to remain outside SQLite. Codex environment inheritance and OpenCode raw tool persistence remain High findings.
-- **Source fix:** minimal child environment, zero general tools, context builder with explicit field allowlist/privacy labels, pre-persistence minimization, and point-of-disclosure user approval for private data.
-- **Test:** sentinel secrets/private fields in environment, tools, sources, paths, and history; assert absence from provider request unless explicitly selected, and absence from logs/SSE/DB/WAL/backup/export.
+- **Existing mitigation:** **Implemented baseline.** M1 containment/minimization remains. M6 stores secret-free connection references, immutable hash-scoped disclosure operations/events, and minimized provider-turn provenance without duplicating provider payloads. Chat, interview, and review UI preview the exact external destination/categories/exclusions/byte count and require an immutable one-time approval. Provider capture tests exclude environment and unrelated private-context sentinels.
+- **Source fix:** complete for active M6 callers; each future context builder must add its own explicit allowlist, disclosure category, and sentinel coverage before external enablement.
+- **Test:** environment and unrelated private-state sentinels are absent from provider create/stream inputs; disclosure hashes/scopes are immutable and one-time; raw provider/tool fields remain absent from SSE and persistence.
 
 ### AI-CTRL-007 — Prompt injection cannot alter authority
 
 - **Attack path:** Course Pack, Source Snapshot, retrieved text, Markdown, learner answer, or provider response instructs the model to ignore policy, reveal secrets, invoke tools, publish, or write mastery.
 - **Impact:** any downstream effect permitted by an overpowered runtime.
-- **Existing mitigation:** strict application schemas and server-owned learning transitions limit some effects, but current non-review provider tools expand authority.
-- **Source fix:** treat all content as data, keep authorization outside prompts, deny general tools, scope context, validate every domain result, and require independent explicit user/app gates for draft apply or provider disclosure.
-- **Test:** injection corpus through every content channel and role; capability set never changes; no unauthorized tool/state/publish/disclosure action occurs.
+- **Existing mitigation:** **Implemented baseline.** Strict schemas, fixed finite role tools, server-owned transitions, exact disclosure approval, and Provider Hub resolution keep authorization outside prompts. Imported/private content remains untrusted data; no prompt can expand the fixed capability set or select a provider/model.
+- **Source fix:** complete for the M6 runtime boundary; future content channels must reuse the same typed role/tool/disclosure seams.
+- **Test:** adversarial event/tool/output matrices and strict schemas reject unauthorized tool/state/disclosure behavior; all four role policies exclude arbitrary filesystem, shell, network, edit, and write tools.
 
 ## 6. Session and persistence rules
 
-Aptiloop session identity is application-owned. A provider `sessionId` is not learner identity or durable Course/session ownership. Persist only the minimum normalized transcript/provenance/audit envelope required by the product; never raw provider protocol, credentials, or general tool arguments/results.
+**Implemented baseline:** the browser receives an app-owned opaque turn UUID and an event allowlist, never provider session/protocol IDs or raw tool payload. `LearningRepository.addMessage` accepts no tool/raw fields and always stores `tool_events_json='[]'` and `raw_event_json=NULL`; new review writes store `raw_response=NULL`. The [read-only M1 inventory](../audits/2026-08-08-m1-safety-boundary-inventory.md) observed zero logical non-empty raw/tool rows and added no cleanup migration. That logical result does not prove sensitive bytes absent from free pages, WAL/SHM, snapshots, or external copies.
+
+**Approved Core Alpha target:** Aptiloop session identity remains application-owned. A provider `sessionId` is not learner identity or durable Course/session ownership. Persist only the minimum normalized transcript/provenance/audit envelope required by the product; never raw provider protocol, credentials, or general tool arguments/results.
 
 Durability must use an Aptiloop-owned integration proven against the chosen Pi APIs. Do not claim the partial AgentHarness or the separate SQLite SessionRepo provides end-to-end recovery for coding-agent sessions. Any migration must inventory existing JSONL/WIP SQLite data, back it up, and prove replay before cutover.
 

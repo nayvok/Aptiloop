@@ -1,6 +1,6 @@
 # Core Alpha Licensing Plan
 
-**Document status:** Proposed pending owner approval and professional legal review. This document is an engineering inventory and decision plan, not legal advice or a legal conclusion. It does not apply a license.
+**Document status:** Approved Core Alpha target for the engineering direction; professional legal review remains required. This document is an inventory and decision plan, not legal advice or a legal conclusion. It does not apply a license.
 
 ## 1. Current legal state
 
@@ -12,16 +12,16 @@ The absence of a license grant is stated as repository fact, not a conclusion ab
 
 ## 2. First-party inventory requiring a decision
 
-| Material | Current repository location/example | Risk/question |
-| --- | --- | --- |
-| Integrated app/server | `apps/web`, `apps/orchestrator` | Orchestrator imports most internal packages; directories alone do not establish a separable legal work. |
-| Domain/runtime packages | `packages/shared`, `learning-core`, `exercise-core`, `database`, `curriculum`, `agent-core`, provider adapters, prompt library | Ownership and intended reusable SDK boundary are unverified. Current packages are private/no-license. |
-| Course/curriculum prose | Russian authored prompts, answers, misconceptions, examples, source links | Determine original/adapted/copied status, authors, translations, attribution, and separate content terms. |
-| Exercise templates/fixtures | `workspaces/exercises/**` | Distinguish product-controlled teaching fixtures from user attempts and executable content; establish provenance. |
-| Documentation | root/docs historical and Core Alpha specifications | Confirm authors/contributors and whether docs follow code terms or separate terms. |
-| Screenshots/branding | `docs/screenshots/**`, product/provider names | Confirm ownership, depicted third-party marks, privacy, and permitted release scope. |
-| Font assets | Geist via the web application/generated output | Preserve the SIL Open Font License terms for distributed font files. |
-| Runtime/private artifacts | `.data`, SQLite/WAL/backups, learner attempts, generated acceptance captures | Must not enter a source/content release; ownership/privacy differs from project code. |
+| Material                    | Current repository location/example                                                                                            | Risk/question                                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Integrated app/server       | `apps/web`, `apps/orchestrator`                                                                                                | Orchestrator imports most internal packages; directories alone do not establish a separable legal work.           |
+| Domain/runtime packages     | `packages/shared`, `learning-core`, `exercise-core`, `database`, `curriculum`, `agent-core`, provider adapters, prompt library | Ownership and intended reusable SDK boundary are unverified. Current packages are private/no-license.             |
+| Course/curriculum prose     | Russian authored prompts, answers, misconceptions, examples, source links                                                      | Determine original/adapted/copied status, authors, translations, attribution, and separate content terms.         |
+| Exercise templates/fixtures | `workspaces/exercises/**`                                                                                                      | Distinguish product-controlled teaching fixtures from user attempts and executable content; establish provenance. |
+| Documentation               | root/docs historical and Core Alpha specifications                                                                             | Confirm authors/contributors and whether docs follow code terms or separate terms.                                |
+| Screenshots/branding        | `docs/screenshots/**`, product/provider names                                                                                  | Confirm ownership, depicted third-party marks, privacy, and permitted release scope.                              |
+| Font assets                 | Geist via the web application/generated output                                                                                 | Preserve the SIL Open Font License terms for distributed font files.                                              |
+| Runtime/private artifacts   | `.data`, SQLite/WAL/backups, learner attempts, generated acceptance captures                                                   | Must not enter a source/content release; ownership/privacy differs from project code.                             |
 
 Core Alpha has no production courses. Fixture/content distribution terms must be decided separately from application/SDK code.
 
@@ -39,10 +39,9 @@ Core Alpha has no production courses. Fixture/content distribution terms must be
 
 This metadata is an inventory lead, not final verification:
 
-- predominantly MIT for Hono, OpenCode SDK, React/ReactDOM, React Hook Form, React Markdown/remark-gfm, Next, Radix/shadcn, TanStack Query, Zod, and much tooling;
-- Apache-2.0 for Drizzle ORM, TypeScript, Playwright Test, and class-variance-authority;
-- SIL Open Font License metadata for Geist;
-- transitive MPL-2.0, CC0-1.0, BSD-2-Clause, BSD-3-Clause, ISC, MIT-0, 0BSD, Apache-2.0, and other permissive families.
+- the lockfile contains 652 `node_modules` records with metadata led by MIT (545), Apache-2.0 (38), MPL-2.0 (24), ISC (11), LGPL-3.0-or-later (10), BSD families, MIT-0, 0BSD, CC0-1.0, CC-BY-4.0, BlueOak-1.0.0, and four composite Apache/LGPL(/MIT) records;
+- direct and common examples include MIT metadata for Hono, OpenCode SDK, React/ReactDOM, React Hook Form, React Markdown/remark-gfm, Next, Radix/shadcn, TanStack Query, and Zod; Apache-2.0 for Drizzle ORM, TypeScript, Playwright Test, and class-variance-authority; and SIL Open Font License metadata for Geist;
+- artifact-sensitive transitive leads include MPL-2.0 `lightningcss` platform packages, LGPL/composite `sharp`/`sharp-libvips` variants, CC-BY-4.0 `caniuse-lite`, and optional platform packages. Presence in lock metadata does not prove that every record ships in every artifact.
 
 Before any distribution, verify exact package/version, upstream source, full license text, copyright holder, notice file, bundled asset, modification status, optional-platform package, and whether it ships in source, standalone output, browser bundle, or container. The orchestrator image copies the complete installed dependency tree from its dependency stage, so dev/test dependency notices may be relevant to the shipped image; this requires artifact-level verification.
 
@@ -67,7 +66,7 @@ Apply `AGPL-3.0-only` to owner-approved first-party application/server and insep
 
 - **Potential rationale:** a clear copyleft policy for the integrated local/web application and server surface, including network use concerns.
 - **Unresolved work:** ownership/contributor permission, exact source-offer/compliance workflow, dependency compatibility, combined-work boundary, installer/container notices, content terms, and trademark policy.
-- **Status:** Proposed pending owner approval and professional legal review.
+- **Status:** **Future** alternative. Professional legal review would still be required.
 
 ### Option B — Recommended direction: AGPL application plus future Apache SDK split
 
@@ -77,14 +76,14 @@ Candidate future SDK concepts may include pure Course Pack schemas/validation, a
 
 - **Potential rationale:** protect the integrated product while enabling deliberately designed interoperability SDKs.
 - **Required clean boundary:** separate package ownership, manifests, dependency graph, build/release artifacts, tests, documentation, contribution policy, and notices; no copy of AGPL-only application code into the Apache artifact.
-- **Status:** Recommended direction, but only Proposed pending explicit owner approval and professional legal review. It is not applied by this plan.
+- **Status:** **Approved Core Alpha target.** The owner selected this engineering direction on 2026-08-08, subject to professional legal review; it is not applied by this plan.
 
 ### Option C — Single permissive or dual-license model
 
 Consider Apache-2.0 for a broader owner-approved scope, or an explicit dual grant, only after complete ownership/contributor permission and business/legal review.
 
 - **Risk:** a broad permissive grant may not match product intent; dual licensing requires clear copyright control and exact “OR” terms; neither resolves content/trademark/dependency obligations.
-- **Status:** Alternative Proposed pending owner approval and professional legal review; not recommended by this engineering plan.
+- **Status:** **Future** alternative. It is not selected for Core Alpha and would require separate owner and professional legal review.
 
 ## 6. Recommended decision sequence
 
@@ -129,7 +128,20 @@ This documentation-only change intentionally stops before step 8.
 - Have MPL/file-level obligations, Geist font terms, and optional/transitive packages been reviewed for actual shipped artifacts?
 - Which Aptiloop names/logos/domains are claimed as marks, and how may provider/project names and logos appear in UI, docs, screenshots, and marketing?
 
-## 8. Approval gates
+## 8. Owner disposition recorded 2026-08-08
+
+The owner approved Option B as the engineering direction and explicitly kept every unresolved legal/business category out of scope pending professional counsel:
+
+1. **Ownership and contributors:** no public release or license grant until every included code, content, document, translation, fixture, screenshot, font/asset, and contribution has verified ownership/provenance and an approved contributor policy.
+2. **Code license and boundary:** retain no-license status until counsel approves the exact AGPL-3.0-only integrated path matrix; Apache-2.0 remains limited to future genuinely separated SDKs after separate proof. No dual licensing is authorized.
+3. **Content and fixtures:** ship no production or redistributable sample Course, Course Pack, curriculum, exercise fixture, translation, screenshot, or generated documentation until its terms and provenance are approved. Repository fixtures remain development evidence only.
+4. **Distribution scope:** no new public source archive, npm, standalone/desktop, container, or hosted distribution channel is authorized by M0.
+5. **Dependencies and notices:** no artifact ships until its exact dependencies, font/assets, license texts, notices, reciprocal obligations, and SBOM are reviewed and approved.
+6. **Marks and contribution policy:** no public contribution launch, trademark policy, or marketing use of Aptiloop/provider/project marks is authorized until reviewed and approved.
+
+These deferrals allow implementation through the approved roadmap but remain release-blocking. They do not authorize license text or public distribution.
+
+## 9. Approval gates
 
 No license is applied until all gates are signed off by owner and professional counsel:
 
@@ -142,4 +154,4 @@ No license is applied until all gates are signed off by owner and professional c
 - approved contribution and trademark policies; and
 - a separate implementation change adding the actual texts and metadata.
 
-Until then, the accurate public statement is: **the repository currently has no license grant; all licensing directions in this plan are proposals pending explicit approval and professional legal review.**
+Until those gates close, the accurate public statement is: **the repository currently has no license grant; the engineering direction is owner-approved, but license application and public distribution remain deferred pending professional legal review.**

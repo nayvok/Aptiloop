@@ -8,6 +8,8 @@
   "include": [
     "src/**/*.ts",
     "test/**/*.ts",
+    "../../scripts/create-approved-backup.ts",
+    "../../scripts/private-data-inventory.ts",
     "vitest.config.ts",
     "drizzle.config.ts"
   ]

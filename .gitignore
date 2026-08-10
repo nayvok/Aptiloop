@@ -1,7 +1,6 @@
 node_modules/
 .next/
-.next-e2e/
-.next-gate/
+.next-*/
 dist/
 coverage/
 playwright-report/

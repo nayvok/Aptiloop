@@ -68,7 +68,7 @@ export class AllowedProcessRunner {
     );
 
     const entries = Object.entries(commands).map(([id, command]) => {
-      if (!/^[a-z][a-z0-9:_-]*$/u.test(id))
+      if (!/^[a-z][a-z0-9:_.-]*$/u.test(id))
         throw new TypeError(`Invalid command id: ${id}`);
       validateProcessToken(command.executable, "executable");
       command.args.forEach((argument) =>

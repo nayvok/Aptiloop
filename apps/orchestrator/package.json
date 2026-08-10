@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@dlh/agent-core": "0.1.0",
+    "@dlh/course-authoring-kit": "0.1.0",
     "@dlh/codex-provider": "0.1.0",
     "@dlh/curriculum": "0.1.0",
     "@dlh/database": "0.1.0",

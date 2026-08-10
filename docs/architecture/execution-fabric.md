@@ -1,6 +1,6 @@
 # Execution Fabric
 
-Status: **Implemented baseline** for the current trusted local exercise path; **Approved Core Alpha target** for the generic contracts below; remote execution is **Future**.
+Status: **Implemented baseline** for the M5 generic trusted local-native Fabric, built-in Node/Python contracts, and compatibility-mapped exercise path; independently isolated untrusted or remote execution is **Future**.
 
 ## Purpose and ownership
 
@@ -16,20 +16,18 @@ The ownership boundary is:
 
 A Course Pack is data, not an execution extension. It may not contain executables, command lines, argument arrays, shell fragments, package lifecycle scripts, environment-variable values, secrets, plugins, container definitions, URLs used as execution endpoints, or absolute/relative host filesystem paths. Unknown environment or check IDs fail validation; they are never interpreted as commands.
 
-## Implemented baseline: trusted local exercise path
+## Implemented baseline: trusted local Execution Fabric
 
-The current path is deliberately narrow:
+The M5 path is deliberately finite and app-owned:
 
-- the browser submits an operation ID and the literal command ID `test`; it does not submit an executable, arguments, working directory, environment, or host path;
-- the orchestrator resolves an exercise from authored application data, copies a bundled template below the server-owned attempts root, rejects symbolic links/reparse points, and creates a private Git baseline;
-- the app-owned command registry maps `test` to `npm test` (`node <npm-cli> test` on Windows), uses `shell: false`, a sanitized child environment, a 120-second timeout, a bounded output buffer, cancellation, and process-tree cleanup;
-- the process runs in the canonical attempt directory selected by the server;
-- the orchestrator stores the test result and the SHA-256 fingerprint of the complete current Git diff; review requires a passing, non-truncated result whose fingerprint still matches;
-- Reviewer receives the diff, test evidence, criteria, and constraints. Its provider policy is read-only/deny-write, it has no patch/apply route, and the orchestrator rejects a review if the workspace diff changed during the turn.
+- `TrustedExecutionFabric` resolves exact environment/check IDs from an in-process registry; requests cannot carry executable, arguments, environment, network policy, or limits;
+- migration `0013_execution_fabric` persists immutable Environment Pack/check descriptors, exact environment/check identity on attempts and test runs, structured artifacts, review evidence bundles, and quarantine for legacy runs without a complete-workspace snapshot;
+- the compatibility exercise route maps the browser's literal `commandId: "test"` to `apt.compat.node24.local.v1` / `apt.compat.node24.npm-test.v1`, preserving existing attempts and behavior without exposing a generic command surface;
+- built-in `apt.core.node24.local.v1` and `apt.core.python3.local.v1` contracts use fixed `shell: false` Node test/Python isolated unittest plans, app-owned lock/runtime checks, minimal non-secret environments, 120-second timeouts, 1 MB output caps, cancellation, and process-tree cleanup;
+- every run snapshots the complete attempt workspace, optionally rejects a stale expected hash before spawn, binds the normalized result/artifacts to that SHA-256, and returns explicit `unsupported_environment` rather than changing runtime;
+- review still requires a complete non-truncated Git-visible patch and passing fresh check, persists an immutable evidence bundle, exposes no patch/apply route, and verifies unchanged workspace evidence.
 
-This is **native local execution and is explicitly unsandboxed and trusted-only today**. Path containment, a fixed command ID, environment reduction, timeouts, and output limits reduce accidents; they do not isolate malicious JavaScript, dependencies, tests, or child processes from the local account. The current runner does not enforce network denial. Only repository-controlled trusted templates may enter this path. Imported Course Packs must not be connected to it as executable content.
-
-The current implementation is a useful seam, not yet the generic Execution Fabric described below.
+This is **native local execution with the local user's authority**. The compatibility npm plan still permits the repository-controlled learner template's package script, and neither local-native contract enforces network, memory, disk, or process-count isolation. The UI/docs must call it trusted and unsandboxed. Imported Course Packs may only reference known public IDs; they cannot supply code, dependencies, locks, commands, paths, or process definitions.
 
 ## Approved Core Alpha manifest contract
 
@@ -38,9 +36,9 @@ An executable Activity contains declarative references only. The exact schema wi
 ```ts
 type ActivityExecutionManifest = {
   schemaVersion: 1;
-  environmentId: string;           // opaque, versioned registry ID
-  checkIds: readonly string[];      // opaque, ordered, unique registry IDs
-  entryDocument?: string;           // logical document ID, never a path
+  environmentId: string; // opaque, versioned registry ID
+  checkIds: readonly string[]; // opaque, ordered, unique registry IDs
+  entryDocument?: string; // logical document ID, never a path
   requestedPreviewTypes: readonly PreviewType[];
 };
 ```
@@ -90,7 +88,10 @@ type ExecutionRequest = {
 interface ExecutionBackend {
   readonly id: string;
   describeCapabilities(): Promise<ExecutionCapabilities>;
-  prepare(request: ExecutionRequest, signal: AbortSignal): Promise<ExecutionLease>;
+  prepare(
+    request: ExecutionRequest,
+    signal: AbortSignal,
+  ): Promise<ExecutionLease>;
   runChecks(
     lease: ExecutionLease,
     checkIds: readonly string[],
@@ -156,12 +157,12 @@ Requirements:
 
 ## Backends and network boundary
 
-| Backend | Status | Trust and network contract |
-| --- | --- | --- |
-| Current native exercise runner | **Implemented baseline** | Repository-controlled templates only; local account authority; unsandboxed; network not denied. |
-| `local-native` generic adapter | **Approved Core Alpha target** | Explicit trusted-only mode using the current process/path primitives and typed registry. It must display the unsandboxed warning and reject imported executable material. |
-| `server-isolated` | **Future** | Sandboxed per execution, read-only base image, ephemeral writable workspace, resource quotas, no host mounts, no credentials, and **deny network by default**. Network exceptions require a separately approved app-owned environment policy and cannot originate in a Course Pack. |
-| `remote-execution` | **Future** | Same structured contract over an authenticated transport, encrypted workspace/artifact transfer, tenant isolation, deny-network execution, retention controls, and explicit user action before private data leaves the device. |
+| Backend                       | Status                   | Trust and network contract                                                                                                                                                                                                                                                        |
+| ----------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compatibility native runner   | **Implemented baseline** | Existing repository-controlled templates mapped through the Fabric; local-account authority; unsandboxed; network not denied; learner-visible API remains the fixed `test` operation.                                                                                             |
+| Generic `local-native` Fabric | **Implemented baseline** | Finite app-distributed Node/Python registry, fixed plans and limits, normalized snapshot-bound evidence, explicit trusted-only mode; imported executable material is rejected.                                                                                                    |
+| `server-isolated`             | **Future**               | Sandboxed per execution, read-only base image, ephemeral writable workspace, resource quotas, no host mounts, no credentials, and **deny network by default**. Network exceptions require separately approved app-owned environment policy and cannot originate in a Course Pack. |
+| `remote-execution`            | **Future**               | Same structured contract over an authenticated transport, encrypted workspace/artifact transfer, tenant isolation, deny-network execution, retention controls, and explicit user action before private data leaves the device.                                                    |
 
 A public/self-hosted server must not use the trusted local native backend for untrusted users. “Runs in a container” is not sufficient evidence of isolation; the server backend requires a tested sandbox and deny-network enforcement.
 
@@ -171,13 +172,8 @@ Pi is a model/runtime layer behind Aptiloop-owned typed tools. Pi has no built-i
 
 Mock execution is not a production fallback. Mock remains test/CI/dev-only, and failure of a real backend or model is explicit; Aptiloop must never silently turn it into Mock success.
 
-## Acceptance gates
+## Acceptance evidence and residual gates
 
-The generic fabric is not implemented until tests prove:
+**Implemented baseline.** M5 contract tests prove exact and collision-safe environment/check resolution, stale complete-workspace snapshot rejection before spawn, structured result/artifact binding, explicit unsupported environments, and normalized Node/Python success/failure. Existing process-runner, workspace-containment, Git freshness, and reviewer-policy suites retain timeout, cancellation, output cap, process-tree cleanup, traversal/reparse, same-mtime change, truncated/stale evidence, and no-apply coverage. Course Pack tests reject commands, scripts, secrets, plugins, paths, and unknown requirements before persistence.
 
-- manifests reject commands, scripts, secrets, plugins, paths, duplicate/unknown IDs, and registry shadowing;
-- browser, Course Pack, and model inputs cannot influence executable, arguments, working directory, environment, host path, or network policy;
-- backend contract suites produce equivalent status semantics and reject malformed/oversized/extra results;
-- cancellation, timeout, process-tree cleanup, output/artifact caps, idempotency, and stale-snapshot rejection are deterministic;
-- Reviewer cannot write or return a patch, and before/after workspace hashes remain equal;
-- the future server backend demonstrates sandbox escape tests, absence of credentials/host mounts, and deny-network behavior rather than documenting those controls only.
+**Residual/Future gates:** local-native execution is not approved for untrusted users or untrusted code; it does not enforce memory/disk/process quotas or deny network. A future isolated backend must demonstrate sandbox escape tests, absence of credentials/host mounts, enforced deny-network behavior, equivalent normalized status semantics, and disposable cleanup rather than documenting those controls only.

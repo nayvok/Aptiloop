@@ -17,8 +17,10 @@ COPY packages/testing/package.json packages/testing/package.json
 RUN npm ci --no-audit --no-fund
 
 FROM dependencies AS builder
-ARG ORCHESTRATOR_URL=http://orchestrator:8787
+ARG ORCHESTRATOR_URL
+ARG ORCHESTRATOR_BIND_MODE
 ENV ORCHESTRATOR_URL=${ORCHESTRATOR_URL}
+ENV ORCHESTRATOR_BIND_MODE=${ORCHESTRATOR_BIND_MODE}
 COPY . .
 RUN npm run build --workspace=@dlh/web
 

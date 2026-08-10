@@ -506,6 +506,8 @@ function operationId(): string {
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Неизвестная ошибка";
 }
+const teacherStreamFailureMessage = "Преподаватель не ответил";
+const teacherStreamCancellationMessage = "Ответ преподавателя остановлен";
 
 export function SessionClient() {
   const params = useSearchParams();
@@ -1563,8 +1565,10 @@ function TeacherDialogueUnit({
       { id: assistantId, role: "assistant", content: "" },
     ]);
     let assistantContent = "";
+    let terminalReason: "completed" | "failed" | "cancelled" | null = null;
+    let streamReportedError = false;
     try {
-      for await (const event of streamAgent(
+      stream: for await (const event of streamAgent(
         {
           role: "teacher",
           sessionId: session.id,
@@ -1574,21 +1578,75 @@ function TeacherDialogueUnit({
         },
         controller.signal,
       )) {
-        if (event.type === "message.delta") {
-          assistantContent += event.content ?? "";
-          setLocalMessages((current) =>
-            (current ?? []).map((message) =>
-              message.id === assistantId
-                ? {
-                    ...message,
-                    content: message.content + (event.content ?? ""),
-                  }
-                : message,
-            ),
-          );
+        switch (event.type) {
+          case "message.delta":
+            assistantContent += event.content;
+            setLocalMessages((current) =>
+              (current ?? []).map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      content: message.content + event.content,
+                    }
+                  : message,
+              ),
+            );
+            break;
+          case "message.completed":
+            assistantContent = event.content;
+            setLocalMessages((current) =>
+              (current ?? []).map((message) =>
+                message.id === assistantId
+                  ? { ...message, content: event.content }
+                  : message,
+              ),
+            );
+            break;
+          case "error":
+            streamReportedError = true;
+            assistantContent = teacherStreamFailureMessage;
+            setLocalMessages((current) =>
+              (current ?? []).map((message) =>
+                message.id === assistantId
+                  ? { ...message, content: teacherStreamFailureMessage }
+                  : message,
+              ),
+            );
+            break;
+          case "session.completed":
+            terminalReason = event.reason;
+            break stream;
         }
-        if (event.type === "error")
-          throw new Error(event.message ?? "Преподаватель не ответил");
+      }
+
+      if (controller.signal.aborted || terminalReason === "cancelled") {
+        assistantContent = teacherStreamCancellationMessage;
+        setLocalMessages((current) =>
+          (current ?? []).map((message) =>
+            message.id === assistantId
+              ? { ...message, content: teacherStreamCancellationMessage }
+              : message,
+          ),
+        );
+        setStreamStatus("Ответ преподавателя остановлен");
+        return;
+      }
+      if (
+        terminalReason === "failed" ||
+        terminalReason === null ||
+        streamReportedError
+      ) {
+        assistantContent = teacherStreamFailureMessage;
+        setLocalMessages((current) =>
+          (current ?? []).map((message) =>
+            message.id === assistantId
+              ? { ...message, content: teacherStreamFailureMessage }
+              : message,
+          ),
+        );
+        setProviderError(teacherStreamFailureMessage);
+        setStreamStatus("Преподаватель недоступен");
+        return;
       }
       if (!assistantContent.trim())
         throw new Error("Преподаватель вернул пустой ответ");
@@ -1612,6 +1670,15 @@ function TeacherDialogueUnit({
       });
     } catch (error) {
       if (controller.signal.aborted) {
+        if (!assistantContent.trim()) {
+          setLocalMessages((current) =>
+            (current ?? []).map((message) =>
+              message.id === assistantId
+                ? { ...message, content: teacherStreamCancellationMessage }
+                : message,
+            ),
+          );
+        }
         setStreamStatus("Ответ преподавателя остановлен");
       } else {
         setProviderError(errorMessage(error));

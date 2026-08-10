@@ -1,13 +1,15 @@
 # Provider Hub
 
-**Document status:** Approved Core Alpha target with an evidenced Implemented baseline.
+**Document status:** Approved Core Alpha target with an implementation-complete evidenced **Implemented baseline**; authenticated external smoke remains an acceptance blocker.
 **Purpose:** separate provider connections from Aptiloop roles, resolve models/capabilities centrally, support explicit no-AI mode, and make every failure visible without silent fallback.
 
 ## Implemented baseline
 
-**Implemented baseline.** Current shared contracts define provider IDs `mock | opencode | codex`, connection states, capabilities, model descriptors, roles, sessions, normalized events, and typed provider errors (`packages/shared/src/agent.ts:5-118,120-153`). `AgentProvider` provides status/models/create session/stream/cancel (`packages/agent-core/src/provider.ts:12-19`). The orchestrator constructs all three adapters and persists provider/model selections per role (`apps/orchestrator/src/app.ts:210-235,1560-1626`). Settings validation checks that configured models are currently returned and available (`apps/orchestrator/src/app.ts:1152-1186`).
+**Implemented baseline.** `packages/shared/src/provider-hub.ts` now defines strict connection, capability, RoleProfile, per-role tool-policy, structured failure, disclosure, and turn-provenance contracts. `packages/agent-core/src/provider-hub.ts` resolves one exact server-owned connection/model, rejects AI Off, disabled/missing providers, capability gaps, and model loss without fallback, and requires an exact approved disclosure for external turns. `packages/agent-core/src/typed-tool-host.ts` installs only the finite Aptiloop role tool matrix and validates both arguments and results.
 
-**Implemented baseline.** Limitations: connections and role selections are flattened into settings fields; `/api/agent/stream` permits browser provider/model overrides (`apps/orchestrator/src/app.ts:455-466`). Capability reporting is adapter-defined, not a role requirement matrix (`packages/shared/src/agent.ts:31-46`). Mock is the default role provider (`apps/orchestrator/src/app.ts:1567-1576`). Non-review external roles may inherit general provider tools/workspace authority (`packages/codex-provider/src/codex-provider.ts:108-110`; `packages/opencode-provider/src/provider.ts:468-470,577-579`). These are migration findings, not the target Provider Hub.
+**Implemented baseline.** Additive migration `0014_provider_hub` and `ProviderHubRepository` persist secret-free connections, role profiles, tool policies, immutable disclosure operations/events, and terminal provider-turn provenance. Disclosure approval is payload-hash, destination, provider, model, role, entity-scope, and expiry specific; one-time consumption is append-only.
+
+**Implemented baseline.** Active learning chat, interview, and evidence-only review resolve through persisted `RoleProfile` records and `ProviderHub`; flattened browser role selections and the legacy provider-status route are retired. The UI previews exact external disclosure scope and consumes an immutable approval once. The common runner enforces cumulative input/output/event/tool/deadline budgets, explicit cancellation, minimized persistence, and structured failures without fallback. Private environment/context sentinels and all four finite role matrices are covered. The remaining M6 acceptance blocker is one authenticated external provider/model smoke with cancellation and persisted provenance; no credential or external request is present on this workstation.
 
 ## Separate concepts
 
@@ -18,7 +20,7 @@ type ProviderConnection = {
   connectionId: string;
   providerType: string;
   displayName: string;
-  credentialRef: string | null;       // reference into credential store, never secret value
+  credentialRef: string | null; // reference into credential store, never secret value
   endpointProfileId: string | null;
   enabled: boolean;
   state: ConnectionState;
@@ -103,7 +105,7 @@ Connection state is a closed application projection:
 
 - `disabled` — intentionally off;
 - `starting` — bounded initialization in progress;
-- `ready` — auth plus required probe/model discovery succeeded at `lastCheckedAt`;
+- `connected` — an authenticated request succeeded at the reported observation time;
 - `misconfigured` — missing/invalid endpoint/auth/config;
 - `authentication-required` — explicit login/key action needed;
 - `unavailable` — executable/service/network/provider absent;
@@ -140,6 +142,8 @@ type ProviderHubFailureCode =
   | "capability_unknown"
   | "capability_missing"
   | "tool_policy_unavailable"
+  | "disclosure_required"
+  | "disclosure_mismatch"
   | "invalid_output"
   | "budget_exceeded"
   | "cancelled"
@@ -161,7 +165,7 @@ Examples:
 
 The Hub exposes no provider-native shell, filesystem, edit, patch, network/browser, credential, or arbitrary RPC tools. It installs only Aptiloop typed tools allowed by the resolved role policy (see [pi-runtime.md](pi-runtime.md)). Every call is schema-validated, scope re-resolved, budgeted, auditable, and default-denied.
 
-Reviewer is read-only and submits results only; no patches. Course Designer submits draft proposals only; no apply/publish. Tutor reads learner-safe context only. Evaluator submits a typed result only. Models never select commands or state transitions.
+Reviewer receives only a bounded app-built evidence capsule, has no local/general tools or patch authority, and submits a typed result. Course Designer submits draft proposals only; no apply/publish. Tutor reads learner-safe context only. Evaluator submits a typed result only. Models never select commands or state transitions.
 
 ## Privacy and retention
 
@@ -171,14 +175,13 @@ Reviewer is read-only and submits results only; no patches. Course Designer subm
 - Persist bounded final content and minimized audit envelopes only when product behavior needs them; never persist general provider tool inputs/outputs.
 - Cancellation, errors, and diagnostics are bounded and secret-redacted before persistence/logging.
 
-## Incremental migration
+## Completed incremental migration
 
-1. Introduce connection and RoleProfile records while reading current settings as a compatibility adapter.
-2. Centralize resolution for one current role; reject browser provider/model overrides on that route.
-3. Add observed capability mapping and typed failures.
-4. Add explicit no-AI profiles and move Mock behind test/developer composition.
-5. Route all roles through the Hub and Aptiloop default-deny tool policy.
-6. Remove general Codex/OpenCode workspace/tool authority for learning roles.
-7. Migrate settings/history with provenance, then retire flattened fields only after all callers/data are verified.
+1. Added connection and RoleProfile records while reading legacy settings only inside the additive migration path.
+2. Centralized exact connection/model/capability resolution and rejected browser provider/model overrides.
+3. Added observed capability mapping, typed failures, and explicit no-AI profiles; Mock is restricted to test/development composition.
+4. Routed active learning roles through Provider Hub and Aptiloop default-deny tool policies.
+5. Removed general Codex/OpenCode workspace/tool authority from learning roles.
+6. Migrated browser settings/history provenance and retired flattened role fields and the legacy provider-status API.
 
 **Future.** Automatic cost/latency routing, load balancing, provider failover, team-shared connections, remote secrets services, and production multi-user quotas are outside Core Alpha.

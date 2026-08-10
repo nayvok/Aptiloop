@@ -7,18 +7,30 @@ import {
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const root = path.resolve(import.meta.dirname, "../../..");
-const attemptsRoot = path.join(root, ".data", "e2e-exercise-attempts");
-const orchestratorOrigin = "http://127.0.0.1:8887";
-const webOrigin = "http://127.0.0.1:3100";
+const runRoot = path.resolve(requiredEnvironment("E2E_RUN_ROOT"));
+const attemptsRoot = path.resolve(requiredEnvironment("E2E_ATTEMPTS_ROOT"));
+const orchestratorOrigin = requiredEnvironment("E2E_ORCHESTRATOR_ORIGIN");
+const webOrigin = requiredEnvironment("E2E_WEB_ORIGIN");
 
 test.afterAll(async () => {
-  const relative = path.relative(path.join(root, ".data"), attemptsRoot);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("E2E cleanup escaped the project .data directory");
+  const relative = path.relative(runRoot, attemptsRoot);
+  if (
+    relative === "" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error("E2E cleanup escaped its launcher-owned run root");
   }
   await rm(attemptsRoot, { recursive: true, force: true });
 });
+
+function requiredEnvironment(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} must be provided by scripts/test-e2e.mjs`);
+  }
+  return value;
+}
 
 test("hydrates stored light and dark themes without an icon mismatch", async ({
   page,
@@ -190,19 +202,23 @@ test("completes restart-safe Day 1 through correction, summary, mastery and card
   );
   expect(exerciseResponse.ok()).toBe(true);
   const exercise = (await exerciseResponse.json()) as {
-    workspacePath: string;
+    attempt: { id: string };
+    workspace: { id: string; generation: number };
   };
-  const attemptRelativePath = path.relative(
-    attemptsRoot,
-    path.resolve(exercise.workspacePath),
-  );
+  expect(exercise).not.toHaveProperty("workspacePath");
+  expect(exercise.workspace).toMatchObject({
+    id: expect.any(String),
+    generation: 1,
+  });
+  const attemptWorkspace = path.join(attemptsRoot, exercise.attempt.id);
+  const attemptRelativePath = path.relative(attemptsRoot, attemptWorkspace);
   expect(
     attemptRelativePath !== "" &&
       !attemptRelativePath.startsWith("..") &&
       !path.isAbsolute(attemptRelativePath),
   ).toBe(true);
   const learnerFile = path.join(
-    exercise.workspacePath,
+    attemptWorkspace,
     "src",
     "normalize-profile.ts",
   );

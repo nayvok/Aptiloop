@@ -13,7 +13,7 @@ This is the product-level contract for the Core Alpha audit. It distinguishes th
 
 **Approved Core Alpha target**
 
-Aptiloop is a local-first learning workbench for people who want durable technical skill rather than passive content completion. It turns an authored Course into a finite sequence and graph of evidence-producing activities: recall, explanation, prediction, implementation, trusted checks, read-only review, correction, and spaced review.
+Aptiloop is a local-first learning workbench for people who want durable technical skill rather than passive content completion. It turns an authored Course into a finite sequence and graph of evidence-producing activities: recall, explanation, prediction, implementation, trusted checks, evidence-only review, correction, and spaced review.
 
 Aptiloop is not an IDE, chat wrapper, course marketplace, autonomous coding agent, or learning-management system. AI may assist within explicit typed roles, but the deterministic Learning Kernel—not a model—owns learning state and mastery.
 
@@ -132,9 +132,9 @@ See [Language policy](docs/product/language-policy.md) and [Terminology](docs/pr
 
 ## Implemented baseline
 
-The runnable repository remains Dev Learning Harness. It already provides useful seams: local SQLite, a versioned curriculum, immutable session snapshots, deterministic progression/summary/mastery functions, typed evidence for several activities, isolated exercise attempts, trusted test execution, read-only review, draft curriculum editing, and optional provider adapters.
+The runnable repository remains Dev Learning Harness. M1–M5 are an **Implemented baseline** around the established vertical slice: strict Course/revision/Activity/source/capsule/adaptation/session/evidence contracts; immutable Course Pack V1 validation, Preview, transactional install/open-as-draft, canonical export and preserved-history uninstall; append-only replay-complete Learning Kernel facts and deterministic projections; and finite app-owned trusted local Execution Fabric with compatibility Node plus Core Node/Python contracts. The M6 **Implemented baseline** adds exact-version constrained Pi dependencies, server-owned Provider Hub/RoleProfile/capability/failure contracts, active role caller cutover, finite app-owned typed role policies, exact one-time disclosure UI, cumulative budgets, immutable disclosure operations/events, and minimized provider-turn provenance.
 
-It does not yet implement the Course top-level model, Course Packs, personal adaptation branches, Source Snapshots/Knowledge Capsules, the complete locale policy, the target navigation, the Pi runtime boundary, generic Execution Fabric, Node/Python environment contracts, or Adaptive Studio. Current provider permissions and raw-response handling have unresolved security findings. Current E2E is red.
+This baseline is not the complete Core Alpha product. The M6 implementation now routes active learning chat, interview, and evidence-only review through persisted Provider Hub RoleProfiles; exact one-time disclosure UI, common cumulative AI budgets, and private-context/environment plus per-role adversarial matrices are implemented. M6 acceptance still requires an observed authenticated external provider/model request with cancellation and persisted provenance; no credential or external request is present on this workstation. Manual target Course authoring and personal-adaptation application in Adaptive Studio, approved production Source Snapshot/Capsule content, complete UI locale separation, target navigation/identity, third-party environment review, licensing decisions, and release evidence remain later gates.
 
 ## Approval gates
 
@@ -153,4 +153,4 @@ Core Alpha cannot be called approved or implemented until all applicable gates a
 11. project/content/third-party licensing and legal review;
 12. passing fast verification, E2E, migration rehearsal, and required runtime smokes.
 
-**Proposed pending owner approval:** use the Calm Workshop visual direction while retaining Geist Sans/Mono and the current semantic OKLCH foundation. Licensing recommendations remain pending legal review; no license is granted by this document.
+**Approved Core Alpha target:** use the Calm Workshop visual direction while retaining Geist Sans/Mono and the current semantic OKLCH foundation. The engineering licensing direction is approved, but license application and public distribution remain deferred pending professional legal review; no license is granted by this document.

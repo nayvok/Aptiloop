@@ -136,15 +136,15 @@ npm run build
 
 `npm run verify` runs format check, lint, typecheck, fast tests, and build. It does **not** run E2E. `npm test` runs fast tests followed by E2E.
 
-For a database change, also use a disposable database to prove migration, repeated seed idempotency, constraints, and rollback/recovery procedure. Back up valuable data before migration.
+For a database change, use a disposable database to prove the affected contract and rollback/recovery procedure. Before any valuable-data migration, run the explicit read-only inventory and create a new active-source-only approved backup under `.data/approved-backups/`; never use a quarantined candidate or old backup automatically.
 
 For a security boundary, test the permitted path and rejection paths: malformed input, unauthorized IDs, traversal/reparse escapes, stale or truncated diff, denied tools, secret redaction, provider unavailability, and cancellation/cleanup as applicable.
 
 For an external provider smoke, require the exact local installation, authentication, selected provider/model, and an observed request. Never infer success from health metadata. Failure must remain explicit; do not switch to Mock.
 
-Do not call E2E green until `npm run test:e2e` passes. At the M0 audit baseline it was red: 1 passed and 3 failed. Do not treat `npm run verify` as evidence for E2E.
+Do not call E2E green until `npm run test:e2e` passes. The M0 audit baseline was red (1 passed, 3 failed); M1 runtime evidence must be recorded separately. Do not treat `npm run verify` as E2E evidence.
 
-Do not claim CI enforcement: no workflow is currently committed. Record dependency audit findings and obtain an approved exception with owner and expiry for any unresolved production high/critical advisory.
+A Node 24/npm 11 CI workflow is committed, but do not claim a run passed unless its result is observed. The supply-chain job must retain full/production audit JSON and CycloneDX artifacts, report lower/dev findings, and fail on any unapproved production high/critical advisory. Any future exception requires explicit owner and expiry.
 
 ## Documentation map
 

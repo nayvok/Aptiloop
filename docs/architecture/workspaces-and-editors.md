@@ -1,6 +1,6 @@
 # Workspaces, Editors, Previews, and Artifacts
 
-Status: the isolated local exercise workspace and Zed launch are an **Implemented baseline**. Opaque workspace contracts, an embedded editor, and editor-neutral previews/artifacts are an **Approved Core Alpha target**. Remote editors are **Future**.
+Status: isolated per-attempt workspaces, Zed launch, complete-workspace check snapshots, normalized check/process artifacts, and immutable review evidence bundles are an **Implemented baseline**. Opaque handles, embedded editing, and editor-neutral preview/document APIs are an **Approved Core Alpha target**. Remote editors are **Future**.
 
 ## Principles
 
@@ -19,15 +19,14 @@ No Course Pack field may contain an absolute path, relative host path, editor ex
 
 Today the orchestrator:
 
-- resolves repository-controlled templates below `workspaces/exercises`;
-- creates one attempt directory below the configured attempts root;
-- copies regular files/directories only, excluding `.git`, `node_modules`, and `build`, and rejects symbolic links/reparse points or canonical-root escape;
-- records the canonical workspace path and private Git baseline;
-- can launch configured Zed with `shell: false` and the server-selected absolute attempt path;
-- returns a copy-path fallback when Zed cannot start;
-- computes the complete Git diff, runs the one app-owned `test` check, fingerprints that diff, and requires a fresh passing check before read-only review.
+- resolves repository-controlled templates below `workspaces/exercises`, creates one canonical attempt below the configured root, and rejects traversal, symlink/reparse, or canonical-root escape;
+- copies regular files/directories only, excluding `.git`, `node_modules`, and `build`, records a private Git baseline, and preserves attempts across restart;
+- launches configured Zed with `shell: false` and a server-selected path, with a local copy-path fallback;
+- maps the learner's fixed `test` operation to an exact app-owned Environment Pack/check, snapshots the complete attempt workspace, rejects a stale expected hash before spawn, and binds normalized status/artifacts to that SHA-256;
+- computes the complete Git-visible patch and requires a passing non-truncated check bound to the current fingerprint before read-only review;
+- persists an immutable review evidence bundle and verifies the workspace evidence is unchanged; Reviewer has no patch/apply route.
 
-This is a local single-user convenience boundary. The host path is currently visible to the learner and the native editor/process runs with local account authority. It is not a sandbox. Templates must be trusted repository content.
+This is a local single-user convenience boundary. Host paths are visible during explicit local editor handoff, and native editor/check processes retain local-account and network authority. It is not a sandbox. Compatibility npm scripts and templates must remain trusted repository content; imported Course content cannot become executable workspace input.
 
 ## Approved workspace contract
 
@@ -119,16 +118,16 @@ A Preview is a bounded, read-only rendering derived from a specific workspace sn
 
 Approved types:
 
-| Preview type | Status | Contract |
-| --- | --- | --- |
-| `plain-text` | **Approved Core Alpha target** | UTF-8 text, escaped, bounded; no active content. |
-| `source-code` | **Approved Core Alpha target** | UTF-8 source plus trusted language ID and line metadata; no execution. |
-| `markdown-safe` | **Approved Core Alpha target** | Strict safe subset; raw HTML and active resources are disabled; external links are explicit. |
-| `diff` | **Implemented baseline** for Git patch; generic form is target | Complete or explicitly truncated structured diff tied to baseline/current hashes. Truncated diff cannot authorize review. |
-| `image` | **Approved Core Alpha target** | Stored application artifact with verified media type, dimensions, byte cap, and no remote URL loading. |
-| `table-json` | **Approved Core Alpha target** | Schema-bounded rows/cells rendered as data, never HTML. |
-| `static-web` | **Future** | Separate sandboxed origin/frame, strict CSP, no credentials/storage, and network denied. It must not be implemented as unsanitized HTML in the app origin. |
-| `interactive-runtime` | **Future** | Requires a dedicated sandbox and message schema; no direct application DOM, storage, network, or host access. |
+| Preview type          | Status                                                         | Contract                                                                                                                                                   |
+| --------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plain-text`          | **Approved Core Alpha target**                                 | UTF-8 text, escaped, bounded; no active content.                                                                                                           |
+| `source-code`         | **Approved Core Alpha target**                                 | UTF-8 source plus trusted language ID and line metadata; no execution.                                                                                     |
+| `markdown-safe`       | **Approved Core Alpha target**                                 | Strict safe subset; raw HTML and active resources are disabled; external links are explicit.                                                               |
+| `diff`                | **Implemented baseline** for Git patch; generic form is target | Complete or explicitly truncated structured diff tied to baseline/current hashes. Truncated diff cannot authorize review.                                  |
+| `image`               | **Approved Core Alpha target**                                 | Stored application artifact with verified media type, dimensions, byte cap, and no remote URL loading.                                                     |
+| `table-json`          | **Approved Core Alpha target**                                 | Schema-bounded rows/cells rendered as data, never HTML.                                                                                                    |
+| `static-web`          | **Future**                                                     | Separate sandboxed origin/frame, strict CSP, no credentials/storage, and network denied. It must not be implemented as unsanitized HTML in the app origin. |
+| `interactive-runtime` | **Future**                                                     | Requires a dedicated sandbox and message schema; no direct application DOM, storage, network, or host access.                                              |
 
 Preview requests name only an approved type and logical document/artifact IDs. They cannot carry renderer code, HTML scripts, plugins, commands, or URLs.
 
@@ -168,11 +167,11 @@ Artifacts are size/count limited, content-type verified rather than extension-tr
 
 The authoritative sequence is:
 
-1. save produces workspace generation/hash $n$;
+1. save produces canonical allowed-workspace manifest/hash $n$, independent of Git ignore, with explicit app-owned exclusions;
 2. check runs against $n$ and returns a result bound to $n$;
-3. any edit creates $n+1$ and makes the result stale;
-4. Reviewer receives only a complete diff and a passing check for the current hash;
-5. Reviewer remains read-only; a before/after hash mismatch invalidates its result;
+3. any allowed file edit creates $n+1$ and makes the result stale; a disallowed/oversized/link entry fails closed;
+4. Reviewer receives only the bounded disclosed patch and a passing check for the current hash;
+5. Reviewer has no local-read or write capability; a before/after hash mismatch invalidates its result;
 6. `changes_requested` returns to edit → fresh check → fresh review;
 7. the Learning Kernel consumes the current validated Evidence.
 

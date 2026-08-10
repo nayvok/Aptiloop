@@ -53,9 +53,19 @@ type OfficialResearchRequest = {
 };
 
 type ResearchResult =
-  | { status: "captured"; snapshotId: string; contentHash: string; diagnostics: readonly Diagnostic[] }
+  | {
+      status: "captured";
+      snapshotId: string;
+      contentHash: string;
+      diagnostics: readonly Diagnostic[];
+    }
   | { status: "not-modified"; snapshotId: string }
-  | { status: "blocked" | "failed"; code: ResearchFailureCode; retryable: boolean; diagnosticId: string };
+  | {
+      status: "blocked" | "failed";
+      code: ResearchFailureCode;
+      retryable: boolean;
+      diagnosticId: string;
+    };
 ```
 
 The Gateway resolves `sourceReferenceId` from the draft Course/Knowledge System, verifies its authority, applies a canonical locator/query, retrieves bounded content, converts it to inert text/structured blocks, and returns only the stored snapshot ID/hash plus diagnostics. Raw active HTML is never passed to a role or renderer.
@@ -64,7 +74,7 @@ Idempotency is mandatory. Same operation ID plus identical canonical request ret
 
 ## Bounds
 
-**Proposed pending owner approval.** Initial Core Alpha defaults should be conservative and configurable downward per authority:
+**Approved Core Alpha target.** Initial Core Alpha defaults are conservative and configurable downward per authority:
 
 - 5 requests per explicit research operation;
 - 3 redirects per request;
@@ -92,12 +102,12 @@ Provider web-search/browsing features are not a substitute: they have different 
 
 ## Typed role tools
 
-| Tool | Input | Output | Authority |
-|---|---|---|---|
-| `research.requestOfficialCapture` | registered source reference ID, purpose, optional bounded locator/query | snapshot ID/hash or typed failure | User action is required before execution. |
-| `knowledge.readSnapshotSlice` | snapshot ID, registered locator, byte/token limit | inert text blocks with locator/hash | Read-only; rejects learner-private/protected fields. |
-| `knowledge.proposeCapsule` | snapshot IDs, KnowledgeNode IDs, bounded claims | typed capsule proposal with citations | Draft proposal only; cannot apply/publish. |
-| `knowledge.verifyCitations` | capsule proposal ID | deterministic diagnostics | Local validator; no network unless user separately requests refresh. |
+| Tool                              | Input                                                                   | Output                                | Authority                                                            |
+| --------------------------------- | ----------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------- |
+| `research.requestOfficialCapture` | registered source reference ID, purpose, optional bounded locator/query | snapshot ID/hash or typed failure     | User action is required before execution.                            |
+| `knowledge.readSnapshotSlice`     | snapshot ID, registered locator, byte/token limit                       | inert text blocks with locator/hash   | Read-only; rejects learner-private/protected fields.                 |
+| `knowledge.proposeCapsule`        | snapshot IDs, KnowledgeNode IDs, bounded claims                         | typed capsule proposal with citations | Draft proposal only; cannot apply/publish.                           |
+| `knowledge.verifyCitations`       | capsule proposal ID                                                     | deterministic diagnostics             | Local validator; no network unless user separately requests refresh. |
 
 A model cannot invoke the capture tool without an application-issued approval token scoped to the exact source references and operation. UI text or web content never supplies approval.
 
@@ -109,15 +119,15 @@ Snapshot capture is distinct from sending content to an AI provider. The UI disp
 
 ## Failure behavior
 
-| Failure | Required behavior |
-|---|---|
-| Unknown authority/reference, disallowed URL/IP/redirect/media type | `blocked`, persist bounded diagnostic, no snapshot. |
-| Timeout, DNS/TLS/HTTP failure, limit exceeded | `failed`, retain prior snapshot unchanged, no partial authoritative capture. |
-| Changed content | create a new snapshot; never overwrite or silently update a published Course. |
-| Offline/no network | explicit offline state; existing snapshots remain readable. |
-| Provider unavailable | capture remains independent; optional AI capsule proposal is blocked with no Mock fallback. |
-| Citation/hash mismatch | block capsule/Course validation until repaired in a new draft. |
-| Terms/licensing disallow retention | store only permitted metadata/extract mode or block; do not evade source policy. |
+| Failure                                                            | Required behavior                                                                           |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| Unknown authority/reference, disallowed URL/IP/redirect/media type | `blocked`, persist bounded diagnostic, no snapshot.                                         |
+| Timeout, DNS/TLS/HTTP failure, limit exceeded                      | `failed`, retain prior snapshot unchanged, no partial authoritative capture.                |
+| Changed content                                                    | create a new snapshot; never overwrite or silently update a published Course.               |
+| Offline/no network                                                 | explicit offline state; existing snapshots remain readable.                                 |
+| Provider unavailable                                               | capture remains independent; optional AI capsule proposal is blocked with no Mock fallback. |
+| Citation/hash mismatch                                             | block capsule/Course validation until repaired in a new draft.                              |
+| Terms/licensing disallow retention                                 | store only permitted metadata/extract mode or block; do not evade source policy.            |
 
 Failures never complete a lesson, validate a capsule, publish a Course, or change mastery.
 

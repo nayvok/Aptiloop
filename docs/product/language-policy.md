@@ -28,7 +28,7 @@ UI locale controls application-owned presentation:
 - Settings, runtime/provider state, privacy prompts, import/export prompts, and Studio chrome;
 - deterministic Learning Kernel explanations and evidence labels.
 
-Supported values are `en-US` and `ru-RU`. The application must define a deterministic initial choice and expose an explicit Settings control. A browser/OS preference may suggest the first selection, but it must not change an existing saved preference silently.
+Supported values are `en-US` and `ru-RU`. Resolution order is deterministic: use the saved user setting; otherwise show an explicit first-run choice prefilled from a supported browser/OS locale (`ru`/`ru-*` → `ru-RU`, `en`/`en-*` → `en-US`, anything else → `en-US`). The prefill is not persisted until the user confirms it. Browser/OS changes never alter an existing saved preference silently. UI locale does not choose or prefill a Course locale.
 
 ### Primary Course locale
 

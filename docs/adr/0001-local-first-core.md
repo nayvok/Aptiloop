@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted product constraint; implementation pending approval gate
+Approved Core Alpha target
 
 ## Date
 

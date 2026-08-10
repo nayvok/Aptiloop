@@ -17,6 +17,41 @@ export interface UnitDefinition {
    */
   readonly prerequisiteUnitIds?: readonly string[];
 }
+export interface ExplicitUnitPrerequisiteDefinition {
+  readonly id: string;
+  readonly stableId: string;
+  readonly optional: boolean;
+  readonly prerequisiteStableIds: readonly string[];
+}
+
+/** Resolves authored stable-ID edges into explicit runtime unit-ID edges. */
+export function resolveExplicitUnitDefinitions(
+  units: readonly ExplicitUnitPrerequisiteDefinition[],
+): UnitDefinition[] {
+  const idByStableId = new Map<string, string>();
+  for (const unit of units) {
+    if (!unit.stableId.trim()) {
+      throw new TypeError("unit stable ID must not be empty");
+    }
+    if (idByStableId.has(unit.stableId)) {
+      throw new TypeError(`duplicate unit stable ID: ${unit.stableId}`);
+    }
+    idByStableId.set(unit.stableId, unit.id);
+  }
+  return units.map((unit) => ({
+    id: unit.id,
+    optional: unit.optional,
+    prerequisiteUnitIds: unit.prerequisiteStableIds.map((stableId) => {
+      const id = idByStableId.get(stableId);
+      if (id === undefined) {
+        throw new TypeError(
+          `unknown prerequisite stable ID ${stableId} for unit ${unit.id}`,
+        );
+      }
+      return id;
+    }),
+  }));
+}
 
 export interface UnitProgressionItem {
   readonly unitId: string;

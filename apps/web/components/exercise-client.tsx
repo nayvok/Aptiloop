@@ -17,6 +17,16 @@ import {
 import { z } from "zod";
 
 import { api } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
@@ -46,9 +56,16 @@ const testRunSchema = z
   .object({
     id: idSchema,
     operationId: idSchema,
-    status: z.enum(["running", "passed", "failed"]),
+    status: z.enum([
+      "running",
+      "passed",
+      "failed",
+      "backend_error",
+      "cancelled",
+    ]),
     exitCode: z.number().int(),
     output: z.string(),
+    result: z.unknown().nullable(),
     workspaceCurrent: z.boolean(),
   })
   .strict();
@@ -69,6 +86,13 @@ const findingSchema = z
     hintLevel: z.number().int().min(0).max(3),
   })
   .strict();
+const evidenceBundleSchema = z
+  .object({
+    id: idSchema,
+    sha256: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+    workspaceSnapshotHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+  })
+  .strict();
 const reviewSchema = z
   .object({
     id: idSchema,
@@ -76,6 +100,7 @@ const reviewSchema = z
     summary: z.string().min(1),
     findings: z.array(findingSchema),
     strengths: z.array(z.string().min(1)),
+    evidenceBundle: evidenceBundleSchema.nullable(),
   })
   .strict();
 const exerciseProgressSchema = z
@@ -121,7 +146,15 @@ const exerciseSchema = z
     criteria: z.array(z.string().min(1)),
     constraints: z.array(z.string().min(1)),
     topics: z.array(z.string().min(1)),
-    workspacePath: z.string().min(1).nullable(),
+    workspace: z
+      .object({
+        id: idSchema,
+        generation: z.number().int().positive(),
+        environmentId: idSchema,
+        trust: z.literal("trusted-local-unsandboxed"),
+      })
+      .strict()
+      .nullable(),
     attempt: z
       .object({
         id: idSchema,
@@ -138,15 +171,40 @@ const exerciseSchema = z
 const diffResponseSchema = z
   .object({ diff: z.string(), changed: z.boolean(), truncated: z.boolean() })
   .strict();
-const commandResponseSchema = testRunSchema.omit({ workspaceCurrent: true });
+const checkResponseSchema = testRunSchema.omit({ workspaceCurrent: true });
 const reviewResponseSchema = reviewSchema.extend({
   suggestedMasteryChanges: z.array(z.unknown()),
+  evidenceBundle: evidenceBundleSchema,
 });
-const attemptResponseSchema = z.object({ id: idSchema }).strict();
+const disclosureResponseSchema = z.object({
+  kind: z.literal("disclosure"),
+  required: z.literal(true),
+  disclosure: z.object({
+    operationId: idSchema,
+    status: z.literal("pending"),
+    scope: z.object({
+      destination: z.string().min(1),
+      payloadCategories: z.array(z.string().min(1)),
+      byteCount: z.number().int().nonnegative(),
+      exclusions: z.array(z.string().min(1)),
+    }),
+  }),
+});
+type PendingReviewDisclosure = {
+  reviewOperationId: string;
+  disclosure: z.infer<typeof disclosureResponseSchema>["disclosure"];
+};
+const attemptResponseSchema = z
+  .object({
+    id: idSchema,
+    workspace: z
+      .object({ id: idSchema, generation: z.number().int().positive() })
+      .strict(),
+  })
+  .strict();
 const openResponseSchema = z
   .object({
     opened: z.boolean(),
-    path: z.string().min(1),
     message: z.string().optional(),
   })
   .strict();
@@ -196,6 +254,8 @@ export function ExerciseClient() {
   const [localReview, setLocalReview] = useState<Review | null>(null);
   const [zedFallback, setZedFallback] = useState<string | null>(null);
   const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
+  const [pendingReviewDisclosure, setPendingReviewDisclosure] =
+    useState<PendingReviewDisclosure | null>(null);
 
   const query = useQuery({
     queryKey: ["exercise", requestedSessionId ?? "current"],
@@ -291,16 +351,16 @@ export function ExerciseClient() {
     mutationFn: async () => {
       const attemptId = getAttemptId();
       const testValue = await api<unknown>(
-        `/exercise-attempts/${encodeURIComponent(attemptId)}/commands`,
+        `/exercise-attempts/${encodeURIComponent(attemptId)}/checks`,
         {
           method: "POST",
           body: JSON.stringify({
             operationId: crypto.randomUUID(),
-            commandId: "test",
+            checkIds: ["apt.compat.node24.npm-test.v1"],
           }),
         },
       );
-      const test = parseSafe(commandResponseSchema, testValue);
+      const test = parseSafe(checkResponseSchema, testValue);
       const diffValue = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/diff`,
       );
@@ -323,7 +383,10 @@ export function ExerciseClient() {
   });
 
   const runReview = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (input?: {
+      reviewOperationId: string;
+      disclosureOperationId: string;
+    }) => {
       const attemptId = getAttemptId();
       const currentDiffValue = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/diff`,
@@ -336,21 +399,49 @@ export function ExerciseClient() {
           "Файлы изменились после последнего diff. Обновите diff и снова запустите тесты.",
         );
       }
+      const reviewOperationId = input?.reviewOperationId ?? crypto.randomUUID();
       const value = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/reviews`,
-        { method: "POST", body: "{}" },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            operationId: reviewOperationId,
+            ...(input
+              ? { disclosureOperationId: input.disclosureOperationId }
+              : { previewDisclosure: true }),
+          }),
+        },
       );
+      const disclosure = disclosureResponseSchema.safeParse(value);
+      if (disclosure.success) {
+        return {
+          kind: "disclosure" as const,
+          reviewOperationId,
+          disclosure: disclosure.data.disclosure,
+        };
+      }
       const parsed = parseSafe(reviewResponseSchema, value);
-      return reviewSchema.parse({
-        id: parsed.id,
-        status: parsed.status,
-        summary: parsed.summary,
-        findings: parsed.findings,
-        strengths: parsed.strengths,
-      });
+      return {
+        kind: "review" as const,
+        review: reviewSchema.parse({
+          id: parsed.id,
+          status: parsed.status,
+          summary: parsed.summary,
+          findings: parsed.findings,
+          strengths: parsed.strengths,
+          evidenceBundle: parsed.evidenceBundle,
+        }),
+      };
     },
     onSuccess: async (result) => {
-      setLocalReview(result);
+      if (result.kind === "disclosure") {
+        setPendingReviewDisclosure({
+          reviewOperationId: result.reviewOperationId,
+          disclosure: result.disclosure,
+        });
+        return;
+      }
+      setLocalReview(result.review);
       await invalidatePractice();
     },
   });
@@ -363,17 +454,12 @@ export function ExerciseClient() {
       );
       return parseSafe(openResponseSchema, value);
     },
-    onSuccess: async (data) => {
-      if (data.opened) {
-        setZedFallback(null);
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(data.path);
-        setZedFallback("Zed недоступен. Путь скопирован в буфер обмена.");
-      } catch {
-        setZedFallback(`Zed недоступен. Откройте папку вручную: ${data.path}`);
-      }
+    onSuccess: (data) => {
+      setZedFallback(
+        data.opened
+          ? null
+          : (data.message ?? "Zed недоступен для этой рабочей области."),
+      );
     },
   });
 
@@ -535,16 +621,45 @@ export function ExerciseClient() {
     openZed.error ??
     acceptReview.error;
 
-  async function copyWorkspacePath() {
-    if (!exercise.workspacePath) return;
+  async function copyWorkspaceId() {
+    if (!exercise.workspace) return;
     try {
-      await navigator.clipboard.writeText(exercise.workspacePath);
-      setWorkspaceNotice("Путь скопирован в буфер обмена.");
+      await navigator.clipboard.writeText(exercise.workspace.id);
+      setWorkspaceNotice("Идентификатор рабочей области скопирован.");
     } catch {
+      setWorkspaceNotice("Не удалось скопировать идентификатор.");
+    }
+  }
+  async function approveReviewDisclosure() {
+    const pending = pendingReviewDisclosure;
+    if (!pending) return;
+    try {
+      await api(`/ai/disclosures/${pending.disclosure.operationId}/approve`, {
+        method: "POST",
+        body: "{}",
+      });
+      setPendingReviewDisclosure(null);
+      runReview.mutate({
+        reviewOperationId: pending.reviewOperationId,
+        disclosureOperationId: pending.disclosure.operationId,
+      });
+    } catch (error) {
       setWorkspaceNotice(
-        "Не удалось скопировать путь автоматически. Выделите его вручную.",
+        error instanceof Error
+          ? error.message
+          : "Не удалось подтвердить отправку данных.",
       );
     }
+  }
+
+  async function cancelReviewDisclosure() {
+    const pending = pendingReviewDisclosure;
+    if (!pending) return;
+    setPendingReviewDisclosure(null);
+    await api(`/ai/disclosures/${pending.disclosure.operationId}`, {
+      method: "DELETE",
+    }).catch(() => undefined);
+    setWorkspaceNotice("Данные не отправлены. Проверку можно запросить позже.");
   }
 
   return (
@@ -624,17 +739,18 @@ export function ExerciseClient() {
           >
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="min-w-0">
-                <h2 className="font-semibold">Изолированная рабочая папка</h2>
+                <h2 className="font-semibold">Изолированная рабочая область</h2>
                 <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-                  {exercise.workspacePath ??
-                    "Будет создана сервером после начала попытки."}
+                  {exercise.workspace
+                    ? `${exercise.workspace.id} · поколение ${exercise.workspace.generation}`
+                    : "Будет создана сервером после начала попытки."}
                 </p>
               </div>
               {attemptId ? (
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={copyWorkspacePath}>
+                  <Button variant="outline" onClick={copyWorkspaceId}>
                     <CopyIcon aria-hidden />
-                    Скопировать путь
+                    Скопировать ID
                   </Button>
                   <Button
                     variant="outline"
@@ -697,7 +813,7 @@ export function ExerciseClient() {
               <Button
                 size="sm"
                 disabled={!reviewAllowed || runReview.isPending}
-                onClick={() => runReview.mutate()}
+                onClick={() => runReview.mutate(undefined)}
               >
                 <FlaskIcon aria-hidden />
                 {runReview.isPending
@@ -794,6 +910,17 @@ export function ExerciseClient() {
             {review ? (
               <div className="mt-4 flex flex-col gap-4">
                 <p className="text-sm leading-6">{review.summary}</p>
+                {review.evidenceBundle ? (
+                  <div className="rounded-lg border border-border bg-muted/40 p-3">
+                    <p className="text-xs font-medium">Капсула доказательств</p>
+                    <p className="mt-1 break-all font-mono text-[11px] leading-5 text-muted-foreground">
+                      {review.evidenceBundle.sha256}
+                    </p>
+                    <p className="mt-1 break-all font-mono text-[11px] leading-5 text-muted-foreground">
+                      snapshot {review.evidenceBundle.workspaceSnapshotHash}
+                    </p>
+                  </div>
+                ) : null}
                 {review.strengths.length ? (
                   <ul className="flex flex-col gap-2 text-sm text-muted-foreground">
                     {review.strengths.map((strength) => (
@@ -848,6 +975,58 @@ export function ExerciseClient() {
           ) : null}
         </aside>
       </div>
+      <AlertDialog open={pendingReviewDisclosure !== null}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Отправить evidence внешнему AI?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Reviewer получит только зафиксированный bundle. Разрешение
+              действует один раз.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {pendingReviewDisclosure ? (
+            <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 text-sm">
+              <div>
+                <dt className="font-medium">Получатель</dt>
+                <dd className="text-muted-foreground">
+                  {pendingReviewDisclosure.disclosure.scope.destination}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-medium">Данные</dt>
+                <dd className="text-muted-foreground">
+                  {pendingReviewDisclosure.disclosure.scope.payloadCategories.join(
+                    ", ",
+                  )}{" "}
+                  · {pendingReviewDisclosure.disclosure.scope.byteCount} bytes
+                </dd>
+              </div>
+              <div>
+                <dt className="font-medium">Не отправляется</dt>
+                <dd className="text-muted-foreground">
+                  {pendingReviewDisclosure.disclosure.scope.exclusions.join(
+                    ", ",
+                  )}
+                </dd>
+              </div>
+            </dl>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={runReview.isPending}
+              onClick={() => void cancelReviewDisclosure()}
+            >
+              Не отправлять
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={runReview.isPending}
+              onClick={() => void approveReviewDisclosure()}
+            >
+              Разрешить один раз
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

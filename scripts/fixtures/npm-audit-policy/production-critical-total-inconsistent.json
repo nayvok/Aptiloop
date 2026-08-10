@@ -1,0 +1,40 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "critical-runtime-risk": {
+      "name": "critical-runtime-risk",
+      "severity": "critical",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 2001,
+          "dependency": "critical-runtime-risk",
+          "url": "https://github.com/advisories/GHSA-DDDD-EEEE-FFFF",
+          "severity": "critical"
+        }
+      ],
+      "effects": [],
+      "range": "<4.0.0",
+      "nodes": ["node_modules/critical-runtime-risk"],
+      "fixAvailable": false
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 1,
+      "total": 0
+    },
+    "dependencies": {
+      "prod": 1,
+      "dev": 0,
+      "optional": 0,
+      "peer": 0,
+      "peerOptional": 0,
+      "total": 1
+    }
+  }
+}

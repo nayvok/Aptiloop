@@ -1,6 +1,6 @@
 # Course Pack V1
 
-**Document status:** Approved Core Alpha target with Implemented baseline and migration findings.
+**Document status:** Course Pack V1 validation, local lifecycle, and Authoring Kit are an **Implemented baseline**. Adaptive Studio authoring, production Course approval, registries/signatures, and archive transport retain their labels below.
 **Scope:** declarative Course interchange, validation, publication, and migration. A Course Pack is not an execution, deployment, provider, or credential format.
 
 ## Purpose and invariants
@@ -19,9 +19,11 @@ A valid V1 pack is:
 
 ## Implemented baseline
 
-**Implemented baseline.** The closest current graph is `curricula → curriculum_versions → curriculum_weeks → curriculum_days_v2 → curriculum_units`, with revision uniqueness and published-content immutability guards (`packages/database/migrations/0001_versioned_curriculum.sql:1-97,151-193`). Current shared contracts enumerate twelve unit types and use discriminated payloads (`packages/shared/src/curriculum.ts:63-77,188-262`). Publication currently checks only non-empty weeks/days/units and completion criteria before hashing and archiving the prior revision (`packages/database/src/authoring-repository.ts:624-685`). There is no Course Pack import/export endpoint or archive importer; the existing editor accepts bounded strict field mutations (`apps/orchestrator/src/curriculum-editor.ts:26-196`).
+**Implemented baseline.** `@dlh/course-authoring-kit` defines the strict Course Pack V1 Zod contract, deterministic diagnostics, canonical JSON/SHA-256 rules, limits profile, generated JSON Schema, typed exports, CLI, and a clearly labeled development-only fixture. The same `validateCoursePackBytes` implementation is used by the local kit and orchestrator import boundary.
 
-**Implemented baseline.** Published session content is copied into a schema-v2 snapshot and hashed, and learner reads redact reference answers/evaluation points (`packages/database/src/repository.ts:541-701,718-810`). These are preservation seams, not proof that Course Pack V1 exists.
+**Implemented baseline.** The orchestrator accepts one bounded byte stream, validates it in a private expiring staging directory, records only bounded diagnostics for invalid bytes, revalidates the exact staged bytes/hash at commit, and transactionally installs an immutable revision or opens a local draft. Migration `0011_course_pack_lifecycle` stores immutable canonical manifests/localizations/knowledge nodes plus append-only lifecycle events and quarantine records. Re-import is idempotent; key/hash collisions fail closed; uninstall archives the revision and preserves learner facts. The Courses UI exposes file selection, validation report/Preview/provenance/requirements/hash, explicit Install/Open-as-draft, canonical export, and confirmed uninstall.
+
+**Implemented baseline limitation.** V1 is one local JSON document. It never fetches content and cannot define commands, processes, providers, plugins, credentials, arbitrary files, or execution environments. No production Course is bundled or approved.
 
 ## Normative V1 document shape
 
@@ -71,18 +73,17 @@ The eight root fields shown above are the complete V1 root schema; any other roo
 
 Each lesson record has the closed shape `{ lessonId, order, title, description, goal, estimatedMinutes, knowledgeNodeIds, entryActivityIds, activities }`. Each activity record has the closed shape `{ activityId, schemaVersion, order, type, title, description, required, prerequisiteActivityIds, capabilityIds, knowledgeNodeIds, sourceSnapshotIds, completionCriteria, payload }`. `environmentId` and `checkIds` are permitted only in a registered activity payload schema that declares the trusted Execution Fabric boundary; their values are IDs, never plans.
 
-
 ### Identity and revision fields
 
-| Field | Rule |
-|---|---|
-| `courseKey` | Stable lowercase ASCII slug, unique in the local library. It identifies lineage, not a database row. |
-| `revisionKey` | Stable opaque identifier unique within the Course; never reused for different canonical content. |
-| `revisionNumber` | Positive, monotonic within the upstream lineage; not used as identity. |
-| `parentRevisionKey` | Required except for the root revision; must resolve within imported/local lineage. |
-| `branchKind` | Closed union `upstream | personal`. Core Alpha adaptation writes only to `personal`. |
-| `basedOnContentHash` | Required for a personal revision and must match its immutable parent. |
-| `contentHash` | `sha256:` plus lowercase digest over the canonical pack payload excluding the `contentHash` field itself and import metadata. |
+| Field                | Rule                                                                                                                          |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `courseKey`          | Stable lowercase ASCII slug, unique in the local library. It identifies lineage, not a database row.                          |
+| `revisionKey`        | Stable opaque identifier unique within the Course; never reused for different canonical content.                              |
+| `revisionNumber`     | Positive, monotonic within the upstream lineage; not used as identity.                                                        |
+| `parentRevisionKey`  | Required except for the root revision; must resolve within imported/local lineage.                                            |
+| `branchKind`         | Closed union `upstream \| personal`. Core Alpha adaptation writes only to `personal`.                                         |
+| `basedOnContentHash` | Required for a personal revision and must match its immutable parent.                                                         |
+| `contentHash`        | `sha256:` plus lowercase digest over the canonical pack payload excluding the `contentHash` field itself and import metadata. |
 
 An imported upstream revision never mutates an existing revision. Identical key+hash is an idempotent re-import. Identical key with a different hash is a hard conflict. A personal branch is a new immutable revision whose parent/based-on hash records provenance; adaptation never overwrites upstream content.
 
@@ -127,7 +128,7 @@ A pack cannot define a new capability, environment, check, renderer, plugin, or 
 
 ## Validation and publication
 
-**Approved Core Alpha target.** Validation is deterministic, side-effect free through the semantic phase, and returns stable diagnostics `{code, severity, path, entityId, message}`.
+**Implemented baseline.** Validation is deterministic, side-effect free through the semantic phase, and returns stable diagnostics `{code, severity, path, entityId, message}`.
 
 1. **Envelope:** UTF-8, JSON object, exact format/version, byte/depth/item limits, no duplicate JSON keys, no unknown fields.
 2. **Shape:** all closed schemas, string/array bounds, IDs and locales.

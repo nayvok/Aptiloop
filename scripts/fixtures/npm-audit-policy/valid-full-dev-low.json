@@ -1,0 +1,48 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "dev-only-tool": {
+      "name": "dev-only-tool",
+      "severity": "low",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1001,
+          "name": "dev-only-tool",
+          "dependency": "dev-only-tool",
+          "title": "Fixture advisory text excluded from the summary",
+          "url": "https://github.com/advisories/GHSA-1111-2222-3333",
+          "severity": "low",
+          "cwe": ["CWE-000"],
+          "cvss": {
+            "score": 2,
+            "vectorString": "CVSS:3.1/AV:L/AC:H/PR:L/UI:R/S:U/C:N/I:L/A:N"
+          },
+          "range": "<2.0.0"
+        }
+      ],
+      "effects": [],
+      "range": "<2.0.0",
+      "nodes": ["node_modules/dev-only-tool"],
+      "fixAvailable": true
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 1,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 1
+    },
+    "dependencies": {
+      "prod": 2,
+      "dev": 1,
+      "optional": 0,
+      "peer": 0,
+      "peerOptional": 0,
+      "total": 3
+    }
+  }
+}

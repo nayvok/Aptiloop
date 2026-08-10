@@ -2,13 +2,13 @@
 
 ## Document status
 
-**Approved Core Alpha target**. This specification defines the common contract for embedded and external Course authoring. It does not claim that Adaptive Studio, Course Packs, or the target model are implemented.
+**Approved Core Alpha target** overall. The external Course Pack V1 path and version-matched Authoring Kit are an **Implemented baseline**; Adaptive Studio, target manual authoring, guided AI proposals, and production publication are not claimed implemented.
 
 ## Implemented baseline
 
-The current Dev Learning Harness has a draft Curriculum Editor backed by versioned curriculum tables. It can create or clone a draft revision, edit/reorder week/day/unit records, validate type-specific payloads, preview some data, and explicitly publish an immutable revision with a content hash. Published/archived graph rows are read-only and existing learning sessions hold immutable snapshots.
+The current Dev Learning Harness has a draft Curriculum Editor backed by versioned curriculum tables. It can create or clone a draft revision, edit/reorder week/day/unit records, validate type-specific payloads, preview some data, and explicitly publish an immutable revision with a content hash. M2 adds target Course/revision/section/lesson/Activity, personal Adaptation Branch, Source Snapshot, and Knowledge Capsule contracts and persistence. M3 adds the strict external Course Pack V1 validator, Preview/install/open-as-draft/export/uninstall lifecycle, and version-matched Authoring Kit. M5 validates runtime requirements against the finite app-owned Environment Pack/check registry.
 
-The active development curriculum is a repository seed and includes Russian content. It is not a production Course. The editor is not Adaptive Studio; the target Course top entity, personal adaptation branch, Source Snapshots, Knowledge Capsules, external Course Pack import/export, target locale model, generic environments/checks, and typed AI proposals do not yet exist. Current documentation that names an older active revision is historical/stale baseline evidence, not the target contract.
+The active curriculum and Authoring Kit fixture are development content, not production Courses. Source Snapshot/Capsule tables contain no approved production material, and the current UI cannot yet create/apply a personal adaptation through Adaptive Studio. Complete target locale resources, guided typed AI proposals, and Adaptive Studio remain **Approved Core Alpha target** work. Existing hardcoded Russian content and retained legacy authoring routes are compatibility surfaces, not evidence that localization or target Studio authoring is complete.
 
 ## Authoring principles
 
@@ -83,8 +83,8 @@ Required flow:
 3. **Outline and graph** — structured finite activity outline with prerequisite/terminal visibility.
 4. **Editor** — schema-driven fields for metadata, sources, capsules, activities, rubrics, protected material, environment/check references, and translations.
 5. **Inspector** — exact stable ID, type contract, references, validation, evidence expectation, and provenance.
-6. **Preview** — learner rendering in a selected Course locale and target viewport without publication.
-7. **Validate** — deterministic whole-Course validation with exact node/field diagnostics.
+6. **Validate** — deterministically validate the current saved Draft, identify its content digest, and report exact node/field diagnostics.
+7. **Preview** — render the exact validated Draft digest as learner experience in a selected Course locale and target viewport without publication; later content changes make both validation and Preview stale.
 8. **Review changes** — diff from parent/source, locale completeness, environment/capability requirements, provenance, and canonical hash inputs.
 9. **Publish** — separate explicit confirmation that creates an immutable Course Revision.
 
@@ -96,24 +96,23 @@ Published revisions are read-only. Editing begins by cloning to a new Draft or c
 
 `/courses/new` offers two equal-trust paths: **Create manually** and **Describe a learning goal**. Manual creation opens the same typed Draft contract without an AI dependency. The guided Course Designer is optional and uses this restart-safe state machine:
 
-| State | Required behavior |
-| --- | --- |
-| `DRAFT_REQUEST` | Capture a natural-language goal, target outcome, current level, preferred language, time/pacing, tools, accessibility needs, and constraints. No Course exists yet. |
-| `DISCOVERY` | Resolve missing scope through bounded questions; propose candidate sources, skills, activity families, and runtime needs as assumptions for review. External-provider transmission requires the privacy preflight. |
-| `DIAGNOSTIC` | Offer optional bounded questions or practical tasks to calibrate prior knowledge. Skip is always available; diagnostic output is evidence for the proposal, not mastery. |
+| State                 | Required behavior                                                                                                                                                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DRAFT_REQUEST`       | Capture a natural-language goal, target outcome, current level, primary Course locale, time/pacing, tools, accessibility needs, and constraints. The UI locale remains independent. No Course exists yet.                                   |
+| `DISCOVERY`           | Resolve missing scope through bounded questions; propose candidate sources, skills, activity families, and runtime needs as assumptions for review. External-provider transmission requires the privacy preflight.                          |
+| `DIAGNOSTIC`          | Offer optional bounded questions or practical tasks to calibrate prior knowledge. Skip is always available; diagnostic output is evidence for the proposal, not mastery.                                                                    |
 | `CURRICULUM_PROPOSAL` | Show proposed Course structure, sequencing, prerequisites, Source Snapshot candidates, Knowledge Capsules, activity/evidence contracts, Node/Python needs, trusted check references, estimates, assumptions, and provider/model provenance. |
-| `USER_REVIEW` | Let the user edit structured fields, request a revision, reject, or explicitly confirm compilation. Confirmation is not Apply, Validate, or Publish. |
-| `COMPILATION` | Compile the confirmed proposal into the same strict Course Pack/Draft schema used by manual and external authoring. Create only a local Draft with proposal provenance. |
-| `VALIDATION` | Run Aptiloop's deterministic whole-Course validators. Errors return to the exact Draft field; model output never overrides a finding. |
-| `PUBLISHED` | Enter only after the separate Preview, Change review, and explicit immutable Publish gate succeeds. The designer cannot transition here directly. |
-| `FAILED` | Preserve user input, prior safe state, operation identity, and exact failure layer; offer Retry, Back, switch provider where explicitly configured, or continue manually. Never select Mock silently. |
+| `USER_REVIEW`         | Let the user edit structured fields, request a revision, reject, or explicitly confirm compilation. Confirmation is not Apply, Validate, or Publish.                                                                                        |
+| `COMPILATION`         | Compile the confirmed proposal into the same strict Course Pack/Draft schema used by manual and external authoring. Create only a local Draft with proposal provenance.                                                                     |
+| `VALIDATION`          | Run Aptiloop's deterministic whole-Course validators. Errors return to the exact Draft field; model output never overrides a finding.                                                                                                       |
+| `PUBLISHED`           | Enter only after the separate Preview, Change review, and explicit immutable Publish gate succeeds. The designer cannot transition here directly.                                                                                           |
+| `FAILED`              | Preserve user input, prior safe state, operation identity, and exact failure layer; offer Retry, Back, switch provider where explicitly configured, or continue manually. Never select Mock silently.                                       |
 
 Every transition is persisted with a bounded audit record and is idempotent on operation ID. Restart resumes the last committed state. Diagnostic answers, source material, provider responses, and proposal revisions remain distinct from deterministic learner Evidence. AI Off bypasses `DISCOVERY`/`DIAGNOSTIC`/proposal generation and leaves the complete structured manual path available.
 
-
 ### External: Course Pack
 
-**Approved Core Alpha target**
+**Implemented baseline** for Course Pack V1.
 
 An author may use any external text editor, build system, or generator to produce declarative Course Pack data. Those external tools are outside Aptiloop's trust boundary. Aptiloop imports only the resulting data through its own bounded parser and validators.
 
@@ -129,9 +128,10 @@ Required import flow:
 8. Commit atomically; invalid imports leave no partially runnable Course.
 
 Embedded and external paths converge on the same Course Draft/Revision contract and validators. Neither path gets a privileged bypass.
+
 #### Authoring Kit
 
-**Approved Core Alpha target**
+**Implemented baseline** for the version-matched V1 kit.
 
 Aptiloop publishes a version-matched Authoring Kit so an author can produce a valid Pack with an external text editor or AI tool without granting that tool access to Aptiloop. The Kit is a build/release artifact, not a runtime plugin, and contains:
 
@@ -146,6 +146,17 @@ Aptiloop publishes a version-matched Authoring Kit so an author can produce a va
 
 The Kit and Adaptive Studio must accept/reject the same canonical fixture corpus and produce identical validation codes and hashes. A Kit update cannot weaken an older schema silently. External generators may help author data, but they cannot validate as authority, install, publish, fetch sources through Aptiloop, or define new Activity/runtime/tool behavior.
 
+Repository workflow after building `@dlh/course-authoring-kit`:
+
+```sh
+node packages/course-authoring-kit/dist/cli.js validate pack.json
+node packages/course-authoring-kit/dist/cli.js hash pack.json
+node packages/course-authoring-kit/dist/cli.js canonicalize pack.json
+node packages/course-authoring-kit/dist/cli.js finalize pack.json
+```
+
+`validate` prints the stable report and exits non-zero on a blocker. `hash` prints the content hash over the canonical hash payload. `canonicalize` requires a valid finalized pack and prints canonical JSON. `finalize` computes/replaces the declared revision content hash and prints canonical JSON. The generated schema is `packages/course-authoring-kit/schema/course-pack-v1.schema.json`; the non-production template is `packages/course-authoring-kit/templates/development-course-pack.json`. Aptiloop imports one finalized JSON file through Courses → Import Course Pack, shows Preview and diagnostics, then requires a separate Install/Open-as-draft action.
+
 Reference external workflow:
 
 1. select a Kit version compatible with the target Aptiloop Core;
@@ -154,7 +165,6 @@ Reference external workflow:
 4. run the local Kit validator/canonicalizer or import into Aptiloop;
 5. fix all errors locally;
 6. use Aptiloop's non-executing inspection, learner Preview, and explicit Install/Open-as-draft choice.
-
 
 ## Course Pack boundary
 
@@ -207,7 +217,7 @@ The learner Activity Frame owns common context, state, accessibility, runtime/AI
 
 ## Environment and trusted checks
 
-**Approved Core Alpha target**
+**Implemented baseline for external Course Pack runtime references and the finite M5 local registry; Approved Core Alpha target for Adaptive Studio authoring UX and future installed packs.**
 
 Course authoring selects declarative environment requirements and trusted IDs. It never authors commands.
 
@@ -240,7 +250,7 @@ AI has no filesystem, shell, network, credential, general edit, install, environ
 
 ## Validation
 
-**Approved Core Alpha target**
+**Implemented baseline for Course Pack V1 validation/install; Approved Core Alpha target for complete Adaptive Studio publication.**
 
 Publication and installation require zero errors across:
 
@@ -262,7 +272,7 @@ Warnings may cover optional translation completeness, unavailable optional AI, u
 
 ## Publish, install, and export
 
-**Approved Core Alpha target**
+**Implemented baseline for external Pack Install/Export and legacy draft Publish; Approved Core Alpha target for unified Adaptive Studio publication/export.**
 
 - **Publish** converts a local Draft into an immutable revision after Validate, Preview, change review, and explicit confirmation.
 - **Install** atomically records a validated external immutable revision after Preview and explicit confirmation.
@@ -276,7 +286,7 @@ Course material, Source Snapshots, Capsules, Drafts, protected answers, and pers
 
 Authors record origin, authorship/ownership claim, license/terms claim, acquisition date, and transformation notes for source/content resources. Aptiloop validates presence and consistency; it does not certify that a claim is legally correct.
 
-**Proposed pending owner approval:** project licensing may use AGPL-3.0-only for the integrated app/server and Apache-2.0 only for newly separated reusable SDK packages after boundaries/ownership are verified. Content/fixtures require separate terms, and third-party notices/SBOM/trademark policy require legal review. No license text or production Course may be added on this proposal alone.
+**Approved Core Alpha target:** project licensing uses the owner-approved engineering direction of AGPL-3.0-only for the integrated app/server and Apache-2.0 only for newly separated reusable SDK packages after boundaries/ownership are verified. Content/fixtures require separate terms, and third-party notices/SBOM/trademark policy require professional legal review. No license text or production Course is authorized by this target alone.
 
 ## Baseline migration
 

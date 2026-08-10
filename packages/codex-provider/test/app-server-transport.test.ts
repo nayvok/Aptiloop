@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import type {
+  ChildProcessWithoutNullStreams,
+  SpawnOptionsWithStdioTuple,
+} from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -99,8 +102,29 @@ function standardResponse(message: Record<string, unknown>): unknown {
 describe("CodexAppServerTransport", () => {
   it("spawns app-server safely and performs the JSONL handshake", async () => {
     const server = createFakeServer(standardResponse);
-    const spawn = vi.fn(() => server.child);
-    const transport = new CodexAppServerTransport({ spawn });
+    let capturedSpawnOptions:
+      SpawnOptionsWithStdioTuple<"pipe", "pipe", "pipe"> | undefined;
+    const spawn = vi.fn(
+      (
+        _command: string,
+        _args: readonly string[],
+        options: SpawnOptionsWithStdioTuple<"pipe", "pipe", "pipe">,
+      ) => {
+        capturedSpawnOptions = options;
+        return server.child;
+      },
+    );
+    const transport = new CodexAppServerTransport({
+      spawn,
+      environment: {
+        PATH: "C:/tools",
+        USERPROFILE: "C:/Users/learner",
+        OPENAI_API_KEY: "provider-credential",
+        DATABASE_URL: "C:/private/database.sqlite",
+        OPENCODE_SERVER_PASSWORD: "must-not-cross-boundary",
+        GITHUB_TOKEN: "must-not-cross-boundary",
+      },
+    });
 
     await transport.connect();
 
@@ -112,6 +136,18 @@ describe("CodexAppServerTransport", () => {
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
       }),
+    );
+    expect(capturedSpawnOptions?.env).toEqual({
+      PATH: "C:/tools",
+      USERPROFILE: "C:/Users/learner",
+      OPENAI_API_KEY: "provider-credential",
+    });
+    expect(JSON.stringify(capturedSpawnOptions?.env)).not.toContain(
+      "DATABASE_URL",
+    );
+    expect(JSON.stringify(capturedSpawnOptions?.env)).not.toContain("OPENCODE");
+    expect(JSON.stringify(capturedSpawnOptions?.env)).not.toContain(
+      "GITHUB_TOKEN",
     );
     expect(server.requests[0]).toMatchObject({
       id: 1,

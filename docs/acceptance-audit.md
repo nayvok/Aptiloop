@@ -20,7 +20,7 @@
 | Следующий день                 | completion unlock по ordered days                                | Реализовано                                          |
 | Restart/resume                 | immutable snapshot, evidence и stable-ID resume между revisions  | Реализовано                                          |
 
-Playwright покрывает продуктовый путь с Mock и реальной изолированной папкой, authoring/publish/clone со snapshot preservation, отдельное интервью и theme hydration. Тесты не меняют template, используют `3100/8887`, in-memory DB, `.next-e2e`, `retries: 0` и отдельный attempts root.
+Playwright covers the product path with explicit test-only Mock, a real isolated file-backed database/attempt root, authoring/publish/clone with snapshot preservation, the dedicated interview, and theme hydration. Each run uses unique launcher-owned data under `.data/e2e-runs/`, fixed lock-serialized loopback ports `3100/8887` that fail closed if occupied, `retries: 0`, and retained failure diagnostics under `.verify/e2e-failures/`; the ports do not provide parallel run isolation, and the suite never mutates the trusted template.
 
 ## Curriculum Editor
 
@@ -42,14 +42,14 @@ Playwright покрывает продуктовый путь с Mock и реа�
 
 ## Migration/data safety
 
-- canonical DB CLI path разрешается от project root;
-- `db:backup` создаёт non-overwriting `VACUUM INTO` copy и проверяет source/copy integrity + foreign keys;
-- migrations ordered/idempotent;
-- repeatable repair восстанавливает ранние schema/snapshot contracts даже при преждевременном marker 0002;
-- legacy rows/history сохраняются;
-- seed versioned curriculum идемпотентен.
+- Writable database paths are resolved from the repository root and restricted to the designated active target.
+- `db:inventory` inspects disposable SQLite-family copies without exposing learner content.
+- `db:backup` creates a non-overwriting copy with the Node `node:sqlite` online `backup()` API, binds its logical digest to the approved source snapshot, and checks source/copy integrity plus foreign keys.
+- Fresh databases bootstrap to the exact current migration contract. The audited legacy active database may use only its named exact compatibility contract and data invariants; it is not silently repaired or reconciled.
+- A recorded migration ledger with any unapproved schema drift is rejected without repeat repair.
+- Versioned curriculum seeding is idempotent.
 
-Перед проверкой на пользовательской DB обязательна свежая backup; нельзя удалять найденные legacy/package-local DB без ручного сравнения.
+A fresh approved backup is required before any future authorized migration of a valuable database. Discovered legacy or package-local databases remain preserved until explicit reconciliation.
 
 ## Security boundaries
 
@@ -72,9 +72,11 @@ Test/review freshness основана на сохранённом SHA-256 по�
 Из корня в чистом окружении:
 
 ```powershell
-npm install
-npm audit
-npm run db:backup
+npm ci
+npm run audit:policy -- --output-dir .verify/supply-chain
+npm run sbom -- --output .verify/supply-chain/sbom.cdx.json
+npm run db:inventory -- --db .data/dev-learning-harness.sqlite
+npm run db:backup -- --source .data/dev-learning-harness.sqlite --destination .data/approved-backups/pre-gate-2026-08-08T120000Z.sqlite
 npm run db:migrate
 npm run db:seed
 npm run format:check
@@ -85,7 +87,7 @@ npm run test:e2e
 npm run build
 ```
 
-`db:backup` пропускается только для новой/`:memory:` DB. После migrate/seed полезно повторить команды для idempotency и выполнить `PRAGMA integrity_check`/`foreign_key_check`.
+Skip approved backup only for a new/`:memory:` disposable database. For valuable data, use one fresh destination under `.data/approved-backups/`; never use a quarantined alternate family or old backup. Repeat migration/seed idempotency and integrity/foreign-key/private-payload checks on a disposable copy.
 
 Browser acceptance проверяет light/dark hydration, path, start/resume, practice, correction, summary, Day 2 unlock, Editor draft/publish/clone guard и Interview reload/report. Component tests покрывают основные loading/empty/error/protected-data states. Dashboard, session и locked Practice дополнительно проверены вручную при 390×844 и 1280×800; автоматический contrast audit в текущий gate не входит.
 

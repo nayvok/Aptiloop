@@ -6,7 +6,7 @@ This document defines a stable lesson workspace, ActivityFrame, renderer registr
 
 - **Implemented baseline** — current repository evidence.
 - **Approved Core Alpha target** — required behavior.
-- **Proposed pending owner approval** — Calm Workshop presentation.
+- **Approved Core Alpha target — Calm Workshop** — selected direction-specific presentation.
 - **Future** — outside Core Alpha.
 
 ## Baseline audit
@@ -66,7 +66,7 @@ The frame owns shared loading, focus, status announcements, save state, capabili
 
 ### Desktop composition
 
-**Proposed pending owner approval — Calm Workshop**
+**Approved Core Alpha target — Calm Workshop**
 
 - Sticky lesson context spans the available content width.
 - ActivityFrame is centered at 720–800px.
@@ -86,7 +86,7 @@ The frame owns shared loading, focus, status announcements, save state, capabili
 
 ### Light and dark
 
-**Proposed pending owner approval**
+**Approved Core Alpha target — Calm Workshop**
 
 Activity type uses tokenized icon, leading rule, and quiet surface. It never recolors all body text. Dark mode separates background/surface/raised without glow; code and diffs use semantic foreground/background pairs. Focus, status, error, and activity type remain distinct color roles.
 
@@ -99,7 +99,15 @@ The target registry is data-driven and exhaustive. Conceptually each entry decla
 ```ts
 interface ActivityRendererDefinition {
   type: SupportedActivityType;
-  family: "orient" | "study" | "recall" | "explain" | "assess" | "practice" | "review" | "reflect";
+  family:
+    | "orient"
+    | "study"
+    | "recall"
+    | "explain"
+    | "assess"
+    | "practice"
+    | "review"
+    | "reflect";
   learnerPayloadSchema: unknown;
   progressPayloadSchema: unknown;
   evidenceKinds: readonly string[];
@@ -328,18 +336,18 @@ Consent is scoped to the displayed provider/tool/data categories. A changed prov
 
 **Approved Core Alpha target**
 
-| Capability state | Frame behavior |
-| --- | --- |
-| Full local | Render normal activity and optional assistance affordances. |
-| AI Off | Hide/collapse optional AI; manual path complete; no global alarm. |
-| AI unavailable | Preserve input; show exact provider/tool failure and explicit choices; no silent fallback. |
-| External editor missing | Keep workspace path, copy/open-manually guidance, and checks. |
-| Required Node missing | Preserve activity; disable checks; name environment contract and Settings action. |
-| Required Python missing | Same as Node with Python-specific contract. |
-| Core unavailable | Preserve local draft where safe; disable kernel mutations; retry/Core settings. |
-| Storage unavailable | Render retained content read-only; explain SQLite/storage state. |
-| Browser offline | Distinguish from local Core failure; do not promise sync or queued completion. |
-| Unsupported renderer/capability | Safe error with type/capability ID and Course validation path; no generic crash. |
+| Capability state                | Frame behavior                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------ |
+| Full local                      | Render normal activity and optional assistance affordances.                                |
+| AI Off                          | Hide/collapse optional AI; manual path complete; no global alarm.                          |
+| AI unavailable                  | Preserve input; show exact provider/tool failure and explicit choices; no silent fallback. |
+| External editor missing         | Keep workspace path, copy/open-manually guidance, and checks.                              |
+| Required Node missing           | Preserve activity; disable checks; name environment contract and Settings action.          |
+| Required Python missing         | Same as Node with Python-specific contract.                                                |
+| Core unavailable                | Preserve local draft where safe; disable kernel mutations; retry/Core settings.            |
+| Storage unavailable             | Render retained content read-only; explain SQLite/storage state.                           |
+| Browser offline                 | Distinguish from local Core failure; do not promise sync or queued completion.             |
+| Unsupported renderer/capability | Safe error with type/capability ID and Course validation path; no generic crash.           |
 
 ## Loading, empty, error, and stale states
 

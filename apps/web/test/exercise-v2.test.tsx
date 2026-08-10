@@ -74,7 +74,12 @@ function exerciseState(options?: {
     criteria: ["Все поля проверены"],
     constraints: ["Без any"],
     topics: ["unknown", "type guards"],
-    workspacePath: "C:/attempts/attempt-v2",
+    workspace: {
+      id: "workspace-v2",
+      generation: 1,
+      environmentId: "apt.compat.node24.local.v1",
+      trust: "trusted-local-unsandboxed",
+    },
     attempt: {
       id: "attempt-v2",
       changed: true,
@@ -86,6 +91,7 @@ function exerciseState(options?: {
         status: testStatus,
         exitCode: testStatus === "passed" ? 0 : 1,
         output: testStatus === "passed" ? "12 passed" : "1 failed",
+        result: null,
         workspaceCurrent: options?.workspaceCurrent ?? true,
       },
       latestReview: review
@@ -96,6 +102,7 @@ function exerciseState(options?: {
               review === "passed" ? "Решение принято" : "Нужно исправление",
             findings: review === "passed" ? [] : [finding()],
             strengths: ["Понятные имена"],
+            evidenceBundle: null,
           }
         : null,
     },
@@ -127,7 +134,7 @@ describe("restart-safe v2 practice", () => {
     const locked = {
       ...exerciseState(),
       attempt: undefined,
-      workspacePath: null,
+      workspace: null,
       exerciseUnitProgress: {
         status: "locked",
         payload: {
@@ -177,19 +184,17 @@ describe("restart-safe v2 practice", () => {
     expect(apiMock).toHaveBeenCalledTimes(2);
   });
 
-  it("copies the server-owned workspace path on demand", async () => {
+  it("copies the server-owned workspace ID on demand", async () => {
     apiMock.mockResolvedValue(exerciseState());
     renderWithQuery(<ExerciseClient />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Скопировать путь" }),
+      await screen.findByRole("button", { name: "Скопировать ID" }),
     );
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      "C:/attempts/attempt-v2",
-    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("workspace-v2");
     expect(
-      await screen.findByText("Путь скопирован в буфер обмена."),
+      await screen.findByText("Идентификатор рабочей области скопирован."),
     ).toBeInTheDocument();
   });
 
@@ -231,13 +236,14 @@ describe("restart-safe v2 practice", () => {
           truncated: false,
         });
       }
-      if (requestPath.endsWith("/commands")) {
+      if (requestPath.endsWith("/checks")) {
         return Promise.resolve({
           id: "test-v2",
           operationId: "operation-test-v2",
           status: "passed",
           exitCode: 0,
           output: "12 passed after correction",
+          result: null,
         });
       }
       if (requestPath.endsWith("/reviews")) {
@@ -250,6 +256,11 @@ describe("restart-safe v2 practice", () => {
           findings: reviews === 1 ? [finding()] : [],
           strengths: ["Чистая функция"],
           suggestedMasteryChanges: [],
+          evidenceBundle: {
+            id: `bundle-v${reviews}`,
+            sha256: `sha256:${"a".repeat(64)}`,
+            workspaceSnapshotHash: `sha256:${"b".repeat(64)}`,
+          },
         });
       }
       throw new Error(`Unexpected API path: ${requestPath}`);
