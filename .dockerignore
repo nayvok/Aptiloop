@@ -1,7 +1,12 @@
 .git
 .data
+.env
+.env.*
+!.env.example
 .next
+.superpowers
 .turbo
+.verify
 coverage
 dist
 node_modules
