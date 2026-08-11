@@ -1,13 +1,13 @@
 # Pi runtime boundary
 
-**Document status:** Approved Core Alpha target with an accepted evidenced **Implemented baseline**.
+**Document status:** **Implemented baseline** for the constrained current Pi adapter; durable harness/session integration and general agent behavior are **Future**.
 **Evidence pins:** published v0.84.1 tag commit [`53fa77ccd8a279eb87e92294ef3687b03ff80112`](https://github.com/earendil-works/pi/tree/53fa77ccd8a279eb87e92294ef3687b03ff80112), plus separately inspected post-release upstream source commit [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328), researched 2026-08-08.
 
 ## Implemented baseline
 
-**Implemented baseline.** `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` are direct exact-version `0.84.1` production dependencies of `@dlh/agent-core`; `@earendil-works/pi-coding-agent` and Pi's SQLite session backend are not dependencies. `PiAgentProvider` now constructs only the reviewed settings catalog: OpenAI and Anthropic API/subscription, NVIDIA NIM, OpenCode Zen, Google Gemini, OpenRouter, DeepSeek, Mistral, Groq, GitHub Copilot subscription, constrained custom OpenAI-compatible HTTPS, and loopback Ollama/LM Studio. All map Pi streaming/cancellation into Aptiloop normalized events, block every tool name not installed by the app role policy, use connection-scoped app-owned credentials, and keep provider/session identifiers out of browser authority.
+**Implemented baseline.** `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` are direct exact-version `0.84.1` production dependencies of `@aptiloop/agent-core`; `@earendil-works/pi-coding-agent` and Pi's SQLite session backend are not dependencies. `PiAgentProvider` constructs only the reviewed settings catalog and runs behind Aptiloop-owned connection, role, disclosure, tool, persistence, and no-fallback policies.
 
-**Implemented baseline limitation.** Active learning chat, interview, and evidence-only review use Provider Hub and constrained Pi adapters, with exact one-time disclosure UI, cumulative turn budgets, private-context/environment sentinels, and finite per-role adversarial matrices. An authenticated OpenCode Zen `deepseek-v4-flash-free` smoke completed with synthetic text in a disposable database, exact disclosure consumption, persisted minimal provenance, and observed cancellation. This proves that reviewed adapter path, not general production provider readiness. Aptiloop does not use AgentHarness v2, Pi session persistence, or coding-agent general tools.
+**Implemented baseline.** When an AI role is enabled and its exact selected connection/model resolves, Course Designer, learning chat, interview, and evidence-only review use Provider Hub and constrained Pi/provider adapters with one-time disclosure, cumulative turn budgets, private-context/environment sentinels, and finite role policy matrices. AI Off or an unavailable selection starts no turn. An authenticated OpenCode Zen `deepseek-v4-flash-free` smoke completed with synthetic text in a disposable database, disclosure consumption, turn-level provenance, and observed cancellation; it proves only that reviewed path. `packages/codex-provider` and `packages/opencode-provider` remain blocked legacy package adapters and cannot bypass Provider Hub. Aptiloop does not use AgentHarness v2, Pi session persistence, or coding-agent general tools.
 
 ## Exact upstream packages
 
@@ -67,16 +67,18 @@ Pi owns model transport, provider auth/stream integration, agent-loop mechanics 
 
 ## Aptiloop roles and typed tools
 
-**Implemented baseline.** Course Designer, Tutor, Evaluator, and Reviewer are Aptiloop-owned roles rather than Pi APIs, each with a default-deny policy. M10 supplies the Course Designer handlers and workflow; the other active role handlers retain their M6 boundaries.
+**Implemented baseline.** Course Designer, Tutor, Evaluator, and Reviewer are Aptiloop-owned roles rather than Pi APIs. The table below is the persisted policy allowlist, not proof that every named handler is installed. The current Pi provider is constructed with the four Course Designer handler definitions. Other active callers use their bounded application context/result paths and cannot invoke an allowed name for which no definition is installed.
 
-| Role            | Allowed typed tools                                                                                        | Explicitly forbidden                                                                                    |
+| Role            | Policy-allowed typed tools                                                                                 | Explicitly forbidden                                                                                    |
 | --------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Course Designer | `course.readDraftSlice`, `course.readApprovedSources`, `course.proposeDraftPatch`, `knowledge.readCapsule` | apply/publish, credentials, arbitrary files/network, commands, plugins                                  |
 | Tutor           | `lesson.readLearnerSafeContext`, `lesson.submitTutorMessage`, `knowledge.readSnapshotSlice`                | protected answers before attempt, progress transition, mastery mutation, arbitrary research/files/tools |
 | Evaluator       | `evaluation.readAttemptBundle`, `evaluation.submitTypedResult`                                             | learner-state mutation, answer disclosure to Tutor, commands/network/filesystem                         |
 | Reviewer        | `review.readBundle`, `review.submitResult`                                                                 | patches/edits/apply, command execution, network, arbitrary repository/workspace reads                   |
 
-Tool schemas use stable IDs and bounded fields. Tool execution re-resolves every ID, checks role/session/activity scope and state, validates output, applies byte/event/deadline budgets, and persists only a minimized audit envelope. A typed tool never accepts executable, argv, cwd, environment, raw SQL, arbitrary URL/path, provider credentials, or a requested state transition.
+Installed tool schemas use stable IDs and bounded fields. `AptiloopTypedToolHost` checks role/policy membership and strict arguments/results; each application handler owns any deeper entity/state re-resolution. Turn budgets cover bytes/events/tool calls/deadline. No typed tool accepts executable, argv, cwd, environment, raw SQL, arbitrary URL/path, provider credentials, or a requested state transition.
+
+Live chat can project paired provider `tool.started`/`tool.completed` events as a safe `tool.summary` containing only the allowlisted name and status. It exposes no call ID, arguments, or output and is not retained in chat history. The durable record is provider-turn provenance—connection/provider/adapter/model/role/tool-policy/capability/disclosure identity plus terminal outcome—not a persisted tool-call transcript.
 
 A model output cannot directly complete an activity. Evaluator/Reviewer results become candidate facts only after app validation and freshness checks; the deterministic Learning Kernel decides completion/mastery.
 
@@ -94,24 +96,22 @@ A model output cannot directly complete an activity. Evaluator/Reviewer results 
 
 **Pinned upstream evidence.** Upstream Pi auth resolution is explicit override, stored credential, then ambient environment/profile/ADC; a stored credential owns a provider and failed OAuth refresh does not silently fall back ([auth resolution](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai/src/auth/resolve.ts#L31-L86)). **Implemented baseline.** Provider registration/auth is resolved by Provider Hub. Settings mutations create server-owned connection IDs, API keys and subscription tokens stay in the scoped local credential store, endpoint/model configuration is accepted only for the constrained compatible adapters, and credential material never enters Course Packs, browser responses, prompts, SQLite, logs, or tool results.
 
-**Pinned upstream evidence.** Upstream built-in provider availability comes from the pinned registry, not README prose ([`providers/all.ts`](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai/src/providers/all.ts#L73-L116)). **Implemented baseline.** Aptiloop does not expose every built-in automatically; the settings catalog contains only explicitly reviewed adapters/profile mappings. Custom external endpoints require public HTTPS hostnames on the default TLS port with a path ending in `/v1`; local compatible providers require loopback HTTP URLs. Every role still resolves one exact observed model without fallback.
+**Pinned upstream evidence.** Upstream built-in provider availability comes from the pinned registry, not README prose ([`providers/all.ts`](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai/src/providers/all.ts#L73-L116)). **Implemented baseline.** Aptiloop does not expose every built-in automatically; the settings catalog contains only explicitly reviewed adapters/profile mappings. Custom external endpoints require public HTTPS hostnames on the default TLS port with a path ending in `/v1`; local compatible providers require loopback HTTP URLs. An AI-enabled role resolves its exact selected available model without fallback; an Off/unconfigured role resolves no provider turn.
 
 ## No-AI and failure behavior
 
 - No-AI is an explicit user mode, not the Mock provider.
-- Manual Course authoring, local snapshots/capsules, deterministic activities/kernel, trusted checks, and review queues remain complete without AI. Every required/terminal Core Alpha learner path has a deterministic/manual completion route.
+- **Implemented baseline.** Manual Course authoring, local snapshots/capsules, deterministic activities/kernel, trusted checks, and review scheduling with queue provenance remain available without AI.
+- Review scheduling and executable availability follow the [Lesson Engine due-review boundary](lesson-engine.md#due-review-execution-boundary); Pi availability never fabricates an executor or next action.
 - Missing provider/model/tool capability disables only the optional AI proposal, assistance, generation, or observation with a typed explanation. A Draft that encodes a required AI-only path fails Course validation rather than making provider availability a publication or session prerequisite.
 - Real provider/model/auth/tool failure is shown and recorded as failure; no silent real→Mock, provider→provider, or model→model substitution.
 - Mock/faux providers are test/CI/development only. Official Pi `fauxProvider()` is not production behavior.
 - Retrying preserves the original operation/session scope and never duplicates accepted facts.
 
-## Adoption sequence
+## Completed integration boundary
 
-1. Add Pi packages only after Provider Hub and default-deny Aptiloop tool host contracts exist.
-2. Implement one tool-free text role through the adapter and prove explicit failure/no fallback.
-3. Add a single read-only typed context tool with byte/secret tests.
-4. Add typed proposal/result tools role by role; keep domain mutation outside Pi.
-5. Migrate current provider callers to Hub resolution, then remove general provider tools/workspace authority.
-6. Evaluate durable Pi harness APIs only after upstream implementation exists and is pinned; do not prebuild against the design document.
+**Implemented baseline.** Provider Hub and the default-deny Aptiloop tool host preceded active Pi role dispatch. Active callers resolve through the Hub when AI-enabled; Course Designer exposes the installed finite proposal tool handlers, while other callers retain bounded app-owned context/result routes. Domain mutation remains outside Pi, and failure never selects another provider/model/Mock. General coding-agent tools and workspace authority are not part of the product runtime.
+
+**Future.** Evaluate durable Pi harness APIs only after the upstream implementation exists and is pinned; do not prebuild recovery against the design document.
 
 **Future.** Pi durable harness adoption, SQLite SessionRepo integration, provider stream resumption, multi-lane agents, general coding-agent operation, and third-party tools are outside Core Alpha.

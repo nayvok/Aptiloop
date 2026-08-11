@@ -10,7 +10,9 @@ The top entity is `Course`. Installation creates or reuses immutable Course revi
 
 ## 2. Allowed and forbidden capabilities
 
-**Implemented baseline — allowed declarative fields:**
+**Implemented baseline**
+
+Allowed declarative fields:
 
 - stable pack, Course, revision, activity, topic, source, and capsule IDs;
 - schema version, pack version, content hash, author/provenance declarations, primary course locale, and optional translations;
@@ -20,7 +22,9 @@ The top entity is `Course`. Installation creates or reuses immutable Course revi
 - references to Aptiloop-owned trusted check IDs plus typed, bounded input fixtures; a reference is not a command;
 - minimum Core capability/runtime contract identifiers selected from an application allowlist.
 
-**Implemented baseline — prohibited anywhere, including extensions and unknown fields:**
+**Implemented baseline**
+
+Prohibited anywhere, including extensions and unknown fields:
 
 - executable names, commands, arguments, current directories, shell strings, package scripts, lifecycle hooks, arbitrary test commands, or process environment entries;
 - JavaScript, Python, WebAssembly, native binaries, macros, templates that evaluate code, plugins, dynamic imports, provider adapters, or install hooks;
@@ -34,7 +38,7 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 
 ## 3. Import pipeline
 
-**Implemented baseline:**
+**Implemented baseline**
 
 1. **Receive one document as bytes.** Accept only an explicitly selected V1 JSON file and place its bytes in a fresh private staging area outside active Course storage. Directory/archive transport is Future.
 2. **Bound before parsing.** Enforce input bytes, JSON nesting, object/array item counts, string lengths, total decoded text, and parse time. Concrete ceilings are milestone-owned implementation parameters in a versioned limits profile; M3 acceptance requires security review, documented rationale, and boundary tests for every threshold. They are not an additional owner scope decision unless implementation requires a new capability or material security tradeoff.
@@ -43,7 +47,7 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 5. **Validate the closed model.** Reject unknown activity kinds, cycles, missing references, unreachable required nodes, locale inconsistencies, protected-answer leakage, required AI-only paths, and forbidden capability fields.
 6. **Verify canonical content.** Canonicalize the parsed V1 object, recompute its declared content hash, and reject collisions or mismatches. A Future signature may establish publisher identity only under a separate trust policy; it never grants execution authority.
 7. **Validate source/privacy metadata.** Restrict external links to intended HTTP(S); imported snapshots remain local and are never fetched or uploaded silently.
-8. **Stage database writes transactionally.** Resolve IDs, collisions, and provenance without overwriting existing immutable revisions. Any error removes staging and rolls back database rows.
+8. **Stage database writes transactionally.** Resolve IDs, collisions, and provenance without overwriting existing immutable revisions. Any database error rolls back rows; filesystem staging cleanup is bounded and best-effort as described below.
 9. **Preview before consequence.** Show provenance, requirements, validation, learner Preview, Course/revision/hash, and the explicit choice **Install immutable revision** or **Open as local draft**.
 10. **Commit atomically and read back.** Persist only the chosen validated result, record import origin/hash/schema/validation/user action, and verify final identity. Re-import of identical bytes is idempotent; conflicting identity is rejected.
 
@@ -53,9 +57,9 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 
 - **Attack path:** crafted bytes exploit encoding ambiguity, duplicate keys, extreme nesting/item/string counts, parser time/memory, path-shaped values, or partial staging to alter meaning or exhaust resources.
 - **Impact:** validation bypass, inconsistent hashes, storage exhaustion, denial of service, or unintended host-path access.
-- **Existing mitigation:** the implemented byte-bounded UTF-8/strict-JSON importer rejects duplicate keys and excess limits, applies closed schema and semantic path-value checks, hashes canonical content, uses private expiring staging, commits transactionally, and removes invalid/expired staging bytes. V1 accepts no archive or directory transport.
-- **Residual:** local resource exhaustion is bounded but native process isolation is irrelevant to parsing; future format/limit changes require the same boundary suite and review.
-- **Test:** invalid/ambiguous encodings, duplicate keys, deep/wide/large/slow documents, forbidden path values, interrupted import, rollback, cleanup, canonical hash parity, and cross-platform deterministic results.
+- **Existing mitigation:** the implemented byte-bounded UTF-8/strict-JSON importer rejects duplicate keys and excess limits, applies closed schema and semantic path-value checks, hashes canonical content, retains only byte/count-bounded validation state in a fixed-size LRU, proactively expires private staging, atomically claims one-shot commits before I/O, commits database changes transactionally, and attempts bounded best-effort cleanup of invalid/expired staging bytes. V1 accepts no archive or directory transport.
+- **Residual:** staging is process-local. Reload recovery works only while the same orchestrator retains the unexpired validation; restart, expiry, or LRU eviction requires file reselection. Cleanup retries `EPERM`/`EBUSY` only a bounded number of times, suppresses the final timer cleanup error, cannot run after a process crash, and has no startup orphan-directory sweep. Unknown staging directories are never trusted or resumed.
+- **Test:** invalid/ambiguous encodings, duplicate keys, deep/wide/large/slow documents, forbidden path values, interrupted import, transactional rollback, bounded cleanup behavior, canonical hash parity, and cross-platform deterministic results.
 
 ### PACK-CTRL-002 — Declarative-only schema
 

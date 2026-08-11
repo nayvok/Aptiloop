@@ -2,16 +2,16 @@
 
 ## Document status
 
-**Approved Core Alpha target**. This glossary is normative for new product specifications and future UI migration. **Implemented baseline** names remain valid only when describing existing code, data, routes, or historical documents.
+**Approved Core Alpha target**. This glossary is normative for current specifications and UI. **Implemented baseline** legacy names remain valid only when describing preserved data, migration provenance, compatibility identifiers, or historical documents.
 
 ## Status terms
 
-| Term                                | Meaning                                                                                                   |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Implemented baseline**            | Directly observed behavior in the current Dev Learning Harness. It may still violate the target contract. |
-| **Approved Core Alpha target**      | Binding behavior or boundary for later Core Alpha implementation. It is not evidence of implementation.   |
-| **Proposed pending owner approval** | A recommendation awaiting an explicit decision.                                                           |
-| **Future**                          | Intentionally outside Core Alpha.                                                                         |
+| Term                                | Meaning                                                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Implemented baseline**            | Directly observed behavior in the current Aptiloop repository or runtime. It may still fall short of release acceptance. |
+| **Approved Core Alpha target**      | Binding behavior or boundary for later Core Alpha implementation. It is not evidence of implementation.                  |
+| **Proposed pending owner approval** | A recommendation awaiting an explicit decision.                                                                          |
+| **Future**                          | Intentionally outside Core Alpha.                                                                                        |
 
 Do not substitute “done,” “supported,” “production-ready,” or “approved” for these labels without evidence and the corresponding gate decision.
 
@@ -19,7 +19,7 @@ Do not substitute “done,” “supported,” “production-ready,” or “app
 
 | Preferred term            | Definition                                                                                                                                                | Legacy or discouraged term                                                                    |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Aptiloop**              | Product name for the approved target.                                                                                                                     | Dev Learning Harness when discussing the target.                                              |
+| **Aptiloop**              | Current product and package identity.                                                                                                                     | Dev Learning Harness except for explicit historical or data-compatibility references.         |
 | **Core Alpha**            | The bounded local-first, single-user product milestone.                                                                                                   | MVP when it obscures the contract or approval gates.                                          |
 | **Course**                | Top-level authored learning product with identity, lineage, locale, sources, revisions, and adaptations.                                                  | Curriculum as the target top entity.                                                          |
 | **Course Revision**       | Immutable published version of a Course. Drafts are mutable until explicit publish.                                                                       | Curriculum version, revision row, active curriculum.                                          |
@@ -51,6 +51,10 @@ Do not substitute “done,” “supported,” “production-ready,” or “app
 
 Current interview reports should use **answer observations** or **interview observations**, not “skill evidence” or “verified correctness,” until a technical evaluation contract produces eligible evidence.
 
+**Implemented baseline**
+
+A due **Review Item** currently exposes scheduling reason and evidence provenance but no executable next action. Its `nextActionHref` is `null`; do not describe the source session as a review executor or fabricate a `/session` continuation link.
+
 ## Runtime and AI terms
 
 | Preferred term           | Definition                                                                                                | Avoid                                                        |
@@ -78,33 +82,35 @@ Current interview reports should use **answer observations** or **interview obse
 
 Migration mapping:
 
-| Implemented baseline label/route concept | Target placement                                                  |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| Path / Today                             | Home and Courses                                                  |
-| Session                                  | Activity view reached from Home/Courses                           |
-| Practice / Exercise                      | Activity mode, not primary navigation                             |
-| Knowledge map                            | Skills                                                            |
-| Mistakes                                 | Review                                                            |
-| Flashcards                               | Review                                                            |
-| Interview                                | Review or an in-Course activity                                   |
-| Curriculum Editor                        | Adaptive Studio under Courses                                     |
-| Agent Playground / Developer tools       | Diagnostics/development surface, never learner primary navigation |
+| Implemented baseline label/route concept | Target placement                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------- |
+| Path / Today                             | Home and Courses                                                                |
+| Session                                  | Activity view reached from Home/Courses                                         |
+| Practice / Exercise                      | Activity mode, not primary navigation                                           |
+| Knowledge map                            | Skills                                                                          |
+| Mistakes                                 | Review                                                                          |
+| Flashcards                               | Review                                                                          |
+| Interview                                | Review or an in-Course activity                                                 |
+| Curriculum Editor                        | Adaptive Studio under Courses; the retained Settings route redirects to Courses |
+| Agent Playground / Developer tools       | Diagnostics/development surface, never learner primary navigation               |
 
 Routes and database columns may keep legacy names during an explicit migration. UI and normative docs should not expose those internal compatibility names as the new product model.
 
 ## Authoring terms
 
-| Preferred term      | Meaning                                                                                               |
-| ------------------- | ----------------------------------------------------------------------------------------------------- |
-| **Adaptive Studio** | Manual-first embedded Course authoring and preview workspace.                                         |
-| **Proposal**        | Typed, inspectable draft change produced by optional AI.                                              |
-| **Apply**           | Explicitly accept a proposal into a draft; never publish.                                             |
-| **Validate**        | Run deterministic whole-Course schema, graph, locale, source, environment, and safety checks.         |
-| **Preview**         | Render a draft as learner experience without publishing/installing.                                   |
-| **Publish**         | Explicitly create an immutable Course Revision after independent validation/review.                   |
-| **Install**         | Explicitly make a validated external immutable Course Revision available locally.                     |
-| **Clone**           | Create a new draft lineage from an immutable revision.                                                |
-| **Export**          | Explicitly serialize selected allowed Course data; no learner-private data or credentials by default. |
+| Preferred term          | Meaning                                                                                                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Adaptive Studio**     | Manual-first embedded Course authoring and preview workspace.                                                                                                      |
+| **Proposal**            | Typed, inspectable draft change produced by optional AI.                                                                                                           |
+| **Apply**               | Explicitly accept a proposal into a draft; never publish.                                                                                                          |
+| **Validate**            | Run deterministic whole-Course schema, graph, locale, source, environment, and safety checks.                                                                      |
+| **Preview**             | Render a draft as learner experience without publishing/installing.                                                                                                |
+| **Publish**             | Explicitly create an immutable Course Revision after independent validation/review.                                                                                |
+| **Install**             | Explicitly make a validated external immutable Course Revision available locally.                                                                                  |
+| **Clone**               | Create a new draft lineage from an immutable revision.                                                                                                             |
+| **Export**              | Explicitly serialize selected allowed Course data; no learner-private data or credentials by default.                                                              |
+| **Course Pack intake**  | Temporary bounded server-held validation/Preview state. Reading it never commits; expiry or process restart requires file reselection.                             |
+| **Transmission review** | Exact operation-scoped approval for one external role/provider/model destination and payload scope. It is not blanket consent; scope changes require a new review. |
 
 Do not use “generate course” to collapse source acquisition, authoring, validation, preview, and publish into one action.
 
@@ -123,4 +129,4 @@ Do not use “generate course” to collapse source acquisition, authoring, vali
 
 **Implemented baseline**
 
-The repository and UI currently use Dev Learning Harness, `@dlh/*`, Curriculum, Week/Day/Unit, Path, Teacher, and several hardcoded Russian labels. These are facts about the baseline, not target compliance. Migration must update user-facing terminology consistently while preserving compatibility identifiers only where an explicit data/code migration requires them.
+The current repository and UI use Aptiloop and `@aptiloop/*`. Curriculum, Week/Day/Unit, Path, Teacher, retained database names, migration provenance strings, and selected compatibility routes remain **Implemented baseline** historical/data-compatibility identifiers. They must not be presented as target product terminology or renamed destructively.

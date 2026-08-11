@@ -24,40 +24,39 @@ A browser may submit learner actions. A model may produce a typed proposal throu
 
 **Implemented baseline.** Versioned learner routes adapt recall, Teacher, quiz, code reading, exercise/trusted-check, review, interview, summary, and progress operations into kernel facts. Objective correctness requires deterministic evaluator or trusted-check provenance; learner/model narrative remains `unverified`. The compatibility unit PATCH may request a target state, but the kernel validates the legal transition and owns the resulting terminal state/next action. Summary artifacts are derived from accepted server facts and persist idempotently.
 
-**Implemented baseline limitations.** Legacy rows are backfilled only where their meaning is provable; ambiguous/non-authoritative summaries remain immutable quarantine records and older projections stay readable. Interview completion/form remains non-technical evidence and cannot change mastery without a separately approved typed evaluator. Git-ignored exercise state remains outside trusted-check/review freshness.
+**Implemented baseline.** Limitations: legacy rows are backfilled only where their meaning is provable; ambiguous/non-authoritative summaries remain immutable quarantine records and older projections stay readable. Interview completion/form remains non-technical evidence and cannot change mastery without a separately approved typed evaluator.
 
 ## Kernel inputs
 
 **Implemented baseline.** The kernel receives explicit values; it never calls `Date.now()` itself.
 
 ```ts
-type KernelCommand = {
-  commandId: string;
-  occurredAt: string; // observed app clock, ISO instant
-  actor: "learner" | "author" | "system";
-  sessionId: string;
-  activityId: string;
-  action: RegisteredLearnerAction;
-};
+interface LearningKernelScope {
+  readonly courseId: string;
+  readonly revisionId: string;
+  readonly branchId: string;
+  readonly sessionId: string;
+}
 
-type AcceptedFact = {
-  factId: string;
-  schemaVersion: number;
-  operationId: string;
-  courseId: string;
-  revisionId: string;
-  lessonId: string;
-  sessionId: string;
-  activityId: string;
-  type: RegisteredFactType;
-  occurredAt: string;
-  recordedAt: string;
-  payload: CanonicalJson;
-  provenance: FactProvenance;
-};
+interface LearningKernelCommand {
+  readonly operationId: string;
+  readonly factId: string;
+  readonly observedAt: string; // app-observed ISO instant
+  readonly provenance: LearningKernelFactProvenance;
+  readonly body: LearningKernelFactBody;
+}
+
+interface LearningKernelFact extends LearningKernelScope {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly operationId: string;
+  readonly occurredAt: string;
+  readonly provenance: LearningKernelFactProvenance;
+  readonly body: LearningKernelFactBody;
+}
 ```
 
-`FactProvenance` distinguishes learner submission, deterministic evaluator, trusted check, read-only reviewer result, source/capsule, and migration. It includes source IDs/hashes and evaluator/check version. Model/provider identity may be recorded as provenance but never raises confidence by itself.
+`LearningKernelFactProvenance.kind` is the closed union `learner_submission | deterministic_evaluator | trusted_check | reviewer | migration`. It carries `sourceId`/`sourceHash` and optional evaluator/check/workspace/check-fact fields. Provider identity is not a provenance kind and cannot raise confidence by itself.
 
 Required invariants:
 
@@ -83,7 +82,7 @@ Required invariants:
 | Source/Capsule use         | Provenance/context evidence, not proof of learner mastery.                                                                                                      |
 | Migrated legacy row        | Retained with migration provenance and confidence limits; never silently upgraded to stronger evidence.                                                         |
 
-A provider/tool failure emits no learning success fact. A malformed or oversized result is a typed failure, not partial credit. Every required/terminal Core Alpha Activity has a deterministic/manual evaluator path; unknown app-owned non-AI evaluation contracts block validation, while missing optional AI only withholds the optional observation.
+A provider/tool failure emits no learning success fact. A malformed or oversized result is a typed failure, not partial credit. Course Pack V1 validation rejects unknown requirements and required AI-only terminal paths under its installed registry. Adaptive Studio's current publication gate validates its current Unit schemas, completion-criterion presence, finite graph, validation hash, Preview hash, and Change-review hash; that does not by itself prove the broader production Course, provenance, licensing, or future registry-closure gates.
 
 ## Mastery model
 
@@ -133,6 +132,8 @@ Current weights/hint penalties may be retained as kernel model version `baseline
 
 Scheduling is deterministic from facts plus an explicit observed clock. A model may suggest wording/content, but not set due dates, dismiss an item, or mark it complete.
 
+**Implemented baseline.** The kernel schedules due Review Items and preserves source fact/session provenance, but it does not infer an executable activity from that provenance. Later accepted evidence may already complete or supersede an item, and a learner review fact may dismiss one. The current Review surface has no typed server-verified executor, so its application DTO has `nextActionHref: null` and never reopens an originating lesson session. A future executor would add a verified Review-surface completion path; it is not the only way the kernel can transition an item.
+
 ## Summary contract
 
 A summary is a projection, not a new source of truth. It references the exact fact IDs used, kernel model version, projection hash, strengths/gaps reason codes, mistake/review candidates, and localized presentation keys. Narrative text may be rendered deterministically or generated as an optional non-authoritative supplement. Re-running a summary operation returns the same projection for the same fact frontier.
@@ -141,7 +142,9 @@ A summary is a projection, not a new source of truth. It references the exact fa
 
 ## Storage boundary
 
-**Implemented baseline for SQLite; Approved Core Alpha target for a future PostgreSQL adapter.** Repositories persist accepted facts and projections in one application transaction. The domain depends on repository ports, not SQLite row shapes. PostgreSQL compatibility requires:
+**Implemented baseline.** SQLite repositories persist accepted facts and projections in one application transaction. The domain depends on repository ports, not SQLite row shapes.
+
+**Approved Core Alpha target.** A future PostgreSQL adapter requires:
 
 - explicit string/UUID identity, never implicit row order;
 - integer or exact decimal score representation with specified rounding;

@@ -1,5 +1,7 @@
 # Авторинг versioned curriculum
 
+> **Historical snapshot — non-authoritative.** This file records an earlier **Implemented baseline** and is preserved for context only. Do not use it as the current Course-authoring runbook. See the [current documentation index](README.md).
+
 Active published revision 3 первой недели собирается как `activeCurriculumVersion` в `packages/curriculum/src/version-3.ts` поверх неизменяемых revision 1 и revision 2 и идемпотентно seed-ится в SQLite. Revision 2 сохраняет исходный Day 1 answer key, estimates и content hash; новые quiz/code-reading материалы и нормализованная длительность занятий опубликованы только в revision 3. Основной UI редактора доступен в `Настройки → Редактор программы` и работает с `/api/curriculum-editor/*`.
 
 ## Жизненный цикл revision

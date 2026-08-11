@@ -1,95 +1,127 @@
 # Design system
 
-## Направление
+## Status and direction
 
-Интерфейс — спокойный рабочий инструмент для взрослого разработчика, а не игровая копия Duolingo. Основной экран — guided path; в каждый момент видны положение, следующий доступный unit, объём и статус. Teacher/Reviewer появляются внутри учебного действия, Agent Playground вынесен в developer tools.
+- **Implemented baseline** — repository seams that exist; this label is not visual acceptance evidence.
+- **Approved Core Alpha target** — required Core Alpha presentation and interaction behavior.
+- **Proposed pending owner approval** — an unresolved recommendation.
+- **Future** — outside Core Alpha.
 
-## Темы и tokens
+Calm Workshop — Clear Slate is the approved and implemented visual direction. Aptiloop is a quiet, precise learning workbench rather than a game, generic dashboard, chat clone, or IDE. The visual foundation is near-white cool neutral in light mode and low-chroma cool graphite in dark mode. Restrained evergreen is semantic emphasis, not an ambient surface tint.
 
-`apps/web/app/globals.css` определяет semantic OKLCH tokens для light/dark:
+## Semantic themes and tokens
 
-- base: `background`, `foreground`, `card`, `popover`, `border`, `input`;
-- actions: `primary`, `primary-hover`, `secondary`, `accent`, `destructive`;
-- feedback: `success`, `warning`, `muted`;
-- activity accents: `study`, `recall`, `teacher`, `quiz`, `code-reading`, `practice`, `review`, `interview`, `summary`, `ai` и paired surfaces.
+**Implemented baseline**
 
-Primary/ring используют спокойный зелёный, а background/sidebar/border — холодную сине-серую нейтраль. Янтарный не является brand/primary: он остаётся семантическим warning и отдельным accent для recall. Activity colors не заменяют status colors.
+`apps/web/app/globals.css` owns semantic OKLCH variables for both themes and maps them to Tailwind roles. Existing components consume roles such as `bg-card`, `text-muted-foreground`, and `ring-ring` instead of raw palette values.
 
-Activity tones: Изучение — violet, Воспроизведение по памяти — amber, Разбор с преподавателем — cyan, Короткая проверка — blue, Чтение кода — indigo, Практическое задание — emerald, Проверка решения — coral, Интервью — pink, Итоги дня — green. Цвет никогда не единственный индикатор: каждый activity-блок дополнительно имеет иконку, label, border и status text.
+**Implemented baseline**
 
-Компоненты используют semantic Tailwind classes (`bg-card`, `text-muted-foreground`, `ring-ring`), а не локальные hex/палитры. Цвет activity дополняет label/icon/status и не остаётся единственным сигналом.
+The exact canonical values and contrast intent are in [`../DESIGN.md`](../DESIGN.md#color-roles). `apps/web/app/globals.css` implements these token families:
 
-ThemeProvider хранит `system|light|dark` под key `theme`, включает `color-scheme` и отключает transition при смене темы. `prefers-reduced-motion` глобально сокращает animation/transition.
+- neutral foundation: `background`, `foreground`, `card`, `popover`, `surface-raised`, `surface-soft`, `sidebar`, `secondary`, `muted`, `accent`, `border`, `input`, and `overlay`;
+- primary interaction: `primary`, `primary-hover`, `primary-foreground`, and `ring`;
+- feedback: `success`, `warning`, and `destructive`, each with an explicit foreground role;
+- activity accents and paired surfaces: `theory`, `study`, `recall`, `teacher`, `quiz`, `code-reading`, `practice`, `review`, `interview`, `summary`, and `ai`.
 
-## Layout и навигация
+`surface-soft` is the canonical recessed-band, quiet-well, query-state, and secondary-group surface. It replaces the obsolete `surface-subtle` name; documentation and components must not introduce a parallel alias. Cool-neutral surfaces never inherit the evergreen hue. Evergreen is reserved for primary action, success, progress, and focus. Warning, destructive, selection, and activity families retain independent roles. Activity color supplements a label, icon, border/marker, and state text; it is never the only distinction.
 
-- desktop: фиксированный sidebar 256 px и sticky header;
-- mobile: доступная grid-навигация, content от 320 px;
-- main content: `max-width: 1440px`, responsive padding;
-- основной набор: Путь, Занятие, Практика, Карта знаний, Ошибки, Интервью, Карточки;
-- Настройки и developer tools отделены от обучения.
+`ThemeProvider` retains `system | light | dark`, applies `color-scheme`, and suppresses transition noise during theme changes. `prefers-reduced-motion` globally reduces nonessential animation, scrolling, and transforms.
 
-Guided path использует statuses `completed`, `in_progress`, `available`, `locked` и отдельный список units. День визуально сгруппирован в три учебных блока (Изучение / Проверка понимания / Практика); детальные units открываются в drawer, а не в основном потоке. Верх Path — карточка «Сегодня» с одним главным CTA («Начать обучение» / «Продолжить обучение»).
+## Layout and navigation
 
-Daily Session: sticky progress header (день, блок, шаг, остаток времени в блоке, «План дня», «Продолжить позже») + активный шаг по центру; план дня — в drawer по запросу. Между учебными блоками показывается transition screen «Блок завершён» с CTA «Продолжить сейчас» / «Вернуться позже». Provider status в top bar компактный («● AI готов») с popover по ролям; полная диагностика — в «Настройки → Инструменты разработчика».
+**Implemented baseline**
 
-## Каталог компонентов
+- Primary destinations are exactly Home, Courses, Review, Skills, and Settings.
+- The desktop rail is exactly 280px expanded and 72px collapsed. Icon centers, 56px row heights, navigation order, and focus order remain stable between states; collapsed destinations use Radix tooltips and never render overlay labels into the content plane.
+- Expanded mode shows the neutral mark and wordmark with an icon-only collapse control at the brand row's top-right edge. Collapsed mode removes the mark and wordmark and centers the expand control inside the same 72px rail; it never creates another strip.
+- Home, Courses, Review, and Skills occupy the upper navigation; Settings is the final lower navigation item. The footer contains no AI/provider badge, theme switch, or ambiguous status pill.
+- The opaque 92px utility header contains a labeled breadcrumb on the left and coherent 44px outlined AI and theme controls on the right. Interface locale is changed only in Settings. Provider recovery remains in Settings or the affected workflow.
+- The shared header and main content use the same 44px desktop gutter inside a fluid maximum width of about 1440px.
+- The separate page header owns a 44px title, 17px description, and 48–50px page actions. It does not repeat the breadcrumb or substitute a top-level title for nested routes.
+- `/courses/*`, compatibility `/session?id=`, exercise, and lesson-linked interview contexts keep Courses active. Home is active only for Home.
+- Mobile uses one compact top context bar and one five-item bottom navigation with visible labels and safe-area padding. It has no second navigation row or squeezed desktop rail.
+- Reading surfaces use a 64–72ch measure; lists and Studio may use the available content width. Complete usable reflow at 320 CSS px remains an **Approved Core Alpha target** beyond the focused responsive paths already exercised.
 
-### Textarea
+## Route-owned composition
 
-`apps/web/components/ui/textarea.tsx` — ui-примитив для многострочного ввода.
-Использует `data-slot="textarea"`, сохраняет стандартные focus/disabled states
-и применяется в интервью-композитах как доступный composer с label.
+**Implemented baseline**
 
-### InterviewChatView
+The design system owns reusable composition, not route semantics. The canonical route, query-state, breadcrumb, Course creation/intake, Review destination, and Studio ownership rules live in [`design/information-architecture.md`](design/information-architecture.md). Components must preserve those rules without duplicating them in local variants.
 
-`apps/web/components/interview-chat-view.tsx` — составной чат-компонент
-интервью. Сообщения рендерятся через `MessageScroller`/`Bubble`/`Message`, а
-pending-вопрос и typing-indicator используют `role="status"` и `aria-live`
-только для одного элемента за раз. Composer опирается на `Textarea`,
-поддерживает Enter/Shift+Enter и не ломает существующие loading/error states.
+## Component catalog
+
+### AppShell, utility header, and PageHeader
+
+**Implemented baseline**
+
+`AppShell` owns the 280px/72px rail, collapsed tooltips, five-item mobile bottom navigation, utility header, entity breadcrumb slot, route-to-primary-destination mapping, skip link, and main landmark. `PageHeader` owns only route title, description, and page actions. Neither owns lesson progression.
+
+### Breadcrumb
+
+**Implemented baseline**
+
+The breadcrumb is a labeled navigation landmark with an ordered list. Ancestors are links; the final item is non-link text with `aria-current="page"`. Entity-backed labels use an honest loading state and never fall back to a false Home location.
+
+### Tabs and compact destination selection
+
+**Implemented baseline**
+
+Desktop destination tabs use the shared Radix Tabs primitive with visible focus and selected semantics. Compact layouts may replace the same destination set with one labeled Select when all options and the current value remain available. Meaningful destination state belongs in the URL—for example Review's `?view=`—so Back, Forward, reload, and copied local links preserve intent.
+
+### Textarea and InterviewChatView
+
+**Implemented baseline**
+
+`apps/web/components/ui/textarea.tsx` is the multiline input primitive. `apps/web/components/interview-chat-view.tsx` composes the transcript and composer, preserves Enter/Shift+Enter behavior, and limits live status to one meaningful operation boundary at a time.
 
 ### DayPlanSheet
 
-`apps/web/components/day-plan.tsx` — план дня в drawer (Sheet) поверх активной
-сессии: учебные блоки со шагами и статусами, цель, темы, ожидаемые результаты
-и границы дня. Открывается по кнопке «План дня» в progress header, по умолчанию
-закрыт, чтобы активная работа оставалась главным элементом экрана.
+**Implemented baseline**
 
-### Sheet / Popover
+`apps/web/components/day-plan.tsx` presents the lesson plan in a Sheet so the current activity remains the focus. The trigger belongs to the lesson-orientation row, not the global utility header.
 
-`apps/web/components/ui/sheet.tsx` — drawer на базе radix Dialog (right side,
-overlay, close, focus trap). `apps/web/components/ui/popover.tsx` — popover на
-базе radix Popover для компактного provider status. Оба примитива используют
-semantic tokens и reduced-motion-совместимые анимации (160–180 ms).
+### Sheet, Popover, and toast feedback
 
-## Компонентные правила
+**Approved Core Alpha target**
 
-- Минимальная высота интерактивной цели — 44 px (`min-h-11`).
-- Button variants, inputs, badges, progress и skeletons используют общие primitives.
-- Loading имеет `role=status`/`aria-busy`; error показывает понятный recovery action; empty state объясняет следующий шаг.
-- Destructive publish/delete требуют явного подтверждения и поясняют необратимость.
-- Published curriculum read-only visually and behaviorally; clone — отдельное действие.
-- Длинные prompts/diff/test output используют перенос или scroll container, не расширяют layout.
+Sheet is for plan, context, inspector, and bounded mobile navigation. Popover may disclose compact utility detail, including provider context, but provider state is never placed in the rail footer or presented as a global KPI. Toast feedback may acknowledge transient success, background completion, or a recoverable operation; validation errors, destructive consequences, uncertain commits, and failures requiring action remain in page context with preserved input and recovery.
+
+## Component rules
+
+**Approved Core Alpha target**
+
+- Primary mobile controls and icon buttons have at least a 44px target.
+- Buttons, inputs, badges, progress, skeletons, sheets, dialogs, and toasts use shared semantic primitives.
+- Loading exposes `role="status"` or `aria-busy`; errors identify the failing layer and a recovery action; empty states explain what creates content.
+- Published revisions are read-only. Clone, Apply, install, and Publish are distinct explicit actions.
+- Destructive or irreversible operations require confirmation and state the consequence.
+- Long prompts, diffs, paths, hashes, and check output wrap or use a named contained scroll region rather than widening the page.
+- Sonner-style toasts are supplemental; persistent or consequential status is never toast-only.
 
 ## Accessibility
 
-- skip-link ведёт к `#main-content`;
-- landmarks и навигации имеют labels;
-- текущая page/unit отмечается `aria-current`;
-- focus-visible использует semantic ring и offset;
-- icon-only buttons имеют `aria-label`, декоративные icons — `aria-hidden`;
-- динамический Teacher/interview transcript использует polite live regions;
-- progress имеет label/value text;
-- формы связывают label/help/error через `aria-describedby` и `aria-invalid`;
-- keyboard не зависит от hover и сохраняет видимый focus.
+**Approved Core Alpha target**
 
-## Проверка изменения UI
+- The skip link targets `#main-content`; landmarks and navigation regions have names.
+- Current primary destination and breadcrumb item expose `aria-current`.
+- Collapse/expand exposes `aria-expanded`, preserves focus, and never removes accessible names. Collapsed icon destinations provide focus/hover tooltips.
+- `focus-visible` uses the semantic ring and offset across light and dark surfaces.
+- Icon-only buttons have accessible names; decorative icons are hidden from assistive technology.
+- Dynamic Teacher/interview output uses restrained polite live regions; progress includes accessible current/max text.
+- Forms associate label, help, and error through `aria-describedby` and `aria-invalid`.
+- Keyboard operation never depends on hover and focus is not covered by sticky headers, bottom navigation, or overlays.
 
-1. Component tests для loading/empty/error/success и protected data.
-2. Keyboard walkthrough path → session → practice → summary.
-3. Light/dark/system screenshots без hydration warning.
-4. Mobile width от 320 px и desktop 1440 px.
-5. Reduced-motion emulation.
-6. Проверка контраста текста, focus ring и status, не полагающегося только на цвет.
-7. `npm run test --workspace=@dlh/web`, lint/typecheck и Playwright Day 1.
+## UI change verification
+
+**Approved Core Alpha target**
+
+Automated component tests cover selected semantics, theme, and reduced-motion contracts; focused browser checks cover exercised responsive and interaction paths. Neither is a complete WCAG 2.2 AA certification. Ongoing acceptance requires:
+
+1. component states for loading, empty, error, success, offline, AI Off, and protected data;
+2. keyboard walkthrough through library → create, library → import/intake, Home → session → practice → summary, and Studio gates;
+3. light, dark, and system screenshots without hydration warnings;
+4. 280px/72px rail, collapsed tooltip, 1440×900 desktop, 390×844 mobile, and 320 CSS px reflow checks;
+5. reduced-motion and forced-colors checks;
+6. rendered contrast checks for text, focus, selected navigation, controls, statuses, and activity surfaces;
+7. the applicable repository format, lint, typecheck, web component, and E2E gates, reported separately from visual approval.

@@ -1,10 +1,10 @@
 # Self-Hosting Aptiloop
 
-Status: **Future** for authenticated public/LAN self-hosting. The committed Docker Compose setup is an **Implemented baseline** for loopback-only local use.
+**Document status:** Authenticated public/LAN self-hosting is **Future**. The committed Docker Compose setup is an **Implemented baseline** for loopback-only local use.
 
-> **Do not expose the current web or orchestrator ports to a LAN, the Internet, a tunnel, or a public reverse proxy.** The current application has no user authentication or authorization. `Origin`, JSON content type, and `X-DLH-Client` checks are not authentication.
+> **Do not expose the current web or orchestrator ports to a LAN, the Internet, a tunnel, or a public reverse proxy.** The current application has no user authentication or authorization. `Origin`, JSON content type, and `X-Aptiloop-Client` checks are not authentication.
 
-See [Deployment Models](docs/architecture/deployment-models.md) for the normative topology and promotion gates.
+See [Deployment Models](docs/architecture/deployment-models.md) for the normative topology and promotion gates, and [Current Database Operations](docs/migration/current-database-operations.md) for the process-mode database procedure.
 
 ## What is supported today
 
@@ -37,38 +37,28 @@ Private data is never uploaded or shared without an explicit user action naming 
 
 ## Backup before migration or upgrade
 
-Before changing an installation that has data:
+Process-mode and Compose recovery have different authority boundaries.
 
-1. stop or quiesce application writers;
-2. inventory every explicit root/candidate without merging, deleting, selecting newest, or opening a candidate for write;
-3. use only `.data/dev-learning-harness.sqlite` as the owner-approved active source; runtime and writable CLIs reject every alternate candidate before opening;
-4. create one new non-overwriting copy under `.data/approved-backups/` only after the active read-only preflight passes;
-5. require integrity `ok`, zero foreign-key violations, the exact migration ledger, complete `agent_messages`/`reviews` schemas, zero logical raw/tool/review payload rows, and stable source hashes around inspection;
-6. retain the inventory and backup record, then rehearse migration on a disposable copy rather than the active file.
+For repository process mode, use [Current Database Operations](docs/migration/current-database-operations.md). Valuable predecessor data requires read-only inventory, a new non-overwriting approved backup, an explicitly computed whole-file SHA-256, and:
 
-```sh
-npm run db:inventory -- --root .data --root data --root packages/database/.data
-npm run db:inventory -- --db .data/dev-learning-harness.sqlite
-npm run db:backup -- --source .data/dev-learning-harness.sqlite --destination .data/approved-backups/pre-migration-2026-08-08T120000Z.sqlite
+```powershell
+npm run db:migrate -- --authorize-current --approved-backup <approved-path> --backup-sha256 <whole-file-sha256>
 ```
 
-Choose a new destination filename for every backup. The inventory fingerprints main/WAL/SHM files and inspects a disposable family copy, so committed WAL-visible rows are counted without checkpointing or mutating the source. It reports only health, migration IDs, sizes/hashes, and aggregate tool/raw counts—never learner content or secret values.
+The approved backup and authorized migration commands apply only to `<repo>/.data/dev-learning-harness.sqlite`. They do not authorize `/data/dev-learning-harness.sqlite` inside Compose. A Compose database on a predecessor ledger must remain stopped until a dedicated owner-approved migration path exists; do not copy it into the process-mode path to bypass authority.
 
-**Approved 2026-08-08 disposition:** the other five candidate families and all eleven existing backups are preserved unchanged and quarantined from runtime, restore, and approved-backup use until M2 reconciliation. `.data/m0-baseline/` is protected unchanged. No M1 cleanup migration exists because the observed logical non-empty tool/raw count is zero; absence of bytes in free pages, WAL, SHM, snapshots, or external copies is not proven.
-
-The approved backup command repeats the preflight, uses the Node `node:sqlite` online `backup()` API, includes committed WAL state in the logical backup, rejects every other source and destinations outside `.data/approved-backups/`, refuses overwrite, binds the produced logical digest to the approved source snapshot, and health-checks the source and copy. Existing `.data/backups/` files are not approved restore points.
-
-A failed in-flight future migration is transaction-rolled back. After a migration commits, Aptiloop has no supported down migration: restore the whole database from the explicitly approved pre-migration backup while writers are stopped, preserve the failed database separately, and repeat integrity, foreign-key, migration-marker, and private-payload checks. The restore loses writes after the maintenance cutoff.
+There is no supported down migration. After a commit, recovery is a whole-file rollback to one verified cutoff, with the failed database preserved separately. It loses writes after that cutoff.
 
 ### Loopback Compose backup and restore
 
 Compose recovery is a cold, paired snapshot of `harness-data` and `harness-attempts`. Stop both services before copying either volume. Never copy a live SQLite main file without its WAL family, never overwrite a prior backup, and never restore into the active volume. The default Docker volume names are `dev-learning-harness_harness-data` and `dev-learning-harness_harness-attempts`.
 
 1. Run `docker compose stop` and confirm `docker compose ps --status running` returns no services.
-2. Create a new timestamped directory under `.data/approved-backups/compose/`. Mount that absolute host directory into a one-shot local helper container.
-3. Copy `/data/dev-learning-harness.sqlite` from the read-only data volume with exclusive-create semantics. The stopped volume must contain only the main database, not `-wal` or `-shm` sidecars.
-4. Archive the read-only attempts volume in the same timestamped directory. Treat the database file and attempts archive as one recovery point.
-5. Run `npm run db:inventory -- --db <absolute-database-backup-path>`, require integrity `ok`, zero foreign-key violations, and the exact current migration ledger, then record SHA-256 digests for both files. Restart with `docker compose start` only after verification.
+2. Inspect the stopped service mounts and record the exact data and attempts volume names; never select volumes by recency.
+3. Create a new timestamped directory under `.data/compose-recovery/`. This is a Compose recovery artifact, not an approved process-mode migration backup.
+4. Copy `/data/dev-learning-harness.sqlite` from the read-only data volume with exclusive-create semantics. The stopped volume must contain only the main database, not `-wal` or `-shm` sidecars.
+5. Archive the read-only attempts volume in the same timestamped directory. Treat the database file and attempts archive as one recovery point.
+6. Run `npm run db:inventory -- --db <absolute-exported-database-path>`, require integrity `ok`, zero foreign-key violations, and the exact expected migration ledger, then record SHA-256 digests for both artifacts. Restart with `docker compose start` only after verification.
 
 Restore is rehearsed without replacing the active volumes:
 
@@ -76,15 +66,15 @@ Restore is rehearsed without replacing the active volumes:
 2. Copy the chosen verified database into the empty data volume as `/data/dev-learning-harness.sqlite`; extract only its paired attempts archive into the empty attempts volume.
 3. Launch the candidate with `APTILOOP_DATA_VOLUME=<new-data-volume>` and `APTILOOP_ATTEMPTS_VOLUME=<new-attempts-volume>` set for `docker compose up`. Compose defaults to the original volume names when those variables are absent.
 4. Require both health checks, repeat the database inventory, and exercise the named learner state before accepting the restored pair.
-5. To roll back the drill, stop the candidate and relaunch without the two overrides. Do not delete either volume until the owner approves retention and reconciliation.
+5. To roll back the drill, stop the candidate without `-v`, clear both overrides, and relaunch the untouched originals. Do not delete any volume until the owner approves retention and reconciliation.
 
-The 2026-08-10 M12 rehearsal followed this non-overwriting path on disposable volumes: the quiesced source and copied database were byte-identical, `PRAGMA integrity_check` returned `ok`, `PRAGMA foreign_key_check` returned zero rows, all 19 migrations were present, and the restored copy had the same SHA-256 digest. This proves the database-volume procedure used in that rehearsal; it does not approve public/LAN deployment or replace a restore drill on each release candidate and operator platform.
+**Historical observation (2026-08-10):** the M12 disposable-volume rehearsal followed this non-overwriting path: the quiesced source and copied database were byte-identical, `PRAGMA integrity_check` returned `ok`, `PRAGMA foreign_key_check` returned zero rows, all 19 migrations were present, and the restored copy had the same SHA-256 digest. This is dated **Implemented baseline** evidence, not current release evidence or approval for public/LAN deployment.
 
 See [Core Alpha Migration Strategy](docs/migration/core-alpha-migration-strategy.md) for candidate inventory, dual-read/write, quarantine, and removal gates.
 
 The observed candidate inventory and exact disposition are recorded in [M1 Safety-Boundary and Private-Data Inventory](docs/audits/2026-08-08-m1-safety-boundary-inventory.md).
 
-The current exercise path copies a trusted repository template into an attempt workspace and accepts only the app-owned browser command ID `test`, with an outer `shell: false` runner, sanitized environment, timeout, output cap, cancellation, and process-tree cleanup. Review is bound to a fingerprint of the Git-visible patch and denies writes; Git-ignored workspace state is not covered. The internal plan invokes `npm test`; learner-modifiable package scripts and npm lifecycle behavior remain trusted-code authority.
+The current exercise path copies a trusted repository template into an attempt workspace and accepts only the app-owned browser command ID `test`, with an outer `shell: false` runner, sanitized environment, timeout, output cap, cancellation, and process-tree cleanup. Check and review freshness bind the exact attempt/check identity to a canonical complete-workspace SHA-256 plus complete non-truncated Git diff evidence; the evidence-only Reviewer has no write/apply route. The compatibility plan still invokes repository-controlled `npm test`, so learner-template scripts and npm lifecycle behavior remain trusted-code authority.
 
 It is therefore **native, unsandboxed, trusted-only execution**. The process has the authority of the orchestrator/container user within its reachable environment, and current execution does not enforce network denial or host resource quotas. Path containment and a browser command allowlist are not a hostile-code sandbox.
 

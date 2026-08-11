@@ -2,308 +2,380 @@
 
 ## Document status
 
-This document replaces the legacy Dev Learning Harness design description. It is a specification and audit, not evidence that the target interface exists.
+This is the current visual and interaction specification for Aptiloop Core Alpha.
 
-Status vocabulary used throughout this design set:
+- **Implemented baseline** — behavior observed in the current repository or direct browser evidence.
+- **Approved Core Alpha target** — required Core Alpha behavior; it is not an implementation claim.
+- **Proposed pending owner approval** — a recommendation that requires an explicit owner decision.
+- **Future** — outside Core Alpha.
 
-- **Implemented baseline** — observed in the current repository or recorded audit evidence.
-- **Approved Core Alpha target** — required product behavior for Core Alpha; implementation is not implied.
-- **Proposed pending owner approval** — a design choice that must not become an implementation commitment until the owner approves it.
-- **Future** — explicitly outside Core Alpha.
-
-The supporting specifications are:
+The product behavior and information architecture remain governed by `PRODUCT.md`, `ARCHITECTURE.md`, and the supporting specifications:
 
 - [`docs/design/information-architecture.md`](docs/design/information-architecture.md)
 - [`docs/design/adaptive-studio.md`](docs/design/adaptive-studio.md)
 - [`docs/design/activity-renderers.md`](docs/design/activity-renderers.md)
 - [`docs/design/accessibility.md`](docs/design/accessibility.md)
 
-## Product and experience principles
+## Design direction: Calm Workshop — Clear Slate
 
 **Approved Core Alpha target**
 
-Aptiloop Core Alpha is a local-first, single-user learning environment. The interface must make the next learner action obvious while preserving the technical provenance needed to trust course content, deterministic progression, evidence, reviews, and optional AI assistance.
+Aptiloop is a quiet local learning workbench: deliberate, tactile, trustworthy, and technically precise. “Clear Slate” removes the rejected ambient green cast from the interface foundation without weakening contrast, provenance, validation, or error visibility. Light mode uses near-white cool neutrals; dark mode uses low-chroma cool graphite. Restrained evergreen appears only for primary action, progress, success, and focus.
 
-The design must communicate these boundaries:
+This is an independent Aptiloop system. It is not a dashboard template, project-management composition, KPI surface, image-led layout, or collection of interchangeable rounded cards.
 
-1. A **Course** is the top-level learner and authoring entity.
-2. Published Course Revisions are immutable. Personal adaptation occurs on a separate private branch and never rewrites the source revision.
-3. A lesson is a finite activity graph. The deterministic Learning Kernel, not the UI or a model, owns state transitions and mastery.
-4. Source Snapshots and Knowledge Capsules expose provenance without turning the learner workspace into a research database.
-5. Course Packs are declarative and validated. They contain no commands, scripts, secrets, executable plugins, or production courses.
-6. The UI locale is `en-US` or `ru-RU`; it is independent of one primary course locale and any declared course fallback locales.
-7. AI is optional. Pi is a model/runtime seam behind Aptiloop-owned typed tools, not a product shell, chat clone, or permission boundary.
-8. Reviewer output is read-only and cannot apply patches. Execution results come from trusted, generic check IDs under the Execution Fabric and explicit Node or Python environment contracts.
-9. Private learner data remains local and is never uploaded or shared without an explicit user action.
+The product signal is produced by five recurring motifs:
 
-The interface is not a generic dashboard or card grid, a ChatGPT clone, or a full IDE. Studio is an editorial authoring environment with contextual technical instruments, not a code editor with a learning sidebar.
+1. **Focus field** — one larger, lightly elevated surface for the next learning or authoring action.
+2. **Evidence rail** — compact supporting values always paired with labels and provenance-oriented copy.
+3. **Soft list** — related entities share one open surface with spacing and subtle separators instead of independent boxes.
+4. **Green focus trace** — next action, progress, success, and keyboard focus use restrained evergreen on otherwise neutral surfaces. Every state also has text or an icon, never color alone.
+5. **Circular utility control** — theme, disclosure, compact navigation, and contextual controls use optically balanced circular or softly squared icon buttons.
 
-## Current UX audit
+## Experience principles
 
-### Useful seams to preserve
+**Approved Core Alpha target**
 
-**Implemented baseline**
+- One primary action per surface. Secondary actions remain visible but quieter.
+- Large values summarize persisted facts; they never imply invented mastery or model certainty.
+- Supporting labels are concise, sentence case by default, and never decorative filler.
+- Containers exist only for a coherent entity, action, or state. Cards are not nested.
+- Borders are low-emphasis boundaries. Surface contrast, whitespace, and elevation carry most hierarchy.
+- Errors, missing runtimes, no-AI mode, offline state, validation blockers, and provenance remain explicit.
+- AI output is visually subordinate to deterministic state and is always attributed.
+- Published revisions, source lineage, local adaptation, and protected-answer boundaries remain legible.
+- Light and dark themes preserve the same hierarchy and semantics.
+- Motion clarifies state changes only; reduced motion removes nonessential transitions.
 
-- `apps/web/app/globals.css:5-160` defines a semantic OKLCH light/dark foundation and activity tokens.
-- `apps/web/app/layout.tsx:1-3` imports the installed `geist` package's self-hosted Sans and Mono styles; `apps/web/app/globals.css:5-7,170-175` maps Geist to the active body font stack.
-- `apps/web/components/ui/button.tsx:7-55` provides semantic variants, visible focus, disabled behavior, and 44px mobile targets.
-- `apps/web/components/query-state.tsx:5-57` provides reusable error and empty-state compositions.
-- `apps/web/components/dashboard-client.tsx:237-275` distinguishes loading, query failure, and no published curriculum; `:303-452` provides a clear current-day and week path.
-- `apps/web/components/session-client.tsx:796-987` provides a sticky session status and stable unit shell; `:1011-1036` dispatches the current activity types.
-- `apps/web/components/exercise-client.tsx:515-529` derives a concrete next action; `:621-755` exposes workspace, diff, and trusted test evidence; `:758-848` keeps review separate and read-only.
-- `apps/web/components/curriculum-editor-client.tsx:1053-1107` warns that publish is immutable and requires explicit acknowledgement.
-- `apps/web/components/interview-client.tsx:838-925` states the limits of the current interview report, although the “skill evidence” label at `:897-918` overstates what the current structural report proves.
+## Pattern research and Aptiloop adaptation
 
-### Material UX debt
+**Approved Core Alpha target**
 
-**Implemented baseline** audit findings, not compliance claims:
+External patterns inform interaction anatomy, not Aptiloop composition or product scope:
 
-- The primary navigation exposes seven subsystems plus Settings (`apps/web/components/app-shell.tsx:24-60`) instead of learner journeys.
-- Mobile renders eight destinations in a four-column grid (`apps/web/components/app-shell.tsx:187-212`). The current 390×844 smoke found no horizontal overflow, but Home was 3,414 px tall and the navigation consumed two overfull rows.
-- The shell, metadata, content, and labels are hardcoded in Russian (`apps/web/components/app-shell.tsx:24-60`, `apps/web/app/layout.tsx:11-20`); this is migration evidence, not localization compliance.
-- Home and the curriculum editor still lean on repeated cards. The editor nests Week → Day → Unit panels (`apps/web/components/curriculum-editor-client.tsx:1365-1468`, `:1497-1559`), contradicting the current no-nested-card intent.
-- The knowledge table requires `min-w-[900px]` horizontal scrolling (`apps/web/components/knowledge-client.tsx:62-119`) and has no mobile-native summary.
-- Optional AI health is presented as global readiness and Mock can be labeled “AI ready” (`apps/web/components/provider-health.tsx:83-137`). Browser-offline, Core-stopped, storage, no-AI, and missing-runtime states are not separated.
-- Studio authoring relies on raw JSON fields (`apps/web/components/curriculum-editor-client.tsx:993-1041`). Course Pack opening, import, export, validation, locale completion, preview, and typed AI proposals are absent.
-- Current screenshots cover paired light/dark Path, Session, Settings, and Interview setup plus a few single-state desktop views in `docs/screenshots/`. They do not prove mobile, error, offline, no-AI, missing-runtime, exercise, review, Skills, or Studio-dark behavior.
+- [shadcn Sidebar](https://ui.shadcn.com/docs/components/radix/sidebar) separates identity, scrollable navigation, and rail responsibilities. Aptiloop keeps brand identity distinct from collapse, theme, provider, and page utilities; it does not copy the sample workspace switcher, avatar, teams, or account menu.
+- [Microsoft NavigationView](https://learn.microsoft.com/en-us/windows/apps/develop/ui/controls/navigationview) distinguishes main items, footer navigation items, and free-form pane footer content. Aptiloop uses the distinction to keep Settings and local status out of the main learning group while preserving one coherent navigation model.
+- [W3C navigation landmark guidance](https://www.w3.org/WAI/ARIA/apg/patterns/landmarks/examples/navigation.html) requires named landmarks when multiple navigation regions exist. Desktop rail and mobile bottom navigation therefore retain explicit accessible names and current-page state.
+- [GOV.UK radio guidance](https://design-system.service.gov.uk/components/radios/) informs the exclusive assisted-start choice: semantic controls, no preselection, one clear question, and a separately visible manual fallback. [Complete multiple tasks](https://design-system.service.gov.uk/patterns/complete-multiple-tasks/) informs Studio's verb-led gates and explicit statuses, not a generic checklist skin.
+- [shadcn Input Group](https://ui.shadcn.com/docs/components/radix/input-group) and [AI Elements Prompt Input](https://elements.ai-sdk.dev/components/prompt-input) inform the chat composer's textarea/body/footer anatomy. Aptiloop omits attachments, microphone, web search, screenshots, and client model switching because those authorities are not in the product contract.
+- [Carbon for AI](https://carbondesignsystem.com/guidelines/carbon-for-ai/) informs explicit identification and explainability of AI-generated proposals. Aptiloop retains its own semantic tokens and avoids Carbon's AI glow/gradient styling because Calm Workshop prohibits decorative AI effects.
 
-Recorded verification is mixed and must remain described accurately: `npm run verify` passed its recorded format, lint, typecheck, fast-test, and build tasks, but `npm run test:e2e` had 1 pass and 3 failures. The web server first emitted repeated fatal Turbopack `Next.js package not found` errors while writing `/session/page`, `/settings/curriculum/page`, and `/interview/page`; missing Day 1 plan and Interview controls plus repeated Curriculum Editor navigation were downstream observed symptoms. A disposable 1440×900 browser smoke separately loaded Home, started a session, opened the plan drawer, and showed no observed console errors. This evidence does not prove the target IA or visual direction.
-
-## Design directions
-
-The owner selected **A. Calm Workshop** on 2026-08-08. B and C remain documented as **Future** alternatives; none of the directions is implementation evidence.
-
-### A Calm Workshop
-
-**Approved Core Alpha target.** Selected direction: **A. Calm Workshop**.
-
-A cold-neutral and eucalyptus workshop: open editorial learner surfaces, thin separators, restrained elevation, and contextual technical panels. The learner sees a calm reading and practice space; Studio increases information density without becoming an IDE.
-
-- Retain Geist Sans and Geist Mono.
-- Retain and refine the semantic OKLCH foundation.
-- Materially replace generic dashboard/card composition with a lead next-action field, open lists, ruled sections, and task-specific side context.
-- Use activity color only as a redundant type cue alongside text and icon.
-- Use nearly flat surfaces; shadows are reserved for temporary overlays and drag elevation.
-- Let Studio be approximately 70% editorial workspace and 30% developer instrument.
-
-Tradeoffs: this is the lowest-risk incremental migration and the strongest shared basis for light/dark and English/Russian. It can look too close to the legacy harness if the shell, hierarchy, card usage, and Studio composition are not actually changed.
-
-### B Learning Ledger
-
-**Future**
-
-A warm editorial study ledger: paper-tinted fields, ruled separators, strong long-form rhythm, and margin evidence. Authored material feels durable and deliberate.
-
-- Source Serif 4 for authored prose and headings; IBM Plex Sans for UI; IBM Plex Mono for code.
-- Document index, manuscript center, and evidence margin rather than panels.
-- Warm neutral light mode with forest and rust accents.
-
-Tradeoffs: strongest identity for reading and reflective work, but weaker for dense graph validation and test evidence. It introduces a larger font/localization migration and loses some paper character in dark mode.
-
-### C Graph Blueprint
-
-**Future**
-
-A slate and navy technical workbench: explicit dependency lines, graph/list switching, cobalt selection, amber validation, and dense inspectors without glow or glass.
-
-- IBM Plex Sans and Mono.
-- Studio-first tree, graph/list, inspector, and validation console.
-- More compact controls and stronger technical provenance rails.
-
-Tradeoffs: best for finite-graph inspection and dark Studio density, but most likely to feel like a full IDE or control plane and to expose authoring internals to learners.
-
-### Comparable direction matrix
-
-**Approved Core Alpha target.** The matrix records the selection evidence and tradeoffs for A; B and C remain **Future** alternatives. None of the reference values is implementation evidence.
-
-| Dimension                           | A Calm Workshop                                                                                               | B Learning Ledger                                                                                                               | C Graph Blueprint                                                                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Light/dark semantic palette         | Cool-neutral surfaces; eucalyptus action; independent activity/status colors; three dark luminance levels.    | Warm paper/ink/forest/rust in light; charcoal parchment in dark; independent evidence/status inks.                              | Slate/near-white light and navy/slate dark; cobalt selection, amber validation; independent semantic statuses; no neon.             |
-| Type and licensing impact           | Existing self-hosted Geist Sans/Mono package; lowest new-dependency and Cyrillic migration risk.              | Source Serif 4 + IBM Plex Sans/Mono; strongest editorial voice, but new font provenance, payload, Cyrillic, and hinting review. | IBM Plex Sans/Mono; technical density, with new font provenance/payload and less long-form warmth.                                  |
-| Density, spacing, radius, elevation | 4px system; 8/12px radii; open learner spacing; dense three-region Studio; thin borders; overlay-only shadow. | 4px system with larger 16/24px prose rhythm; 4/8px radii; ruled document fields; almost no elevation.                           | 4px system; 6/8px radii; compact rows and inspectors; border/selection markers; elevation only for overlays/drag.                   |
-| Home                                | Lead next action, open phase rows, compact readiness/evidence rail.                                           | Dated learning brief, manuscript-like next action, evidence margin.                                                             | Dependency-oriented next action, compact readiness and graph-position rail.                                                         |
-| Lesson                              | 720–800px calm ActivityFrame plus optional context rail.                                                      | 68–74ch reading sheet with margin sources/evidence and restrained task footer.                                                  | Compact ActivityFrame with collapsible dependency/evidence rail; learner material still visually primary.                           |
-| Adaptive Studio                     | 264px outline / fluid editorial field / 320px inspector; 70/30 editorial-instrument balance.                  | Document index / manuscript editor / evidence margin; graph and validation use dedicated modes.                                 | Tree or graph/list / compact editor-preview / inspector-validation rail; strict guard against full-IDE drift.                       |
-| Mobile                              | One pane, five-item bottom nav, full-height context sheets; Studio Outline/Edit/Preview modes.                | One reading sheet, section index sheet, evidence/source sheet; same workflow limits.                                            | One list/editor/preview mode at a time; graph becomes accessible outline; inspectors become sheets.                                 |
-| Accessibility/localization risk     | Lowest: existing type/tokens; must prove new compositions and all semantic pairs.                             | Highest font/reflow risk and paper metaphor loss in dark/forced-colors; 30% label expansion still required.                     | Highest density/cognitive-load risk; dependency meaning needs list/text equivalents; Russian expansion can stress compact controls. |
-| Migration cost                      | Lowest, but must materially replace shell/card hierarchy to avoid a rename-only result.                       | Highest: typography, composition, dark mode, localization, and artifact licensing changes.                                      | Medium-high: dense components, graph/list parity, mobile reduction, and learner/author separation.                                  |
-
-All directions use the same five-destination IA, ActivityFrame, no-generic-dashboard rule, responsive state contract, WCAG 2.2 AA target, and manual/no-AI completeness. Direction choice changes composition and visual language, not product authority or security boundaries.
-
-### Selection-level foundations for B and C
-
-**Approved Core Alpha target.** Calm Workshop receives the rendered token/component, font-provenance, contrast, and bilingual reflow pass before implementation. The B and C foundations remain decision history and are not licenses to mix their tokens into the selected direction.
-
-#### B. Learning Ledger foundation
-
-- **Light/dark palette:** warm paper and ink with forest action and restrained rust evidence accents; dark mode becomes charcoal parchment with raised ruled fields, never inverted white paper or sepia glow. Shared success/warning/error/info roles remain independently named and never rely on the paper metaphor or color alone.
-- **Typography:** Source Serif 4 for authored prose/headings, IBM Plex Sans for application controls, and IBM Plex Mono for code/IDs. Adoption requires verified package/source license, Cyrillic coverage, local packaging, payload, hinting, and 30% English/Russian label expansion.
-- **Density and shape:** 16/24px reading rhythm, 4/8px radii, ruled groups, almost no shadow, and a 68–74ch manuscript field. Cards remain limited to self-contained entities; nested paper sheets are prohibited.
-- **Product composition:** Home is a dated learning brief with an evidence margin; Lesson is a manuscript with source/evidence margin; Studio is document index / manuscript editor / evidence margin, with graph and validation in dedicated modes rather than an IDE grid.
-- **Responsive behavior:** mobile keeps one reading sheet and opens section index, sources/evidence, validation, and Studio modes as full-height sheets/screens. Dark, forced-colors, large-text, and Russian reflow must preserve rule hierarchy without depending on paper tint.
-- **Primary tradeoff:** strongest durable reading/authoring identity; highest font, localization, dense-graph, and dark-mode migration cost.
-
-#### C. Graph Blueprint foundation
-
-- **Light/dark palette:** slate/near-white light surfaces and navy/slate dark surfaces with cobalt selection and amber validation; status roles remain separate, labeled, and non-neon. Graph lines are supplementary to text/list relationships.
-- **Typography:** IBM Plex Sans and Mono with compact technical metadata. Adoption requires verified local packaging/license, Cyrillic coverage, payload, and 30% bilingual label expansion before density is accepted.
-- **Density and shape:** 4px grid, 6/8px radii, compact ruled rows and inspectors, selection markers, and overlay/drag-only elevation. No glass, terminal chrome, decorative grid, or nested control-plane cards.
-- **Product composition:** Home emphasizes dependency-aware next action without exposing internal graph machinery; Lesson keeps learner material primary with a collapsible dependency/evidence rail; Studio uses tree or graph/list / editor-preview / inspector-validation regions.
-- **Responsive behavior:** mobile exposes one outline, editor, Preview, or inspector mode; graph meaning always has an ordered-list/text equivalent. Large text, keyboard focus, screen-reader traversal, forced colors, and Russian reflow may reduce density rather than truncate meaning.
-- **Primary tradeoff:** strongest finite-graph and validation expression; highest risk of IDE/control-plane drift and learner cognitive load.
-
-## Selected direction and implementation gate
-
-**Approved Core Alpha target.** Selected direction: **A. Calm Workshop**.
-
-A Calm Workshop was selected because it preserves the strongest implemented seams—the self-hosted Geist package/CSS mapping, semantic OKLCH roles, restrained motion, session progression, and source/review evidence—while materially changing composition and information architecture. It supports a calm lesson surface and a capable three-region Studio without a big-bang rewrite.
-
-The owner selection covers the direction, not every token or a claim of implementation:
-
-- direction-specific work follows the approved roadmap and milestone gates;
-- the token values below remain design inputs until verified in rendered UI;
-- wireframes define behavior and hierarchy, not pixel-perfect implementation;
-- every implemented slice must prove accessibility, responsive behavior, localization, and product acceptance.
-
-After approval, implementation must still pass the independent accessibility, responsive, localization, and product acceptance gates. Approval of an AI-generated draft is never approval to publish a Course Revision.
-
-## Calm Workshop foundation
-
-### Color
+## Implemented seams to preserve
 
 **Implemented baseline**
 
-The existing semantic names in `apps/web/app/globals.css:5-160` are the migration foundation: background, foreground, card/popover, primary, secondary, muted, accent, destructive, success, warning, border, input, ring, sidebar, and activity pairs. Existing activity-practice is emerald; stale references to blue practice are not authoritative.
+- Next.js App Router presentation remains in `apps/web`.
+- Geist Sans and Geist Mono are locally supplied by the installed `geist` package.
+- `apps/web/app/globals.css` owns the semantic OKLCH light/dark foundation.
+- Existing shadcn/Radix source primitives remain the component toolkit.
+- `AppShell`, `PageHeader`, query states, `ActivityFrame`, the closed renderer registry, Adaptive Studio, and provider connection management are implemented seams.
+- Primary navigation remains Home, Courses, Review, Skills, and Settings.
+- UI locale remains independent from Course locale and supports `en-US` and `ru-RU`.
+- Course library search/filter/page, Review destination, Studio workspace tab, Chat role, and staged-intake confirmation use separate URL contracts. Pack intake recovery is limited to the same orchestrator process and the validation expiry window; a Core restart requires file reselection and validation.
+- Browser requests retain the existing typed API and domain contracts; redesign does not move database, provider, filesystem, Git, or process authority into the browser.
 
-**Approved Core Alpha target** Calm Workshop identity values:
+## Visual system
 
-| Role             | Light                    | Dark                     |
-| ---------------- | ------------------------ | ------------------------ |
-| background       | `oklch(0.975 0.006 250)` | `oklch(0.185 0.018 255)` |
-| surface          | `oklch(0.995 0.002 250)` | `oklch(0.225 0.022 255)` |
-| raised           | `oklch(0.985 0.004 250)` | `oklch(0.255 0.024 255)` |
-| foreground       | `oklch(0.25 0.025 255)`  | `oklch(0.965 0.006 255)` |
-| muted foreground | `oklch(0.48 0.025 255)`  | `oklch(0.72 0.018 255)`  |
-| border           | `oklch(0.875 0.015 255)` | `oklch(0.34 0.025 255)`  |
-| primary          | `oklch(0.50 0.13 153)`   | `oklch(0.78 0.13 153)`   |
-| focus ring       | `oklch(0.55 0.15 153)`   | `oklch(0.82 0.12 153)`   |
+### Color roles
 
-Activity families use explicit foreground/quiet-surface pairs. The reference values below must still be measured in rendered controls, text, borders, diffs, charts, overlays, and forced-color fallbacks before adoption.
+**Approved Core Alpha target**
 
-| Activity family | Light foreground       | Light quiet surface     | Dark foreground        | Dark quiet surface     |
-| --------------- | ---------------------- | ----------------------- | ---------------------- | ---------------------- |
-| study           | `oklch(0.40 0.14 300)` | `oklch(0.95 0.03 300)`  | `oklch(0.84 0.10 300)` | `oklch(0.29 0.05 300)` |
-| recall          | `oklch(0.39 0.10 75)`  | `oklch(0.96 0.04 80)`   | `oklch(0.87 0.11 80)`  | `oklch(0.29 0.06 75)`  |
-| explain         | `oklch(0.37 0.10 215)` | `oklch(0.95 0.035 215)` | `oklch(0.84 0.09 215)` | `oklch(0.28 0.05 215)` |
-| assess          | `oklch(0.39 0.13 255)` | `oklch(0.95 0.03 255)`  | `oklch(0.84 0.10 255)` | `oklch(0.29 0.05 255)` |
-| practice        | `oklch(0.37 0.11 155)` | `oklch(0.95 0.035 155)` | `oklch(0.84 0.10 155)` | `oklch(0.28 0.05 155)` |
-| review          | `oklch(0.43 0.14 25)`  | `oklch(0.96 0.035 25)`  | `oklch(0.86 0.10 25)`  | `oklch(0.29 0.05 25)`  |
+All interface color uses semantic OKLCH variables. Component-only raw palette classes are prohibited. The neutral axis uses cool graphite rather than green-tinted neutrals. Restrained evergreen is reserved for primary action, progress, success, and focus. Warning, destructive, and activity-family roles stay independent. Activity color never overpowers readiness or evidence.
 
-Status semantics have separate foreground/quiet-surface pairs and always include text/icon/state:
+| Role             | Light                    | Dark                     | Use                            |
+| ---------------- | ------------------------ | ------------------------ | ------------------------------ |
+| background       | `oklch(0.994 0.001 260)` | `oklch(0.140 0.006 260)` | App field                      |
+| foreground       | `oklch(0.205 0.009 260)` | `oklch(0.945 0.005 260)` | Primary text                   |
+| surface-soft     | `oklch(0.965 0.004 260)` | `oklch(0.175 0.007 260)` | Recessed bands and quiet wells |
+| surface          | `oklch(1.000 0.000 000)` | `oklch(0.180 0.008 260)` | Standard content surface       |
+| surface-raised   | `oklch(1.000 0.000 000)` | `oklch(0.205 0.009 260)` | Focus field, popovers          |
+| sidebar          | `oklch(0.982 0.002 260)` | `oklch(0.155 0.006 260)` | Navigation rail                |
+| muted text       | `oklch(0.455 0.011 260)` | `oklch(0.720 0.012 260)` | Supporting copy                |
+| border           | `oklch(0.895 0.006 260)` | `oklch(0.285 0.010 260)` | Low-emphasis boundary          |
+| control boundary | `oklch(0.664 0.009 260)` | `oklch(0.490 0.012 260)` | Inputs and selected boundaries |
+| primary          | `oklch(0.500 0.130 151)` | `oklch(0.720 0.130 151)` | Next action and progress       |
+| primary hover    | `oklch(0.445 0.130 151)` | `oklch(0.770 0.125 151)` | Hover/pressed action           |
+| focus ring       | `oklch(0.500 0.130 151)` | `oklch(0.720 0.130 151)` | Visible keyboard focus         |
+| success          | `oklch(0.510 0.120 152)` | `oklch(0.720 0.110 152)` | Positive and completed state   |
+| destructive      | `oklch(0.535 0.185 027)` | `oklch(0.700 0.160 027)` | Error and destructive action   |
+| warning          | `oklch(0.875 0.070 078)` | `oklch(0.350 0.065 078)` | Warning field                  |
 
-| Status           | Light foreground        | Light quiet surface     | Dark foreground         | Dark quiet surface      |
-| ---------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- |
-| success          | `oklch(0.36 0.11 150)`  | `oklch(0.95 0.035 150)` | `oklch(0.84 0.10 150)`  | `oklch(0.28 0.05 150)`  |
-| warning          | `oklch(0.39 0.10 75)`   | `oklch(0.96 0.04 80)`   | `oklch(0.87 0.11 80)`   | `oklch(0.29 0.06 75)`   |
-| error            | `oklch(0.43 0.15 25)`   | `oklch(0.96 0.035 25)`  | `oklch(0.86 0.11 25)`   | `oklch(0.29 0.055 25)`  |
-| info             | `oklch(0.39 0.12 250)`  | `oklch(0.95 0.03 250)`  | `oklch(0.84 0.10 250)`  | `oklch(0.29 0.05 250)`  |
-| offline          | `oklch(0.40 0.035 255)` | `oklch(0.94 0.015 255)` | `oklch(0.80 0.025 255)` | `oklch(0.28 0.025 255)` |
-| disabled control | `oklch(0.58 0.018 255)` | `oklch(0.94 0.008 255)` | `oklch(0.58 0.018 255)` | `oklch(0.25 0.015 255)` |
+Normal text must reach WCAG 2.2 AA contrast. Large text and graphical/control boundaries must reach at least 3:1. Softer hierarchy is never achieved by lowering essential text contrast.
 
-Interaction references: hover uses `oklch(0.50 0.03 255 / 0.08)` light and `oklch(0.90 0.02 255 / 0.08)` dark; pressed doubles that alpha; selected uses the primary quiet surface plus a leading marker; focus uses the existing focus-ring role with a 2px ring and 2px offset; disabled controls remove interaction but essential explanatory copy uses normal muted foreground, not the disabled token. Expected checks: at least 4.5:1 for normal text, 3:1 for large text and graphical/control boundaries, 3:1 focus contrast against adjacent colors, discernible hover/selected/pressed without color alone, and no information conveyed solely by disabled opacity.
+### Surface hierarchy and elevation
 
-No interface may use hardcoded hex, pure black, pure white, or arbitrary component-only colors. Contrast must be verified against rendered theme pairs rather than inferred from token intent.
+**Approved Core Alpha target**
+
+- App background: near-white cool neutral in light mode and low-chroma graphite in dark mode, uninterrupted behind primary content.
+- Recessed surface: sidebar, mobile navigation, tab tracks, code/output wells.
+- Standard surface: related content group or form section.
+- Raised surface: the one current focus action, overlay, or sticky content crossing another surface.
+- Focus shadow, light: `0 1px 2px oklch(0.20 0.012 255 / 0.06), 0 18px 48px oklch(0.20 0.012 255 / 0.08)`.
+- Focus shadow, dark: `0 1px 2px oklch(0.03 0.006 255 / 0.28), 0 18px 48px oklch(0.03 0.006 255 / 0.22)`.
+- Standard surfaces use either a subtle border or a low shadow, not both at full strength.
+- No glow, glassmorphism, animated gradient, or decorative blur field.
+
+### Shape
+
+**Approved Core Alpha target**
+
+- Controls, standard panels, entity rows, and primary focus fields use an 8px radius.
+- Large temporary overlays may use a larger radius only when their component anatomy requires it.
+- Progress tracks and true state indicators may be fully rounded.
+- Icon controls are circular where the control is a single familiar action.
+- Nested containers use visibly smaller radii or no radius; equal-radius nesting is prohibited.
+
+### Spacing and density
+
+**Approved Core Alpha target**
+
+A 4px base produces steps `4, 8, 12, 16, 20, 24, 32, 40, 48, 64`.
+
+- Page section rhythm: 32px mobile, 40px desktop.
+- Page header to first region: 24–32px.
+- Standard surface padding: 20px mobile, 24px desktop.
+- Focus field padding: 24px mobile, 32px desktop.
+- Related list rows: 16–20px vertical.
+- Controls keep a 44px minimum touch target on mobile.
+- Dense Studio lists may use 36–40px controls only at desktop widths with equivalent keyboard focus and accessible names.
 
 ### Typography
 
 **Approved Core Alpha target**
 
-- UI and authored prose: Geist Sans from the current self-hosted package import, with a language-appropriate fallback.
-- Code, paths, stable IDs, hashes, versions, model IDs, check IDs, and compact metrics: Geist Mono.
-- Page title: 28/34, weight 650.
-- Section title: 20/28, weight 600.
-- Activity title: 22/30, weight 600.
-- Body/prose: 15/24, weight 400; reading measure 64–72ch.
-- UI/control: 14/20, weight 500 where interactive.
-- Caption/metadata/mono: 12/18; never below 12px for essential text.
-- Code blocks: 13/20 desktop and mobile, horizontal containment, user-controlled wrapping when feasible.
+- UI, authored prose, and labels: Geist Sans.
+- Code, paths, stable IDs, hashes, versions, provider/model IDs, checks, and compact technical evidence: Geist Mono.
+- Page title: 28/34, weight 650, tracking `-0.025em`.
+- Focus value/title: 24–30/32–38, weight 620–650.
+- Section title: 18–20/26–28, weight 600.
+- Activity title: 22/30, weight 620.
+- Body/prose: 15/24, weight 400, 64–72ch reading measure.
+- UI/control: 14/20, weight 500 when interactive.
+- Supporting label: 12/18, weight 550, modest tracking; uppercase only for rare workflow orientation labels.
+- Technical caption: 12/18 Geist Mono; never below 12px for essential content.
+- English and Russian share the scale. Controls allow at least 30% label expansion.
 
-English and Russian must share the scale. Controls must allow at least 30% label expansion without clipping. Truncation is reserved for repeatable identifiers with a full accessible name and a reveal/copy path.
-
-### Spacing, shape, elevation, motion
-
-**Approved Core Alpha target**
-
-- 4px base with named steps 4, 8, 12, 16, 24, 32, 48, 64.
-- Control radius 8px; bounded panels and overlays 12px; pills only for compact state or tags.
-- Learner rail 240–256px. Lesson reading field 720–800px plus optional 280px context.
-- Studio at ≥1280px: 264px outline, fluid editor/preview, 320px inspector.
-- Thin borders provide hierarchy. Shadows appear only on menus, sheets, dialogs, drag previews, and sticky elements crossing content.
-- State transitions use 160ms ease-out. No page-load choreography, bounce, decorative parallax, animated gradients, or typewriter AI text.
-- `prefers-reduced-motion` removes nonessential motion and preserves immediate state feedback.
-
-## Composition rules
+### Icons
 
 **Approved Core Alpha target**
 
-- Primary navigation is **Home / Courses / Review / Skills / Settings**.
-- Home is an editorial next-action surface, not a metric dashboard.
-- Courses owns installed Courses and immutable revisions, Course Pack intake/export, Course outline, lesson workspaces, and Adaptive Studio entry points.
-- Review is a due-first work queue with Mistakes, Cards, and Interview practice as views, not primary destinations.
-- Skills is an evidence-backed topic index and detail timeline, not a wide table as the only view.
-- Settings separates language, appearance/accessibility, Core & Storage, external runtimes, optional AI tools, privacy, and diagnostics.
-- Desktop uses persistent navigation; mobile uses a five-destination bottom bar. A second row of navigation is prohibited.
-- A card is used only for a self-contained entity or action. Related rows share an open surface and separators. Cards must not be nested.
-- Dialogs are reserved for destructive or consequential confirmations. Inspectors and details use rails or sheets.
+Phosphor remains the single icon family. Navigation uses regular weight and selected navigation may use filled weight. Status icons use an icon plus readable state text. Utility controls use 18–20px icons inside 36–44px targets. Decorative icons are omitted.
 
-## Required responsive and theme behavior
+### Interaction and motion
 
 **Approved Core Alpha target**
 
-Desktop and mobile are different compositions over the same contract, not a desktop grid squeezed narrower.
+- Hover changes surface or text emphasis, never layout.
+- Pressed state slightly deepens the hover treatment.
+- Focus uses a 2px semantic ring with a 2px offset against the current surface.
+- Selected state uses the cool-neutral accent surface plus weight, marker, or `aria-current`; color alone is insufficient.
+- Disabled actions remain legible and retain nearby explanation.
+- State transitions use 140–180ms ease-out.
+- `prefers-reduced-motion: reduce` removes nonessential duration, scrolling, and transforms.
 
-- Desktop: persistent primary rail; optional contextual rail; sticky local toolbar only when it shortens a repeated workflow.
-- Mobile: one primary pane; bottom navigation; plan, context, outline, and inspector open as full-height sheets or dedicated screens; primary lesson action sits above the bottom bar.
-- Adaptive Studio mobile is for review, metadata edits, structured field edits, validation, Preview, simple adaptation/conflict inspection, and proposal approval. Graph rearrangement, bulk import conflict resolution, raw JSON, wide diff/conflict review, environment authoring, export packaging, and release publication are desktop-only unless a later usability study approves otherwise. Small bounded embedded coding tasks may run on mobile when their renderer/input/reflow contract passes; full-project coding remains in an external workspace and mobile offers safe resume/Continue on desktop.
-- Light and dark preserve identical information hierarchy and status meaning. Dark mode uses raised luminance, not glow. Light mode uses tinted neutrals, not pure white.
-- Zoom to 200%, 320 CSS px reflow, long English/Russian labels, large text, and high-contrast/forced-colors behavior are design inputs, not cleanup tasks.
+## Component families
 
-## State model
-
-**Approved Core Alpha target**
-
-Every networked or runtime-dependent region declares one of: loading, ready, empty, validation blocked, recoverable error, browser offline, Core unavailable, storage unavailable/locked, external runtime missing, AI off, AI unavailable, or unsupported capability.
-
-- **Loading:** preserve layout context; announce the operation once; disable duplicate submission.
-- **Empty:** explain why the region is empty and the next relevant action.
-- **Error:** stay beside the source, preserve user input, identify the failed layer, and provide a safe retry or settings path.
-- **Offline:** distinguish browser connectivity from local Core health. Do not promise queued mutation or cached completion unless the Learning Kernel implements it.
-- **No AI:** manual and deterministic paths remain complete. Hide or disable only the optional AI affordance.
-- **Missing runtime:** identify Core, SQLite/storage, filesystem permission, Node, Python, external editor, or AI provider separately. Never silently substitute Mock for a real provider.
-- **Validation blocked:** focus the exact Course node and field; retain a summary and stable error IDs.
-
-## Content and provenance
+### App Shell
 
 **Approved Core Alpha target**
 
-- UI copy defaults to concise `en-US`; `ru-RU` is a complete UI catalog, not mixed inline strings.
-- Course content stays in its declared primary locale with explicit fallback and missing-translation markers.
-- Actions describe the next operation: “Resume lesson,” “Run checks,” “Review evidence,” “Validate draft,” “Apply to draft,” “Publish immutable revision.”
-- AI surfaces name the Aptiloop role/tool and provider/model in a disclosure. Never anthropomorphize a model or present Mock as a real provider.
-- Source contexts show title, origin, snapshot time/version, course locale, and availability. External navigation is explicit.
-- Interview observations must be labeled as answer observations until technically validated evidence exists.
-- Private-data export or provider transmission requires an explicit scope summary and confirmation at the point of action.
+Desktop uses one stable navigation rail: 280px expanded and 72px collapsed. Expanding or collapsing changes only the rail width; icon centers, 56px row heights, navigation order, and focus order remain stable. Expanded mode shows a larger neutral Aptiloop mark and wordmark with an icon-only collapse control at the top right. Collapsed mode removes the mark and wordmark and centers the expand control in the same 72px rail header; it never adds a second strip. Collapsed destinations use centered 48px hit fields, accessible names, and Radix tooltips; they never render custom labels over page content.
 
-## Out of scope
+Home, Courses, Review, and Skills stay in the upper navigation; Settings is the final item in the lower group. The rail footer contains no AI/provider badge, theme switch, or ambiguous local-status pill. Active navigation uses the cool-neutral accent surface, stronger text/icon treatment, and `aria-current`, not a green block.
 
-**Future**
+The opaque 92px utility header owns location and two global utilities: a labeled breadcrumb is left-aligned; coherent 44px outlined AI and theme controls are right-aligned. Interface locale is changed only in Settings so it is not duplicated in global chrome. Provider detail and recovery remain in Settings or the affected workflow. The brand stack and sidebar footer never duplicate these utilities. `/courses/*`, compatibility `/session?id=`, exercise, and lesson-linked interview routes keep Courses active; Home is active only for Home.
 
-- Multi-user collaboration, shared comments, cloud sync, and permissions.
-- A general-purpose graph canvas, full IDE, embedded shell, arbitrary AI tools, plugins, or pack scripts.
-- Production Course Packs or a public course marketplace.
-- Automatic cross-device offline mutation replay.
-- AI-authored automatic publishing or reviewer patches.
+**Implemented baseline** — Core Alpha remains local-first and single-user. It must not render a fake account, avatar, login, disabled account placeholder, or authentication affordance.
 
-## Acceptance gate
+**Future** — if an owner-approved account capability is introduced after Core Alpha, its profile/account entry belongs at the bottom of the desktop rail and in one equivalent mobile account menu; it does not replace local privacy or runtime status.
 
-Design implementation may be called approved only after it is reviewed against all four supporting specifications. Owner selection is recorded, but implementation still requires desktop/mobile, light/dark, `en-US`/`ru-RU`, keyboard and assistive technology, the complete state model, all required screens and authoring/import/validation flows, and proof that no silent real-provider-to-Mock fallback or private-data transmission has been introduced.
+**Approved Core Alpha target**
+
+Main content uses a fluid centered maximum width of about 1440px and a shared 44px desktop gutter with the utility header.
+
+Mobile uses one 64–72px sticky header and one five-destination bottom bar. Labels remain visible in both locales. Safe-area padding, 320px reflow, and no second navigation row are mandatory.
+
+### Page Header
+
+**Approved Core Alpha target**
+
+The page header is open, without a full-width hard divider. It contains one 44px title, a readable 17px one- or two-line description, and optional right-aligned 48–50px page actions. It never repeats the utility header breadcrumb or renders a false top-level title for a nested route. On mobile, actions wrap below content without clipping.
+
+### Buttons and controls
+
+**Approved Core Alpha target**
+
+- Primary: restrained evergreen fill, compact shadow, high-contrast label.
+- Secondary: quiet neutral surface.
+- Outline: strong control boundary on the current surface.
+- Ghost: circular or softly squared utility action.
+- Destructive: explicit red role, reserved for actual destructive consequences.
+- Loading: spinner, stable width where practical, disabled duplicate submission.
+
+### Progress
+
+**Approved Core Alpha target**
+
+Progress uses one continuous quiet track and restrained evergreen indicator. It is paired with exact completed/total text. Course progress, phase progress, and skill dimensions must not be combined into an invented overall score.
+
+### Empty, error, offline, and no-AI states
+
+**Approved Core Alpha target**
+
+Empty states are compact open surfaces with reason and next action. Errors use a quiet destructive field, explicit failing layer, preserved input, and recovery action. Transient operation feedback that needs no in-page correction uses the localized global toast region and does not survive navigation; validation errors, uncertain commits, and failures requiring action remain in context. Browser offline, Core unavailable, storage failure, missing local runtime, and AI unavailable remain distinct. AI Off is calm and normal; it is not presented as an error and manual paths remain complete.
+
+## Screen specifications
+
+### Screen purpose contract
+
+**Approved Core Alpha target**
+
+Every route answers one primary user question and exposes one primary next action. Secondary tools remain reachable without competing with that action.
+
+| Surface                 | Primary question                                                                   | Primary action                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Home                    | What should I learn next in my explicitly current Course?                          | Start or resume the deterministic next activity.                                                        |
+| Courses library         | Which installed Course/revision should I open or make current?                     | Open or select one Course; Create and Import are separate routes.                                       |
+| Create Course           | Which assisted start fits this Course, or should I continue manually without AI?   | Choose external-model instructions or the connected Designer; use the manual fallback when preferred.   |
+| Import Course Pack      | Is this existing declarative Pack safe and suitable to install or open as a Draft? | Choose a Pack, validate it, then enter staged Preview and confirmation.                                 |
+| Review                  | Which due, mistake, card, or interview evidence needs attention?                   | Inspect the selected URL-backed destination and take only an available typed action.                    |
+| Skills                  | What has persisted evidence, and where is it weak or due?                          | Inspect one topic's evidence-backed dimensions.                                                         |
+| Session / ActivityFrame | Where am I in this lesson, and what must I do now?                                 | Complete the current authored activity.                                                                 |
+| Exercise                | What trusted attempt/check/review state exists?                                    | Edit or run the next permitted attempt action.                                                          |
+| Interview               | What question/progress/report state exists?                                        | Start, answer, resume, or finish the current interview step.                                            |
+| Adaptive Studio         | Which explicit Draft/revision is open, and what authoring gate is next?            | Edit, review a proposal, Apply, Validate, Preview, inspect Changes, or Publish as separately permitted. |
+| Settings / Connections  | Which local interface, Core, runtime, or optional AI setting needs attention?      | Save or recover one named layer.                                                                        |
+| Agent chat              | Which bounded Aptiloop role/provider context am I using?                           | Send or stop one disclosed message; chat remains a secondary tool.                                      |
+| Developer tools         | Which local diagnostic layer is failing?                                           | Run or recover one diagnostic action; this is never primary navigation.                                 |
+
+Home and Courses share one invariant: the current Course is a persisted explicit selection owned by the application. The UI must never silently reinterpret “current” as the first installed Course, most recently rendered card, or last route visited. When several Courses exist, Home stays focused on the current one and provides a clear route to Courses for switching.
+
+### Home
+
+**Approved Core Alpha target**
+
+Home is an editorial learning surface for the explicitly current Course, not a dashboard or recent-items feed.
+
+1. Current Course header: persisted Course/revision identity, concise description, and a quiet **Change Course** route to Courses when another selection is needed.
+2. Primary focus field: deterministic next lesson/activity, expected or remaining time, exact Course/phase progress, and one Start/Resume action.
+3. Learning signals: review queue and evidence basis appear as compact supporting regions only when facts are available. Loading/error/empty states remain honest and do not block the primary Course path.
+4. Phase path: Understand, Demonstrate, and Practice/Review share one soft list with exact counts and readable ready/locked/completed states.
+5. Upcoming lessons: an open list for the current Course, not a metric grid.
+
+With no current Course, Home explains that state and offers Select Course, Create Course, and Import Course Pack routes according to available actions. It never invents a current Course from list order. No streak, generic productivity score, model-generated motivation, fabricated mastery percentage, or ungrounded “recent Course” strip is permitted.
+
+### Courses
+
+**Approved Core Alpha target**
+
+Courses is a set of route-owned surfaces, not one mixed page:
+
+1. `/courses` is the local library. It shows a soft entity list with current selection, immutable revision state, stable identity/hash, personal-branch context, and explicit Open/Export/Remove actions. Its page actions link to **Create Course** and **Import Course Pack**; it contains no editor and no inline file importer.
+2. `/courses/new` presents one unselected exclusive choice between **Use an external model** and **Use the connected Course Designer**. **Create manually without AI** is a quieter complete fallback. `/courses/new/external`, `/courses/new/guided`, and `/courses/new/manual` own those paths and never open the current, first, or recently viewed Course.
+3. External generation downloads a version-matched instruction and creates no Draft. Guided and manual confirmation each create exactly one explicit local Draft; provider transmission, proposal Apply, Validate, Preview, Changes, and Publish remain later separate operations. Studio requires the returned revision authority and fails back to Courses when it is missing or invalid.
+4. `/courses/import` alone selects an existing declarative Course Pack. Validation creates a server-owned staged intake operation at `/courses/intake/{operationId}`; its Preview leads to explicit **Install immutable revision** or **Open as local Draft**. File selection, validation, Preview, and commit remain separate states, and Studio never owns uncommitted Pack bytes.
+
+The connected Designer and manual path converge on the same typed local Draft. The external path converges only after its untrusted Pack passes local intake. Import remains acquisition, not creation. Entity breadcrumbs identify the actual Course, revision, lesson, or intake operation; ancestors are links and the final crumb is plain current-page text.
+
+### Review
+
+**Approved Core Alpha target**
+
+Review exposes exactly **Due**, **Mistakes**, **Cards**, and **Interviews**. Desktop uses a semantic tab list; compact layouts use one labeled select. The selected destination is encoded in `?view=` except canonical Due, so Back, Forward, and reload preserve intent. Due work explains schedule and source provenance, but no Start action is rendered until a typed server-verified due-review executor exists. Empty review is positive but neutral, and repeated mistakes use text and icon in addition to color.
+
+### Skills
+
+**Approved Core Alpha target**
+
+Skills is an evidence-backed topic index. Topic groups use open surfaces with a prominent topic name, evidence count/date context, review-due text, and separate dimension rows. Each dimension has exact numeric value and a continuous progress track. There is no invented single overall score, and unvalidated interview observations never become mastery.
+
+### Learning Session and ActivityFrame
+
+**Approved Core Alpha target**
+
+The utility-header breadcrumb resolves `Courses › {Course} › {Lesson}` for the target lesson route and the compatibility `/session?id=` route. Courses remains the active primary destination; the shell never reports Home merely because the compatibility URL is top-level. While entity labels load, the breadcrumb shows an honest loading label rather than falling back to Home. The session header is sticky only when it materially preserves orientation below the App Shell. It adds phase/activity position, remaining estimate, Plan, and Continue later without repeating the shell breadcrumb or page title; one continuous progress track closes the header.
+
+Ready, transition, and in-progress activity content uses a 52–56rem focus region on desktop, centered within the page but not trapped in a small card surrounded by empty space. On mobile it becomes one edge-safe column. The ready state visually connects lesson context, activity purpose, and the single Start action.
+
+`ActivityFrame` uses five distinguishable layers:
+
+1. context and readiness;
+2. prompt or authored learning content;
+3. learner input;
+4. runtime/output and evidence;
+5. help and actions.
+
+These layers use surface contrast and spacing before borders. Learner input remains before protected feedback or strong hints. Evidence and model commentary are labeled separately. Code blocks and output wells use Geist Mono, recessed surfaces, horizontal containment, and readable line height. Correction/resume preserves input and exact state. Activity type color is a supporting trace, not the main container fill.
+
+### Adaptive Studio
+
+**Approved Core Alpha target**
+
+Studio is 70% editorial workspace and 30% developer instrument. Existing forms, finite graph, proposal state machine, validation, Preview, change review, and publish contracts remain.
+
+- Course creation remains outside Studio. The entry surface offers two unselected assisted choices—external-model instructions and the connected Course Designer—plus a complete manual fallback.
+- External download creates no Draft. Guided/manual confirmation creates the explicit Draft before Studio opens; provider transmission and proposal Apply remain separate. Manual authoring is complete with AI Off.
+
+- Current Course and personal adaptation use separate lineage surfaces.
+- Complex forms group related fields in standard surfaces with lower-emphasis borders and clear section titles.
+- Outline rows use spacing, indentation, and restrained separators.
+- Proposal review uses before/after and provenance in a recessed diff field.
+- Apply mutates only the selected Draft. Validate, digest-bound learner Preview, Changes, and Publish are separate later gates; Publish remains an independent consequential action.
+- Apply, Validate, Preview, Changes, and Publish never share the same visual emphasis or wording.
+- Mobile supports bounded review and field edits; wide diff/graph operations may identify desktop-only limitations without losing state.
+
+### Settings and Connections
+
+**Approved Core Alpha target**
+
+Settings groups Interface, Core/local paths, AI roles, Connections, and diagnostics as calm sections. Local paths and IDs use mono and wrap safely. Theme and locale controls expose their exact current values.
+
+Connection rows show display name, provider kind, locality, model observation count, and readable health state. Credential secrets are never rendered. Errors identify authentication, model, capability, provider, or disclosure layer and show only safe recovery actions. Add connection is primary within Connections, not for the whole Settings page. AI role assignment remains server-owned and visibly separate from connection authentication.
+
+### Chat and conversational input
+
+**Approved Core Alpha target**
+
+Agent chat and interview dialogue use the same conversational grammar while retaining their different authority and state contracts. A transcript is an open reading surface with restrained role attribution, a readable 64–72ch message measure, explicit streaming/error states, and a scroll-to-latest control that does not cover content.
+
+The composer follows the current shadcn Input Group and AI Prompt Input composition principles without importing unsupported product behavior: one tactile 18px surface contains a multiline textarea body and a block-end footer. The footer shows only real Aptiloop context such as role/provider/model or interview state on the left and one real Send, Stop, or Retry action on the right. Enter submits, Shift+Enter inserts a line break, and the action retains an accessible name and mobile touch target.
+
+Attachments, screenshots, web search, speech input, microphone controls, and browser-side model switching are omitted until a separately approved contract exists. No inert icon may suggest unavailable authority. AI Off and provider-unavailable states remain calm, explicit, and recoverable through the existing Settings path. Disclosure approval remains a separate explicit dialog before any named payload leaves the local application.
+
+## Responsive contract
+
+**Approved Core Alpha target**
+
+- Desktop reference: 1440×900; persistent rail; two-column focus regions only where reading order remains obvious.
+- Mobile reference: 390×844; single content column; bottom navigation; actions wrap or become full-width without reordering consequence.
+- Minimum width: 320 CSS px; no horizontal page overflow.
+- Technical values may wrap or use a contained horizontal scroller; the page itself must not scroll horizontally.
+- 200% zoom, long Russian labels, browser text enlargement, safe-area insets, and virtual keyboard obstruction are design inputs.
+
+## Accessibility contract
+
+**Approved Core Alpha target**
+
+- Semantic landmarks, one page-level heading, nested section headings, labels, descriptions, and live regions remain correct.
+- All workflows are keyboard-operable; focus order follows the visual and reading order.
+- Focus is always visible and never clipped by overflow containers.
+- Touch targets are at least 44×44px on mobile.
+- State is never encoded by color alone.
+- Dialogs/sheets have titles, initial focus, Escape behavior, and focus return.
+- Progress has an accessible name plus current/max values.
+- Reduced motion, light/dark/system, and high-contrast/forced-color behavior retain information.
+- `en-US` and `ru-RU` accessibility names and labels have functional parity.
+
+## Verification requirements
+
+**Approved Core Alpha target**
+
+Automated component, integration, and E2E checks cover selected semantics, state contracts, localization, and reduced-motion behavior. Focused browser checks separately cover the exercised shell, navigation, breadcrumbs, route separation, themes, and responsive viewports. Neither evidence set verifies every 320px reflow path or constitutes complete visual or WCAG 2.2 AA certification. Acceptance still requires systematic 320px reflow, 200% zoom, forced-colors, assistive-technology, keyboard, contrast, and error-state sampling as defined in [`docs/design/accessibility.md`](docs/design/accessibility.md).
+
+Repository quality gates remain separate proof from visual evidence. Design completion does not imply legal, licensing, content, trademark, distribution, or release acceptance.
+
+## Implemented design evidence boundary
+
+**Implemented baseline**
+
+The current repository implements the Clear Slate token foundation, localized shell, closed ActivityFrame registry, Course creation/intake route separation, Review destinations, Studio gates, and responsive navigation described above. Individual component and browser checks prove only the exercised paths and states; target conformance and release acceptance remain separate gates.

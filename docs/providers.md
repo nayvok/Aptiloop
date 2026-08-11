@@ -1,6 +1,6 @@
 # AI providers
 
-**Document status:** Accepted evidenced **Implemented baseline** for the Core Alpha M6 Provider Hub and settings workflow.
+**Document status:** **Implemented baseline** — the Core Alpha M6 Provider Hub and Settings connection workflow are evidenced in the current repository.
 
 ## Operating policy
 
@@ -58,7 +58,7 @@ Use Ollama or LM Studio for loopback endpoints. Do not expose a local model serv
 
 API keys and subscription tokens are stored in the app-owned local `.data/provider-credentials.json` credential file, scoped by connection ID, written atomically, and requested with owner-only POSIX file permissions where the platform supports them. They are never stored in SQLite, returned by settings APIs, included in Course Packs, prompts, role profiles, logs, model output, or browser-readable payloads. Replacing or signing out a credential is an explicit settings mutation.
 
-External provider turns remain blocked until the UI shows the exact destination and data categories and the user approves that one disclosure. The Provider Hub persists only bounded final content when product behavior requires it plus secret-free terminal provenance. General provider tool arguments/results and raw provider events are not persistence or browser contracts.
+External provider turns remain blocked until the UI shows the exact destination and data categories and the user approves the operation-scoped disclosure that is consumed once. The Provider Hub persists only bounded final content when product behavior requires it plus secret-free terminal provenance. General provider tool arguments/results and raw provider events are not persistence or browser contracts.
 
 ## Failure and recovery
 
@@ -73,4 +73,4 @@ External provider turns remain blocked until the UI shows the exact destination 
 
 The Codex app-server and old OpenCode sidecar adapters remain historical migration boundaries and are blocked from learning roles. `npm start` launches Aptiloop only. Installed CLIs, sidecar health, or ambient credentials do not authorize a learning turn. The active OpenCode Zen connection uses the constrained pinned Pi adapter, not the legacy sidecar.
 
-For the authenticated disposable OpenCode smoke contract, see the root README and run `npm run smoke:provider:opencode` with `OPENCODE_API_KEY` configured outside the repository.
+Current provider evidence ownership is defined by the [Provider Hub architecture](architecture/provider-hub.md) and recorded by dated audits. The [2026-08-12 hardening audit](audits/2026-08-12-ui-ux-runtime-hardening.md) distinguishes the historical 2026-08-10 authenticated OpenCode Zen smoke from the absence of a fresh smoke for implementation `b542b32`.

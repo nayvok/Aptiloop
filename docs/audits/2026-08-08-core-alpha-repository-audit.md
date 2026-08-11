@@ -5,6 +5,8 @@
 **Status:** Approved Core Alpha target; M0 owner decision recorded 2026-08-08
 **Scope:** M0 audit/specification evidence and approval package only; target behavior is not claimed as implemented
 
+**Implemented baseline** — historical snapshot boundary: every “current” claim in this audit means observed on 2026-08-08. It does not describe the repository after M1–M12 implementation. Current status, package identity, runtime evidence, and release blockers are recorded in the root `README.md`, `PRODUCT.md`, and `ROADMAP.md`; this audit remains unchanged evidence for the M0 decision context.
+
 Status language in this audit is normative:
 
 - **Implemented baseline** — directly observed in the current repository or in the recorded 2026-08-08 verification run.

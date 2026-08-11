@@ -1,6 +1,8 @@
 # Troubleshooting
 
-## npm использует не тот workspace/runtime
+**Document status:** **Implemented baseline** for current local-process and loopback Compose behavior.
+
+## Wrong Node, npm, or workspace
 
 ```powershell
 node --version
@@ -9,120 +11,119 @@ npm config get prefix
 git status --short
 ```
 
-Нужны Node 24+ и npm 11+. Запускайте команды из корня с общим `package-lock.json`; не используйте pnpm/yarn, `workspace:*` и `--legacy-peer-deps`.
+Use Node 24+, npm 11+, the repository root, and the single root lockfile. Do not use pnpm, Yarn, `workspace:*`, `--legacy-peer-deps`, or a package-local install.
 
-## SQLite открывается не из корня проекта
+## Database inventory requires an explicit input
 
-Canonical writable target is `<repo>/.data/dev-learning-harness.sqlite`. Runtime and writable database CLIs resolve from the repository root and reject `DATABASE_PROJECT_ROOT`, alternate candidates, `:memory:`, and arbitrary absolute paths before opening them.
+`db:inventory` rejects a command with no `--root` or `--db`.
 
 ```powershell
-$env:DATABASE_URL = ".data/dev-learning-harness.sqlite"
 npm run db:inventory -- --root .data --root data --root packages/database/.data
 npm run db:inventory -- --db .data/dev-learning-harness.sqlite
-npm run db:backup -- --source .data/dev-learning-harness.sqlite --destination .data/approved-backups/pre-migration-2026-08-08T120000Z.sqlite
-npm run db:migrate
-npm run db:seed
 ```
 
-If a prototype created another database under a package/data directory, do not move, merge, migrate, back up as approved, or delete it. M1 designates only `.data/dev-learning-harness.sqlite` active and enforces that target in runtime and writable CLIs; five alternate families and all eleven old backups remain quarantined unchanged until M2 reconciliation.
+The only process-mode writable source is `.data/dev-learning-harness.sqlite`. Do not move, merge, migrate, approve, restore, or delete an alternate candidate based on path, timestamp, or apparent similarity.
 
-## Backup не создаётся
+## Existing database reports predecessor/no migration
 
-`db:backup` requires one explicit active `--source` and one new `.sqlite` `--destination` directly under `.data/approved-backups/`. It fails on `:memory:`, a non-active source, an existing destination, unstable source hashes, health/migration errors, or logical raw/tool/review payload rows. Do not bypass it by copying an active main/WAL file manually.
-
-## Старая DB не открывает current session
-
-Early prototype schemas may need compatibility repair. First inventory all candidates without mutation. Repair only the owner-approved active file and only after a new approved backup:
+A bare `npm run db:migrate` does not authorize a valuable predecessor upgrade. It bootstraps fresh data, verifies current data, or leaves an admitted predecessor unchanged. Follow [Current Database Operations](migration/current-database-operations.md) and use the exact approved backup path/hash:
 
 ```powershell
-npm run db:inventory -- --db .data/dev-learning-harness.sqlite
-npm run db:backup -- --source .data/dev-learning-harness.sqlite --destination .data/approved-backups/pre-repair-2026-08-08T120000Z.sqlite
-npm run db:migrate
-npm run db:seed
+npm run db:migrate -- --authorize-current --approved-backup <path-under-.data/approved-backups> --backup-sha256 <64-lowercase-hex>
 ```
 
-Migration can rewrite schema/snapshot bytes. It retains legacy session history, but after commit the rollback is whole-file restore from the new approved backup—not a quarantined historical copy.
+Do not use the historical `--authorize-m2` spelling in current operations.
 
-## Порты заняты
+## Approved backup fails
 
-Обычный dev: `3000/8787`; E2E: `3100/8887`; OpenCode: `4096`.
+The backup command requires exactly one active `--source` and one new `.sqlite` `--destination` directly under `.data/approved-backups/`. It rejects existing destinations, alternate sources, unstable files, health/ledger failures, or incomplete private-payload inspection.
+
+The command prints the verified path, not its hash:
 
 ```powershell
-Get-NetTCPConnection -LocalPort 3000,8787,3100,8887,4096 -ErrorAction SilentlyContinue |
+$backupHash = (Get-FileHash -LiteralPath <approved-backup-path> -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+If authorized migration reports a wrong or changed hash, do not recalculate and continue blindly. Stop writers, inventory source and backup again, and create a new approved backup if the maintenance cutoff changed.
+
+## Compose database has a predecessor ledger
+
+The process-mode approved-backup/migration capability does not authorize Compose `/data/dev-learning-harness.sqlite`. Keep both services stopped and use the paired cold-volume procedure in [Self-Hosting Aptiloop](../SELF_HOSTING.md#loopback-compose-backup-and-restore). Do not copy the volume database into the process-mode active path to bypass admission.
+
+## Ports or E2E locks are busy
+
+Normal development uses `3000/8787`; E2E uses `3100/8887`.
+
+```powershell
+Get-NetTCPConnection -LocalPort 3000,8787,3100,8887 -ErrorAction SilentlyContinue |
   Select-Object LocalPort,State,OwningProcess
 ```
 
-Завершайте только проверенный PID. Не убивайте все Node-процессы. Для dev согласованно меняйте `PORT`, `WEB_ORIGIN` и `ORCHESTRATOR_URL`; не используйте `0.0.0.0`.
-
-## E2E не стартует или видит Next lock
+Stop only a verified owner process. Do not kill every Node process or delete a lock while its owner is alive. Install the browser once if needed, then run:
 
 ```powershell
 npx playwright install chromium
 npm run test:e2e
 ```
 
-Free `3100/8887`; deleting a lock does not replace stopping its owner. E2E uses one `.data/e2e-runs/<run-id>/` root for a file-backed disposable database, attempts, Next output, and logs, with `reuseExistingServer: false` and `retries: 0`. On failure inspect `.verify/e2e-failures/<run-id>/playwright-results` and service logs; CI uploads the same directory. Do not enable retries to mask a flake.
+On failure, inspect `.verify/e2e-failures/<run-id>/`. E2E is intentionally serialized and has no retries.
 
-## Занятие не продолжилось после reload
+## A lesson does not resume after reload
 
-Проверьте, что оба приложения смотрят на одну DB и путь возвращает active published revision:
+Confirm both services use the same database and readiness succeeds:
 
 ```powershell
 Invoke-WebRequest http://127.0.0.1:8787/health/ready
 ```
 
-API routes требуют локальный client header, а mutations также Origin/JSON. Проще проверить через UI. Не создавайте вручную second active session; `GET /api/learning/sessions/current` должен вернуть сохранённый snapshot/progress.
+Resume is Course-scoped and reads the persisted immutable session snapshot and accepted facts. Do not create or retarget sessions manually. A missing/current-Course mismatch, unpublished revision, invalid context, or quarantined relationship fails closed.
 
-## Review пишет «нужен актуальный passed test»
+## Course Pack Preview disappeared
 
-После любой правки файлов нужно снова нажать «Запустить тесты». Review отклоняется, если diff пуст, latest test failed или filesystem `mtime` новее test completion. Если tool сохранил старый timestamp, текущая mtime-проверка может быть недостаточна; это известное ограничение, диагностируйте diff и запускайте новый test.
+Course Pack validation is held in a bounded, expiring, process-local staging registry. Reload and Back/Forward can restore `/courses/intake/<validationId>` only while the same orchestrator process still holds that unexpired validation. Expiry, LRU eviction, or orchestrator restart requires selecting the file again. A recovery GET never commits; Commit is a one-shot atomic POST.
 
-Reviewer никогда не применяет патч. После `changes_requested` исправьте код в Zed, затем создайте новый test/review cycle.
+Expired staging is removed proactively. After bounded retries, a final `EPERM`/`EBUSY` cleanup error is suppressed, and a process crash cannot run timers; there is no startup orphan-directory sweep. These are local cleanup limitations, not permission to reuse an unknown staging directory.
 
-## Zed не открывается
+## Review requires a fresh passing check
+
+Run the check again after every workspace change. Review requires all of the following:
+
+- a passing trusted check bound to the exact attempt/revision/check contract;
+- a canonical complete-workspace SHA-256 covering allowed regular files, including Git-ignored files except explicit app-owned exclusions;
+- a complete, non-truncated Git diff and its SHA-256;
+- unchanged workspace snapshots before and after the evidence-only Reviewer turn.
+
+Filesystem timestamps are not freshness authority. Reviewer never applies a patch. After `changes_requested`, edit the attempt, run a fresh check, and request a new review.
+
+## AI is Off, unavailable, or the model is missing
+
+Open **Settings → AI connections**. A role is ready only when its connection is enabled, connected, authenticated, the exact configured model is observed as available, and required capabilities are present. Failure never selects another provider, model, or Mock.
+
+For a metadata-less legacy connection, use **Add managed connection** instead of trying to edit read-only diagnostics. API keys are submitted only by the explicit loopback mutation and stored connection-scoped in `.data/provider-credentials.json`; they are not returned to the browser or stored in SQLite.
+
+Catalog presence and health metadata do not prove a model request. Use the displayed recovery action and record an external-provider smoke only after an observed authenticated request.
+
+## Course Designer or Interview disclosure did not resume
+
+Pending disclosure recovery is exact and server-owned. Course Designer binds Course, revision, workflow, and authoring operation. Interview binds learning session, interview, question, and operation. Unknown, expired, terminal, consumed, cancelled, ambiguous, or cross-scope disclosures fail closed.
+
+Reload the exact URL. If the server reports no recoverable operation, retry from the preserved Draft/interview state. Do not reconstruct or store the outbound provider payload in browser storage. Approval or cancellation remains separate from applying a Course proposal, publishing, or accepting an Interview answer.
+
+## Zed does not open
 
 ```powershell
 Get-Command zed -ErrorAction SilentlyContinue
 ```
 
-`ZED_EXECUTABLE` — один executable/path без аргументов shell. UI показывает проверенный attempt path для ручного открытия. В Docker desktop Zed из Linux container не запускается.
+`ZED_EXECUTABLE` is one executable/path, not a shell string. The UI offers the server-verified attempt path as a local copy-path fallback. A host desktop editor is not automatically available inside Compose.
 
-## Codex unavailable/misconfigured
+## Interview report does not score correctness
 
-```powershell
-Get-Command codex
-codex --version
-codex login status
-```
+This is expected. Interview completion and answer form are non-technical evidence. The report does not assert technical correctness or change mastery without a separately approved typed evaluator.
 
-M1 readiness endpoints intentionally report Codex as policy-blocked without invoking it. The commands above are manual adapter diagnostics only; they are not learning-provider or model-response evidence, and an external-provider smoke is not permitted until its later approval gate.
+## A trusted check process is stuck
 
-## OpenCode unavailable
-
-```powershell
-Get-Command opencode
-opencode --version
-Invoke-WebRequest http://127.0.0.1:4096/global/health
-```
-
-Validate `OPENCODE_ENDPOINT`, username/password, and CLI/SDK compatibility manually. The endpoint must be HTTP loopback without path/credentials/query. `npm start` and Compose do not launch a sidecar, and M1 readiness/learning routes do not activate OpenCode. `host.docker.internal` is not accepted as loopback.
-
-## Запуск OpenCode sidecar
-
-```text
-Запуск OpenCode sidecar для локального провайдера:
-OPENCODE_SERVER_PASSWORD=<пароль> opencode serve --hostname 127.0.0.1 --port 4096
-Проверка: GET http://127.0.0.1:4096/health → 200.
-Пароль передаётся только через environment и не логируется.
-```
-
-## Interview report не оценивает correctness
-
-Это ожидаемое ограничение MVP: отчёт хранит completion/length/structure evidence. Он не сравнивает ответы с rubric/reference и не меняет mastery. Для технической оценки используйте Teacher/Reviewer или ручную проверку; не интерпретируйте completion rate как correctness score.
-
-## Тестовый процесс завис
-
-Runner имеет timeout/output cap и завершает process tree. На Windows сначала найдите адресный процесс:
+The runner enforces timeout, output limits, cancellation, and process-tree cleanup. On Windows, identify the exact process before terminating it:
 
 ```powershell
 Get-CimInstance Win32_Process |
@@ -130,4 +131,4 @@ Get-CimInstance Win32_Process |
   Select-Object ProcessId,CommandLine
 ```
 
-Не завершайте все `node.exe` без проверки command line.
+Do not terminate every `node.exe` process.

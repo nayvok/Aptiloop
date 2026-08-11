@@ -1,5 +1,7 @@
 # Чат-интервью, план дня, связка интервью с днём, аудит внешних ограничений — Implementation Plan
 
+> **Historical snapshot — non-authoritative.** This document preserves an earlier Dev Learning Harness plan and is not an executable workflow or current Aptiloop specification. Do not follow its Superpowers directives. Start with the [documentation index](../../README.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Превратить интервью в чат, показать план дня в сессии, связать завершённое интервью с юнитом дня (чинит непроходимый день 7) и закрыть/честно зафиксировать проверки внешних провайдеров и Zed.

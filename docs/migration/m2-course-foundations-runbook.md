@@ -1,6 +1,8 @@
 # M2 Course Foundations Migration and Recovery Runbook
 
-**Document status:** The active migration record below is an **Implemented baseline** observed locally on 2026-08-09. The procedure is the required boundary for any future M2 migration/replay. Destructive legacy removal is not authorized.
+> **Historical migration record — non-authoritative for current operations.** This file preserves the M2 **Implemented baseline** observed on 2026-08-09, including cutoff-specific hashes and the former `--authorize-m2` spelling. Do not execute it as the current upgrade procedure. Use [Current Database Operations](current-database-operations.md), which requires `--authorize-current`, an exact approved backup path, and its whole-file SHA-256.
+
+**Document status:** **Implemented baseline** at the recorded 2026-08-09 cutoff. Destructive legacy removal was not authorized by this record.
 
 ## Scope and safety properties
 

@@ -2,7 +2,7 @@
 
 ## Document status
 
-This is the product-level contract for the Core Alpha audit. It distinguishes the runnable Dev Learning Harness from the Aptiloop target and does not assert that migration has happened.
+This is the current product-level contract for Core Alpha. It distinguishes **Implemented baseline** behavior from approved target and release gates; implementation evidence never implies legal or distribution acceptance.
 
 - **Implemented baseline** — observed current behavior.
 - **Approved Core Alpha target** — binding target for later implementation.
@@ -99,7 +99,7 @@ See [Course authoring](docs/product/course-authoring.md).
 
 **Approved Core Alpha target**
 
-The interface supports `en-US` and `ru-RU`. UI locale is independent from a Course's one required primary locale. Optional Course translations are explicit resources; they do not change identifiers, graph semantics, evidence types, code, or trusted check IDs. Current Russian documentation and hardcoded UI are migration findings, not proof of locale compliance.
+The interface supports `en-US` and `ru-RU`. UI locale is independent from a Course's one required primary locale. Optional Course translations are explicit resources; they do not change identifiers, graph semantics, evidence types, code, or trusted check IDs. Retained Russian development Course content and historical documents are not application-string fallbacks or production Course localization evidence.
 
 See [Language policy](docs/product/language-policy.md) and [Terminology](docs/product/terminology.md).
 
@@ -132,15 +132,23 @@ See [Language policy](docs/product/language-policy.md) and [Terminology](docs/pr
 
 ## Implemented baseline
 
-The runnable repository remains Dev Learning Harness. M1–M11 are an **Implemented baseline** around the established vertical slice: strict Course/revision/Activity/source/capsule/adaptation/session/evidence contracts; immutable Course Pack V1 validation, Preview, transactional install/open-as-draft, canonical export and preserved-history uninstall; append-only replay-complete Learning Kernel facts and deterministic projections; finite app-owned trusted local Execution Fabric; the constrained Provider Hub and exact disclosure boundary; localized Calm Workshop navigation; the closed Activity Frame registry; manual/personal Adaptive Studio authoring; the persisted optional Course Designer; and explicit per-Course learner selection, active revision, and current-session ownership.
+The runnable repository now carries the Aptiloop package and product identity. M1–M11 are an **Implemented baseline** around the established vertical slice: strict Course/revision/Activity/source/capsule/adaptation/session/evidence contracts; immutable Course Pack V1 validation, Preview, transactional install/open-as-draft, canonical export and preserved-history uninstall; append-only replay-complete Learning Kernel facts and deterministic projections; finite app-owned trusted local Execution Fabric; the constrained Provider Hub and typed role policies; complete `en-US`/`ru-RU` application catalogs; the closed Activity Frame registry; Adaptive Studio; and Course/session cutover with retained compatibility data.
 
 M10 resolves the `course-designer` RoleProfile through Provider Hub, projects only the selected Draft plus explicitly approved source records, exposes only the finite app-owned Course Designer tools, validates one typed stable-ID proposal, and records provider/model/prompt/source attribution and deterministic validation diagnostics. Proposal revision, rejection, confirmation, Apply, and failed-state recovery are explicit persisted operations; only the separate Preview/Change review/manual Publish gate can transition to `PUBLISHED`. M11 removes the global learner pointer from target reads and writes, permits one active session per Course, preserves exact Course/revision context for side effects, freezes v1 mutations, retires the hardcoded dashboard, and retains historical data and compatibility storage without destructive rewriting. This baseline is not the complete Core Alpha product: production Source Snapshot/Capsule content, production Course approval, legal approval, and release evidence remain later gates.
 
-The M12 **Implemented baseline** is a local technical preflight only: clean install, fast verification, 4/4 E2E, loopback local-process/Compose launches, non-overwriting backup/restore/rollback, trusted Node/Python checks, SBOM/dependency policy, distribution-content inspection, and responsive browser QA passed on 2026-08-10. Core Alpha is not approved or published. Hosted CI, authenticated real-provider smoke, professional legal review, approved license/notices/content/trademark artifacts, distribution authorization, and owner sign-off remain blocking.
+The current web experience implements the Calm Workshop shell with five primary destinations, a stable desktop rail and mobile bottom navigation, entity-aware breadcrumbs, responsive light/dark layouts, URL-restored route state where specified, visible focus, semantic structure, and reduced-motion handling. This is implementation evidence, not complete WCAG 2.2 conformance or release acceptance.
+
+The dated 2026-08-12 UI/UX/runtime hardening is an **Implemented baseline**. Pending-disclosure recovery for Course Designer and Interview has integration and component-remount evidence only. Course Designer recovery-preview freshness remains narrower than Interview recovery and is documented in the Provider Hub boundary. No fresh authenticated supported-provider smoke has been observed for commit `b542b32`; that release gate remains open.
+
+Due-review scheduling, due reasons, and evidence provenance are implemented. No typed server-verified executor currently completes or reschedules a due Review Item: `nextActionHref` remains `null`, and the UI intentionally exposes no fabricated `/session` shortcut. The spaced-Review execution gate therefore remains open.
+
+The M12 technical preflight recorded on 2026-08-10 is dated historical **Implemented baseline** evidence for the tree reviewed at that time, not evidence for later changes or release acceptance. That run covered clean install, fast verification, 4/4 E2E, loopback local-process/Compose launches, non-overwriting backup/restore/rollback, trusted Node/Python checks, SBOM/dependency policy, distribution-content inspection, responsive browser QA, hosted CI, and an authenticated OpenCode Zen smoke without fallback. Core Alpha is not approved or published. Professional legal review, approved license/notices/content/trademark artifacts, distribution authorization, owner sign-off, and the open spaced-Review executor gate remain release-blocking.
 
 ## Approval gates
 
-Core Alpha cannot be called approved or implemented until all applicable gates are closed with evidence:
+**Approved Core Alpha target**
+
+The Core Alpha release cannot be called accepted or published until all applicable gates are closed with evidence:
 
 1. product terms, scope, journeys, and language policy;
 2. domain and persistence contracts, additive migration, rollback, and representative-data rehearsal;
@@ -155,4 +163,6 @@ Core Alpha cannot be called approved or implemented until all applicable gates a
 11. project/content/third-party licensing and legal review;
 12. passing fast verification, E2E, migration rehearsal, and required runtime smokes.
 
-**Approved Core Alpha target:** use the Calm Workshop visual direction while retaining Geist Sans/Mono and the current semantic OKLCH foundation. The engineering licensing direction is approved, but license application and public distribution remain deferred pending professional legal review; no license is granted by this document.
+**Approved Core Alpha target**
+
+Use the Calm Workshop visual direction while retaining Geist Sans/Mono and the current semantic OKLCH foundation. The engineering licensing direction is approved, but license application and public distribution remain deferred pending professional legal review; no license is granted by this document.

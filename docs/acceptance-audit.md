@@ -1,5 +1,7 @@
 # Acceptance-аудит versioned MVP
 
+> **Historical snapshot — non-authoritative.** This file records dated **Implemented baseline** evidence and is preserved for context only. It is not current acceptance or release evidence. See the [current documentation index](README.md).
+
 Дата среза: 2026-08-02. Этот документ отделяет реализованное поведение от обязательной финальной проверки окружения. Наличие UI или unit test не считается доказательством external provider smoke.
 
 ## Вертикальный срез Дня 1

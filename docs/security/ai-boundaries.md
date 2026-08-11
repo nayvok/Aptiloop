@@ -1,6 +1,6 @@
 # AI Runtime and Tool Boundaries
 
-**Document status:** Approved Core Alpha target with an evidenced **Implemented baseline** through M10. M6 supplies constrained Pi adapters, Provider Hub resolution, active role caller cutover, finite Aptiloop role/tool policies, strict tool input/output validation, exact disclosure, cumulative budgets, adversarial coverage, and minimized provider provenance. M10 adds the persisted Course Designer workflow, approved-source projection, strict typed proposal/diff validation, immutable attribution, and separate application/manual-publication gates.
+**Document status:** **Approved Core Alpha target** with an evidenced **Implemented baseline** through M10. M6 supplies constrained Pi adapters, Provider Hub resolution, active role caller cutover, finite Aptiloop role/tool policies, strict tool input/output validation, payload-hash-scoped disclosure, cumulative budgets, adversarial coverage, and minimized provider provenance. M10 adds the persisted Course Designer workflow, approved-source projection, strict typed proposal/diff validation, immutable attribution, and separate application/manual-publication gates.
 
 ## 1. Ownership boundary
 
@@ -58,8 +58,8 @@ Private data is sent to a real provider only after a separate explicit user acti
 
 - **Attack path:** learner/private-source prompt injection causes a non-review provider role to call general file/shell/edit/network tools rooted at the project.
 - **Impact:** local mutation, command effects, private-data/credential access, and Learning Kernel compromise.
-- **Existing mitigation:** **Implemented baseline.** M1 blocks Codex/OpenCode/Pi for every legacy learning role and preserves only deterministic Mock. The M6 tool host now admits only the closed Aptiloop tool-name registry per role, validates strict arguments/results, and the Pi adapter rejects any tool name not installed by the app. No `pi-coding-agent` or general read/bash/edit/write tool package is installed. This remains foundational until all role handlers/context scopes and adversarial tests are complete.
-- **Source fix:** complete role-specific handlers, scope re-resolution, byte/event/deadline budgets, and orchestrator cutover without adding provider-native or general tools.
+- **Existing mitigation:** **Implemented baseline.** Active Chat, Interview, evidence-only Review, and Course Designer callers resolve through Provider Hub and the closed Aptiloop tool-name registry. The tool host validates strict arguments/results, re-resolves entity scope server-side, and the Pi adapter rejects any tool not installed by the app. No `pi-coding-agent` or general read/bash/edit/write tool package is installed; legacy Codex/OpenCode authority remains blocked.
+- **Source fix:** complete; every future caller must reuse the same scope, budget, and default-deny boundary.
 - **Test:** matrix every role/provider; malicious prompts request shell/file/network/edit actions; assert no such tool is registered/called and repository/attempt hashes remain unchanged.
 
 ### AI-CTRL-002 — Typed arguments and result validation
@@ -90,7 +90,7 @@ Private data is sent to a real provider only after a separate explicit user acti
 
 - **Attack path:** Reviewer obtains local-read, edit/apply, or general-tool authority, or its response directly changes learner files.
 - **Impact:** private local-file disclosure, unreviewed mutation, and false completion of the correction loop.
-- **Existing mitigation:** **Implemented baseline.** Reviewer receives only the complete immutable evidence capsule after passing freshness gates, resolves through the constrained Hub role, has no local-read/edit/apply/general-tool authority, returns a strictly parsed typed result, and is checked against canonical workspace snapshots before and after. Invalid output cannot persist an authoritative review.
+- **Existing mitigation:** **Implemented baseline.** Reviewer receives only the immutable evidence capsule after a passing check bound to the exact attempt/revision/check, canonical complete-workspace SHA-256, and complete non-truncated diff. It resolves through the constrained Hub role, has no local-read/process/network/edit/apply/general-tool authority, returns a strictly parsed typed result, and requires equal before/after workspace snapshots. Invalid output cannot persist an authoritative review.
 - **Source fix:** complete for the current evidence-only Reviewer; keep all future review inputs capsule-bound and read-only.
 - **Test:** malicious event/output/tool cases fail closed; sentinels outside the capsule are absent; the workspace manifest remains unchanged; only canonical advice/result fields persist.
 
@@ -98,9 +98,9 @@ Private data is sent to a real provider only after a separate explicit user acti
 
 - **Attack path:** full environment, raw tool result, local path, private source, or broad learner history enters provider context or persistence without explicit disclosure.
 - **Impact:** credential/private-data exposure and long-lived copies at provider or in SQLite/backups.
-- **Existing mitigation:** **Implemented baseline.** M1 containment/minimization remains. M6 stores secret-free connection references, immutable hash-scoped disclosure operations/events, and minimized provider-turn provenance without duplicating provider payloads. Chat, interview, and review UI preview the exact external destination/categories/exclusions/byte count and require an immutable one-time approval. Provider capture tests exclude environment and unrelated private-context sentinels.
-- **Source fix:** complete for active M6 callers; each future context builder must add its own explicit allowlist, disclosure category, and sentinel coverage before external enablement.
-- **Test:** environment and unrelated private-state sentinels are absent from provider create/stream inputs; disclosure hashes/scopes are immutable and one-time; raw provider/tool fields remain absent from SSE and persistence.
+- **Existing mitigation:** **Implemented baseline.** M6 stores secret-free connection references, immutable hash-scoped disclosure operations/events, and minimized provider-turn provenance without duplicating provider payloads. Chat, Interview, Review, and Course Designer preview destination/categories/exclusions/byte count and require a single-consumption approval. Dispatch validates status, expiry, role, connection, provider, model, and payload hash. Interview recovery is exact to its persisted domain scope. Course Designer recovery matches revision/workflow and requires an authoring-operation identity, but does not rederive payload hash during recovery GET; stale previews fail closed later at dispatch.
+- **Source fix:** **Approved Core Alpha target.** Compare expected destination and entity IDs during dispatch and rederive the Course Designer payload hash before returning a recovered preview. Every future context builder must add an explicit allowlist, disclosure category, recovery scope, and sentinel coverage before external enablement.
+- **Test:** environment and unrelated private-state sentinels are absent from provider inputs; disclosure hashes/scopes are immutable and consumed once; reload cannot dispatch a stale or terminal disclosure; raw provider/tool fields remain absent from browser persistence, SSE, and database persistence.
 
 ### AI-CTRL-007 — Prompt injection cannot alter authority
 

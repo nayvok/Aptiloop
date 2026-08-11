@@ -1,6 +1,6 @@
 # Aptiloop Security Policy
 
-**Document status:** Approved Core Alpha target. Implemented baseline findings are explicitly identified below; target controls are not claimed as implemented.
+**Document status:** **Approved Core Alpha target** with **Implemented baseline** controls identified below. Target controls are not claimed as implemented.
 
 ## Supported security scope
 
@@ -32,9 +32,9 @@ Do not test against another person's installation, provider account, or data. Ro
 
 No response-time or remediation-time commitment is established by this documentation.
 
-## M1 containment status
+## Historical M1 containment evidence
 
-**Implemented baseline:** Mock is the only permitted learning provider for Teacher, Reviewer, Interviewer, Curator, and Codex Expert, and only in explicit development/test mode; unset, misspelled, or production runtime mode is honest no-AI. Codex/OpenCode remain legacy adapters but are blocked at the orchestrator; browser bodies cannot override provider/model, readiness endpoints do not activate blocked adapters, and failure never substitutes Mock. `npm start` launches no external sidecar. Codex children use a minimal explicit environment, OpenCode tool lifecycle normalization drops provider inputs/outputs, browser events expose only an allowlist under an opaque app turn UUID, and new persistence stores no raw provider/tool/review payload.
+**Implemented baseline** at the M1 cutoff: external learning roles were blocked and deterministic Mock was permitted only in explicit development/test mode. This was containment before Provider Hub caller cutover, not the current provider topology. Legacy Codex/OpenCode adapters remain blocked from learning authority; no failure substitutes Mock.
 
 Direct unauthenticated operation is fail-closed to exact loopback hosts. Only the explicit Compose mode may bind the container service to `0.0.0.0`, with host publication still fixed to `127.0.0.1`. All API responses are `Cache-Control: no-store`; mutation Origin/client/media-type checks remain request-shape controls, not identity.
 
@@ -42,9 +42,11 @@ The active process database and writable database CLIs are fixed to `.data/dev-l
 
 The [M1 private-data inventory](docs/audits/2026-08-08-m1-safety-boundary-inventory.md) observed six database families and eleven backups with zero logical non-empty raw/tool rows. This does not prove byte absence in SQLite free pages, WAL/SHM, snapshots, or external copies. One family is active; five families and all eleven existing backups are preserved and quarantined under the approved 2026-08-08 disposition. No cleanup migration or user-data mutation was performed.
 
-## M2 data and migration status
+## Historical M2 data and migration evidence
 
-**Implemented baseline:** The active M2 migration is an explicit maintenance operation, not startup repair. It accepts only the authoritative active path, an exact admitted predecessor stage, an exact named approved-backup path and SHA-256, matching logical lineage, healthy private-payload inventory, and stable source/backup identities. It rehearses an exact whole-file restore before `BEGIN IMMEDIATE`, re-verifies immediately before writing, applies forward-only migrations, and verifies the exact current `0000`–`0010` contract before commit. Replay with the same approved backup is a verified no-op.
+**Implemented baseline** at the 2026-08-09 M2 cutoff: migration was an explicit, backup-bound maintenance operation rather than startup repair. Current valuable-data operations retain that boundary and use `--authorize-current`, an exact `--approved-backup`, and its `--backup-sha256`; see [Current Database Operations](docs/migration/current-database-operations.md).
+
+The repository's current SQLite migration contract is the exact `0000`–`0018` ledger. Ordinary startup admits that current contract without rewriting history; advancing an admitted predecessor with valuable data requires the explicit backup-bound operation above.
 
 The target schema uses composite Course/revision/lesson/activity ownership, immutable published/archived content, immutable session contexts/snapshots, append-only Evidence and migration records, constrained type registries, and explicit orphan inventory. Browser Course operations carry only entity and operation IDs. Unknown activity/evidence types, cross-scope references, missing context, and unaccounted active sessions fail closed.
 
@@ -54,7 +56,11 @@ Final post-review evidence on 2026-08-09: `npm run verify` passed formatting, 12
 
 ## M6 Provider Hub status
 
-**Implemented baseline:** Active AI roles resolve through the server-owned Provider Hub and constrained pinned Pi adapters. Settings exposes only reviewed connection factories; exact role/model profiles, capability observations, default-deny typed tools, one-time disclosure operations, cumulative turn budgets, cancellation, and secret-free terminal provenance are app-owned. API keys and subscription tokens are scoped to connection IDs in `.data/provider-credentials.json`; settings responses and SQLite hold no credential value. Built-in providers own their endpoints; local compatible endpoints are loopback-only; custom compatible endpoints require an explicit public HTTPS hostname on the default TLS port and a path ending in `/v1`.
+**Implemented baseline:** Active Chat, Interview, evidence-only Review, and Course Designer callers resolve one exact server-owned RoleProfile, connection, and model through Provider Hub and constrained pinned Pi adapters. Readiness requires the connection to be enabled, connected, authenticated, the exact configured model to be observed as available, and all required capabilities to be present. Default-deny typed tools, single-consumption disclosure operations, cumulative turn budgets, cancellation, and secret-free terminal provenance are app-owned. Legacy Codex/OpenCode authority remains blocked and no failure substitutes another connection, model, provider, or Mock.
+
+Settings exposes reviewed connection factories and a recovery path to add a managed connection for metadata-less legacy entries. API keys and subscription tokens enter only the explicit loopback mutation, are stored connection-scoped in `.data/provider-credentials.json`, and are never returned in browser responses or stored in browser persistence, SQLite, prompts, Course Packs, or logs. Replacement and sign-out/revocation are explicit operations. Built-in providers own their endpoints; local compatible endpoints are loopback-only; custom compatible endpoints require an explicit public HTTPS hostname on the default TLS port and a path ending in `/v1`.
+
+Course Designer pending-disclosure lookup matches the Course revision and workflow and requires a stored authoring-operation identity. It does not rederive the current Draft payload during recovery GET; a changed Draft can surface a stale preview, which payload-hash validation then rejects before provider dispatch. The browser stores no outbound provider payload, and approval/cancellation remains separate from proposal Apply and manual Publish.
 
 Only the authenticated OpenCode Zen `deepseek-v4-flash-free` disposable smoke is recorded as observed real-provider evidence. Catalog presence, stored credentials, or health metadata are not evidence that another provider/model completed a request. Every external private-data turn remains disclosure-gated; no failure silently selects another provider, model, or Mock.
 
@@ -62,31 +68,31 @@ Only the authenticated OpenCode Zen `deepseek-v4-flash-free` disposable smoke is
 
 The complete records, including attack path, impact, existing mitigation, source fix, and required test, are in [docs/security/threat-model.md](docs/security/threat-model.md).
 
-| ID                | Rank   | State                        | Summary                                                                                                                                       |
-| ----------------- | ------ | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| SEC-AI-001        | High   | Implemented baseline         | Active AI roles use exact server-owned Provider Hub profiles; legacy Codex/OpenCode learning authority remains blocked.                       |
-| SEC-REVIEW-001    | High   | Implemented baseline         | Reviewer receives only a bounded evidence capsule and has no write, patch, filesystem, process, or network tool.                              |
-| SEC-CRED-001      | High   | Implemented baseline         | Connection-scoped credentials stay in the app-owned local store and never enter SQLite, browser payloads, prompts, packs, or logs.            |
-| SEC-AI-002        | High   | Implemented baseline         | Finite app-owned typed tool policies default-deny provider/general tools and persist no raw tool/provider payload.                            |
-| SEC-NET-001       | High   | Implemented baseline         | The app API is loopback-only; local model endpoints are loopback-only and custom model endpoints require explicit public HTTPS configuration. |
-| SEC-INTEGRITY-001 | High   | Implemented baseline         | Provider output cannot directly mutate deterministic mastery/progression; accepted facts remain app/kernel owned.                             |
-| SEC-PROVIDER-001  | High   | Implemented baseline         | Exact connection/model resolution, capability checks, disclosure, and failure behavior are server-owned with no fallback.                     |
-| SEC-EVIDENCE-001  | High   | Implemented baseline finding | Mock/model review verdicts can satisfy completion and influence mastery evidence.                                                             |
-| SEC-RELATION-001  | High   | Implemented baseline finding | Caller-controlled Teacher/Interview relationships can create false progression or mastery evidence.                                           |
-| SEC-DIFF-001      | High   | Implemented baseline finding | Git-ignored workspace state is absent from test/review freshness fingerprints.                                                                |
-| SEC-MIGRATION-001 | High   | Implemented baseline         | M2 is explicit, backup-bound, byte-preserving, quarantined, transactionally verified, and replay-safe.                                        |
-| SEC-AI-003        | Medium | Implemented baseline         | Provider turns enforce cumulative input/output/event/tool-call/deadline budgets across reused sessions.                                       |
-| SEC-CANCEL-001    | Medium | Implemented baseline         | Cancellation propagates through the common provider runner, evicts the session, and cannot commit success.                                    |
-| SEC-SUPPLY-001    | Medium | Implemented baseline         | Shipped installed-tree High/Critical: zero; one low graph-dev-only esbuild advisory remains.                                                  |
-| SEC-WEB-001       | Low    | Implemented baseline finding | Untrusted Markdown can cause an external browser fetch.                                                                                       |
-| SEC-HTTP-001      | Low    | Implemented baseline finding | Body/rate limits, production client-header rejection, and strict chat/settings schemas are incomplete.                                        |
-| SEC-DATA-001      | Low    | Implemented baseline finding | Private SQLite data/backups are plaintext and lack a complete lifecycle contract.                                                             |
-| SEC-PACK-001      | High   | Approved Core Alpha target   | An untrusted Course Pack must never enter the trusted native-execution path.                                                                  |
-| SEC-EXEC-001      | High   | Future boundary              | Executable activities require real isolation before untrusted content can run.                                                                |
+| ID                | Rank   | State                      | Summary                                                                                                                                                       |
+| ----------------- | ------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SEC-AI-001        | High   | Implemented baseline       | Active AI roles use exact server-owned Provider Hub profiles; legacy Codex/OpenCode learning authority remains blocked.                                       |
+| SEC-REVIEW-001    | High   | Implemented baseline       | Reviewer receives only a bounded evidence capsule and has no write, patch, filesystem, process, or network tool.                                              |
+| SEC-CRED-001      | High   | Implemented baseline       | Connection-scoped credentials enter only the explicit Settings mutation, then remain out of responses, browser persistence, SQLite, prompts, packs, and logs. |
+| SEC-AI-002        | High   | Implemented baseline       | Finite app-owned typed tool policies default-deny provider/general tools and persist no raw tool/provider payload.                                            |
+| SEC-NET-001       | High   | Implemented baseline       | The app API is loopback-only; local model endpoints are loopback-only and custom model endpoints require explicit public HTTPS configuration.                 |
+| SEC-INTEGRITY-001 | High   | Implemented baseline       | Provider output cannot directly mutate deterministic mastery/progression; accepted facts remain app/kernel owned.                                             |
+| SEC-PROVIDER-001  | High   | Implemented baseline       | Exact connection/model resolution, capability checks, disclosure, and failure behavior are server-owned with no fallback.                                     |
+| SEC-EVIDENCE-001  | High   | Implemented baseline       | Reviewer output is non-authoritative advice and cannot independently emit correct mastery evidence; trusted checks remain the authority.                      |
+| SEC-RELATION-001  | High   | Implemented baseline       | Teacher and Interview evidence is server-proven against the exact Course/session/Activity/conversation/interview/report relationships.                        |
+| SEC-DIFF-001      | High   | Implemented baseline       | Freshness binds a canonical complete-workspace SHA-256 and complete non-truncated diff to the exact check/review evidence.                                    |
+| SEC-MIGRATION-001 | High   | Implemented baseline       | M2 is explicit, backup-bound, byte-preserving, quarantined, transactionally verified, and replay-safe.                                                        |
+| SEC-AI-003        | Medium | Implemented baseline       | Provider turns enforce cumulative input/output/event/tool-call/deadline budgets across reused sessions.                                                       |
+| SEC-CANCEL-001    | Medium | Implemented baseline       | Cancellation propagates through the common provider runner, evicts the session, and cannot commit success.                                                    |
+| SEC-SUPPLY-001    | Medium | Implemented baseline       | At the 2026-08-09 audit cutoff, shipped installed-tree High/Critical was zero and one low graph-dev-only esbuild advisory was reported.                       |
+| SEC-WEB-001       | Low    | Approved Core Alpha target | Automatic external-resource behavior in untrusted Markdown remains a privacy hardening gate.                                                                  |
+| SEC-HTTP-001      | Low    | Approved Core Alpha target | Remaining pre-parse body/concurrency limits must be evidenced without treating request-shape controls as authentication.                                      |
+| SEC-DATA-001      | Low    | Approved Core Alpha target | Private SQLite, credential, and backup files are plaintext and need complete retention/export/delete policy before broader deployment.                        |
+| SEC-PACK-001      | High   | Implemented baseline       | Course Pack V1 is strict declarative data and cannot supply executable/process/provider authority.                                                            |
+| SEC-EXEC-001      | High   | Future                     | Executing untrusted content requires a separately reviewed isolated backend.                                                                                  |
 
 ## Positive controls to preserve
 
-**Implemented baseline:** strict mutation schemas; direct loopback bind enforcement; explicit internal-only Compose wildcard mode with loopback host publication; exact Origin/client/JSON checks; API-wide `no-store`; protected-answer redaction; server-owned Provider Hub profiles; connection-scoped local credentials; constrained pinned Pi adapters; default-deny finite typed role tools; evidence-only Reviewer; exact one-time external disclosure; cumulative turn budgets and cancellation; browser event allowlisting and opaque app turn IDs; minimized provider-turn provenance; immutable Course/session/kernel facts; declarative Course Pack validation; and trusted app-owned execution plans.
+**Implemented baseline:** strict mutation schemas; direct loopback bind enforcement; explicit internal-only Compose wildcard mode with loopback host publication; exact Origin/client/JSON checks; API-wide `no-store`; protected-answer redaction; server-owned Provider Hub profiles; connection-scoped local credentials; constrained pinned Pi adapters; default-deny finite typed role tools; evidence-only Reviewer; single-consumption external disclosure bound at dispatch to role, connection, provider, model, payload hash, status, and expiry; cumulative turn budgets and cancellation; server-proven Teacher/Interview relationships; complete-workspace and diff SHA-256 freshness; browser event allowlisting and opaque app turn IDs; minimized provider-turn provenance; immutable Course/session/kernel facts; declarative Course Pack validation; and trusted app-owned execution plans.
 
 These controls reduce specific risks. They do not authenticate a remote client, sandbox native execution, encrypt SQLite or the local credential file, prove deleted bytes absent from WAL/free pages, guarantee any provider's price/retention/availability, or establish authenticated smoke evidence for every catalog entry. The authenticated OpenCode Zen smoke proves only that exact reviewed path. Custom external endpoints remain an advanced user-directed disclosure destination, not a general model network proxy. Mock remains test/CI/development infrastructure and is not production model evidence.
 
@@ -118,7 +124,7 @@ Core Alpha security approval requires all of the following evidence:
 7. no untrusted Course Pack field or imported artifact can reach native process execution;
 8. external-provider smoke evidence is recorded per provider and never represented by Mock success.
 
-Final local M1 evidence on 2026-08-09 reports zero High/Critical findings in the full installed tree, zero production vulnerabilities, and one low graph-dev-only transitive esbuild advisory (`GHSA-g7r4-m6w7-qqqr`), reported without an owner exception. Because the orchestrator image copies the full root `node_modules` tree, policy gates High/Critical findings across that shipped installed tree rather than only production-classified findings. `npm ci`, the refreshed 656-test `npm run verify`, the 30/30 E2E ownership/lock suite, two consecutive 4/4 lock-serialized E2E runs, read-only active-data inventory, approved-backup verification, audit policy, CycloneDX generation, and a 1440×900 loopback Settings smoke passed. The first final E2E run removed the retained authenticated, stale, proven-dead run root while the scavenger remains fail-closed for live, ambiguous, malformed, or unauthenticated state. Independent security and correctness re-reviews closed every reported M1 blocker. The Node 24/npm 11 workflow commits the same audit/SBOM, fast, E2E, and build gates; no hosted GitHub Actions run is claimed. This closes M1 containment, not the later Core Alpha security approval gates above.
+**Historical observation (2026-08-09):** final local M1 evidence reported zero High/Critical findings in the full installed tree, zero production vulnerabilities, and one low graph-dev-only transitive esbuild advisory (`GHSA-g7r4-m6w7-qqqr`). This remains dated **Implemented baseline** evidence, not a claim about the current working tree, hosted CI, or complete Core Alpha security approval.
 
 ## Detailed specifications
 
@@ -129,4 +135,5 @@ Final local M1 evidence on 2026-08-09 reports zero High/Critical findings in the
 - [Secrets and private sources](docs/security/secrets-and-private-sources.md)
 - [M1 safety-boundary and private-data inventory](docs/audits/2026-08-08-m1-safety-boundary-inventory.md)
 - [M2 migration and recovery runbook](docs/migration/m2-course-foundations-runbook.md)
+- [Current database operations](docs/migration/current-database-operations.md)
 - [Core Alpha licensing plan](docs/licensing/core-alpha-licensing-plan.md)

@@ -4,7 +4,7 @@ Status: local single-user processes and loopback Compose are an **Implemented ba
 
 ## Non-negotiable boundary
 
-The current application has no user authentication or authorization. `Origin`, `Content-Type`, and `X-DLH-Client` checks are request-boundary controls, not identity. Therefore the current server must not be published to a LAN, the Internet, a tunnel, or an untrusted reverse proxy.
+The current application has no user authentication or authorization. `Origin`, `Content-Type`, and `X-Aptiloop-Client` checks are request-boundary controls, not identity. Therefore the current server must not be published to a LAN, the Internet, a tunnel, or an untrusted reverse proxy.
 
 The committed `compose.yaml` is **loopback/local only and is not authenticated public self-hosting**. Although the containers listen on `0.0.0.0` internally, the host publishes web and orchestrator only on `127.0.0.1`. Changing those port bindings, forwarding them, or adding a public reverse proxy produces an unsupported and unsafe deployment.
 
@@ -27,10 +27,10 @@ The source defaults are:
 
 - orchestrator direct mode accepts only `127.0.0.1`, `::1`, or `localhost` and defaults to `127.0.0.1:8787`;
 - web defaults to `127.0.0.1:3000` through local development tooling;
-- the only active M1 SQLite candidate is `.data/dev-learning-harness.sqlite`;
-- new approved backups use explicit active-source preflight and `.data/approved-backups`; five alternate families and eleven old backups remain quarantined;
+- the active SQLite path is `.data/dev-learning-harness.sqlite`;
+- new approved backups use explicit active-source preflight and non-overwriting destinations under `.data/approved-backups`; historical candidates/backups remain quarantined unless a separate reconciliation approves them;
 - trusted templates are at `workspaces/exercises`, attempts at `.data/exercise-attempts`, and fixed compatibility/Core Node/Python Environment Pack/check descriptors are app-distributed;
-- Mock is the only learning provider; Codex/OpenCode are blocked legacy adapters and no external sidecar is started.
+- active AI roles resolve one exact reviewed Provider Hub connection/model with explicit disclosure and no fallback; AI Off is first-class, Mock is test/CI/development-only, legacy Codex/OpenCode adapters remain blocked, and no external sidecar is started by `npm start`.
 
 The web browser uses Next.js routes/rewrite to reach the orchestrator. The orchestrator owns SQLite, filesystem/process operations, providers, and deterministic learning transitions.
 
@@ -85,7 +85,7 @@ A supported self-hosted profile cannot be documented as available until it inclu
 - auditable security-sensitive operations without logging secrets/private content unnecessarily;
 - fail-closed startup for unsafe bind/proxy/auth combinations.
 
-The `X-DLH-Client` header and `Origin` remain defense-in-depth and never become authentication.
+The `X-Aptiloop-Client` header and `Origin` remain defense-in-depth and never become authentication.
 
 ### Data and storage
 

@@ -1,5 +1,7 @@
 # Implementation plan v2
 
+> **Historical snapshot — non-authoritative.** This file records an earlier **Implemented baseline** and is preserved for context only. Do not execute it as a current plan. See the [current documentation index](README.md).
+
 Статус: выполняется  
 Baseline: `eeb0e3e`  
 Принцип: tests first, additive migrations, usable Day 1 before breadth.

@@ -1,5 +1,7 @@
 # Dev Learning Harness: product specification v2
 
+> **Historical snapshot — non-authoritative.** This file records an earlier **Implemented baseline** and is preserved for context only. Do not use it as the current product contract. See the [current documentation index](README.md).
+
 Статус: implementation baseline  
 Дата: 2026-07-31  
 Baseline commit: `eeb0e3e`

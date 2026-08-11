@@ -2,12 +2,14 @@
 
 ## Status and intent
 
-This document specifies the Core Alpha Adaptive Studio. It is not evidence that Course Packs, typed Studio controls, AI proposals, validation, preview, or release workflows are implemented.
+This document owns the authoring workspace after an explicit Draft or revision exists. Course creation and Pack intake remain owned by [`information-architecture.md`](information-architecture.md); renderer Preview behavior remains owned by [`activity-renderers.md`](activity-renderers.md).
 
 - **Implemented baseline** — current repository evidence.
 - **Approved Core Alpha target** — required Studio contract.
-- **Approved Core Alpha target — Calm Workshop** — selected direction-specific presentation.
+- **Proposed pending owner approval** — an unresolved recommendation.
 - **Future** — outside Core Alpha.
+
+Calm Workshop — Clear Slate is the approved direction name, not a separate status label.
 
 Adaptive Studio is approximately **70% editorial workspace and 30% developer instrument**. Authors primarily shape a learning experience; stable IDs, schemas, dependencies, environments, validation, hashes, and diffs remain available as contextual instruments. Studio must not become a full IDE, generic CMS card grid, or chat interface.
 
@@ -15,16 +17,9 @@ Adaptive Studio is approximately **70% editorial workspace and 30% developer ins
 
 **Implemented baseline**
 
-The current Curriculum Editor is a useful predecessor:
+The current Studio is revision-scoped and exposes URL-backed **Program**, **Designer**, **Preview**, **Release**, and **History** destinations. It preserves typed Draft editing, immutable published history, clone-to-draft, deterministic validation, learner-safe Preview, change review, explicit Publish, personal adaptation lineage, and a persisted optional Course Designer workflow. The Designer runs against the selected Draft, returns a reviewable proposal, and cannot publish.
 
-- Versioned CRUD, reorder, clone, and publish flows exist in `apps/web/components/curriculum-editor-client.tsx`.
-- Publish requires acknowledgement of immutability at `:1053-1107`.
-- Draft-only editing and published read-only behavior are represented by status checks around `:1062-1065` and graph editing.
-- The current editor exposes many authoring fields as raw JSON (`:993-1041`).
-- Week → Day → Unit panels are nested at `:1365-1468` and `:1497-1559`, creating deep card hierarchy instead of an outline/editor model.
-- There is no current Course Pack intake, export, locale coverage, Source Snapshot/Knowledge Capsule editor, environment contract editor, learner preview gate, complete validation surface, structured proposal model, or independent proposal approval.
-
-These are migration findings. They do not establish Adaptive Studio compliance.
+Current implementation evidence does not turn every target authoring field or mobile operation into a completed capability. Sections below retain **Approved Core Alpha target** where additional authoring breadth or formal acceptance remains required.
 
 ## Studio principles
 
@@ -83,38 +78,44 @@ Secrets, environment variable values, provider credentials, arbitrary filesystem
 
 ## Studio shell and modes
 
+### Entry boundary
+
+**Implemented baseline**
+
+Direction: Calm Workshop — Clear Slate.
+
+Studio never owns the uncommitted creation chooser or Pack bytes. `/courses/new` exposes two unselected assisted starts—**Use an external model** and **Use the connected Course Designer**—plus **Create manually without AI**. External instruction download creates no Draft. Guided/manual confirmation creates exactly one explicit Draft and opens Studio with its revision ID. `/courses/import` and `/courses/intake/{operationId}` alone own file selection, validation, Preview, and install-or-draft confirmation.
+
+Studio requires an exact `version` URL value. Optional `mode` records manual/designer creation context; the separate `tab` parameter selects Program, Designer, Preview, Release, or History. Missing/invalid revision authority returns safely to Courses, while invalid tab state falls back to the mode-appropriate workspace. Studio never substitutes the first, current, or most recently viewed revision.
+
 ### Desktop
 
-**Approved Core Alpha target — Calm Workshop**
+**Implemented baseline**
 
-At widths ≥1280px:
+Direction: Calm Workshop — Clear Slate.
 
-- **264px outline region** — course/lesson/activity tree or finite-graph list, status markers, validation counts, locale gaps, and search.
-- **Fluid editorial region** — structured editor or learner preview; this owns visual priority and at least half the usable width.
-- **320px inspector region** — selected-node details, stable IDs, dependencies, locales, sources, environment/check references, and optional AI proposals.
-- **Local top toolbar** — Course/revision, Draft/Published, preview locale, “Saved locally,” Validate, Preview, and overflow.
-- **Bottom status line** — save status, validation errors/warnings, selected environment, preview breakpoint; not a terminal or console.
-
-At 900–1279px, the inspector becomes a sheet and outline may collapse to a labeled drawer. The editorial region remains primary.
+Desktop uses the shared shell, entity breadcrumb, PageHeader, exact Course/revision context, and one contained horizontal tab track for **Program**, **Designer**, **Preview**, **Release**, and **History**. The selected tab is URL-backed. Program uses structured Week/Day/Activity forms and disclosures; Preview uses the learner-safe hierarchy; Designer, Release, and History remain distinct surfaces rather than nested sidebars. Technical IDs, hashes, diagnostics, and proposal provenance use `surface-soft` wells without turning Studio into an IDE.
 
 ### Mobile
 
-**Approved Core Alpha target**
+**Implemented baseline**
 
-Mobile uses one mode at a time: **Outline / Edit / Preview**. Inspector, locale completion, sources, and AI proposal open as full-height sheets. Selection and unsaved draft survive mode changes.
+Mobile keeps the same five Studio destinations in a contained horizontal tab track. Forms, disclosures, proposal review, Preview, validation, and history stack into one reading column; exact version/tab state and retained draft data survive route changes and reload.
 
-Mobile Core Alpha supports:
+The implemented mobile composition supports:
 
 - opening a Course/revision;
-- inspecting Pack metadata and validation;
+- inspecting revision metadata and validation;
 - editing simple text, enum, boolean, number, list, source, and locale fields;
 - adding/reordering within a small ordered list using accessible Move up/Move down controls;
 - reviewing one activity and its dependencies;
 - learner preview at mobile width;
-- applying/rejecting one validated typed proposal to a draft;
+- reviewing, applying, or rejecting one validated typed proposal to a Draft;
 - cloning a published revision to draft.
 
-Mobile Core Alpha does not support:
+**Approved Core Alpha target**
+
+The following actions require explicit desktop-only enforcement and a state-preserving handoff; that enforcement is not claimed as an implemented baseline:
 
 - freeform graph manipulation;
 - bulk reorder across lessons;
@@ -125,25 +126,27 @@ Mobile Core Alpha does not support:
 - export packaging;
 - immutable publication.
 
-Those actions explain “Available on desktop” and preserve the draft. They are not hidden behind a failing control.
+Those actions must explain “Available on desktop” and preserve the Draft. They must not remain visible as a failing mobile control.
 
 ### Light and dark
 
-**Approved Core Alpha target — Calm Workshop**
+**Implemented baseline**
 
-Light Studio uses cool-tinted background, near-white editorial field, and quiet inspector. Dark Studio uses background/surface/raised luminance with thin borders. Selection combines leading marker, selected background, and text/icon state. Validation colors never replace labels or icons. No neon code palette, glow, glass, simulated terminal, or dense IDE menu bar.
+Direction: Calm Workshop — Clear Slate.
+
+Light Studio uses the near-white cool-neutral foundation, `surface-soft` for quiet technical wells, and restrained evergreen for primary action, progress, success, and focus. Dark Studio uses low-chroma graphite background/surface/raised levels. Selection combines surface, marker, text, and semantics; validation colors never replace labels or icons. No neon code palette, glow, glass, simulated terminal, or dense IDE menu bar.
 
 ## Required screens and flows
 
-### 1. Studio entry and Pack overview
+### 1. Studio entry and revision context
 
 **Approved Core Alpha target**
 
-Entry: Home/Courses → **Create Course** at `/courses/new`, or Courses → existing Course → Adaptive Studio. Creation offers **Create manually** and optional **Describe a learning goal**; the minimal confirmed metadata transaction creates only a local Draft before Studio opens. The Studio header contains Course, revision/version, locale, Draft/Published/Archived, personal/source branch, saved state, Validate, Preview, and release action where applicable.
+Entry: a guided/manual creation confirmation, explicit Course revision action, clone, or completed **Open as local Draft** result opens `/courses/studio` with exact version/mode authority. Studio never substitutes the current or first revision. The shell breadcrumb and Studio header identify Course, revision/version, locale, Draft/Published/Archived state, personal/source branch, and save state. Actions appear only in their owning tabs.
 
 Main overview sections:
 
-1. Pack identity and provenance.
+1. Course/revision identity and provenance.
 2. Draft/source/release lineage.
 3. Locale coverage.
 4. Outline summary and graph validity.
@@ -156,49 +159,21 @@ Published revisions are read-only and offer “Clone to new draft.” A personal
 
 Required states: no draft, draft, published, archived, unsaved local edits, save pending, save failure, validation never run, validation stale, missing locale, missing source, missing environment, and read-only source.
 
-### 2. New, Open, and Import
+### 2. Creation and intake handoff
 
-**Approved Core Alpha target**
+**Implemented baseline**
 
-The entry surface exposes distinct actions:
+Course creation and intake are specified in [`information-architecture.md`](information-architecture.md#create-course) and [`../product/course-authoring.md`](../product/course-authoring.md). Studio receives only an explicit local Draft/revision result. Clone creates a new Draft with parent lineage; install opens immutable Course context; **Open as local Draft** creates the separate personal Draft before Studio opens. No file picker, staged bytes, validation operation, or install confirmation belongs inside Studio.
 
-- **Create Course** — collect minimal identity/primary-locale metadata at `/courses/new`; confirm creates one local Draft and opens Adaptive Studio. Manual creation is the primary no-AI path.
-- **Describe a learning goal** — enter the optional guided Course Designer flow; compilation may create a local Draft only after user confirmation.
-- **Open local Pack** — inspect one local V1 JSON document without installing, copying into the library, or publishing it.
-- **Import Course Pack** — stage one validated V1 JSON document for Preview and an explicit later choice between immutable installation and a separate local Draft.
-- **Clone published revision** — create a new Draft with parent lineage.
+### 3. Guided Course Designer flow
 
-These actions are not aliases. Each confirmation names whether bytes are only read, a Draft is created, or an immutable revision is installed. Cancel before the creation/import commit leaves no Draft or installed revision.
+**Implemented baseline**
 
-Pre-course inspection and staging remain owned by Courses at `/courses/intake/:operationId`. Studio opens only after **Open as local draft** creates a Course/Draft or after an immutable installation enters Course context; it never owns uncommitted external Pack bytes.
+The guided entry is a structured workflow, not generic chat. Guided creation has already created the explicit local Draft before Studio opens. The persisted workflow and its pending external-disclosure operation are scoped to that exact revision and recover after reload. The proposal screen shows goal/outcome/level/constraints, assumptions, sources/capsules, finite sequence and prerequisites, activity/evidence types, runtime/check requirements, estimates, provider/model, and disclosed data.
 
-### 3. Pack intake and non-executing inspection
+`USER_REVIEW` supports structured edits, **Request revision**, **Reject**, and **Confirm compilation**. Compilation produces a proposal; it does not create, mutate, preview, or publish the Draft. A separate **Apply to Draft** validates and applies only selected typed changes. Deterministic **Validate**, digest-bound learner **Preview**, **Changes**, and immutable **Publish** are later independent gates. AI Off keeps the manual Program editor complete, and `FAILED` preserves input and the prior safe state.
 
-**Approved Core Alpha target**
-
-Intake is a staged screen, not an upload spinner:
-
-1. **Choose local source.** Show the selected V1 JSON file name and byte size. Never ask for credentials or accept a directory/archive in Core Alpha.
-2. **Inspect without executing.** Parse only bounded UTF-8 JSON. Do not install, resolve plugins, fetch arbitrary URLs, or run Pack content.
-3. **Safety validation.** Reject commands, scripts, secrets, plugin declarations, duplicate keys, forbidden local/absolute/UNC/device/traversal path values, unsafe links, oversized/deep structures, and incompatible schema.
-4. **Semantic validation.** Validate IDs, lineage, locales, finite graph, prerequisites, completion/evidence contracts, no required AI-only path, sources/capsules, environments, trusted check references, and canonical hash.
-5. **Provenance and requirements review.** Show Course/revision identity, sources/terms claims, locale coverage, environment/check requirements, warnings, and compatibility.
-6. **Learner Preview.** Render the valid Pack before any Draft or immutable revision is committed.
-7. **Choose consequence.** Select **Install immutable revision** or **Open as local draft**; show destination, identity/hash, collision result, and create/replace-none/skip behavior.
-8. **Explicit commit.** User confirms one named local action; persistence is atomic.
-9. **Read back result.** Open the installed revision or Draft with the same validation report and canonical identity.
-
-Import errors include stage, local relative path, stable node ID where available, rule ID, message, and recovery. Invalid content remains quarantined outside the installed Course library. Validation never offers “run anyway.”
-
-### Guided Course Designer flow
-
-**Approved Core Alpha target**
-
-The guided entry is a structured workflow, not a generic chat. It renders the persisted states `DRAFT_REQUEST`, `DISCOVERY`, optional `DIAGNOSTIC`, `CURRICULUM_PROPOSAL`, `USER_REVIEW`, `COMPILATION`, `VALIDATION`, `PUBLISHED`, and recoverable `FAILED` exactly as specified in [`course-authoring.md`](../product/course-authoring.md). The proposal screen shows goal/outcome/level/constraints, assumptions, sources/capsules, finite sequence and prerequisites, activity/evidence types, runtime/check requirements, estimates, provider/model, and data disclosed externally.
-
-`USER_REVIEW` supports structured edits, **Request revision**, **Reject**, and **Confirm compilation**. Compilation creates only a local Draft through the same schema/canonicalizer as the Authoring Kit. Validation findings focus the resulting Draft field. `PUBLISHED` is reachable only through the ordinary separate Preview → Change review → Publish gates. AI Off switches to the complete manual Draft editor without discarding entered metadata. `FAILED` preserves inputs and prior safe state and names whether discovery, provider/auth, diagnostic, compilation, storage, or validation failed.
-
-Required states: initial, saving request, discovery awaiting answer, diagnostic offered/in progress/skipped, proposal loading/ready/revising, confirmation pending, compilation, validation blocked, provider unavailable, browser offline, Core/storage unavailable, cancelled with no Draft, resumable after restart, and failed with retained input.
+Required states: initial, saving request, discovery awaiting answer, diagnostic offered/in progress/skipped, proposal loading/ready/revising, confirmation pending, compilation, validation blocked, provider unavailable, browser offline, Core/storage unavailable, cancellation with the existing Draft unchanged, resumable after restart, and failed with retained input.
 
 ### 4. Course metadata editor
 
@@ -349,7 +324,9 @@ Validation loading, cancelled, Core unavailable, storage error, validator-versio
 
 AI is optional and never the primary editor. Pi runs behind Aptiloop-owned typed tools. Studio never exposes arbitrary filesystem, shell, network, write/edit, coding-agent, or plugin tools.
 
-**Approved Core Alpha target.** The typed-tool boundary is informed by [pinned upstream Pi evidence](../architecture/pi-runtime.md), not Aptiloop implementation evidence: the published `v0.84.1` tag is commit [`53fa77ccd8a279eb87e92294ef3687b03ff80112`](https://github.com/earendil-works/pi/tree/53fa77ccd8a279eb87e92294ef3687b03ff80112); separately inspected post-release commit [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328) contains unreleased changes while its manifests still report `0.84.1`. Both contain `@earendil-works/pi-ai` provider/model and typed-tool schemas plus the `@earendil-works/pi-agent-core` loop. Aptiloop has integrated neither package. `@earendil-works/pi-coding-agent` is explicitly excluded because its general tools violate this boundary.
+**Approved Core Alpha target**
+
+The typed-tool boundary is informed by [pinned upstream Pi evidence](../architecture/pi-runtime.md), not Aptiloop implementation evidence: the published `v0.84.1` tag is commit [`53fa77ccd8a279eb87e92294ef3687b03ff80112`](https://github.com/earendil-works/pi/tree/53fa77ccd8a279eb87e92294ef3687b03ff80112); separately inspected post-release commit [`9dd90a49711d088b86fdd9b4aea575913a8328`](https://github.com/earendil-works/pi/tree/9dd90a49711d088b86fdd9b4aea575913a8328) contains additional typed-tool/provider-model and message-steering infrastructure but does not change the pinned implementation boundary.
 
 A proposal contains:
 
@@ -508,5 +485,7 @@ Export never silently shares externally. Errors preserve the local target choice
 - Transparent use of Pi SQLite session backend as coding-agent session storage.
 
 ## Studio acceptance gate
+
+**Approved Core Alpha target**
 
 Adaptive Studio meets this specification only after owner-approved implementation evidence demonstrates every screen and flow above on desktop and the defined mobile subset, in light/dark and `en-US`/`ru-RU`; proves the guided Course Designer state machine and failure recovery; verifies manual no-AI authoring and Authoring Kit schema/validator/hash parity; rejects unsafe Pack content without execution; preserves immutable source and personal-adaptation lineage through explicit upstream integration; uses typed Aptiloop tools and explicit provider failure; keeps Reviewer read-only; uses trusted check IDs rather than Pack commands; and separates Apply/Compile, Validate, Preview, Change review, and Publish. Until then, this document remains a target specification.

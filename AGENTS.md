@@ -2,7 +2,7 @@
 
 ## Authority and status
 
-These rules apply to every repository task. Read `README.md` and `PRODUCT.md` before changing behavior. The current application is the Dev Learning Harness baseline; Aptiloop Core Alpha specifications describe target behavior unless a section is explicitly labeled **Implemented baseline**.
+These rules apply to every repository task. Read `README.md` and `PRODUCT.md` before changing behavior. The current application and npm workspace carry the Aptiloop identity. M1–M11 platform boundaries and the dated 2026-08-12 UI/UX/runtime hardening are an **Implemented baseline**; Core Alpha release acceptance remains an **Approved Core Alpha target**. Every current specification section must state its own status explicitly.
 
 Use these status labels exactly:
 
@@ -46,7 +46,7 @@ Do not add cloud sync, authentication, collaboration, organizations, marketplace
 - `packages/shared` — boundary schemas and DTO contracts.
 - `packages/learning-core` — deterministic learning rules.
 - `packages/agent-core` — current provider contract and normalized events.
-- `packages/codex-provider` and `packages/opencode-provider` — current legacy provider adapters, not the approved Pi boundary.
+- `packages/codex-provider` and `packages/opencode-provider` — retained legacy provider adapters; they must not bypass the active Provider Hub/Pi boundary.
 - `packages/exercise-core` — canonical paths, isolated attempts, Git evidence, allowlisted runner, and editor launch.
 - `packages/curriculum` — current versioned development curriculum.
 - `packages/database` — SQLite schema, migrations, repositories, seed, and backup.
@@ -76,7 +76,7 @@ Migrate through these seams. Do not move database, provider, filesystem, Git, or
 - Do not weaken loopback defaults, exact Origin checks, local-client checks, JSON content checks, rate/size limits, or trust-proxy safety.
 - Preserve protected-answer redaction and first-attempt-before-hint behavior.
 
-The current non-review Codex/OpenCode authority and provider override paths are audit findings. Do not describe them as compliant and do not extend them.
+The historical non-review Codex/OpenCode authority and provider-override paths were audit findings. Active AI roles resolve through Provider Hub and constrained Pi policy. Do not re-enable, describe as compliant, or extend a compatibility path that bypasses that boundary.
 
 ## Learning and authoring invariants
 
@@ -109,7 +109,7 @@ The current non-review Codex/OpenCode authority and provider override paths are 
 - Do not encode state by color alone.
 - UI strings belong in `en-US` and `ru-RU` catalogs. Do not use a Course locale as the UI locale.
 - Identifiers, schema keys, activity/evidence types, code, commands, API names, hashes, and check IDs are not localized.
-- Current Russian hardcoded UI is an audit finding, not evidence that localization is complete.
+- Complete `en-US`/`ru-RU` catalogs are an **Implemented baseline**. Treat any new learner-facing hardcoded copy outside the catalogs as a regression, not as permission to weaken localization.
 
 ## Package and implementation rules
 
@@ -150,11 +150,17 @@ A Node 24/npm 11 CI workflow is committed, but do not claim a run passed unless 
 
 Product specifications:
 
+- `docs/README.md`
 - `PRODUCT.md`
 - `docs/product/core-alpha-scope.md`
 - `docs/product/user-journeys.md`
 - `docs/product/terminology.md`
 - `docs/product/language-policy.md`
 - `docs/product/course-authoring.md`
+
+Decision and evidence indexes:
+
+- `docs/adr/README.md`
+- `docs/audits/2026-08-12-ui-ux-runtime-hardening.md`
 
 When behavior changes, update the relevant current product, architecture, security, runtime, data, authoring, or roadmap specification. Preserve historical documents as history; do not cite them as current approval evidence.

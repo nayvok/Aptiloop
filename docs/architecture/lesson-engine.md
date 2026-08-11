@@ -1,15 +1,17 @@
 # Lesson Engine
 
-**Document status:** Approved Core Alpha target with an evidenced Implemented baseline.
+**Document status:** **Implemented baseline** for current finite lesson adapters and kernel-owned progression; remaining intent-command and Review-executor work is an **Approved Core Alpha target**.
 **Purpose:** execute a finite Course activity graph while keeping transition authority out of the browser and model runtime.
 
 ## Implemented baseline
 
 **Implemented baseline.** Current curriculum contracts define twelve closed unit types, statuses, discriminated payloads, completion criteria, and explicit unlock references. The pure progression module validates prerequisite graphs and legal events, while the M4 Learning Kernel wraps those transitions in scoped append-only facts and chooses the only legal terminal/next-action projection.
 
-**Implemented baseline.** Versioned lesson routes load the immutable Course/session snapshot, reject inactive or mismatched operations, persist typed learner/evaluator/check/reviewer facts, and apply the kernel projection transactionally. Recall, Teacher, quiz, code-reading, exercise, review, interview, summary, checkpoint, and spaced-review paths retain their explicit completion criteria and provenance.
+**Implemented baseline.** Versioned lesson routes load the immutable Course/session snapshot, reject inactive or mismatched operations, persist typed learner/evaluator/check/reviewer facts, and apply the kernel projection transactionally. Recall, Teacher, quiz, code-reading, exercise, evidence-only Reviewer, interview, summary, and checkpoint paths retain their explicit completion criteria and provenance.
 
-**Implemented baseline limitation.** The compatibility unit PATCH still carries a requested target status, but it cannot set stored state directly: server-side completion criteria and the kernel transition table accept or reject the resulting event. Legacy rows remain readable; new target authority is not inferred from ambiguous historical state.
+**Implemented baseline.** Limitation: the kernel projects due Review Items and their source provenance, but no typed server-verified due-review executor is exposed. Aptiloop intentionally does not reopen an ordinary source session as a substitute; executable spaced review remains an **Approved Core Alpha target**.
+
+**Implemented baseline.** Limitation: the compatibility unit PATCH still carries a requested target status, but it cannot set stored state directly: server-side completion criteria and the kernel transition table accept or reject the resulting event. Legacy rows remain readable; new target authority is not inferred from ambiguous historical state.
 
 ## Activity graph
 
@@ -47,6 +49,8 @@ Publication validation requires:
 - no completion criterion depends on a model-selected transition or an untyped text assertion.
 
 Unknown activity types or capabilities block publication. Preserving unknown JSON for a future version is not permission to execute or publish it.
+
+This paragraph is the **Approved Core Alpha target** closure rule. The **Implemented baseline** is narrower: Course Pack V1 validates its closed activity/requirement registry, while Adaptive Studio publication validates current Unit schemas, completion criteria, graph structure, and matching release hashes. Neither gate alone constitutes production Course content, provenance, safety, licensing, or every future renderer/capability approval.
 
 ## Activity Registry
 
@@ -108,7 +112,7 @@ type LessonCommand =
 The engine, in one transaction:
 
 1. loads the immutable session snapshot and current activity/evidence state;
-2. authenticates local intent and validates the command/action schema;
+2. enforces the loopback request boundary and strict command/action schema, then re-resolves server-owned entity scope;
 3. verifies that the activity is current and its prerequisites/capabilities are satisfied;
 4. dispatches to the registered activity reducer;
 5. asks the Learning Kernel to validate/normalize derived facts;
@@ -139,9 +143,15 @@ Every accepted action produces or references append-only facts with:
 
 ## Exercise and review boundary
 
-**Implemented baseline for the trusted local-native path.** Activities reference only an app-owned `environmentId` and `checkId`. The M5 Execution Fabric owns executable, args, cwd, environment, trust/network policy, timeout, output budget, cancellation, process cleanup, snapshot freshness, result normalization, and immutable artifacts. Course Pack, browser, and model inputs cannot define a process plan.
+**Implemented baseline.** On the trusted local-native path, Activities reference only an app-owned `environmentId` and `checkId`. The M5 Execution Fabric owns executable, args, cwd, environment, trust/network policy, timeout, output budget, cancellation, process cleanup, snapshot freshness, result normalization, and immutable artifacts. Course Pack, browser, and model inputs cannot define a process plan.
 
-Reviewer remains evidence-only and has no patch/apply route. Review requires a non-empty complete Git-visible diff, passing non-truncated check evidence bound to the exact current fingerprint, an immutable evidence bundle, and unchanged before/after workspace state. Trusted local checks still run with local-user authority; Git-ignored state is outside the evidence hash and untrusted execution remains prohibited.
+Reviewer remains evidence-only and has no patch/apply route. Review requires a non-empty complete Git-visible diff, passing non-truncated check evidence bound to the exact complete-workspace snapshot SHA-256, an immutable evidence bundle, and an unchanged before/after workspace snapshot. The Git patch is the bounded human/model-readable change projection; allowed Git-ignored files are still covered by the workspace snapshot. Trusted local checks run with local-user authority, and untrusted execution remains prohibited.
+
+## Due Review execution boundary
+
+**Implemented baseline.** The Review surface may list due items, deterministic schedule state, and source provenance. Its boundary DTO fixes `nextActionHref` to `null`: the server never fabricates `/session`, and a source session ID is provenance rather than an executable Review target. The UI therefore exposes an unavailable-executor state instead of a Start/Open action.
+
+**Approved Core Alpha target.** Executable spaced review requires a typed server-owned executor that resolves the exact Course revision, Review Item, activity/content snapshot, and submitted completion evidence. That executor may expose a Review-surface action and append verified facts. It is not the kernel's only completion route: later accepted correction/mastery evidence may already complete or supersede an item, and learner intent may dismiss one.
 
 ## Snapshots, resume, and adaptation
 
@@ -149,23 +159,27 @@ A LessonSession pins one immutable CourseRevision and its activity definitions, 
 
 Personal adaptation creates a new `personal` CourseRevision derived from the upstream hash. It may change future lesson definitions after validation and publication to the personal branch. It cannot rewrite prior sessions, evidence, or mastery history.
 
+### Interview restart and disclosure recovery
+
+**Implemented baseline.** Interview is a finite persisted state machine: setup, one pending question, one answer operation, the next question, then finish/report. Every read and mutation re-resolves the exact Course revision, learning session, Interview, and current question. Setup and conversation identity are staged before external dispatch; an answer retry reconstructs the exact provider payload from the persisted transcript and current question rather than trusting browser state. Operation IDs are payload-fingerprint bound, concurrent retries are serialized, identical replay is stable, and changed payload under the same operation conflicts.
+
+**Implemented baseline.** When external disclosure is required, the server returns a bounded continuation and persists the exact pending disclosure scope. Reload recovery uses the server-provided `resumeOperationId` and a strict lookup bound to operation kind, learning session, Interview, question when applicable, provider destination/model, payload hash, and expiry. Recovery GET performs no provider dispatch and returns no broad provider payload. Unknown, duplicate-query, ambiguous, cross-scope, terminal, cancelled, consumed, or expired matches fail closed; an exact pending match is reused rather than broadened.
+
+**Implemented baseline.** Approval and cancellation are explicit mutations. Declining a staged start cancels the disclosure and abandons the uncommitted setup; provider failure removes failed downstream setup so the same operation may retry safely. A committed answer advances the one-question-at-a-time state and clears stale pending continuation. The final report records completion/form observations only and cannot set technical correctness or mastery.
+
 ## Failure behavior
 
-- Missing/unknown activity, capability, renderer, environment, check, source snapshot, or schema version: block publication; fail session start if discovered in an unvalidated legacy snapshot.
+- Missing/unknown activity, capability, renderer, environment, check, source snapshot, or schema version: fail closed in the validator that owns that closed registry; fail session start if discovered in an unvalidated legacy snapshot. Current Studio publication covers its implemented Unit/graph/release-hash validators, not every production Course approval gate.
 - Provider unavailable: preserve lesson state and return a typed blocked/retry/manual-alternative state. Never mark completion and never silently use Mock.
 - No-AI mode: registered manual paths remain usable. An AI-required activity without a validated manual alternative is visibly blocked, not auto-completed.
 - Duplicate operation with identical payload: return the prior result. Same operation ID with different payload: conflict.
 - Reducer/validation/storage failure: commit nothing; retain prior progress.
 - Unknown persisted event: stop projection and surface migration-required; do not coerce it.
 
-## Incremental cutover
+## Residual migration boundary
 
-1. Wrap current snapshot units in ActivityDefinition adapters without changing stored IDs.
-2. Route current server-owned recall/quiz/code-reading/summary endpoints through the action/fact contract.
-3. Add typed adapters for teacher, exercise, review, interview, and hints.
-4. Change the generic UI command from desired status to learner intent.
-5. Move direct SQL writes behind transaction-scoped repositories.
-6. Dual-project existing sessions and compare state/evidence before making the new engine authoritative.
-7. Retire legacy fixed-completion routes only after all callers and persisted rows are accounted for.
+**Implemented baseline.** Snapshot units retain their stable IDs behind Activity adapters; recall, quiz, code-reading, summary, Teacher, exercise, review, interview, and hint operations produce scoped typed facts; target projections are authoritative; and legacy fixed-completion mutations are retired.
+
+**Approved Core Alpha target.** Replace the remaining compatibility desired-status PATCH with intent-specific commands, move remaining handler SQL behind transaction-scoped repositories, and retain compatibility reads until every persisted row and caller is accounted for. These are incremental seam migrations, not authorization for a second lesson architecture or destructive history removal.
 
 **Future.** Cyclic/open-ended agent workflows, third-party activity plugins, model-authored runtime state machines, and distributed/multi-user lesson execution are out of scope.

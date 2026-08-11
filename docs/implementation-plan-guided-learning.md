@@ -1,5 +1,7 @@
 # Implementation plan: Guided Learning UX
 
+> **Historical snapshot — non-authoritative.** This file records an earlier **Implemented baseline** and is preserved for context only. Do not execute it as a current plan. See the [current documentation index](README.md).
+
 Дата: 2026-08-02
 
 Вертикальные срезы; после каждого этапа — релевантные тесты и commit. Backend меняется только при необходимости небольшого API/DTO; security/curriculum/session/exercise не трогаются.

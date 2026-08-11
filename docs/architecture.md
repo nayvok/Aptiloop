@@ -1,5 +1,7 @@
 # Архитектура Dev Learning Harness
 
+> **Historical snapshot — non-authoritative.** This file records an earlier **Implemented baseline** and is preserved for context only. Do not use it as current architecture or approval evidence. See the [current documentation index](README.md).
+
 Статус: реализованный versioned MVP.
 
 Дата актуализации: 2026-08-01.

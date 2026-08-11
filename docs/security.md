@@ -1,5 +1,7 @@
 # Модель безопасности
 
+> **Historical snapshot — non-authoritative.** This file records an earlier **Implemented baseline** and is preserved for context only. Do not use it as current security policy or approval evidence. See the [current documentation index](README.md).
+
 ## Scope и actors
 
 Это локальное single-user приложение без auth. Тем не менее browser input, provider output, DB JSON, пути и содержимое exercise считаются недоверенными. Поддерживаемый bind — HTTP loopback; remote/LAN deployment не является безопасным режимом MVP.

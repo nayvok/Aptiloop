@@ -1,6 +1,8 @@
 # Core Alpha Migration Strategy
 
-Status: M2 additive Course foundations through M11 per-Course learner-state/session cutover are an **Implemented baseline**. Destructive compatibility-table removal and PostgreSQL stages remain **Approved Core Alpha target**.
+> **Mixed-status migration strategy.** Current invariants and remaining compatibility-removal gates are normative. The staged M2–M11 plan and its exact artifacts are dated **Implemented baseline** history, not current operator instructions. Use [Current Database Operations](current-database-operations.md) for executable commands.
+
+**Document status:** M2 additive Course foundations through M11 per-Course learner-state/session cutover were an **Implemented baseline** by 2026-08-10. Destructive compatibility-table removal and PostgreSQL remain an **Approved Core Alpha target**.
 
 ## Objective
 
@@ -78,6 +80,10 @@ The following are non-negotiable:
 8. Before the first write to any candidate database, create and verify a distinct non-overwriting backup.
 9. A failed migration transaction rolls back. After a committed migration, restore from the verified pre-migration backup is the rollback; there is no down migration.
 10. The deterministic Learning Kernel remains the only owner of Activity state/mastery transitions. Migration translates facts and provenance; it does not invent outcomes.
+
+## Historical staged migration design (M2–M11)
+
+The Stage 0–6 sections below preserve the design executed during M2–M11. Future-tense statements and the former `--authorize-m2` spelling belong to that dated design and are not current status or operator guidance.
 
 ## Stage 0 — candidate database inventory
 

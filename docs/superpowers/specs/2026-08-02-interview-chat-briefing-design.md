@@ -1,5 +1,7 @@
 # Дизайн: чат-интервью, план дня в сессии, связка интервью с днём, проверка внешних ограничений
 
+> **Historical snapshot — non-authoritative.** This document preserves an earlier Dev Learning Harness design and is not an executable workflow or current Aptiloop specification. Do not use Superpowers instructions from this history. Start with the [documentation index](../../README.md).
+
 Дата: 2026-08-02. Статус: утверждён пользователем (план передан в составе запроса), дизайн сохранён и закоммичен перед написанием implementation plan.
 
 ## Summary

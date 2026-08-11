@@ -1,5 +1,7 @@
 # Guided Learning UX: спецификация рефакторинга
 
+> **Historical snapshot — non-authoritative.** This file records an earlier **Implemented baseline** and is preserved for context only. Do not use it as the current UX specification. See the [current documentation index](README.md).
+
 Дата: 2026-08-02
 Статус: approved для реализации
 

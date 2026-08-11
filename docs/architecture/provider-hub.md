@@ -1,15 +1,15 @@
 # Provider Hub
 
-**Document status:** Approved Core Alpha target with an accepted evidenced **Implemented baseline**.
+**Document status:** **Implemented baseline** for current connection, role, disclosure, budget, and provenance boundaries; broader routing remains an **Approved Core Alpha target** or **Future** where labeled.
 **Purpose:** separate provider connections from Aptiloop roles, resolve models/capabilities centrally, support explicit no-AI mode, and make every failure visible without silent fallback.
 
 ## Implemented baseline
 
-**Implemented baseline.** `packages/shared/src/provider-hub.ts` now defines strict connection, capability, RoleProfile, per-role tool-policy, structured failure, disclosure, and turn-provenance contracts. `packages/agent-core/src/provider-hub.ts` resolves one exact server-owned connection/model, rejects AI Off, disabled/missing providers, capability gaps, and model loss without fallback, and requires an exact approved disclosure for external turns. `packages/agent-core/src/typed-tool-host.ts` installs only the finite Aptiloop role tool matrix and validates both arguments and results.
+**Implemented baseline.** `packages/shared/src/provider-hub.ts` defines strict connection, capability, RoleProfile, per-role tool-policy, structured failure, disclosure, and turn-provenance contracts. `ProviderHub.resolveTurn` resolves one server-owned role/connection/adapter/provider/model, checks provider status/capabilities and exact model availability, and rejects fallback. For an external connection it validates an approved disclosure's status, expiry, role, connection, provider type, model, and payload SHA-256. It does not compare disclosure `entityIds` or `destination`; those fields remain preview/audit scope and application recovery checks where implemented.
 
-**Implemented baseline.** Additive migration `0014_provider_hub` and `ProviderHubRepository` persist secret-free connections, role profiles, tool policies, immutable disclosure operations/events, and terminal provider-turn provenance. Disclosure approval is payload-hash, destination, provider, model, role, entity-scope, and expiry specific; one-time consumption is append-only.
+**Implemented baseline.** Additive migration `0014_provider_hub` and `ProviderHubRepository` persist secret-free connections, role profiles, policy allowlists, immutable disclosure operations/events, and turn-level provider provenance. Dispatch persists connection/provider/adapter/model/role/tool-policy/capability/disclosure identity and terminal outcome, not raw provider or tool payloads. One approved disclosure is consumed atomically with turn start.
 
-**Implemented baseline.** Active learning chat, interview, and evidence-only review resolve through persisted `RoleProfile` records and `ProviderHub`; flattened browser role selections and the legacy provider-status route are retired. The UI previews exact external disclosure scope and consumes an immutable approval once. The common runner enforces cumulative input/output/event/tool/deadline budgets, explicit cancellation, minimized persistence, and structured failures without fallback. Private environment/context sentinels and all four finite role matrices are covered. The exact authenticated OpenCode Zen `deepseek-v4-flash-free` smoke completed through constrained Pi with synthetic text in a disposable database, exact disclosure consumption, persisted minimal provenance, and observed cancellation. This closes M6 acceptance without asserting general production provider readiness.
+**Implemented baseline.** Course Designer, active learning chat, interview, and evidence-only review resolve through persisted `RoleProfile` records and `ProviderHub`; flattened browser role selections and the legacy provider-status route are retired. The UI previews exact external disclosure scope and consumes an immutable approval once. The common runner enforces cumulative input/output/event/tool/deadline budgets, explicit cancellation, minimized persistence, and structured failures without fallback. Private environment/context sentinels and all four finite role matrices are covered. The exact authenticated OpenCode Zen `deepseek-v4-flash-free` smoke completed through constrained Pi with synthetic text in a disposable database, exact disclosure consumption, persisted minimal provenance, and observed cancellation. This closes M6 acceptance without asserting general production provider readiness.
 
 **Implemented baseline.** Settings exposes a server-owned connection-management API and localized UI for the reviewed catalog. API-key and subscription credentials are connection-scoped in `.data/provider-credentials.json` and never returned to the browser or stored in SQLite. Built-in providers own endpoint/model discovery; Ollama and LM Studio accept only loopback `/v1` URLs plus exact model IDs; the advanced custom compatible adapter accepts only explicit public HTTPS `/v1` endpoints plus exact model IDs. Connection disable/enable, key replacement, subscription sign-in/sign-out, observed model status, and exact per-role model switching are explicit mutations.
 
@@ -20,11 +20,13 @@
 ```ts
 type ProviderConnection = {
   connectionId: string;
+  adapterId: string;
   providerType: string;
   displayName: string;
   credentialRef: string | null; // reference into credential store, never secret value
   endpointProfileId: string | null;
   enabled: boolean;
+  external: boolean;
   state: ConnectionState;
   observedCapabilities: ProviderCapabilityProfile | null;
   lastCheckedAt: string | null;
@@ -95,11 +97,23 @@ A provider-neutral structured assistant-output capability is not assumed. For Pi
 4. Resolve credentials according to provider-owned auth rules without exposing them.
 5. Refresh status/capability profile when stale, within a bounded timeout.
 6. Resolve the exact configured model; do not choose “first available.”
-7. Compare all role/activity requirements to observed capabilities and installed typed tools.
-8. Create a bounded provider turn through the Pi/provider adapter with the role's default-deny tool set.
+7. Compare role requirements to observed capabilities and resolve the policy allowlist; an allowed name is executable only when a matching app-owned handler is installed.
+8. Create a bounded provider turn through the selected adapter. Current Pi tool handlers are installed for Course Designer; other active callers retain their bounded app-owned context/result paths and gain no uninstalled policy tools.
 9. Record minimized provenance: connection ID, provider type, model ID, adapter/capability profile version, role/tool policy, timestamps, outcome, and diagnostic ID. Do not persist raw secrets/general tool input/output.
 
 No step substitutes a different connection, model, provider, role, or Mock. A user may explicitly edit the profile and retry as a new decision.
+
+## Durable disclosure recovery
+
+**Implemented baseline.** `ai_disclosure_operations` stores an immutable, secret-free scope: operation identity, provider/connection/model, role, destination, bounded entity IDs, payload categories/exclusions, byte count, payload SHA-256, and `expiresAt`. Append-only events persist `pending`, `approved`, `cancelled`, and `consumed`. Expiry is enforced by comparing `expiresAt` during lookup, approval, and dispatch; the current implementation does not append an `expired` event. The disclosure record intentionally does not persist the disclosed payload.
+
+Recovery is application-owned rather than provider-session recovery. A caller that supports reload recovery must first persist enough typed domain state to reconstruct the exact payload and then expose a non-mutating, scope-specific pending lookup. The browser receives only the bounded disclosure preview and continuation identifiers; it does not store or return the provider payload as authority. Recovery GET never approves, consumes, or dispatches a provider turn.
+
+Recovery matching is caller-specific. `ProviderRuntime.findPendingDisclosure` can match payload hash, connection/provider/model, exact entity IDs, status, and expiry. `resolveTurn` later revalidates role, connection/provider/model, payload hash, approved status, and expiry, but not destination/entity IDs. Approval and cancellation are separate explicit mutations; a dispatch mismatch fails before provider work.
+
+### Course Designer binding
+
+**Implemented baseline.** Course Designer recovery scans persisted pending disclosures and matches the requested Course version, workflow ID, the presence of a Course Designer authoring operation ID, and `expiresAt`; multiple matches fail as ambiguous. The recovery GET does not reconstruct the current Draft payload or rederive its SHA-256 before returning the stored preview. A Draft change can therefore make that preview stale. Dispatch reconstructs the current payload and `resolveTurn` rejects the stale approval by payload hash before provider work. This is a fail-closed dispatch boundary, not exact recovery-preview freshness. Approve/Cancel, proposal Apply, and immutable Publish remain separate decisions.
 
 ## Connection state and readiness
 
@@ -165,7 +179,9 @@ Examples:
 
 ## Typed tools and safety
 
-The Hub exposes no provider-native shell, filesystem, edit, patch, network/browser, credential, or arbitrary RPC tools. It installs only Aptiloop typed tools allowed by the resolved role policy (see [pi-runtime.md](pi-runtime.md)). Every call is schema-validated, scope re-resolved, budgeted, auditable, and default-denied.
+The Hub exposes no provider-native shell, filesystem, edit, patch, network/browser, credential, or arbitrary RPC tools. Persisted policies are finite allowlists; `AptiloopTypedToolHost` exposes only the intersection of an allowlist and installed app-owned definitions. Current Pi definitions are the Course Designer handlers. Each installed call is schema-validated, scope-checked by its handler, budgeted, and default-denied.
+
+Live chat may emit `tool.summary` events containing only an allowlisted tool name and `started | completed` status. These summaries contain no call ID, arguments, or result and are not persisted as message history. Persisted provider provenance remains turn-level rather than a durable tool-event log.
 
 Reviewer receives only a bounded app-built evidence capsule, has no local/general tools or patch authority, and submits a typed result. Course Designer submits draft proposals only; no apply/publish. Tutor reads learner-safe context only. Evaluator submits a typed result only. Models never select commands or state transitions.
 

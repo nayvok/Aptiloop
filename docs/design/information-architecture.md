@@ -2,14 +2,16 @@
 
 ## Status and scope
 
-This document specifies Core Alpha navigation, journeys, screens, wireframe-level responsive behavior, and cross-screen states. It does not claim that the target routes or compositions are implemented.
+This document owns Core Alpha route responsibility, navigation, meaningful URL state, screen purpose, and cross-screen recovery. The current route inventory is **Implemented baseline** evidence; future logical paths remain **Approved Core Alpha target** only where stated.
 
 - **Implemented baseline** — current repository evidence.
 - **Approved Core Alpha target** — required for Core Alpha.
-- **Approved Core Alpha target — Calm Workshop** — selected composition and presentation choices.
+- **Proposed pending owner approval** — an unresolved recommendation.
 - **Future** — outside Core Alpha.
 
-The visual-direction approval gate is defined in [`../../DESIGN.md`](../../DESIGN.md). Activity internals, Studio, and accessibility are detailed in the sibling specifications.
+Calm Workshop — Clear Slate is the approved direction name, not a separate status label.
+
+The visual system is owned by [`../../DESIGN.md`](../../DESIGN.md) and [`../design-system.md`](../design-system.md). Activity internals, Studio, and accessibility are owned by the sibling specialist specifications; this document links to them instead of redefining their component anatomy.
 
 ## Audit of the current information architecture
 
@@ -17,42 +19,46 @@ The visual-direction approval gate is defined in [`../../DESIGN.md`](../../DESIG
 
 **Implemented baseline**
 
-| Current path                         | Current responsibility                      | Evidence                                                                           | Audit finding                                                                                   |
-| ------------------------------------ | ------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `/`                                  | Path/current day/week                       | `apps/web/app/page.tsx`; `apps/web/components/dashboard-client.tsx:237-452`        | Strong resume surface; lacks Course Pack first run and Core-layer states.                       |
-| `/session?id=`                       | Current lesson and 12 unit types            | `apps/web/app/session/page.tsx`; `apps/web/components/session-client.tsx:691-1036` | Strong learner seam; should become a course/lesson workspace rather than a primary destination. |
-| `/exercise?sessionId=`               | Isolated code attempt, diff, checks, review | `apps/web/components/exercise-client.tsx:447-850`                                  | Keep as an activity context and compatibility deep link; remove from primary navigation.        |
-| `/knowledge`                         | Topic × dimension table                     | `apps/web/components/knowledge-client.tsx:29-121`                                  | Move to Skills; replace table-only mobile behavior.                                             |
-| `/mistakes`                          | Mistake journal                             | `apps/web/components/mistakes-client.tsx:24-89`                                    | Move to Review as a view/filter.                                                                |
-| `/interview`                         | Setup, transcript, report                   | `apps/web/components/interview-client.tsx:521-925`                                 | Standalone practice belongs in Review; linked interviews stay in lessons.                       |
-| `/flashcards`                        | Candidate approval and local export         | `apps/web/components/flashcards-client.tsx:26-144`                                 | Move to Review; preserve explicit candidate approval.                                           |
-| `/settings`                          | Theme, paths, AI roles, connections         | `apps/web/components/settings-form.tsx:523-892`                                    | Split settings by user task and distinguish Core/runtime/AI layers.                             |
-| `/settings/curriculum`               | Versioned curriculum CRUD/publish           | `apps/web/components/curriculum-editor-client.tsx:1053-1107`, `:1365-1559`         | Predecessor to Adaptive Studio; lacks Course Pack and typed editing flows.                      |
-| `/settings/developer-tools`, `/chat` | Diagnostics and agent playground            | `apps/web/components/app-shell.tsx:34-60`                                          | Keep diagnostics secondary; a generic chat must not define product IA.                          |
+| Current path                                                                          | Current responsibility                                                                                                                  | Evidence                                                                                         | Current disposition                                                                                           |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `/`                                                                                   | Explicitly selected/current Course and deterministic next action                                                                        | `apps/web/app/page.tsx`; `apps/web/components/home-client.tsx`                                   | Primary Home destination; never infer current Course from list order or last route.                           |
+| `/courses`                                                                            | Local Course/revision library, current selection, and explicit Create/Import entries                                                    | `apps/web/app/courses/page.tsx`; `apps/web/components/course-pack-client.tsx`                    | Primary Courses destination; contains no editor or inline Pack importer.                                      |
+| `/courses/new`, `/courses/new/external`, `/courses/new/manual`, `/courses/new/guided` | Two exclusive assisted starts, quiet manual fallback, locally retained authoring brief, and explicit Draft creation; no Pack file input | the corresponding App Router pages; `CourseCreationClient`; version-matched instruction route    | External download creates nothing; guided/manual create exactly one explicit Draft only after confirmation.   |
+| `/courses/import`                                                                     | Course Pack file selection, validation, Preview, and explicit install-or-draft action                                                   | `apps/web/app/courses/import/page.tsx`; `CoursePackClient`                                       | Dedicated acquisition route, separate from new Course creation.                                               |
+| `/courses/intake/[operationId]?confirm={action}`                                      | Server-owned diagnostics, learner Preview, and explicit install/open-as-draft commit                                                    | `apps/web/app/courses/intake/[operationId]/page.tsx`; `CoursePackClient`                         | Recoverable only in the same process before expiry; restart, expiry, or unknown ID returns to file selection. |
+| `/courses/studio?version={revisionId}&mode={mode}&tab={workspace}`                    | Explicitly selected revision workspace: Program, Designer, Preview, Release, or History                                                 | `apps/web/app/courses/studio/page.tsx`; `CurriculumStudioClient`                                 | `version` is required; optional creation `mode` and workspace `tab` are separate concerns.                    |
+| `/courses/[courseId]/revisions/[revisionId]`                                          | Learner-safe revision preview and explicit Course selection                                                                             | `apps/web/app/courses/[courseId]/revisions/[revisionId]/page.tsx`; `HomeClient` selection target | Compatibility detail route until the logical Course route cutover.                                            |
+| `/review`                                                                             | Due, Mistakes, Cards, and Interviews                                                                                                    | `apps/web/components/review-client.tsx`; review subclients                                       | Primary Review destination; `?view=` preserves non-Due selection across navigation and reload.                |
+| `/skills`                                                                             | Evidence-backed topic and mastery dimensions                                                                                            | `apps/web/app/skills/page.tsx`; `apps/web/components/knowledge-client.tsx`                       | Primary Skills destination.                                                                                   |
+| `/session?id=`, `/exercise?sessionId=`, `/interview`                                  | Lesson ActivityFrame, isolated practice/check/reviewer, and interview activity/report contexts                                          | the corresponding App Router pages and clients                                                   | Deep activity contexts; never separate primary destinations.                                                  |
+| `/settings`                                                                           | Interface, local paths/Core, optional AI roles, Connections, and recovery                                                               | `apps/web/components/settings-form.tsx`; `provider-connection-manager.tsx`                       | Primary Settings destination with diagnostics kept secondary.                                                 |
+| `/settings/curriculum`                                                                | Historical authoring URL redirect                                                                                                       | `apps/web/app/settings/curriculum/page.tsx`                                                      | Redirects to `/courses`; it is not a second Studio entry.                                                     |
+| `/settings/developer-tools`, `/chat`                                                  | Local diagnostics and bounded role chat                                                                                                 | the corresponding route components                                                               | Secondary tools; generic chat and diagnostics do not define product IA.                                       |
+| `/knowledge`, `/mistakes`, `/flashcards`                                              | Compatibility redirects                                                                                                                 | the corresponding route pages                                                                    | Preserve stable links while maintaining one navigation model.                                                 |
 
-The current desktop shell uses a fixed 256px rail (`apps/web/components/app-shell.tsx:95-164`). Mobile exposes eight destinations in a four-column grid (`:187-212`). The shell maps system modules instead of the learner’s five recurring tasks. Hardcoded Russian labels and `<html lang="ru">` (`apps/web/app/layout.tsx:11-20`) are audit findings to migrate, not evidence of the required locale model.
+The shell implements exactly five localized destinations: Home, Courses, Review, Skills, and Settings. Desktop uses a collapsible rail; mobile uses a five-item bottom navigation. `en-US` and `ru-RU` UI locale remain independent from Course locale. Account/authentication is not rendered in the local-first single-user baseline.
 
 ### Current journey quality
 
 **Implemented baseline**
 
-| Journey                    | Current quality         | Path evidence                                             | Core Alpha gap                                                                    |
-| -------------------------- | ----------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Resume today               | Strong                  | `dashboard-client.tsx:277-337`, `:457-550`                | Course identity, first run, runtime readiness.                                    |
-| Complete lesson            | Strong v2 seam          | `session-client.tsx:691-790`, `:943-1036`                 | Stable ActivityFrame/registry and unified activity contexts.                      |
-| Code practice              | Strong guarded sequence | `exercise-client.tsx:504-529`, `:621-848`                 | Bring into lesson anatomy; name trusted check IDs/environment.                    |
-| Review weak evidence       | Fragmented              | `/mistakes`, `/flashcards`, `/interview`                  | One due-first Review entry.                                                       |
-| Inspect mastery            | Dense desktop table     | `knowledge-client.tsx:62-119`                             | Evidence-led Skills detail and mobile-native disclosure.                          |
-| Configure optional AI      | Present but conflated   | `provider-health.tsx:83-137`; `settings-form.tsx:604-844` | AI Off/unavailable/failed; explicit provider resolution; no silent Mock fallback. |
-| Work offline or without AI | Not modeled             | generic query errors in `query-state.tsx:5-30`            | Layer-specific offline/Core/storage/runtime states.                               |
-| Author a revision          | Partial                 | `curriculum-editor-client.tsx:804-1048`, `:1053-1107`     | Course Pack intake, typed forms, Preview, validation, Change review, export.      |
-| Use English/Russian        | Absent                  | `app-shell.tsx:24-60`; `layout.tsx:20`                    | Separate UI and course locale contracts.                                          |
+| Journey                            | Current quality                                                                                           | Evidence                                  | Remaining target pressure                                                                       |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Resume learning                    | Deterministic current-Course focus with one next action                                                   | Home and `/learning/path`                 | Keep supporting evidence quieter than the next action.                                          |
+| Switch among Courses               | Explicit selected Course/revision state and server-owned selection                                        | `/learning/courses`; Courses/Home clients | Avoid ambiguous Open versus Make current wording.                                               |
+| Create a Course                    | External instruction download and connected Designer are the two assisted starts; manual remains complete | Course creation routes; Adaptive Studio   | Keep one exclusive chooser and one Continue action before dense authoring controls.             |
+| Import a Course Pack               | Bounded Validate → Preview → explicit install/open-as-draft                                               | Courses intake                            | Keep import distinct from Course creation.                                                      |
+| Complete lesson/practice/interview | ActivityFrame registry plus guarded session, exercise, reviewer, and interview flows                      | corresponding clients                     | Maintain orientation, protected answers, evidence, and clear recovery.                          |
+| Review weak evidence               | Due, Mistakes, Cards, and Interviews under one URL-backed destination                                     | Review clients and kernel projections     | A due-item executor remains unavailable; provenance stays visible without a false Start action. |
+| Inspect mastery                    | Evidence-backed Skills dimensions                                                                         | Skills client                             | Never collapse dimensions into an invented overall score.                                       |
+| Configure optional AI              | AI Off, connection/model/role health, disclosure, and no silent Mock fallback                             | Settings, ProviderHealth, Connections     | Keep provider failure distinct from Core/storage failure.                                       |
+| Work in both UI locales/themes     | `en-US`, `ru-RU`, light, dark, and system through shared semantic tokens                                  | App Shell, i18n provider, theme provider  | Continue 320px, keyboard, contrast, and long-label QA.                                          |
 
 ## Navigation model
 
 ### Primary destinations
 
-**Approved Core Alpha target**
+**Implemented baseline**
 
 Primary navigation contains exactly five destinations, in this order:
 
@@ -64,49 +70,34 @@ Primary navigation contains exactly five destinations, in this order:
 
 Home is the default route. Courses is the only product-level entry to authoring; Studio is a workspace mode under a Course, not a sixth primary destination. Exercise and linked interview are activity contexts. Developer diagnostics never enter primary navigation.
 
-### Route model
+### URL and state model
 
-**Approved Core Alpha target** logical routes; exact URLs may be refined without changing ownership:
+**Implemented baseline**
 
-| Target path                                                   | Screen owner                                                                             | Current compatibility source                |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `/`                                                           | Home                                                                                     | `/`                                         |
-| `/courses`                                                    | Course library / first run                                                               | no equivalent                               |
-| `/courses/new`                                                | Create Course: manual Draft or optional guided Course Designer                           | no equivalent                               |
-| `/courses/intake/:operationId`                                | Courses-owned staged Pack inspection, validation, Preview, and install-or-draft decision | no equivalent                               |
-| `/courses/:courseId`                                          | Course overview and finite outline                                                       | current Path data                           |
-| `/courses/:courseId/lessons/:lessonId`                        | Lesson workspace / ActivityFrame                                                         | `/session?id=`                              |
-| `/courses/:courseId/lessons/:lessonId/activities/:activityId` | Stable activity deep link                                                                | `/exercise?sessionId=`, linked `/interview` |
-| `/courses/:courseId/adaptation`                               | Personal adaptation branch                                                               | no equivalent                               |
-| `/courses/:courseId/studio`                                   | Adaptive Studio Pack overview                                                            | `/settings/curriculum`                      |
-| `/courses/:courseId/studio/revisions/:revisionId`             | Studio editor/preview/validation/release                                                 | `/settings/curriculum`                      |
-| `/review`                                                     | Due queue                                                                                | no combined equivalent                      |
-| `/review/mistakes`                                            | Mistakes view                                                                            | `/mistakes`                                 |
-| `/review/cards`                                               | Candidate and due cards                                                                  | `/flashcards`                               |
-| `/review/interviews`                                          | Standalone interview practice/history                                                    | `/interview` without lesson context         |
-| `/skills`                                                     | Topic index                                                                              | `/knowledge`                                |
-| `/skills/:topicId`                                            | Topic dimensions/evidence timeline                                                       | no equivalent                               |
-| `/settings`                                                   | Settings category overview                                                               | `/settings`                                 |
-| `/settings/language`                                          | UI locale                                                                                | no equivalent                               |
-| `/settings/appearance`                                        | Theme and accessibility preferences                                                      | part of `/settings`                         |
-| `/settings/core`                                              | Core, SQLite, filesystem, backups                                                        | partial diagnostic paths                    |
-| `/settings/runtimes`                                          | Node, Python, external editor                                                            | partial Zed path                            |
-| `/settings/ai-tools`                                          | optional providers/models/roles                                                          | part of `/settings`                         |
-| `/settings/privacy`                                           | data boundaries/export controls                                                          | no equivalent                               |
-| `/settings/diagnostics`                                       | lifecycle, check, and provider diagnostics                                               | developer tools and chat                    |
-| `/exports/:operationId/review`                                | Reusable local export/external share review                                              | no equivalent                               |
+Meaningful navigation state is recoverable without moving server authority into the browser:
 
-A server-issued `operationId` owns pre-install Pack staging; neither selected file bytes nor a local path appears in the URL. Intake remains Courses-owned through bounded parse, validation, provenance/requirements review, Preview, and explicit commit. **Open as local draft** creates a Course/Draft and then enters Studio; **Install immutable revision** enters the resulting Course overview. Studio never owns an uncommitted external Pack.
+- **Course library:** `/courses?q={text}&filter={value}&page={number}`; default values canonicalize away and Back/Forward restores the view.
+- **Course creation:** `/courses/new`, `/external`, `/guided`, and `/manual` own distinct starts; retained briefs are bounded local drafts, not URL payloads.
+- **Pack intake:** `/courses/intake/{operationId}?confirm={action}` identifies only the staged operation and an `install` or `open-as-draft` confirmation choice; diagnostics, learner Preview, and commit remain intake-owned. Recovery works only in the same orchestrator process before `expiresAt`; restart or expiry requires file reselection and validation.
+- **Studio:** `/courses/studio?version={revisionId}&mode={mode}&tab={workspace}` requires the revision, treats creation mode as optional context, and keeps the Program/Designer/Preview/Release/History workspace in the separate `tab` parameter. Week/day selection is canonicalized without dropping that state.
+- **Review:** `/review` is canonical Due; `?view={destination}` preserves `mistakes`, `cards`, or `interviews`.
+- **Chat:** `?role=` preserves the strict role selection while unrelated safe query parameters survive canonicalization.
+- **Lesson contexts:** `/session?id=`, `/exercise?sessionId=`, and lesson-linked `/interview` preserve exact server-owned entity association.
 
-Compatibility links may redirect during migration, but the final cutover must not leave two navigation models or two names for one user task.
+Invalid or ambiguous URL state is replaced with a safe canonical value, never interpreted as a new entity or executable instruction. Compatibility redirects preserve stable links without creating a second navigation model.
 
 ### Desktop shell
 
-**Approved Core Alpha target — Calm Workshop**
+**Approved Core Alpha target**
 
-- 240–256px left rail with product identity, the five destinations, active Course switcher, and a compact local status entry.
-- Home/Courses/Review/Skills occupy the main group; Settings sits at the rail foot.
-- Top of content contains a contextual breadcrumb and page-level actions only. A global provider-health pill is replaced by layer-aware local status.
+Direction: Calm Workshop — Clear Slate.
+
+- The left rail is exactly 280px expanded and 72px collapsed. Width changes do not move icon centers, reorder destinations, clip labels, or change focus order. Collapsed items have accessible names and Radix tooltips; no custom label overlays page content. Collapse/expand exposes `aria-expanded` and preserves focus.
+- The brand row owns identity only. Collapse/expand is a distinct edge-aligned control. Theme and provider utilities never appear in the brand stack or sidebar footer.
+- Home, Courses, Review, and Skills occupy the main scrollable navigation group. Settings is the final navigation item in the lower group. One `nav` landmark or uniquely named landmarks preserve a coherent navigation model and `aria-current="page"` semantics. The footer contains no AI, provider, runtime, or ambiguous local-status pill.
+- A restrained sticky utility header contains a labeled breadcrumb on the left and theme plus a compact layer-aware provider utility on the right. Provider detail/recovery remains in Settings or the affected workflow; the header does not present a generic “AI ready” KPI.
+- Route ownership drives active navigation: Home only for `/`; Courses for `/courses/*`, compatibility `/session?id=`, exercise, and lesson-linked interview contexts; Review for `/review/*`; Skills for `/skills/*`; Settings for `/settings/*`.
+- The separate page header owns title, description, and page actions. It does not repeat the breadcrumb or show a false top-level title for a nested route.
 - Main width follows the screen: reading views cap content measure; lists and Studio use available width.
 - Secondary tabs are scoped to their destination and use a single row. They do not duplicate primary navigation.
 
@@ -114,9 +105,9 @@ Compatibility links may redirect during migration, but the final cutover must no
 
 **Approved Core Alpha target**
 
-- Top app bar: current page title, optional back/up affordance, and one overflow menu.
+- Top app bar: compact breadcrumb/up context for deep routes, theme/provider utilities only when they fit without displacing location, and one overflow menu for remaining global utilities.
 - Fixed bottom navigation: Home, Courses, Review, Skills, Settings; label and icon always visible; safe-area inset honored.
-- No second row, horizontally scrolling primary tabs, or eight-item grid.
+- Exactly five labeled destinations remain in one bottom row; primary navigation never becomes a horizontally scrolling tab strip.
 - Activity primary action sits above the bottom bar; sheets leave it reachable and preserve focus.
 - Deep-linked activity or Studio screens may temporarily replace the bottom bar with a task toolbar when the user is in a contained workflow and a clear Back/Leave action is present.
 
@@ -143,12 +134,12 @@ All states preserve already entered learner or authoring data. The UI never mark
 **Approved Core Alpha target**
 
 1. Home detects no installed Course and shows a compact readiness section with separate Core, SQLite, filesystem/workspace, Node, Python, external editor, and optional AI rows. Blocking local infrastructure appears first; AI Off is neutral.
-2. The primary action is **Create Course** and the secondary action is **Import Course Pack**. Both lead to Courses; no marketplace or production catalog is implied.
-3. Courses offers **Create Course**, **Import Course Pack**, and **Open local Pack**. Create opens `/courses/new`, where **Create manually** and optional **Describe a learning goal** converge on the same local Draft schema. Cancel before confirmation leaves no Draft. Import/Open creates only a server-owned staging operation at `/courses/intake/:operationId`.
-4. Open reads one V1 JSON document for inspection only. Import remains Courses-owned while it performs bounded non-executing validation, provenance/requirements review, and learner Preview before any persistence.
-5. Invalid input remains outside the installed library. Errors identify JSON path, stable node ID, field, and rule.
-6. For a valid Pack, the user explicitly chooses **Install immutable revision** or **Open as local draft**, then reviews Course/revision/hash/destination and commits atomically. Install enters Course overview; Open-as-draft creates the Course/Draft before Studio opens.
-7. For creation, confirmed minimal metadata creates only a local Draft and opens Adaptive Studio; immutable Publish remains a separate desktop gate.
+2. The primary action **Create Course** opens `/courses/new`; the secondary action **Import Course Pack** opens `/courses/import`. Neither routes through Settings or opens an existing Course editor. No marketplace or production catalog is implied.
+3. `/courses/new` presents one unselected exclusive choice between **Use an external model** and **Use the connected Course Designer**, with one Continue action. It explains limited versus suitable model guidance without automatic weak/strong scoring. **Create manually without AI** remains a quieter complete fallback. The page contains no Pack file input.
+4. The external start retains the same authoring brief locally, downloads a version-matched instruction embedding the exact generated V1 schema/template, sends nothing automatically, and directs the returned JSON to `/courses/import`.
+5. Guided confirmation shows the exact configured role/provider/model and available capability evidence, then creates exactly one explicit local Draft before any transmission. Unknown evidence is advisory; AI Off and unavailable selections expose Settings, external, and manual recovery without silent substitution.
+6. `/courses/import` alone reads one V1 JSON document and creates the server-owned staged intake. Invalid input stays outside the library; valid input proceeds through provenance/requirements review and learner Preview.
+7. Install/Open-as-draft is explicit and atomic. For locally created Drafts, proposal **Apply**, deterministic **Validate**, digest-bound **Preview**, **Change review**, and immutable **Publish** remain separate gates.
 8. Home then shows the active Course/Draft status and the deterministic next valid action.
 
 Missing Core or storage blocks create/import commits. Missing optional AI never blocks manual creation, authoring, or any required/terminal learner path. Every publishable Course graph must have a deterministic/manual route; AI-dependent activities are optional and non-blocking. Commands, scripts, secrets, and plugins are rejected rather than displayed as runnable options.
@@ -190,7 +181,7 @@ Missing Core or storage blocks create/import commits. Missing optional AI never 
 
 **Approved Core Alpha target**
 
-Courses → Course → Adaptive Studio owns Create/Open/Import, metadata, outline/finite graph, structured activity editing, Source Snapshots, Knowledge Capsules, locale completion, environment contracts, Preview, validation, Change review, immutable Publish, personal adaptation/upstream integration, release history, export, and clone-to-draft. The complete sequence and mobile limits are specified in [`adaptive-studio.md`](adaptive-studio.md).
+Courses owns creation entry and Pack intake. Adaptive Studio begins only after an explicit local Draft/revision exists and owns structured editing, optional proposal review/Apply, deterministic Validate, digest-bound learner Preview, Change review, immutable Publish, personal adaptation/upstream integration, history, export, and clone-to-draft. It does not own an uncommitted Pack or embed import file selection. The complete sequence and mobile limits are specified in [`adaptive-studio.md`](adaptive-studio.md).
 
 ### 6. Work with no AI
 
@@ -206,7 +197,7 @@ Courses → Course → Adaptive Studio owns Create/Open/Import, metadata, outlin
 
 **Approved Core Alpha target**
 
-Settings → Core & Storage and Settings → Runtimes use status rows for Aptiloop Core, SQLite, filesystem, Node environment, Python environment, external editor, then optional AI tools. Each row has status, version/path summary, diagnostic reason, and one exact recovery action. Core/storage failures are pinned above optional failures. An external-editor failure retains the current useful copy/manual-path fallback seen in `apps/web/components/exercise-client.tsx:538-547`.
+Settings → Core & Storage and Settings → Runtimes use status rows for Aptiloop Core, SQLite, filesystem, Node environment, Python environment, external editor, then optional AI tools. Each row has status, version/path summary, diagnostic reason, and one exact recovery action. Core/storage failures are pinned above optional failures. An external-editor failure retains the implemented copy/manual-path fallback.
 
 ### 8. Change UI or preview locale
 
@@ -257,26 +248,50 @@ Light/dark: same separators and hierarchy; dark uses raised surfaces only for th
 
 Required states: loading, readiness loading, no Course, create/import unavailable because Core/storage failed, installed but no published revision, ready, active lesson, Course complete, browser offline, Core unavailable, storage unavailable, start failure.
 
-### Courses library and first run
+### Courses library
 
 **Approved Core Alpha target**
 
 Desktop wireframe:
 
-- Header actions: **Create Course**, **Import Course Pack**, **Open local Pack**.
+- Header actions: **Create Course** and **Import Course Pack** link to separate routes.
 - Installed Courses are a ruled list, grouped by active and other; no identical card grid.
 - Each row: title, immutable revision/version, primary/available locales, lesson count, source/provenance summary, local validation state, runtime requirements, and Continue/Open.
 - Selected Course may open a right detail rail on wide screens.
-- `/courses/new` begins with manual/guided choice and minimal Course/locale fields. Confirm creates one local Draft; Cancel creates nothing.
+- The library contains neither a Draft editor nor an inline Pack file input. Create never opens the selected, first, or most recently viewed Course.
 
 Mobile wireframe:
 
 - Single list; row metadata under disclosure.
-- Sticky **Create Course** in empty/first-run state with secondary **Import Course Pack**; Open local Pack remains in overflow.
-- Intake validation and learner Preview are dedicated steps, not a cramped modal.
-- Ordinary validated immutable installation confirmation is supported on mobile. Complex import conflict resolution requires desktop; the validated staging operation remains resumable and exposes a clear handoff instead of a failing control.
+- Sticky **Create Course** in empty/first-run state with secondary **Import Course Pack**.
 
-Required states: library loading, no Courses, new-Course initial/saving/save failure/cancelled-no-Draft, Core unavailable, storage unavailable, invalid Pack, incompatible schema, duplicate revision, Preview loading/failure, install-vs-draft choice, update/new revision available locally, runtime mismatch, commit uncertain, install failure, and storage failure.
+Required states: library loading, no Courses, selected Course, multiple Courses, Draft-only Course, archived-only history, Core unavailable, storage unavailable, and library load failure.
+
+### Create Course
+
+**Approved Core Alpha target**
+
+Breadcrumb: `Courses › Create course`. The page preserves one unselected exclusive chooser with two high-emphasis assisted paths and one Continue action:
+
+1. **Use an external model** — explain that Aptiloop downloads a version-matched instruction, sends nothing automatically, and accepts the resulting JSON only at `/courses/import`.
+2. **Use the connected Course Designer** — explain that Aptiloop shows the selected provider/model and current technical readiness evidence without rating model strength. `connected` and `degraded` remain eligible server states; unknown evidence is advisory, not a guessed Ready state.
+3. **Create manually without AI** — a visually quieter tertiary link that remains complete and enabled whenever Core/storage permit.
+
+External and guided routes collect the same brief and retain it locally until explicit Clear. External download creates no Draft. Guided/manual confirmation creates exactly one local Draft and opens that explicit Draft; provider transmission, proposal Apply, Validate, Preview, Change review, and Publish are later separate actions. This route contains no library, Pack input, selected-Course editor, validation dashboard, or Publish action.
+
+Required states: initial choice, external brief/download, guided brief, capability checking, eligible connected/degraded selection, AI Off, provider/model unavailable, capability unknown advisory, explicit missing capability, manual fallback, retained-input create/download failure, cancelled-no-Draft, Core unavailable, and storage unavailable.
+
+### Import Course Pack and staged intake
+
+**Approved Core Alpha target**
+
+Breadcrumb starts `Courses › Import Course Pack`; staged inspection appends the Pack title or a stable inspection label when known. `/courses/import` owns file selection, bounded byte/schema preflight, and the explicit **Validate Pack** action. A successful preflight enters `/courses/intake/:operationId`, where provenance, requirements, graph summary, diagnostics, and learner Preview precede the explicit install-or-draft decision. Import does not expose Course creation choices or Studio editing controls.
+
+The route may explain that the file came from downloaded external-model instructions, but it does not contact that model or trust its output. `/courses/new` links here and never hosts this file input.
+
+Mobile uses dedicated file-selection, validation, Preview, and confirmation steps rather than a cramped modal. Ordinary validated immutable installation is supported on mobile. The staged operation remains recoverable only in the same process before expiry; a Core restart or expiry returns to file selection. Desktop-only conflict enforcement and handoff behavior remain an **Approved Core Alpha target**.
+
+Required states: no file, reading, invalid bytes, invalid Pack, incompatible schema, duplicate revision, validation blocked, Preview loading/failure, install-vs-draft choice, update/new revision available locally, runtime mismatch, commit uncertain, install failure, storage failure, expired staging operation, and cancel with no installed mutation.
 
 ### Course overview and outline
 
@@ -306,9 +321,10 @@ Required states: no branch, branch current, Draft saved/saving/failed, upstream 
 
 Desktop wireframe:
 
-- Sticky Course › lesson breadcrumb, activity N/M, remaining estimate, Plan, and Leave safely.
+- The utility-header breadcrumb resolves `Courses › {Course} › {Lesson}` from entity data for both the target route and compatibility `/session?id=`. Courses remains the active primary destination; loading entity labels use an honest loading state and never fall back to Home.
+- A sticky lesson-orientation row may add activity N/M, remaining estimate, Plan, and Leave safely, but it does not repeat the shell breadcrumb or page title.
 - Center 720–800px ActivityFrame.
-- Optional 280px context rail for sources, notes, evidence, or runtime details.
+- Optional contextual region for sources, notes, evidence, or runtime details when the exercised viewport has sufficient space.
 - Activity frame anatomy and code/review/source contexts follow [`activity-renderers.md`](activity-renderers.md).
 
 Mobile wireframe: one pane, compact progress header, Plan/Context sheets, contained code/output scroll, and sticky primary action above bottom navigation. No desktop rail remains squeezed beside content.
@@ -319,9 +335,9 @@ Required states: activity loading, locked, ready, in progress, saving, validatio
 
 **Approved Core Alpha target**
 
-Desktop wireframe: due-first list in the main field; scoped tabs All/Mistakes/Cards/Interviews; optional detail rail. Each list row has type, topic, reason, source evidence/date, due state, and action.
+Desktop wireframe: URL-backed destinations **Due**, **Mistakes**, **Cards**, and **Interviews** sit above the main field; an optional detail rail may accompany the active destination. Each row exposes the persisted type, topic, reason, source evidence/date, and due state. Due rows do not render an executable Start action until the typed server-owned review executor exists.
 
-Mobile wireframe: compact rows; selecting an item opens a full screen. Tabs may use a select/menu if all labels do not fit at 320px. Primary review action remains reachable above bottom navigation.
+Mobile wireframe: the same four destinations use one labeled Select; compact rows open their supported detail or action without losing `?view=` state. Controls remain reachable above bottom navigation.
 
 Cards retain candidate approval and local export. Export errors stay local and do not invalidate review. Interview reports use “Answer observations” until technical correctness is evaluated.
 
@@ -389,7 +405,7 @@ The common pattern for Course Designer, Tutor, Evaluator, Reviewer, and intervie
 
 **Approved Core Alpha target**
 
-Adaptive Studio contains Pack overview, guided/manual creation, outline/finite graph, structured editor, Source Snapshot/Knowledge Capsule management, locale coverage, environment contracts, learner Preview, validation, Change review, immutable Publish, personal adaptation/upstream integration, history, clone, import, and export. See [`adaptive-studio.md`](adaptive-studio.md).
+Adaptive Studio contains the explicit Draft/revision header, optional guided Designer for that Draft, manual outline/finite-graph editing, Source Snapshot/Knowledge Capsule management, locale coverage, environment contracts, learner Preview, validation, Change review, immutable Publish, personal adaptation/upstream integration, history, clone, and export. Pack file selection and pre-install intake remain under `/courses/import`, never inside Studio. See [`adaptive-studio.md`](adaptive-studio.md).
 
 Studio light/dark must preserve editor hierarchy, validation severity, selection, read-only state, and proposal provenance. Dark mode must not use code-editor neon, glow, or glass.
 
@@ -397,29 +413,26 @@ Studio light/dark must preserve editor hierarchy, validation severity, selection
 
 **Approved Core Alpha target**
 
-| State               | Required content                                                                | Prohibited behavior                                                   |
-| ------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Loading             | known heading/context, shape-preserving skeleton, `aria-busy`, one announcement | replacing the entire shell; announcing every skeleton pulse           |
-| Empty               | reason, what creates content, one relevant action                               | “Nothing here” without recovery; decorative illustration taking focus |
-| Validation error    | summary, stable count, exact field/node link, inline message, preserved input   | toast-only failure; clearing form; publishing with errors             |
-| Recoverable error   | failed layer/operation, retained data, Retry and settings/recovery path         | generic “Something went wrong”; infinite retry                        |
-| Browser offline     | visible Offline status, read-only retained data, explicit mutation limit        | pretending local Core is necessarily down; promising sync             |
-| Core unavailable    | “Aptiloop Core is not responding,” retry, Core settings                         | labeling as AI/network failure                                        |
-| Storage unavailable | specific SQLite/storage state and safe recovery                                 | suggesting destructive reset before diagnostics/backup                |
-| AI off              | calm neutral notice only where AI was optional                                  | global warning; activating Mock                                       |
-| AI unavailable      | provider/tool/model and explicit retry/switch/continue-without-AI options       | silent provider or Mock substitution                                  |
-| Runtime missing     | exact Node/Python/editor requirement and setup/copy/manual path                 | arbitrary command execution or shell instructions from a Pack         |
+| State                        | Required content                                                                                       | Prohibited behavior                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| Loading                      | known heading/context, shape-preserving skeleton, `aria-busy`, one announcement                        | replacing the entire shell; announcing every skeleton pulse                  |
+| Empty                        | reason, what creates content, one relevant action                                                      | “Nothing here” without recovery; decorative illustration taking focus        |
+| Validation error             | summary, stable count, exact field/node link, inline message, preserved input                          | toast-only failure; clearing form; publishing with errors                    |
+| Recoverable error            | failed layer/operation, retained data, Retry and settings/recovery path                                | generic “Something went wrong”; infinite retry                               |
+| Browser offline              | visible Offline status, read-only retained data, explicit mutation limit                               | pretending local Core is necessarily down; promising sync                    |
+| Core unavailable             | “Aptiloop Core is not responding,” retry, Core settings                                                | labeling as AI/network failure                                               |
+| Storage unavailable          | specific SQLite/storage state and safe recovery                                                        | suggesting destructive reset before diagnostics/backup                       |
+| AI off                       | calm neutral notice only where AI was optional                                                         | global warning; activating Mock                                              |
+| AI unavailable               | provider/tool/model and explicit retry/switch/continue-without-AI options                              | silent provider or Mock substitution                                         |
+| Designer capability checking | selected provider/model plus Checking state; manual and external alternatives remain usable            | showing Ready before server-owned capability resolution                      |
+| Designer capability unknown  | exact eligible connection/model, advisory evidence gap, server-authoritative continuation and recovery | disabling every path; guessing model strength or silently switching provider |
+| Runtime missing              | exact Node/Python/editor requirement and setup/copy/manual path                                        | arbitrary command execution or shell instructions from a Pack                |
 
-## Light and dark behavior
+## Theme and responsive ownership
 
-**Approved Core Alpha target — Calm Workshop**
+**Implemented baseline**
 
-- Light uses tinted cool-neutral background and near-white semantic surfaces; avoid pure white.
-- Dark uses three quiet luminance levels: background, surface, raised. Border contrast provides grouping.
-- Primary eucalyptus remains action/selection, not success. Success, warning, destructive, activity type, and focus are separate token roles.
-- Selected rows use background + leading marker + `aria-current`/state, not color alone.
-- Diff additions/deletions, validation severities, mastery dimensions, and graph edges require text/icon/pattern equivalents.
-- Theme changes do not rearrange content or hide borders. Screens must not rely on shadow as their only boundary.
+Light/dark tokens, `surface-soft`, focus treatment, and Clear Slate hierarchy are canonical in [`../../DESIGN.md`](../../DESIGN.md) and [`../design-system.md`](../design-system.md). This IA adds only one invariant: theme or breakpoint changes never change route ownership, reading order, current destination, or URL-backed state.
 
 ## Explicit non-goals
 
@@ -433,6 +446,8 @@ Studio light/dark must preserve editor hierarchy, validation severity, selection
 
 ## Information architecture acceptance checklist
 
+**Approved Core Alpha target**
+
 The IA gate is satisfied only when owner-approved implementation evidence shows:
 
 - exactly Home/Courses/Review/Skills/Settings as primary destinations;
@@ -441,4 +456,6 @@ The IA gate is satisfied only when owner-approved implementation evidence shows:
 - desktop/mobile and light/dark compositions follow this specification;
 - no nested-card hierarchy, generic dashboard/card grid, chat-clone organization, full IDE, or second mobile navigation row;
 - all required states preserve data and identify the failing layer;
+- `/courses/new` contains no Pack input; `/courses/import` is the sole upload owner;
+- Create/Compile, proposal Apply, Validate, digest-bound Preview, Change review, and Publish remain distinct actions;
 - design approval remains separate from implementation and Course publication approval.

@@ -1,6 +1,6 @@
 # Research Gateway
 
-**Document status:** Approved Core Alpha target. The repository has only precursor source fields; no target gateway is claimed as implemented.
+**Document status:** Live bounded retrieval is an **Approved Core Alpha target**. Immutable local Source Snapshot/Capsule persistence and validated non-network Course Pack import are an **Implemented baseline**; no live Research Gateway fetch is claimed.
 **Purpose:** bounded retrieval from registered official sources into immutable local Source Snapshots. It is the only external-source path exposed to Aptiloop AI roles.
 
 ## Boundary
@@ -9,7 +9,7 @@
 
 A role tool accepts a registered source authority/reference ID and a bounded query/locator. It does not accept an arbitrary URL, HTTP method, headers, body, cookies, credentials, proxy, filesystem path, or shell command. Models cannot browse freely or select a network destination.
 
-**Implemented baseline.** The only current precursor is authored source metadata: current schemas allow URL-bearing source records but do not constrain URL protocol to official authorities and do not capture immutable content (`packages/shared/src/curriculum.ts:16-52`; `packages/curriculum/src/versioned-types.ts:20-39`). That is an audit finding, not gateway compliance.
+**Implemented baseline.** Course foundations persist Course/revision-owned immutable Source Snapshots and Knowledge Capsules with hashes, provenance/rights fields, citations, and protected-material separation. Course Pack V1 can validate and transactionally import those records as explicitly selected local declarative data; that path performs no network retrieval. Legacy authored source metadata remains only a pointer and is not a snapshot. No live Research Gateway fetch is implemented, and URL-bearing legacy fields are not gateway compliance.
 
 ## Official source registry
 
@@ -43,6 +43,8 @@ Adding/changing an authority is an application release/configuration decision, n
 
 ## Request and result contracts
 
+**Approved Core Alpha target.** The live Gateway uses the following app-owned intent/result boundary; it is not a claim that the retrieval route exists today.
+
 ```ts
 type OfficialResearchRequest = {
   operationId: string;
@@ -68,9 +70,9 @@ type ResearchResult =
     };
 ```
 
-The Gateway resolves `sourceReferenceId` from the draft Course/Knowledge System, verifies its authority, applies a canonical locator/query, retrieves bounded content, converts it to inert text/structured blocks, and returns only the stored snapshot ID/hash plus diagnostics. Raw active HTML is never passed to a role or renderer.
+**Approved Core Alpha target.** The Gateway resolves `sourceReferenceId` from the draft Course/Knowledge System, verifies its authority, applies a canonical locator/query, retrieves bounded content, converts it to inert text/structured blocks, and returns only the stored snapshot ID/hash plus diagnostics. Raw active HTML is never passed to a role or renderer.
 
-Idempotency is mandatory. Same operation ID plus identical canonical request returns the prior result. A conflicting replay fails. Identical bytes/metadata may reuse the content-addressed snapshot; changed content creates a new snapshot linked to the prior one.
+**Approved Core Alpha target.** Idempotency is mandatory. Same operation ID plus identical canonical request returns the prior result. A conflicting replay fails. Identical bytes/metadata may reuse the content-addressed snapshot; changed content creates a new snapshot linked to the prior one.
 
 ## Bounds
 
@@ -89,6 +91,8 @@ Idempotency is mandatory. Same operation ID plus identical canonical request ret
 
 ## Extraction and snapshots
 
+**Approved Core Alpha target.** Live retrieval follows this sequence:
+
 1. Resolve and validate authority/reference.
 2. Fetch with an app-owned minimal client and no ambient credentials.
 3. Validate status, final URL, media type, encoding, and size while streaming.
@@ -101,6 +105,8 @@ Idempotency is mandatory. Same operation ID plus identical canonical request ret
 Provider web-search/browsing features are not a substitute: they have different destination, credential, retention, citation, and reproducibility semantics. If a provider can browse autonomously, that capability is disabled for Aptiloop roles.
 
 ## Typed role tools
+
+**Approved Core Alpha target.** These tools are the proposed live Gateway/editor boundary, not implemented Course Pack import tools.
 
 | Tool                              | Input                                                                   | Output                                | Authority                                                            |
 | --------------------------------- | ----------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------- |
@@ -119,6 +125,8 @@ Snapshot capture is distinct from sending content to an AI provider. The UI disp
 
 ## Failure behavior
 
+**Approved Core Alpha target.** Live retrieval must fail as follows:
+
 | Failure                                                            | Required behavior                                                                           |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | Unknown authority/reference, disallowed URL/IP/redirect/media type | `blocked`, persist bounded diagnostic, no snapshot.                                         |
@@ -133,11 +141,8 @@ Failures never complete a lesson, validate a capsule, publish a Course, or chang
 
 ## Migration
 
-1. Treat existing source objects as SourceReference candidates.
-2. Normalize only approved HTTPS official URLs; quarantine other protocols/unknown authorities.
-3. Require an explicit user capture to create each first Source Snapshot.
-4. Pin snapshots/capsules only in a new draft/personal CourseRevision.
-5. Keep existing sessions on their old snapshot content; do not fetch during resume.
-6. Introduce role tools only after the network and persistence boundary is implemented and verified.
+**Implemented baseline.** Course-foundation migration preserves legacy source objects as provenance-bearing compatibility data and admits only provable target relationships; validated Course Pack import can create immutable local Source Snapshots/Capsules without a network operation. Existing sessions remain pinned and never fetch during resume. Ambiguous legacy rows remain quarantine rather than being promoted to a SourceReference or Snapshot.
+
+**Approved Core Alpha target.** Migrate eligible legacy source objects into explicit SourceReference candidates, resolve their authority through the future registry, and require an explicit user capture before any live URL becomes a new Snapshot. Introduce Gateway role tools only after the network policy, SourceReference workflow, and persistence integration are implemented and verified. Imported immutable snapshots do not need to be fetched again merely to satisfy this future workflow.
 
 **Future.** General web search, crawling, authenticated sources, browser automation, private repositories, remote vector search, scheduled refresh, and collaborative source libraries are outside Core Alpha.

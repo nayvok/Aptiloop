@@ -4,7 +4,7 @@
 
 ## 1. Baseline boundary
 
-The Implemented baseline practice path copies a repository-controlled template into a per-attempt directory, establishes a Git baseline, and accepts only operation/entity IDs plus the literal compatibility command ID `test`. The M5 Fabric resolves that to immutable environment/check descriptors and an app-owned `shell: false` plan, validates exact attempt ownership and complete-workspace freshness, supplies a minimal environment, bounds output/runtime, and terminates the process tree on cancellation or limits. Canonical containment rejects traversal and link/reparse escape. Review requires a passing non-truncated result bound to the current Git-visible patch SHA-256 and persists an immutable evidence bundle.
+The **Implemented baseline** practice path copies a repository-controlled template into a per-attempt directory, establishes a Git baseline, and accepts only operation/entity IDs plus the literal compatibility command ID `test`. The M5 Fabric resolves that to immutable environment/check descriptors and an app-owned `shell: false` plan, validates exact attempt ownership and complete-workspace freshness, supplies a minimal environment, bounds output/runtime, and terminates the process tree on cancellation or limits. Canonical containment rejects traversal and link/reparse escape. Review requires a passing result bound to a canonical complete-workspace SHA-256, including Git-ignored regular files except explicit app-owned exclusions, plus a complete non-truncated Git diff and immutable evidence bundle.
 
 Those controls make execution auditable and reject browser/pack/model command authority; they do not isolate malicious Node/Python code from the local account or network. The compatibility npm contract also preserves learner-template script authority. No imported Course Pack, arbitrary dependency, AI-authored executable, learner-selected command, or untrusted user may enter this backend.
 
@@ -40,8 +40,8 @@ Both accepted local-native contracts use `inherit-local-trusted` network policy 
 
 - **Attack path:** browser, AI, learner input, or pack supplies executable/argv/cwd/script or selects an unknown operation.
 - **Impact:** arbitrary command execution and local account compromise.
-- **Existing mitigation:** Implemented baseline accepts only `commandId: "test"`; server owns executable/args/cwd; `shell: false` is used.
-- **Source fix:** replace the single command with a versioned trusted-check registry while preserving server ownership; strict request schemas contain no command-like fields and unknown IDs fail closed.
+- **Existing mitigation:** **Implemented baseline.** Compatibility accepts only `commandId: "test"`; the implemented versioned trusted-check registry owns executable/args/cwd/environment/limits, uses `shell: false`, and rejects unknown IDs and command-like request fields.
+- **Source fix:** complete for the trusted local registry; preserve exact server ownership for every new check.
 - **Test:** unknown/forged IDs and command/argv/cwd/env fields are rejected; spawn capture exactly matches the registry for every Node/Python check.
 
 ### EXEC-CTRL-002 — Filesystem containment
@@ -56,7 +56,7 @@ Both accepted local-native contracts use `inherit-local-trusted` network policy 
 
 - **Attack path:** a child inherits provider tokens, sidecar passwords, database paths, cloud credentials, auth-store variables, or proxy configuration and reads/exfiltrates them.
 - **Impact:** credential/private-data disclosure and lateral provider access.
-- **Existing mitigation:** Implemented baseline exercise child environment is minimal and rejects secret-shaped overrides; Codex child inheritance remains a separate High finding.
+- **Existing mitigation:** **Implemented baseline.** Exercise and active provider child environments are boundary-specific and minimal; secret-shaped and unrelated connection/database/provider sentinels are rejected.
 - **Source fix:** one environment builder per trusted runtime permits only essential OS/runtime variables and synthetic run identifiers; strip secret-shaped/cross-provider variables and do not mount auth stores.
 - **Test:** parent environment contains varied sentinel names/values; child records its environment; no sentinel or private path appears in output, logs, database, WAL, or backup.
 
@@ -86,9 +86,9 @@ Both accepted local-native contracts use `inherit-local-trusted` network policy 
 
 ### EXEC-CTRL-007 — Evidence freshness and deterministic authority
 
-- **Attack path:** learner edits after a passing run, truncated/stale evidence reaches Reviewer, mtime is forged, or a caller directly submits mastery/result state.
+- **Attack path:** learner edits after a passing run, truncated/stale evidence reaches Reviewer, or a caller directly submits mastery/result state.
 - **Impact:** false approval and corrupted adaptation/mastery.
-- **Existing mitigation:** Implemented baseline fingerprints the full non-truncated Git diff with SHA-256, rejects stale/truncated review, compares before/after review, and v2 Learning Kernel derives evidence. The old mtime-bypass claim is obsolete.
+- **Existing mitigation:** **Implemented baseline.** The check binds exact attempt/revision/check identity to the canonical complete-workspace SHA-256. Review separately requires the complete non-truncated Git diff SHA-256, the same workspace snapshot before/after, and Learning Kernel authority. Filesystem timestamps are not evidence.
 - **Source fix:** bind result to activity revision, attempt, check contract, exact input/diff hash, operation ID, and terminal run; Reviewer remains read-only; only the Learning Kernel accepts typed evidence.
 - **Test:** same-mtime edit, stale run, truncated diff, baseline tamper, replay/duplicate operation, Reviewer mutation, and caller-supplied mastery are rejected.
 
@@ -96,8 +96,8 @@ Both accepted local-native contracts use `inherit-local-trusted` network policy 
 
 - **Attack path:** Reviewer obtains filesystem/edit/apply tools or its response automatically patches/approves learner work.
 - **Impact:** unreviewed mutation and collapse of the learner correction cycle.
-- **Existing mitigation:** Implemented baseline Reviewer uses Codex read-only/no-network, OpenCode deny-write, no apply route, and before/after diff invariant.
-- **Source fix:** preserve read-only/no-patch policy across Pi/provider migration; Reviewer receives only bounded serialized evidence through a typed tool/result; its decision never executes code or edits.
+- **Existing mitigation:** **Implemented baseline.** The constrained Provider Hub Reviewer receives only bounded serialized evidence, has no filesystem/process/network/edit/apply/general-tool authority, exposes no apply route, and must leave the complete workspace snapshot unchanged.
+- **Source fix:** complete for the evidence-only Reviewer; preserve this boundary for every adapter and result schema.
 - **Test:** adapter policy matrix and malicious reviewer output/tool request; zero filesystem/process action; diff unchanged; invalid/oversized response cannot produce trusted review.
 
 ## 5. Release gates

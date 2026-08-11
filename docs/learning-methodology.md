@@ -1,5 +1,7 @@
 # Учебная методика
 
+> **Historical snapshot — non-authoritative.** This file records an earlier **Implemented baseline** and is preserved for context only. Do not use it as the current learning specification. See the [current documentation index](README.md).
+
 ## Принцип
 
 Harness тренирует воспроизведение, а не узнавание. Сначала пользователь формулирует ответ или пишет код сам, затем получает минимальную помощь. Zed остаётся отдельным рабочим контекстом; приложение хранит attempts/evidence/diff/tests/reviews, но не применяет correction.

@@ -2,7 +2,7 @@
 
 ## Document status
 
-**Approved Core Alpha target**. The current hardcoded Russian interface and legacy Russian documentation are **Implemented baseline** migration findings, not evidence that this policy is implemented.
+**Approved Core Alpha target** overall. Complete `en-US` and `ru-RU` application catalogs, explicit UI locale persistence, root document language, and locale-independent browser state are an **Implemented baseline**. Production Course translations, publication completeness, and full assistive-technology conformance remain gated separately.
 
 ## Principles
 
@@ -106,7 +106,7 @@ External Course Packs declare primary locale and optional translation resources 
 
 - A role request declares the intended response/content locale explicitly.
 - Provider/model capability does not override Course or UI locale policy.
-- Before external use, the user sees which Course/learner content and locale will be sent.
+- Before every external dispatch carrying private content, the user sees the stored role, provider/model, destination, selected Course/learner scope, locale, exclusions, and retention disclosure. Approval is consumed once; dispatch rejects a changed role, connection/provider/model, payload hash, status, or expiry. Comparing destination/entity IDs again at dispatch and rederiving Course Designer recovery-preview scope remain an **Approved Core Alpha target**.
 - Model output is untrusted. It is schema-validated and labeled with provider/model provenance.
 - Model-generated translation is a proposal against a draft, not approved Course content.
 - Applying a translation proposal never publishes.
@@ -134,22 +134,15 @@ Use locale-aware platform formatting with explicit time zone behavior where lear
 
 Code blocks, inline code, diffs, terminal output, and raw validation paths preserve source text and direction. Surround them with localized explanation rather than translating their content.
 
-## Baseline migration plan
+## Baseline migration status
 
 **Implemented baseline**
 
-The current root HTML language, UI labels, curriculum prose, and much documentation are Russian and largely hardcoded. Existing English technical identifiers coexist with Russian product labels. This is not a locale catalog implementation.
+The M7 application-shell migration moved application-owned navigation, state, validation, provider/runtime, accessibility, authoring, Course Pack, Review, and Interview strings into complete `en-US`/`ru-RU` catalogs with explicit locale persistence and parity checks. M11 kept Course locale independent from UI locale. Manual/guided creation and Course Pack import require explicit primary Course locale data, and immutable revision identity includes that locale. Existing Russian development Course content and historical documents remain intentionally untranslated fixtures/history rather than application-string fallbacks. Legacy identifiers remain stable rather than being translated in place.
 
-**Approved Core Alpha target** migration sequence:
+**Approved Core Alpha target**
 
-1. inventory application-owned strings separately from Course content and historical docs;
-2. establish stable message keys and `en-US`/`ru-RU` catalogs;
-3. move navigation, system states, validation, privacy, provider/runtime, and accessibility text first;
-4. add explicit UI locale persistence and formatting;
-5. add Course primary-locale metadata and translation resource contracts;
-6. migrate current development curriculum as fixture content only, without treating it as a production Course;
-7. add parity checks for missing keys/placeholders and desktop/mobile journey coverage;
-8. preserve legacy database values and identifiers through an explicit migration rather than translating them in place.
+Remaining locale work is production Course translation content and provenance, complete visible fallback behavior across every authored resource, publication evidence for primary-locale completeness, full assistive-technology and formatting verification in both UI locales, and any later additive migration required for retained legacy data. These gates are not closed merely by catalog parity.
 
 ## Acceptance
 

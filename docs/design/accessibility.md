@@ -18,35 +18,31 @@ Status vocabulary:
 
 - **Implemented baseline** — current repository evidence.
 - **Approved Core Alpha target** — required accessibility behavior.
-- **Approved Core Alpha target — Calm Workshop** — selected direction-specific presentation.
+- **Proposed pending owner approval** — an unresolved recommendation.
 - **Future** — outside Core Alpha.
+
+Calm Workshop — Clear Slate is the approved direction name, not a separate status label.
 
 ## Baseline audit
 
-### Useful current practices
+### Implemented semantics
 
 **Implemented baseline**
 
-- `apps/web/components/app-shell.tsx:89-94` provides a skip link to `#main-content`; `:214-220` makes the main target programmatically focusable.
-- `apps/web/components/ui/button.tsx:7-35` provides visible focus rings, disabled state, and 44px mobile button/icon targets.
-- `apps/web/components/query-state.tsx:13-30` uses `role="alert"` for query failures.
-- `apps/web/components/dashboard-client.tsx:237-250`, `apps/web/components/flashcards-client.tsx:40-45`, and similar screens expose loading status text instead of skeleton-only output.
-- `apps/web/components/session-client.tsx:858-862` gives lesson progress an accessible label.
-- `apps/web/components/knowledge-client.tsx:62-71` names and makes the wide scroll region keyboard-focusable; dimension progress has value text at `:98-110`.
-- `apps/web/components/interview-client.tsx:571-596` uses fieldset/legend for scope options and associates controls visibly.
-- `apps/web/app/globals.css:190-198` reduces motion when the user requests it.
+- `AppShell` provides a skip link, focusable main landmark, named desktop/mobile navigation, exactly five ordered destinations, visible current-page state, and an `aria-expanded` collapse control.
+- The utility breadcrumb is a named navigation landmark with an ordered list, linked ancestors, entity-backed labels, and plain final text with `aria-current="page"`.
+- Shared buttons and form controls expose accessible names, labels, descriptions, invalid/disabled/busy state, visible focus, and mobile-sized targets.
+- Query, validation, streaming, save, and interview states use bounded `role="status"` or `role="alert"` regions rather than announcing every visual update.
+- Review uses semantic desktop tabs and a labeled compact Select for the same Due/Mistakes/Cards/Interviews destinations.
+- The closed ActivityFrame registry provides typed labels/status and a localized unsupported-type alert; lesson and roadmap progress use accessible values and current-step semantics.
+- `en-US` and `ru-RU` catalogs drive application strings and root language independently from Course locale.
+- Global reduced-motion rules and component `motion-reduce` variants remove nonessential transitions and transforms.
 
-### Current risks and gaps
+### Evidence limits and remaining acceptance work
 
-**Implemented baseline** audit findings, not failure determinations from a formal conformance test:
+**Implemented baseline** automated tests cover selected landmarks, names, roles, values, keyboard paths, focus states, theme behavior, reduced motion, URL-backed navigation, and localized labels. Focused browser checks separately cover exercised responsive layouts and interactions. Neither verifies complete 320px reflow or constitutes certification.
 
-- The document language is hardcoded to Russian (`apps/web/app/layout.tsx:20`), while Core Alpha requires `en-US` and `ru-RU` UI independent of Course locale.
-- Mobile navigation renders eight destinations in two rows (`apps/web/components/app-shell.tsx:187-212`), increasing cognitive and focus-order load. Recorded 390×844 smoke evidence found it overfull.
-- The Skills predecessor relies on a `min-w-[900px]` table (`apps/web/components/knowledge-client.tsx:62-119`); its named scroll region is useful but does not replace a 320px reflow composition.
-- Provider state can collapse Core/provider/model distinctions and labels Mock as “AI ready” (`apps/web/components/provider-health.tsx:83-137`), weakening status comprehension.
-- Nested authoring panels and raw JSON fields (`apps/web/components/curriculum-editor-client.tsx:993-1041`, `:1365-1559`) create long focus paths and error-localization risk.
-- Current screenshot evidence does not cover keyboard focus, zoom/reflow, forced colors, screen readers, state errors, mobile Studio, or all dark views.
-- Recorded E2E is not green: 1 passed and 3 failed. Failures included a missing plan label, editor revision navigation timeout, and missing default interview radio. These failures are not an accessibility conformance result, but they prevent a broad UI-green claim.
+**Approved Core Alpha target** remains open for a complete WCAG 2.2 A/AA criterion inventory and representative manual verification with screen readers, keyboard-only navigation, 200% zoom, 320 CSS px reflow, text-spacing overrides, Forced Colors Mode, rendered contrast across every state, long labels in both locales, and capability/error variants. No component test, screenshot set, E2E pass, or green repository gate is a certification by itself.
 
 ## Conformance scope
 
@@ -105,7 +101,8 @@ Instructions never rely only on position, shape, color, sound, or gesture. “Se
 - Essential control boundaries, icons, focus indicators, graph edges, progress parts, and status visuals: at least 3:1 against adjacent colors where required by non-text contrast.
 - Color never carries the only meaning. Activity families add icon/text; validation adds severity text/icon; diff adds Added/Removed labels; Skills shows numeric/text values.
 - Disabled controls remain identifiable; disabled contrast is assessed for usability even where WCAG’s inactive-component exception applies.
-- Every semantic token pair is tested in light, dark, hover, active, focus, selected, disabled, and forced-colors contexts. OKLCH values are not accepted based on visual intuition alone.
+- The Clear Slate neutral foundation is tested independently from evergreen primary/success/progress/focus roles. Selected rail items, neutral accent buttons, activity surfaces, destructive/warning fields, and dark graphite surface boundaries remain distinguishable without relying on a green cast.
+- Every semantic token pair is tested in light, dark, hover, active, focus, selected, disabled, overlay, and forced-colors contexts. OKLCH values are not accepted based on visual intuition alone.
 
 ### Resize, reflow, spacing, and hover content — 1.4.4, 1.4.10, 1.4.12, 1.4.13
 
@@ -117,6 +114,7 @@ Instructions never rely only on position, shape, color, sound, or gesture. “Se
 - User-applied text spacing—line height 1.5×, paragraph spacing 2×, letter spacing 0.12×, word spacing 0.16×—does not clip or overlap content.
 - Tooltip/popover content triggered by hover or focus is dismissible, hoverable, and persistent under WCAG conditions. Essential instructions never live only in a tooltip.
 - Sticky lesson actions and bottom navigation do not cover zoomed focus targets or validation errors.
+- The desktop rail remains exactly 280px expanded or 72px collapsed without content overlap, clipped destinations, focus loss, or layout jitter. At zoom/reflow breakpoints it yields to the mobile shell rather than squeezing beside 320px content.
 
 ## Operable
 
@@ -155,9 +153,11 @@ No flashing content, rapid high-contrast animation, or autoplay visual effects. 
 - Headings and labels describe topic/purpose.
 - Keyboard focus is always visible (2.4.7).
 - Focused components are not entirely hidden by sticky headers, action bars, bottom navigation, or overlays, satisfying Focus Not Obscured (Minimum), 2.4.11 at Level AA.
-- Breadcrumb/current item and `aria-current` expose location.
+- The utility-header breadcrumb is a labeled navigation landmark with an ordered list. Ancestors are links; the final item is non-link text with `aria-current="page"`. A session exposes `Courses › {Course} › {Lesson}` from resolved entities and never substitutes a false Home title while labels load.
 
-Although Focus Appearance (2.4.13) is Level AAA, **Approved Core Alpha target — Calm Workshop** uses a two-layer focus ring designed to be at least 2 CSS px equivalent and visibly contrasted across light/dark surfaces as a product-quality goal.
+**Approved Core Alpha target**
+
+Although Focus Appearance (2.4.13) is Level AAA, Calm Workshop — Clear Slate uses a two-layer focus ring designed to be at least 2 CSS px equivalent and visibly contrasted across near-white and dark graphite surfaces as a product-quality goal.
 
 ### Pointer gestures, cancellation, labels, dragging, and target size — 2.5.x
 
@@ -189,6 +189,7 @@ Although Focus Appearance (2.4.13) is Level AAA, **Approved Core Alpha target �
 - Focus or input does not trigger unexpected navigation, installation, validation, provider request, Apply, or Publish.
 - Home/Courses/Review/Skills/Settings remain in the same relative order across the application.
 - Controls with the same function use the same name, icon, and placement within comparable frames.
+- **Create Course** consistently opens two unselected assisted choices—external-model instructions and the connected Course Designer—with a separate complete manual fallback. It never opens Settings or an existing Course editor. **Import Course Pack** consistently opens the separate Pack-selection/intake path.
 - Contextual help and recovery routes appear consistently, satisfying Consistent Help (3.2.6) where applicable.
 - Theme and locale may preview immediately only when the control explains the behavior; persistent save state remains explicit.
 
@@ -227,7 +228,7 @@ Aptiloop itself is local single-user and does not add a product login for Core A
 
 **Approved Core Alpha target**
 
-Desktop rail and mobile bottom navigation are landmarks with distinct labels if both ever coexist during a breakpoint transition. Active page uses `aria-current="page"`. Icons are decorative when text labels are visible. Mobile safe areas and 200% zoom do not cover content.
+Desktop rail and mobile bottom navigation are landmarks with distinct labels if both ever coexist during a breakpoint transition. Active page uses `aria-current="page"`. The 280px/72px collapse control exposes its state with `aria-expanded`; collapsing preserves destination order and focus, while every icon-only destination keeps an accessible name and a dismissible, hoverable Radix tooltip. No custom hover label may overlap the content plane. Icons are decorative when visible text labels already name the destination. The utility-header breadcrumb follows the ordered ancestor/current-page pattern, and the final crumb exposes `aria-current="page"`.
 
 ### Sheets and dialogs
 
@@ -286,7 +287,7 @@ No acceptance is inferred from “no horizontal overflow” alone; content densi
 
 ## Assistive technology and manual verification plan
 
-These are required future acceptance activities, not tests run for this documentation change.
+These are remaining manual acceptance activities. Existing automated and focused browser checks reduce regression risk but do not replace this matrix.
 
 **Approved Core Alpha target**
 
@@ -299,13 +300,14 @@ These are required future acceptance activities, not tests run for this document
 
 ### Journey sampling
 
-1. First run → inspect/validate/import Course Pack → install.
-2. Home → resume lesson → recall save error/retry → complete.
-3. Code activity → copy/open workspace → run trusted checks → stale evidence → read-only review → changes requested.
-4. Review → card approve/reject/export; interview setup/report limit.
-5. Skills → select topic → inspect dimensions and evidence timeline.
-6. Settings → UI locale/theme → Core/storage/runtime state → AI Off and provider failure.
-7. Studio → outline edit → validation finding → source/locale/environment → preview → proposal review → change review → publish.
+1. Courses library → Create Course → external/connected assisted choice or manual fallback → cancel with no Draft, download with no Draft, or confirm exactly one explicit Draft.
+2. Courses library → Import Course Pack → staged validate/Preview → install or open as Draft.
+3. Home → resume lesson → verify `Courses › Course › Lesson` location on compatibility `/session?id=` → recall save error/retry → complete.
+4. Code activity → copy/open workspace → run trusted checks → stale evidence → read-only review → changes requested.
+5. Review → switch URL-backed Due/Mistakes/Cards/Interviews destinations → card approve/reject/export → interview setup/report limit; confirm Due exposes provenance without a false executor.
+6. Skills → select topic → inspect dimensions and evidence timeline.
+7. Settings → UI locale/theme → Core/storage/runtime state → AI Off and provider failure.
+8. Studio → outline edit → validation finding → source/locale/environment → preview → proposal review → change review → publish.
 
 ## WCAG 2.2 additions explicitly covered
 
@@ -341,4 +343,6 @@ An unresolved Level A/AA blocker in a required Core Alpha journey blocks accessi
 
 ## Accessibility acceptance gate
 
-The accessibility gate remains open until owner-approved UI exists and the complete required scope has evidence for WCAG 2.2 A/AA criteria, keyboard, screen reader, zoom/reflow, contrast, forced colors, reduced motion, desktop/mobile, light/dark, `en-US`/`ru-RU`, mixed Course locales, and all capability/error states. Repository code quality or green non-accessibility tests cannot substitute for this evidence.
+**Approved Core Alpha target**
+
+The UI has implemented semantics and focused regression evidence, but the accessibility gate remains open until the complete required scope has reviewed evidence for applicable WCAG 2.2 A/AA criteria, keyboard, screen reader, zoom/reflow, contrast, forced colors, reduced motion, desktop/mobile, light/dark, `en-US`/`ru-RU`, mixed Course locales, and representative capability/error states. This document is a target and verification plan, not a formal conformance statement or certification.

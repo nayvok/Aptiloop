@@ -4,7 +4,7 @@
 
 ## 1. Current legal state
 
-**Implemented baseline inventory:** the public repository currently contains no root `LICENSE`, `COPYING`, `NOTICE`, or equivalent license grant. The root and reviewed internal `@dlh/*` package manifests are `private` and do not declare a `license` field. `private: true` prevents an accidental npm publish; it is not a license grant. A lockfile's upstream `license` metadata is not a license for Aptiloop and does not replace upstream license/notice texts.
+**Implemented baseline inventory:** the repository currently contains no root `LICENSE`, `COPYING`, `NOTICE`, or equivalent license grant. The root and reviewed internal `@aptiloop/*` package manifests are `private` and do not declare a `license` field. `private: true` prevents an accidental npm publish; it is not a license grant. A lockfile's upstream `license` metadata is not a license for Aptiloop and does not replace upstream license/notice texts.
 
 Therefore, this plan must not describe Aptiloop as open source, AGPL-licensed, Apache-licensed, dual-licensed, or permissively reusable today. No `LICENSE`, `NOTICE`, `TRADEMARK`, dependency, manifest, or package-boundary change is made by this documentation set.
 
@@ -30,7 +30,7 @@ Core Alpha has no production courses. Fixture/content distribution terms must be
 ### Direct dependency families observed
 
 - **Root tooling:** npm workspace/Turborepo, TypeScript, ESLint, Prettier, tsx, Vitest and type packages.
-- **Orchestrator:** internal `@dlh/*`, Hono and `@hono/node-server`, Zod.
+- **Orchestrator:** internal `@aptiloop/*`, Hono and `@hono/node-server`, Zod.
 - **Web:** Next/React, Radix/shadcn components, Phosphor icons, TanStack Query, React Hook Form, React Markdown/remark-gfm, Geist, Sonner, Tailwind utilities, Playwright and Testing Library tooling.
 - **Packages:** Zod, OpenCode SDK, Drizzle ORM/Kit, tsup and normal test/build tooling.
 - **Pi runtime:** pinned `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` v0.84.1 are present behind the constrained app-owned adapter; their lockfile metadata is MIT. `pi-coding-agent` general filesystem, shell, edit, and write tools are not exposed through Aptiloop.

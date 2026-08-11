@@ -2,28 +2,22 @@
 
 ## Status and purpose
 
-This document defines a stable lesson workspace, ActivityFrame, renderer registry, activity patterns, technical contexts, states, responsive behavior, and authoring-preview contract. It is a specification, not evidence that these abstractions or target renderers have been implemented.
+This document owns the implemented lesson `ActivityFrame`, closed renderer registry, type-specific interaction boundaries, technical contexts, and authoring-preview contract. Route ownership and global shell behavior remain in [`information-architecture.md`](information-architecture.md); cross-cutting accessibility remains in [`accessibility.md`](accessibility.md).
 
 - **Implemented baseline** — current repository evidence.
 - **Approved Core Alpha target** — required behavior.
-- **Approved Core Alpha target — Calm Workshop** — selected direction-specific presentation.
+- **Proposed pending owner approval** — an unresolved recommendation.
 - **Future** — outside Core Alpha.
+
+Calm Workshop — Clear Slate is the approved direction name, not a separate status label.
 
 ## Baseline audit
 
 **Implemented baseline**
 
-The current v2 session is the strongest learner seam:
+`apps/web/components/activity-frame.tsx` implements the shared frame. `activityRendererRegistry` in `session-client.tsx` is frozen and covers briefing, study, recall, teacher dialogue, quiz, code reading, exercise, review, interview, summary, checkpoint, and spaced review. An unknown type renders a localized `role="alert"` unsupported state instead of falling through to arbitrary UI. The deterministic kernel and server contracts remain authoritative for readiness, completion, evidence, and next action.
 
-- `apps/web/components/session-client.tsx:796-863` has a sticky day/block/step progress header.
-- `:943-987` provides a common `UnitShell` with type, estimate, title, description, and state.
-- `:1011-1036` dispatches briefing, study, recall, teacher-dialogue, quiz, code-reading, exercise, review, interview, summary, checkpoint, and spaced-review through one switch.
-- `:1039-1086` already has a reusable checklist with required items.
-- Exercise and interview move to separate routes (`session-client.tsx:775-787`) and therefore lose some common lesson context.
-- Code exercise evidence is strong but route-specific: `apps/web/components/exercise-client.tsx:515-529` derives the next action; `:621-755` separates local workspace, diff, and check output; `:758-848` presents read-only review.
-- Source and prose rendering exists inside current unit bodies and `apps/web/components/ui/markdown.tsx:13-118`, but there is no common source-context contract.
-
-The target should wrap and migrate current renderers incrementally. A new parallel learning state machine or big-bang rewrite is prohibited.
+Session activities preserve bounded context-scoped local drafts for learner input where implemented. Exercise and linked Interview routes retain exact Course/lesson entity breadcrumbs and server-owned session association rather than presenting themselves as unrelated destinations. This is the implemented migration seam; no parallel learning state machine is permitted.
 
 ## Activity model boundary
 
@@ -54,7 +48,7 @@ The Activity renderer does not:
 
 Every activity uses this ordered anatomy even when a region is empty:
 
-1. **Lesson context** — Course › lesson, activity N/M, deterministic graph position, remaining estimate, Plan, Leave safely.
+1. **Lesson context** — the App Shell owns `Courses › {Course} › {Lesson}`; the lesson orientation row adds activity N/M, deterministic graph position, remaining estimate, Plan, and Leave safely without duplicating the breadcrumb.
 2. **Activity header** — type icon and text, status text, title, concise purpose, estimate, required/optional.
 3. **Prompt/material** — authored instructions, Knowledge Capsule content, question, code, or task criteria.
 4. **Response surface** — learner answer, selection, explanation, checklist, external workspace handoff, or review acknowledgement.
@@ -66,12 +60,12 @@ The frame owns shared loading, focus, status announcements, save state, capabili
 
 ### Desktop composition
 
-**Approved Core Alpha target — Calm Workshop**
+**Implemented baseline**
 
 - Sticky lesson context spans the available content width.
 - ActivityFrame is centered at 720–800px.
-- A 280px contextual rail appears only for sources, notes, evidence, or capability help that is useful alongside the task.
-- The main activity is an open editorial field bounded by a top rule and action footer, not a card nested inside the app shell.
+- A contextual region appears only for sources, notes, evidence, or capability help that is useful alongside the task and fits the exercised viewport.
+- The main activity is an open editorial field; `surface-soft` is reserved for quiet context/evidence wells rather than wrapping every activity in a nested card.
 - Technical evidence may use a wider workspace up to the content maximum, while learner instructions retain readable measure.
 
 ### Mobile composition
@@ -86,15 +80,17 @@ The frame owns shared loading, focus, status announcements, save state, capabili
 
 ### Light and dark
 
-**Approved Core Alpha target — Calm Workshop**
+**Implemented baseline**
 
-Activity type uses tokenized icon, leading rule, and quiet surface. It never recolors all body text. Dark mode separates background/surface/raised without glow; code and diffs use semantic foreground/background pairs. Focus, status, error, and activity type remain distinct color roles.
+Activity type uses a tokenized icon, label, and supporting trace. It never recolors all body text. Light mode uses the near-white Clear Slate foundation; dark mode separates graphite background/surface/raised without glow. Code, diff, focus, status, error, and activity type use independent semantic roles.
 
 ## Declarative renderer registry
 
-**Approved Core Alpha target**
+**Implemented baseline**
 
-The target registry is data-driven and exhaustive. Conceptually each entry declares:
+The current registry is closed, frozen, and exhaustive for the learner unit union. It maps each supported type to one renderer and fails safely for an unknown type. Shared schemas and server routes—not component naming—define accepted learner payloads and evidence.
+
+**Approved Core Alpha target** metadata may evolve toward a declarative definition such as:
 
 ```ts
 interface ActivityRendererDefinition {
@@ -118,7 +114,7 @@ interface ActivityRendererDefinition {
 }
 ```
 
-This is a contract shape, not a production API claim. The actual implementation must reuse existing shared schemas and naming conventions rather than introduce duplicate contracts.
+This is a target metadata shape, not the current registry API. Any evolution must reuse existing shared schemas and naming conventions rather than introduce duplicate contracts.
 
 Registry requirements:
 
@@ -127,7 +123,7 @@ Registry requirements:
 - capability requirements are declared, not inferred from UI code;
 - protected data boundaries are declared and tested at the API/schema boundary;
 - activity family affects presentation only, never kernel semantics;
-- target migration wraps current `UnitBody` first, then moves types incrementally without changing persisted meaning.
+- future metadata migration extends the current registry incrementally without changing persisted meaning.
 
 ## Common interaction contract
 
@@ -240,7 +236,7 @@ Sequence:
 9. rerun fresh checks and review;
 10. accept evidence and return to lesson.
 
-The current useful next-action and fallback patterns at `apps/web/components/exercise-client.tsx:515-547` should be preserved. The target labels the editor mode, environment contract (Node/Python), check ID and purpose, diff baseline, output truncation/freshness, and review boundary.
+The implemented next-action and fallback patterns remain the migration seam. The target labels the editor mode, environment contract (Node/Python), check ID and purpose, diff baseline, output truncation/freshness, and review boundary.
 
 The embedded editor reads/writes only declared logical documents through typed APIs; it has no terminal, package manager, arbitrary filesystem browser, arbitrary command, or autonomous AI edit. The external adapter executable/argv/cwd remain app-owned. Execution Fabric exposes only app-owned actions such as **Run checks**. Missing Node/Python blocks checks with a settings path; missing external editor offers copy/manual open or the declared embedded alternative. Reviewer is read-only, produces findings against current evidence, and never supplies an Apply patch.
 
@@ -262,7 +258,7 @@ No “Apply fix,” patch button, editable reviewer diff, or filesystem tool app
 
 Linked interview uses ActivityFrame; standalone interview lives in Review. Setup declares studied/manual scope, difficulty, question count, estimate, and assessment limits. One question is active at a time; answer drafts persist according to the save contract.
 
-Until technical evaluation exists, the report must say **Answer observations** and state that structure/completeness, not technical correctness, was evaluated. Current “skill evidence” wording at `apps/web/components/interview-client.tsx:897-918` must not be carried forward as proof of mastery.
+**Implemented baseline.** Interview reports use **Answer observations** and explicitly state that answer structure/completeness—not technical correctness—was evaluated. These observations do not become mastery without deterministic Learning Kernel evidence.
 
 AI Off/unavailable disables only optional generation. Saved interviews/reports remain readable, and a required/terminal Course or review path must use authored deterministic questions or another manual renderer. A standalone optional generated interview may be unavailable without blocking Course completion. Failure to obtain a question preserves setup and operation identity.
 
@@ -285,6 +281,8 @@ Checkpoint composes supported assessment/acknowledgement elements and states the
 **Approved Core Alpha target**
 
 Spaced review names why the item is due and shows the prior evidence date without revealing protected material. It may use recall, quiz, explanation, or practice subpatterns registered by schema. Completion returns evidence to the kernel; the renderer never schedules its own next date.
+
+**Implemented baseline limitation.** The kernel and Review UI expose due scheduling and provenance, but no typed server-verified due-review executor currently completes or reschedules a due item. The UI therefore withholds a false Start action rather than reopening an ordinary source session.
 
 ## Source context pattern
 
@@ -417,4 +415,6 @@ Preview is labeled and cannot create real evidence. Protected answer material is
 
 ## Renderer acceptance gate
 
-The renderer specification is satisfied only after owner-approved implementation evidence demonstrates the common frame, all supported renderer types, code/review/source contexts, desktop/mobile, light/dark, `en-US`/`ru-RU` UI with independent Course locale, loading/empty/error/offline/no-AI/missing-runtime states, protected-answer separation, deterministic kernel ownership, trusted check IDs, explicit provider failure, and read-only Reviewer. Until then, these are target behaviors only.
+**Approved Core Alpha target**
+
+Automated tests provide implementation evidence for the common frame, closed type registry, supported renderers, local draft recovery, protected-answer separation, deterministic kernel ownership, trusted check IDs, explicit provider failure, and read-only Reviewer. Focused browser checks separately cover exercised responsive, theme, and interaction paths. Remaining target items—especially executable due review, complete 320px reflow, and unexercised assistive-technology/state combinations—do not become accessibility or release evidence through this document.

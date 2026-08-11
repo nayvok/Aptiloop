@@ -2,7 +2,13 @@
 
 ## Document status
 
-**Approved Core Alpha target**. These are required product journeys for later implementation. The current Dev Learning Harness covers parts of the learning loop but does not implement these journeys end to end.
+**Approved Core Alpha target**
+
+This document defines the complete user journeys and their release boundaries.
+
+**Implemented baseline**
+
+M1–M11 implement the application journeys around development Course content, and the dated 2026-08-12 UI/UX/runtime hardening records the current reviewed baseline. The 2026-08-10 M12 technical preflight is historical evidence for its earlier tree, not current-tree certification. Production Course content, a fresh authenticated supported-provider smoke on `b542b32`, and release authorization remain outside the implemented journey evidence.
 
 ## Actors
 
@@ -26,7 +32,7 @@ Every role is optional where a manual path is defined. Pi supplies model/runtime
 3. A Core/storage/filesystem problem blocks the affected action and provides local recovery guidance.
 4. An optional AI problem does not masquerade as a Core failure. The user can continue through a complete manual path.
 5. With no saved UI locale, the user explicitly confirms `en-US` or `ru-RU`; the picker is prefilled from a supported browser/OS locale and otherwise defaults to `en-US`. This does not select or prefill a Course locale.
-6. With no installed Course, the primary action is to create one manually or import a Course Pack.
+6. With no installed Course, **Create Course** opens two assisted starts—external-model instructions or an eligible connected Course Designer—with a quiet complete **Create manually without AI** fallback; **Import Course Pack** remains a separate direct action to `/courses/import`.
 
 Privacy result: no account, telemetry, upload, provider request, or sharing action occurs during launch.
 
@@ -34,38 +40,52 @@ Privacy result: no account, telemetry, upload, provider request, or sharing acti
 
 **Approved Core Alpha target**
 
-1. From Home empty state or Courses, the user chooses **Create Course** at `/courses/new`.
-2. The user chooses **Create manually** or **Describe a learning goal**. Both produce the same local Draft contract; AI Off keeps the manual path complete.
-3. In guided mode, the user provides a natural-language goal, target outcome, current level, primary Course locale, time/pacing, tools, accessibility needs, and constraints. The UI locale remains independent.
-4. Course Designer asks bounded discovery questions and may offer an optional diagnostic through questions or a practical task. Skip remains available. Before any external provider receives content, the transmission review names provider/model, destination, payload categories, selected entities, exclusions, and retention disclosure.
-5. The curriculum proposal shows finite structure and sequencing, prerequisites, sources, capsules, activity/evidence types, Node/Python requirements, trusted check references, estimates, assumptions, and provider/model provenance.
-6. The user edits fields, requests revision, rejects, or explicitly confirms compilation. Confirmation creates only a local Draft and cannot publish.
-7. Manual or compiled Draft editing uses typed fields for identity, one primary locale, Sources, Capsules, finite activities, protected material, evidence/completion rules, and trusted environment/check references.
-8. Adaptive Studio preserves state through `DRAFT_REQUEST → DISCOVERY → DIAGNOSTIC → CURRICULUM_PROPOSAL → USER_REVIEW → COMPILATION → VALIDATION`; `FAILED` retains input and offers explicit recovery.
-9. Validate checks the whole Course with the same rules used by the Authoring Kit and external import. Preview renders the learner experience. Change review shows changes, locales, runtime requirements, revision, hash, and proposal provenance.
-10. The user separately confirms immutable Publish. Only that action enters `PUBLISHED`; the resulting Course Revision is read-only.
+1. From Home empty state or Courses, the user chooses **Create Course** at `/courses/new`. The screen contains no Pack file input, selected-Course editor, validation dashboard, or Publish action.
+2. Two exclusive assisted choices use one Continue action: **Use an external model** downloads version-matched Course Pack V1 instructions, while **Use the connected Course Designer** proceeds to technical readiness and brief review. A quieter **Create manually without AI** fallback is always available.
+3. The chooser explains the decision without scoring models: prefer an external model when it offers the needed context, search, tools, or reasoning; prefer the connected Designer when its exact model is eligible and the user considers it appropriate.
+4. Both assisted paths collect the same locally retained brief: topic/goal, target outcome, current level, primary Course locale, pacing, tools/access, accessibility needs, and constraints. The Course locale remains independent from the UI locale. Before Draft creation, the browser copy survives reload only when `localStorage` is available and until explicitly cleared; guided confirmation persists the approved brief with the Draft.
+5. External-model generation follows Journey 3. Aptiloop sends nothing to that model and cannot label its capability or output quality as verified.
+6. In connected guided mode, Aptiloop shows the persisted Course Designer role, connection, exact model, and available capability evidence. `connected` and `degraded` are eligible; unknown/stale evidence is an advisory and the server performs the authoritative check. AI Off or an unavailable exact selection keeps connected generation disabled without affecting external or manual recovery.
+7. Confirming guided creation creates exactly one explicit local Draft, preserves the brief with it, and enters that Draft's Designer. It does not contact a provider, apply a proposal, Preview, or publish. Cancel before confirmation creates nothing.
+8. Before a later provider request, the transmission review names role, provider/model, destination, selected Draft fields/source records, payload categories, exclusions, and retention. Course Designer may then ask bounded questions or offer an optional diagnostic and returns a typed proposal with finite structure, sequencing, sources/capsules, activity/evidence types, trusted runtime/check references, estimates, assumptions, and provider/model provenance.
+9. The user may edit, request revision, reject, or confirm compilation. None of those actions mutates the Draft. A separate **Apply to Draft** action validates and applies only the selected proposal changes.
+10. The manual fallback creates the same Draft contract and opens the complete structured editor without provider checks or transmission. If readiness changes or a provider request fails, the retained Draft/brief can continue manually or through an external-model handoff.
+11. **Validate** checks the current saved Draft and content digest. Learner **Preview** renders that exact digest. **Change review** shows the parent/source diff, locales, runtime requirements, provenance, and canonical hash inputs.
+12. The user separately confirms immutable **Publish**. Create, proposal confirmation, compilation, Apply, Validate, and Preview never publish.
 
 Recovery:
 
-- Closing and reopening Studio resumes the local draft.
+- Closing and reopening Studio resumes the saved local Draft. Unsaved browser-only authoring fields survive reload only when `localStorage` is available.
 - Validation errors focus the exact node and field.
 - AI unavailable leaves all manual controls working.
+- A guided Draft and its brief survive provider, authentication, model, or capability failure; Aptiloop never replaces the selected provider/model or activates Mock silently.
+- A pending Course Designer transmission review resumes only for the exact Draft revision, workflow, authoring operation, provider/model selection, and payload scope. Expired, terminal, ambiguous, unknown, or cross-revision records fail closed and require a new review.
 - Publishing is blocked on errors, unknown activity/environment/check types, graph violations, missing primary-locale content, or unresolved protected material.
 
 ## Journey 3: import an externally authored Course Pack
 
 **Approved Core Alpha target**
 
-1. The user authors or obtains one declarative Course Pack JSON document outside Aptiloop using the version-matched Authoring Kit with a text editor or generator.
-2. The Kit provides the exact schema and allowed Activity types, examples, local validator/canonicalizer, compatibility rules, single-file packaging requirements, and Aptiloop import instructions. An external AI sees only context the user deliberately sends and receives no direct Aptiloop authority.
-3. From Courses, the user chooses **Import Course Pack** and selects the exact UTF-8 JSON file.
+1. From `/courses/new` or Courses, the user chooses **Use an external model**, completes the locally retained brief, and downloads a version-matched instruction file embedding that brief, the exact generated Course Pack V1 schema, and the exact generated development template.
+2. The user deliberately supplies only that downloaded file to the chosen external tool. Aptiloop neither transmits the brief nor verifies the external model; the resulting JSON remains untrusted.
+3. The user opens `/courses/import` and selects the exact UTF-8 JSON file returned by the model. No import form exists on `/courses/new`, and downloading instructions or selecting a file creates no Course or Draft.
 4. Aptiloop treats every field as untrusted data. It reads no commands and grants no runtime, filesystem, network, plugin, or provider authority from the pack.
 5. Validation reports schema version, stable IDs, reference integrity, finite graph result, locale coverage, source/capsule hashes, environment/check references, limits, provenance, compatibility, and canonical hash. Authoring Kit and importer results must match.
 6. Unknown or unsupported definitions fail closed. The user may inspect errors without partially installing runnable content.
-7. A valid pack opens in learner Preview. The user sees publisher/provenance claims as claims, not automatic trust proof.
-8. The user explicitly chooses **Install immutable revision** or **Open as local draft**, reviews the identity/hash/destination consequence, and commits atomically. Opening as a draft creates a separate editable lineage.
+7. The browser navigates to `/courses/intake/{validationId}`. A strict GET may restore the staged validation's Preview or diagnostics but never installs, publishes, or opens a Draft.
+8. A valid pack opens in learner-safe Preview. The user sees publisher/provenance claims as claims, not automatic trust proof.
+9. The user explicitly chooses **Install immutable revision** or **Open as local draft**, reviews the identity/hash/destination consequence, and confirms one atomic commit. Open as draft preserves the imported manifest as an immutable archived source revision and creates a separate personal Draft/adaptation lineage.
 
 Privacy result: import is local. The pack cannot read existing Courses, learner history, credentials, paths, or provider sessions.
+
+Recovery and lifecycle:
+
+- Back, Forward, and reload restore URL-backed confirmation only while the bounded process-local staged validation remains available; GET never commits.
+- Expiry or orchestrator restart makes the staged operation unavailable and requires explicit file reselection. Browser state cannot reconstruct a commit.
+- Concurrent or mixed Install/Open-as-draft attempts have one atomic winner; already-claimed, malformed, unknown, and conflicting attempts fail closed.
+- Invalid or expired intake leaves no partially runnable Course.
+- Uninstall preserves history and fails closed while an active learning session pins the revision.
+- A later Pack cannot silently change an existing Course's primary locale or overwrite an occupied personal adaptation branch.
 
 ## Journey 4: start or resume learning
 
@@ -123,6 +143,18 @@ Recovery:
 6. The Learning Kernel applies deterministic rules and stores the resulting state so replay produces the same result.
 7. Export of flashcards/evidence is a separate explicit local action and describes included data.
 
+**Implemented baseline**
+
+Interview practice stores browser-only setup drafts per validated learning-session scope and unsent answer drafts per exact interview/question. They restore across reload only when `localStorage` is available; accepted mutations clear only their matching draft. Persisted interview state, report, and Return action are server-owned and use the recorded `learningSessionId` association rather than trusting URL scope. Interview reports contain answer/interview observations and never establish technical correctness or mastery.
+
+External Interviewer requests use the existing Evaluator provider role. A staged start or answer transmission review can resume after reload only for the exact session, interview, question, operation, provider/model selection, and payload. Expired, terminal, cancelled, unknown, ambiguous, or cross-scope records fail closed. AI Off preserves local drafts and offers explicit manual/settings recovery without creating a provider-backed interview.
+
+Course Designer and Interview disclosure recovery has integration and component-remount evidence only. No fresh authenticated live-provider smoke has been observed for these recovery paths on `b542b32`.
+
+**Approved Core Alpha target**
+
+Due Review Items still require a typed server-verified executor before Journey 6 steps 5–6 can be complete for spaced review. Scheduling, due reason, and provenance do not themselves execute or reschedule an item.
+
 ## Journey 7: create a personal adaptation
 
 **Approved Core Alpha target**
@@ -152,7 +184,7 @@ Recovery:
 
 1. In Settings, the user selects a provider, model, and allowed Aptiloop role.
 2. Aptiloop reports authentication and capability requirements explicitly.
-3. Before first use of private Course/learner context with that provider, the UI identifies provider, destination, and payload categories and requires explicit action.
+3. Before every external dispatch carrying private Course/learner context, the UI identifies the exact role, provider/model, destination, payload categories, selected entities, exclusions, and retention disclosure and requires an operation-scoped explicit action. A changed scope requires a new review; prior consent is never a blanket authorization.
 4. Aptiloop invokes Pi through an app-owned role policy and typed tools only.
 5. Tool arguments and outputs are schema-validated; secrets are redacted before persistence or UI delivery.
 6. A provider/auth/model/tool failure is shown as that failure.
@@ -172,8 +204,17 @@ Recovery:
 
 ## Current baseline coverage
 
-**Implemented baseline**
+| Journey                               | Status                                                    | Current boundary                                                                                                                                                                                                                                                      |
+| ------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. First local launch                 | **Implemented baseline** / **Approved Core Alpha target** | Account-free launch, locale confirmation, Course creation/import, and AI-Off recovery exist. A consolidated Home view of Core, SQLite, filesystem, Node/Python, editor, and provider readiness remains target work.                                                   |
+| 2. Adaptive Studio authoring          | **Implemented baseline**                                  | Manual and guided development-content Draft workflows, exact disclosure recovery, Validate, Preview, change review, Publish, and immutable history exist. Production Course approval remains gated.                                                                   |
+| 3. Course Pack import                 | **Implemented baseline**                                  | Bounded validation, temporary URL-restored intake, learner-safe Preview, atomic Install/Open-as-draft, exact lineage/export, and fail-closed uninstall exist. Process restart requires file reselection.                                                              |
+| 4. Start or resume learning           | **Implemented baseline**                                  | Kernel-owned next action, immutable session context, first-attempt protection, and restart-safe server resume exist for development Course content. Browser-only drafts restore when `localStorage` is available.                                                     |
+| 5. Practice/check/review correction   | **Implemented baseline**                                  | Trusted Node/Python checks, complete diff freshness, read-only Reviewer, and correction recheck exist. Trusted local execution is not an independent sandbox.                                                                                                         |
+| 6. Summary, Skills, Review, Interview | **Implemented baseline** / **Approved Core Alpha target** | Summary, Skills, due scheduling/provenance, cards, and scoped restart-safe Interview observations exist. No typed due-Review executor exists; `nextActionHref` remains `null`, no `/session` shortcut is fabricated, and completion/rescheduling remains target work. |
+| 7. Personal adaptation                | **Implemented baseline**                                  | Personal lineage, immutable source preservation, personal Publish, and explicit upstream integration exist for development content.                                                                                                                                   |
+| 8. UI and Course locales              | **Implemented baseline** / **Approved Core Alpha target** | Complete `en-US`/`ru-RU` application catalogs, persisted UI locale, and independent primary Course locale exist. Production Course translations and complete fallback/conformance evidence remain target work.                                                        |
+| 9. External provider                  | **Implemented baseline** / **Approved Core Alpha target** | Exact role/provider/model configuration, operation-scoped disclosures, typed tools, explicit failure, and no Mock fallback exist. A fresh authenticated supported-provider smoke on `b542b32` remains open.                                                           |
+| 10. Export or share                   | **Implemented baseline** / **Approved Core Alpha target** | Explicit local Course Pack and flashcard exports exist. External sharing and production distribution remain target/gated work.                                                                                                                                        |
 
-The Dev Learning Harness now demonstrates parts of Journeys 1–6 and 10: Course Pack V1 validation/Preview/install/export, immutable Course/session context, deterministic kernel-owned progression and replay, multiple activities, trusted local Node exercise checks, diff-bound read-only review/correction, deterministic summary/mastery/review projections, restart-safe interview/session behavior, and local flashcard export. It also retains the legacy draft Curriculum Editor related to Journey 2. Adaptive Studio, production Course content, complete target navigation/localization, and real Pi/provider roles remain unimplemented.
-
-It does not implement the complete first-run target Course flow, personal-adaptation application, UI locale separation, target navigation/identity, Adaptive Studio, Pi typed tools/provider roles, or the complete manual/AI state model. M3–M5 local acceptance proves the current Course Pack, deterministic-kernel, and trusted execution slices; it is not production-content, public-distribution, or complete Core Alpha approval.
+The baseline does not supply an approved production Course or authorize external sharing, public distribution, or an accepted Core Alpha release. Those actions retain their explicit content, privacy, legal, distribution, and owner gates.
