@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { publishedCurriculumV2 } from "@dlh/curriculum";
-import { SessionSnapshotSchema, type SessionSnapshot } from "@dlh/shared";
+import { publishedCurriculumV2 } from "@aptiloop/curriculum";
+import { SessionSnapshotSchema, type SessionSnapshot } from "@aptiloop/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {

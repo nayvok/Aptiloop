@@ -1,4 +1,4 @@
-import { weekOneCurriculum, type CurriculumWeek } from "@dlh/curriculum";
+import { weekOneCurriculum, type CurriculumWeek } from "@aptiloop/curriculum";
 
 import { withTransaction, type DatabaseConnection } from "./database.js";
 import {

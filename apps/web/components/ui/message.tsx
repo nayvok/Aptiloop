@@ -16,13 +16,13 @@ function Message({
   className,
   align = "start",
   ...props
-}: React.ComponentProps<"div"> & { align?: "start" | "end" }) {
+}: React.ComponentProps<"article"> & { align?: "start" | "end" }) {
   return (
-    <div
+    <article
       data-slot="message"
       data-align={align}
       className={cn(
-        "group/message relative flex w-full min-w-0 gap-2 text-sm data-[align=end]:flex-row-reverse",
+        "group/message relative flex w-full min-w-0 gap-3 text-sm data-[align=end]:flex-row-reverse",
         className,
       )}
       {...props}
@@ -35,7 +35,7 @@ function MessageContent({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="message-content"
       className={cn(
-        "flex w-full min-w-0 flex-col gap-2.5 group-data-[align=end]/message:*:data-slot:self-end",
+        "flex w-full min-w-0 flex-col gap-1.5 group-data-[align=end]/message:*:data-slot:self-end",
         className,
       )}
       {...props}
@@ -48,7 +48,7 @@ function MessageHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="message-header"
       className={cn(
-        "flex items-center px-3 text-xs font-medium text-muted-foreground",
+        "flex max-w-full items-center px-1 text-xs font-semibold text-muted-foreground",
         className,
       )}
       {...props}

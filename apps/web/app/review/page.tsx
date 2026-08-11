@@ -1,11 +1,10 @@
 import { Suspense } from "react";
 
-import { ReviewClient } from "@/components/review-client";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ReviewClient, ReviewPageSkeleton } from "@/components/review-client";
 
 export default function ReviewPage() {
   return (
-    <Suspense fallback={<Skeleton className="h-96" />}>
+    <Suspense fallback={<ReviewPageSkeleton />}>
       <ReviewClient />
     </Suspense>
   );

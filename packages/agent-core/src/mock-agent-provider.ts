@@ -8,7 +8,7 @@ import {
   type ProviderStatus,
   type ReviewResult,
   type StreamAgentMessageInput,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 import { createAgentEventNormalizer } from "./event-normalizer.js";
 import { AgentProviderError, type AgentProvider } from "./provider.js";

@@ -1,4 +1,4 @@
-import type { AgentError, AgentEvent, JsonValue } from "@dlh/shared";
+import type { AgentError, AgentEvent, JsonValue } from "@aptiloop/shared";
 
 import type { CodexNotification } from "./protocol.js";
 import { redactSensitiveText, safeToolStatus } from "./sanitization.js";

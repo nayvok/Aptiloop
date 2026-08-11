@@ -1,5 +1,5 @@
 {
-  "name": "@dlh/testing",
+  "name": "@aptiloop/testing",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@dlh/shared": "0.1.0"
+    "@aptiloop/shared": "0.1.0"
   },
   "devDependencies": {
     "tsup": "^8.5.1"

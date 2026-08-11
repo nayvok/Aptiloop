@@ -3,21 +3,23 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { SessionSnapshotSchema, UnitProgressSchema } from "@dlh/shared";
+import { SessionSnapshotSchema, UnitProgressSchema } from "@aptiloop/shared";
 import {
   activeCurriculumVersion,
   publishedCurriculumRevision2,
   publishedCurriculumV2,
   publishedCurriculumV3,
-} from "@dlh/curriculum";
+} from "@aptiloop/curriculum";
 
 import {
   createCurriculumAuthoringRepository,
   createDatabaseBackup,
   createLearningRepository,
+  hashCanonicalJson,
   migrateDatabase,
   openDatabase,
   discoverDatabaseCandidates,
+  publicationContent,
   resolveDatabaseProjectRoot,
   seedDatabase,
   seedVersionedCurriculum,
@@ -30,7 +32,7 @@ const migrationsDirectory = fileURLToPath(
 );
 
 function tempConnection(): { connection: DatabaseConnection; path: string } {
-  const directory = mkdtempSync(join(tmpdir(), "dlh-database-v2-"));
+  const directory = mkdtempSync(join(tmpdir(), "aptiloop-database-v2-"));
   const path = join(directory, "test.sqlite");
   const connection = openDatabase(path);
   cleanup.push(() => {
@@ -192,6 +194,33 @@ describe("versioned curriculum migration", () => {
 });
 
 describe("curriculum authoring", () => {
+  it("fails closed when a modern curriculum version has no Course row", async () => {
+    const { connection } = tempConnection();
+    migrateDatabase(connection);
+    const repository = createCurriculumAuthoringRepository(connection, {
+      id: () => "missing-course-version",
+      now: () => 100,
+    });
+    const draft = await repository.createDraft({
+      curriculum: {
+        id: "missing-course",
+        slug: "missing-course",
+        title: "Missing Course",
+        primaryLocale: "en-US",
+      },
+      title: "Missing Course revision",
+    });
+
+    connection.sqlite.exec("PRAGMA foreign_keys = OFF");
+    connection.sqlite
+      .prepare("DELETE FROM courses WHERE id = ?")
+      .run("missing-course");
+
+    await expect(repository.getVersionGraph(draft.id)).rejects.toThrow(
+      `Unknown Course for curriculum version: ${draft.id}`,
+    );
+  });
+
   it("publishes an ordered immutable graph and clones a draft revision", async () => {
     const { connection } = tempConnection();
     migrateDatabase(connection);
@@ -200,15 +229,37 @@ describe("curriculum authoring", () => {
       id: () => `id-${++id}`,
       now: () => 100,
     });
+    await expect(
+      repository.createDraft({
+        curriculum: {
+          id: "curriculum-invalid-locale",
+          slug: "invalid-locale",
+          title: "Invalid locale",
+          primaryLocale: "not_a_locale",
+        },
+        title: "Invalid revision",
+      }),
+    ).rejects.toThrow("Malformed BCP 47 locale");
+    expect(
+      connection.sqlite
+        .prepare("SELECT COUNT(*) AS count FROM courses WHERE id = ?")
+        .get("curriculum-invalid-locale"),
+    ).toEqual({ count: 0 });
     const draft = await repository.createDraft({
       curriculum: {
         id: "curriculum-js",
         slug: "javascript",
         title: "JavaScript",
         description: "Foundation",
+        primaryLocale: "ru-RU",
       },
       title: "First revision",
     });
+    expect(
+      connection.sqlite
+        .prepare("SELECT primary_locale FROM courses WHERE id = ?")
+        .get("curriculum-js"),
+    ).toEqual({ primary_locale: "ru-RU" });
     const week = await repository.addWeek({
       versionId: draft.id,
       stableId: "week-1",
@@ -259,6 +310,134 @@ describe("curriculum authoring", () => {
     expect(path?.weeks[0]?.days[0]?.units.map((unit) => unit.stableId)).toEqual(
       ["briefing", "summary"],
     );
+    if (!path) throw new Error("Published path is missing");
+    const publishedHash = hashCanonicalJson(publicationContent(path));
+    expect(published.contentHash).toBe(publishedHash);
+    expect(
+      hashCanonicalJson(
+        publicationContent({ ...path, primaryLocale: "en-US" }),
+      ),
+    ).not.toBe(publishedHash);
+    const courseBeforeCollisions = connection.sqlite
+      .prepare(
+        `SELECT id, slug, title, description, primary_locale, active_revision_id,
+                created_at, updated_at
+         FROM courses WHERE id = ?`,
+      )
+      .get("curriculum-js");
+    const curriculumBeforeCollisions = connection.sqlite
+      .prepare(
+        `SELECT id, slug, title, description, active_version_id,
+                created_at, updated_at
+         FROM curricula WHERE id = ?`,
+      )
+      .get("curriculum-js");
+    const versionCountBeforeCollisions = connection.sqlite
+      .prepare(
+        "SELECT COUNT(*) AS count FROM curriculum_versions WHERE curriculum_id = ?",
+      )
+      .get("curriculum-js");
+
+    await expect(
+      repository.createDraft({
+        curriculum: {
+          id: "curriculum-js",
+          slug: "different-javascript",
+          title: "Replacement title",
+          description: "Replacement description",
+          primaryLocale: "en-US",
+        },
+        title: "Replacement revision",
+      }),
+    ).rejects.toMatchObject({
+      name: "CourseIdentityConflictError",
+      conflict: "id",
+    });
+    await expect(
+      repository.createDraft({
+        curriculum: {
+          id: "different-curriculum-js",
+          slug: "javascript",
+          title: "Slug replacement",
+          description: "Slug replacement description",
+          primaryLocale: "en-US",
+        },
+        title: "Slug replacement revision",
+      }),
+    ).rejects.toMatchObject({
+      name: "CourseIdentityConflictError",
+      conflict: "slug",
+    });
+    await expect(
+      repository.createDraft({
+        curriculum: {
+          id: "javascript",
+          slug: "cross-column-id-collision",
+          title: "Cross-column ID replacement",
+          primaryLocale: "en-US",
+        },
+        title: "Cross-column ID revision",
+      }),
+    ).rejects.toMatchObject({
+      name: "CourseIdentityConflictError",
+      conflict: "id",
+    });
+    await expect(
+      repository.createDraft({
+        curriculum: {
+          id: "cross-column-slug-collision",
+          slug: "curriculum-js",
+          title: "Cross-column slug replacement",
+          primaryLocale: "en-US",
+        },
+        title: "Cross-column slug revision",
+      }),
+    ).rejects.toMatchObject({
+      name: "CourseIdentityConflictError",
+      conflict: "slug",
+    });
+
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT id, slug, title, description, primary_locale, active_revision_id,
+                  created_at, updated_at
+           FROM courses WHERE id = ?`,
+        )
+        .get("curriculum-js"),
+    ).toEqual(courseBeforeCollisions);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT id, slug, title, description, active_version_id,
+                  created_at, updated_at
+           FROM curricula WHERE id = ?`,
+        )
+        .get("curriculum-js"),
+    ).toEqual(curriculumBeforeCollisions);
+    expect(
+      connection.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM curriculum_versions WHERE curriculum_id = ?",
+        )
+        .get("curriculum-js"),
+    ).toEqual(versionCountBeforeCollisions);
+    expect(
+      connection.sqlite
+        .prepare("SELECT content_hash FROM curriculum_versions WHERE id = ?")
+        .get(published.id),
+    ).toEqual({ content_hash: publishedHash });
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM curricula
+           WHERE id IN ('different-curriculum-js', 'javascript',
+                        'cross-column-slug-collision')
+              OR slug IN ('different-javascript', 'cross-column-id-collision',
+                          'curriculum-js') AND id != 'curriculum-js'`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
     await expect(
       repository.addUnit({
         versionId: draft.id,
@@ -282,10 +461,242 @@ describe("curriculum authoring", () => {
       revision: 2,
       status: "draft",
     });
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT id, slug, title, description, primary_locale, active_revision_id,
+                  created_at, updated_at
+           FROM courses WHERE id = ?`,
+        )
+        .get("curriculum-js"),
+    ).toEqual(courseBeforeCollisions);
     const clonePath = await repository.getVersionGraph(clone.id);
     expect(
       clonePath.weeks[0]?.days[0]?.units.map((unit) => unit.stableId),
     ).toEqual(["briefing", "summary"]);
+  });
+
+  it("rolls back the complete clone when a projected child identity collides", async () => {
+    const { connection } = tempConnection();
+    migrateDatabase(connection);
+    const sourceIds = [
+      "source-version",
+      "source-week",
+      "source-day",
+      "source-unit",
+      "clone-version",
+      "colliding-week",
+    ];
+    const sourceRepository = createCurriculumAuthoringRepository(connection, {
+      id: () => {
+        const value = sourceIds.shift();
+        if (!value) throw new Error("Source ID sequence is exhausted");
+        return value;
+      },
+      now: () => 200,
+    });
+    const source = await sourceRepository.createDraft({
+      curriculum: {
+        id: "clone-source-course",
+        slug: "clone-source-course",
+        title: "Clone source Course",
+        primaryLocale: "en-US",
+      },
+      title: "Clone source revision",
+    });
+    const sourceWeek = await sourceRepository.addWeek({
+      versionId: source.id,
+      stableId: "source-week",
+      title: "Source week",
+    });
+    const sourceDay = await sourceRepository.addDay({
+      versionId: source.id,
+      weekId: sourceWeek.id,
+      stableId: "source-day",
+      title: "Source day",
+      goal: "Finish the source day",
+      estimatedMinutes: 30,
+      depthLevel: "foundation",
+    });
+    await sourceRepository.addUnit({
+      versionId: source.id,
+      dayId: sourceDay.id,
+      stableId: "source-summary",
+      type: "summary",
+      title: "Source summary",
+      completionCriteria: [{ type: "acknowledgement" }],
+      payload: { type: "summary", prompts: [] },
+    });
+    const publishedSource = await sourceRepository.publishVersion(source.id);
+
+    const collisionIds = ["collision-version", "colliding-week"];
+    const collisionRepository = createCurriculumAuthoringRepository(
+      connection,
+      {
+        id: () => {
+          const value = collisionIds.shift();
+          if (!value) throw new Error("Collision ID sequence is exhausted");
+          return value;
+        },
+        now: () => 201,
+      },
+    );
+    const collisionDraft = await collisionRepository.createDraft({
+      curriculum: {
+        id: "collision-course",
+        slug: "collision-course",
+        title: "Collision Course",
+        primaryLocale: "en-US",
+      },
+      title: "Collision revision",
+    });
+    await collisionRepository.addWeek({
+      versionId: collisionDraft.id,
+      stableId: "collision-week",
+      title: "Collision week",
+    });
+
+    await expect(
+      sourceRepository.cloneRevision(publishedSource.id),
+    ).rejects.toThrow(/unique constraint/i);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM curriculum_versions
+           WHERE id = 'clone-version'`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM course_revisions
+           WHERE id = 'clone-version'`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT
+             (SELECT COUNT(*) FROM curriculum_weeks WHERE version_id = 'clone-version') +
+             (SELECT COUNT(*) FROM course_sections WHERE revision_id = 'clone-version')
+             AS count`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      connection.sqlite
+        .prepare(
+          "SELECT active_revision_id FROM courses WHERE id = 'clone-source-course'",
+        )
+        .get(),
+    ).toEqual({ active_revision_id: publishedSource.id });
+
+    const retryIds = [
+      "retry-clone-version",
+      "retry-clone-week",
+      "retry-clone-day",
+      "retry-clone-unit",
+    ];
+    const retryRepository = createCurriculumAuthoringRepository(connection, {
+      id: () => {
+        const value = retryIds.shift();
+        if (!value) throw new Error("Retry ID sequence is exhausted");
+        return value;
+      },
+      now: () => 202,
+    });
+    const retry = await retryRepository.cloneRevision(publishedSource.id);
+    expect(retry).toMatchObject({
+      id: "retry-clone-version",
+      revision: 2,
+      parentVersionId: publishedSource.id,
+      status: "draft",
+    });
+    expect(
+      (await retryRepository.getVersionGraph(retry.id)).weeks[0]?.days[0]
+        ?.units,
+    ).toHaveLength(1);
+  });
+
+  it("rolls back a new Course when its draft version insert fails", async () => {
+    const { connection } = tempConnection();
+    migrateDatabase(connection);
+    const existingRepository = createCurriculumAuthoringRepository(connection, {
+      id: () => "occupied-version-id",
+      now: () => 300,
+    });
+    await existingRepository.createDraft({
+      curriculum: {
+        id: "occupied-version-course",
+        slug: "occupied-version-course",
+        title: "Occupied version Course",
+        primaryLocale: "en-US",
+      },
+      title: "Occupied version revision",
+    });
+    const countsBeforeFailure = connection.sqlite
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM curricula) AS curricula,
+           (SELECT COUNT(*) FROM courses) AS courses,
+           (SELECT COUNT(*) FROM curriculum_versions) AS versions,
+           (SELECT COUNT(*) FROM course_revisions) AS revisions`,
+      )
+      .get();
+
+    const failingRepository = createCurriculumAuthoringRepository(connection, {
+      id: () => "occupied-version-id",
+      now: () => 301,
+    });
+    await expect(
+      failingRepository.createDraft({
+        curriculum: {
+          id: "rolled-back-course",
+          slug: "rolled-back-course",
+          title: "Rolled back Course",
+          description: "This metadata must not survive",
+          primaryLocale: "ru-RU",
+        },
+        title: "Rolled back revision",
+      }),
+    ).rejects.toThrow(/unique constraint/i);
+
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT
+             (SELECT COUNT(*) FROM curricula) AS curricula,
+             (SELECT COUNT(*) FROM courses) AS courses,
+             (SELECT COUNT(*) FROM curriculum_versions) AS versions,
+             (SELECT COUNT(*) FROM course_revisions) AS revisions`,
+        )
+        .get(),
+    ).toEqual(countsBeforeFailure);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT
+             (SELECT COUNT(*) FROM curricula WHERE id = 'rolled-back-course') +
+             (SELECT COUNT(*) FROM courses WHERE id = 'rolled-back-course')
+             AS count`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT title, description, primary_locale, active_revision_id
+           FROM courses WHERE id = 'occupied-version-course'`,
+        )
+        .get(),
+    ).toEqual({
+      title: "Occupied version Course",
+      description: null,
+      primary_locale: "en-US",
+      active_revision_id: null,
+    });
   });
 });
 
@@ -299,7 +710,12 @@ describe("snapshot sessions", () => {
       now: () => 100,
     });
     const draft = await authoring.createDraft({
-      curriculum: { id: "c", slug: "c", title: "Course" },
+      curriculum: {
+        id: "c",
+        slug: "c",
+        title: "Course",
+        primaryLocale: "en-US",
+      },
       title: "v1",
     });
     const week = await authoring.addWeek({
@@ -395,7 +811,12 @@ describe("snapshot sessions", () => {
     });
     const createCourse = async (courseId: string) => {
       const draft = await authoring.createDraft({
-        curriculum: { id: courseId, slug: courseId, title: courseId },
+        curriculum: {
+          id: courseId,
+          slug: courseId,
+          title: courseId,
+          primaryLocale: "en-US",
+        },
         title: `${courseId} revision`,
       });
       const week = await authoring.addWeek({
@@ -853,7 +1274,7 @@ describe("database backup", () => {
   });
 
   it("discovers root databases when invoked from the database workspace", () => {
-    const directory = mkdtempSync(join(tmpdir(), "dlh-backup-root-"));
+    const directory = mkdtempSync(join(tmpdir(), "aptiloop-backup-root-"));
     cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
     const candidate = join(directory, ".data", "dev-learning-harness.sqlite");
     const connection = openDatabase(candidate);

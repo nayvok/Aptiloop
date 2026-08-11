@@ -1,28 +1,61 @@
 "use client";
 
 import {
+  ArrowLeftIcon,
   ArrowRightIcon,
+  CaretDownIcon,
   CheckCircleIcon,
+  CircleIcon,
   LockKeyIcon,
 } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useMemo } from "react";
+import { toast } from "sonner";
 
-import { type LearningDay, learningPathSchema } from "@/lib/learning-path";
+import { usePageRouteContext } from "@/components/page-route-context";
+import {
+  type LearningDay,
+  type LearningPath,
+  learningPathSchema,
+} from "@/lib/learning-path";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryError } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
 import {
-  focusedUnit,
+  blockForUnitType,
   groupDayIntoBlocks,
   remainingDayMinutes,
   type LearningBlock,
 } from "@/lib/learning-blocks";
 import { type MessageKey, useI18n } from "@/lib/i18n";
+import type { RouteContext } from "@/lib/route-context";
+import {
+  type UnitStatus,
+  unitStatusMessageKeys,
+  unitTypeMessageKeys,
+} from "@/lib/unit-labels";
+
+type LearningCourse = NonNullable<LearningPath["curriculum"]>;
+type RoadmapStatus =
+  LearningDay["status"] | LearningBlock["status"] | UnitStatus;
+type RevisionRoadmapAction =
+  | {
+      kind: "continue";
+      day: LearningDay;
+      sessionId: string;
+      currentUnit: LearningDay["units"][number] | null;
+    }
+  | {
+      kind: "start";
+      day: LearningDay;
+      currentUnit: LearningDay["units"][number] | null;
+    };
 
 const phaseLabels: Readonly<Record<LearningBlock["id"], MessageKey>> = {
   study: "home.phase.study",
@@ -36,11 +69,19 @@ const phaseStatusLabels: Readonly<Record<LearningBlock["status"], MessageKey>> =
     ready: "home.phase.ready",
     locked: "home.phase.locked",
   };
+const dayStatusLabels: Readonly<Record<LearningDay["status"], MessageKey>> = {
+  completed: "home.completed",
+  in_progress: "home.phase.current",
+  available: "home.phase.ready",
+  locked: "home.locked",
+};
 
 export function HomeClient({
+  surface = "home",
   pathEndpoint = "/learning/path",
   selectionTarget,
 }: {
+  surface?: "home" | "revision";
   pathEndpoint?: string;
   selectionTarget?: { courseId: string; revisionId: string };
 }) {
@@ -51,6 +92,23 @@ export function HomeClient({
     queryKey: ["learning-path", pathEndpoint],
     queryFn: async () => learningPathSchema.parse(await api(pathEndpoint)),
   });
+  const isRevisionPreview = surface === "revision";
+  const routeCourse = query.data?.curriculum ?? null;
+  const pageRouteContext = useMemo<RouteContext | null>(
+    () =>
+      isRevisionPreview && routeCourse
+        ? {
+            sectionHref: "/courses",
+            breadcrumbs: [
+              { href: "/courses", label: "nav.courses" },
+              { text: routeCourse.title },
+            ],
+          }
+        : null,
+    [isRevisionPreview, routeCourse],
+  );
+  usePageRouteContext(pageRouteContext);
+  const surfaceSlot = isRevisionPreview ? "course-revision-preview" : "home";
   const start = useMutation({
     mutationFn: (dayId: string) =>
       api<{ session: { id: string } }>("/learning/sessions/v2", {
@@ -69,11 +127,11 @@ export function HomeClient({
       ]);
       router.push(`/session?id=${encodeURIComponent(session.id)}`);
     },
+    onError: () => toast.error(t("home.startError")),
   });
   const selectCourse = useMutation({
     mutationFn: async () => {
-      if (!selectionTarget)
-        throw new Error("Course selection target is missing");
+      if (!selectionTarget) throw new Error("missing-selection-target");
       return api(
         `/learning/courses/${encodeURIComponent(selectionTarget.courseId)}/select`,
         {
@@ -88,84 +146,221 @@ export function HomeClient({
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["learning-path"] });
     },
+    onError: () => toast.error(t("home.selectCourse.error")),
   });
 
   if (query.isLoading) {
     return (
-      <div role="status" aria-label={t("home.loading")} className="grid gap-6">
-        <span className="sr-only">{t("home.loading")}</span>
-        <Skeleton className="h-24" />
-        <Skeleton className="h-52" />
-        <Skeleton className="h-48" />
+      <div data-slot={surfaceSlot} className="flex flex-col gap-8 lg:gap-10">
+        {isRevisionPreview ? <RevisionPageHeader /> : <HomePageHeader />}
+        <div
+          role="status"
+          aria-label={
+            isRevisionPreview
+              ? t("authoring.loading.versions")
+              : t("home.loading")
+          }
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-8"
+        >
+          <span className="sr-only">
+            {isRevisionPreview
+              ? t("authoring.loading.versions")
+              : t("home.loading")}
+          </span>
+          <div
+            className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 rounded-control border border-border/70 bg-card p-6 sm:p-8"
+            aria-hidden
+          >
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-8 w-80 max-w-[90%]" />
+            <Skeleton className="h-4 w-full max-w-xl" />
+            <Skeleton className="h-2 w-full max-w-xl" />
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-4 border-t border-border/60 pt-5 sm:grid-cols-3">
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+            </div>
+          </div>
+          <div
+            aria-hidden
+            className="min-w-0 divide-y divide-border/60 border-y border-border/60"
+          >
+            <Skeleton className="my-4 h-12 rounded-control" />
+            <Skeleton className="my-4 h-12 rounded-control" />
+            <Skeleton className="my-4 h-12 rounded-control" />
+          </div>
+        </div>
       </div>
     );
   }
   if (query.isError || !query.data) {
+    if (isRevisionPreview) {
+      return (
+        <RevisionFailureState
+          {...(query.error instanceof Error
+            ? { diagnostic: query.error.message }
+            : {})}
+          retry={() => void query.refetch()}
+        />
+      );
+    }
     return (
-      <QueryError
-        message={
-          query.error instanceof Error
-            ? query.error.message
-            : t("home.unavailable")
-        }
-        retry={() => void query.refetch()}
-      />
+      <div data-slot="home" className="flex flex-col gap-8 lg:gap-10">
+        <HomePageHeader />
+        <QueryError
+          message={t("home.unavailable")}
+          {...(query.error instanceof Error
+            ? { diagnostic: query.error.message }
+            : {})}
+          retry={() => void query.refetch()}
+        />
+      </div>
     );
   }
 
   const course = query.data.curriculum;
   if (!course) {
+    if (isRevisionPreview) {
+      return <RevisionMissingState retry={() => void query.refetch()} />;
+    }
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader
-          title={t("nav.home")}
-          description={t("page.home.description")}
-        />
+        <HomePageHeader />
         <EmptyState
           title={t("home.noCourse.title")}
           description={t("home.noCourse.description")}
           action={
-            <Button asChild>
-              <Link href="/courses">{t("home.openCourses")}</Link>
-            </Button>
+            <div className="flex w-full flex-col justify-center gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+              <Button asChild className="w-full sm:w-auto">
+                <Link href="/courses#course-library-title">
+                  {t("home.chooseCourse")}
+                </Link>
+              </Button>
+              <Button asChild variant="secondary" className="w-full sm:w-auto">
+                <Link href="/courses/new">{t("home.createCourse")}</Link>
+              </Button>
+              <Button asChild variant="outline" className="w-full sm:w-auto">
+                <Link href="/courses/import">{t("home.importCoursePack")}</Link>
+              </Button>
+            </div>
           }
         />
       </div>
     );
   }
 
+  if (
+    isRevisionPreview &&
+    (!selectionTarget ||
+      !query.data.courseContext ||
+      query.data.courseContext.courseId !== selectionTarget.courseId ||
+      query.data.courseContext.revisionId !== selectionTarget.revisionId ||
+      course.id !== selectionTarget.courseId ||
+      course.version.id !== selectionTarget.revisionId)
+  ) {
+    return <RevisionFailureState retry={() => void query.refetch()} />;
+  }
+
   const days = course.weeks.flatMap((week) => week.days);
-  const currentDay =
-    days.find((day) => day.status === "in_progress") ??
-    days.find((day) => day.status === "available") ??
-    null;
+  const completedDays = days.filter((day) => day.status === "completed").length;
+  const requiresSelection =
+    selectionTarget !== undefined && !query.data.courseContext?.selected;
+  const roadmapAction = resolveRevisionRoadmapAction(
+    query.data.nextAction,
+    days,
+  );
+
+  if (isRevisionPreview) {
+    return (
+      <RevisionRoadmapView
+        course={course}
+        days={days}
+        action={roadmapAction}
+        completedDays={completedDays}
+        requiresSelection={requiresSelection}
+        selecting={selectCourse.isPending}
+        continuing={start.isPending}
+        onSelect={() => selectCourse.mutate()}
+        onAction={() => {
+          if (!roadmapAction) return;
+          if (roadmapAction.kind === "continue") {
+            router.push(
+              `/session?id=${encodeURIComponent(roadmapAction.sessionId)}`,
+            );
+            return;
+          }
+          start.mutate(roadmapAction.day.id);
+        }}
+      />
+    );
+  }
+
+  const currentDay = roadmapAction?.day ?? null;
   const blocks = currentDay
     ? groupDayIntoBlocks(currentDay.units, (unit) => unit.status ?? "locked")
     : [];
-  const nextUnit = currentDay
-    ? focusedUnit(currentDay.units, (unit) => unit.status ?? "locked")
+  const nextUnit = roadmapAction?.currentUnit ?? null;
+  const currentBlock = nextUnit
+    ? (blocks.find((block) =>
+        block.units.some((unit) => unit.id === nextUnit.id),
+      ) ?? null)
     : null;
   const remaining = remainingDayMinutes(blocks);
+  const completedUnits = blocks.reduce(
+    (total, block) => total + block.completedCount,
+    0,
+  );
+  const totalUnits = blocks.reduce(
+    (total, block) => total + block.totalCount,
+    0,
+  );
   const upcoming = currentDay
     ? days.filter((day) => day.order > currentDay.order).slice(0, 4)
     : [];
 
   return (
-    <div data-slot="home" className="flex flex-col gap-8">
-      <PageHeader
-        title={course.title}
-        description={course.description ?? t("home.defaultCourseDescription")}
-      />
-      {selectionTarget && !query.data.courseContext?.selected ? (
-        <section className="flex flex-col gap-4 rounded-xl border border-primary/30 bg-primary/5 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
+    <div data-slot={surfaceSlot} className="flex flex-col gap-8 lg:gap-10">
+      {isRevisionPreview ? (
+        <RevisionPageHeader
+          title={course.title}
+          description={course.description ?? t("courses.library.selectHelp")}
+        />
+      ) : (
+        <div
+          data-slot="home-course-header"
+          className="flex min-w-0 flex-col gap-2 [overflow-wrap:anywhere]"
+        >
+          <p className="text-sm font-medium text-muted-foreground">
+            {t("home.currentCourse")}
+          </p>
+          <PageHeader
+            title={course.title}
+            description={
+              course.description ?? t("home.defaultCourseDescription")
+            }
+            actions={
+              <Button asChild variant="outline">
+                <Link href="/courses#course-library-title">
+                  {t("home.switchCourse")}
+                </Link>
+              </Button>
+            }
+          />
+        </div>
+      )}
+
+      {requiresSelection ? (
+        <section className="flex min-w-0 flex-col gap-4 border-y border-border/70 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <h2 className="font-semibold">{t("home.selectCourse.title")}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
               {t("home.selectCourse.description")}
             </p>
           </div>
           <Button
+            data-slot="home-primary-action"
             type="button"
+            className="w-full shrink-0 sm:w-auto"
             disabled={selectCourse.isPending}
             onClick={() => selectCourse.mutate()}
           >
@@ -175,75 +370,128 @@ export function HomeClient({
           </Button>
         </section>
       ) : null}
-      {selectCourse.isError ? (
-        <p role="alert" className="text-sm text-destructive">
-          {selectCourse.error instanceof Error
-            ? selectCourse.error.message
-            : t("home.selectCourse.error")}
-        </p>
-      ) : null}
-      {start.isError ? (
-        <p
-          role="alert"
-          className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
-        >
-          {start.error instanceof Error
-            ? start.error.message
-            : t("home.startError")}
-        </p>
-      ) : null}
+
       {currentDay ? (
         <section
           aria-labelledby="next-action-title"
-          className="grid gap-6 rounded-xl border border-border bg-card p-5 sm:p-6 lg:grid-cols-[1fr_auto] lg:items-end"
+          className="flex min-w-0 flex-col gap-6 rounded-control border border-border/70 bg-card p-6 sm:p-8"
         >
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-[0.12em] text-primary">
-              {t("home.nextAction")}
-            </p>
-            <h2
-              id="next-action-title"
-              className="mt-2 text-2xl font-semibold tracking-[-0.025em]"
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+              <p className="text-xs font-semibold tracking-wide text-primary">
+                {t("home.nextAction")}
+              </p>
+              <h2
+                id="next-action-title"
+                className="mt-2 text-2xl font-semibold leading-tight tracking-[-0.025em] sm:text-[1.75rem]"
+              >
+                {t("home.lesson", { number: currentDay.order })} ·{" "}
+                {currentDay.title}
+              </h2>
+              <p className="mt-2 max-w-[70ch] text-sm leading-6 text-muted-foreground">
+                {nextUnit?.title ?? currentDay.goal}
+              </p>
+              {totalUnits > 0 ? (
+                <div className="mt-5 max-w-xl">
+                  <div className="mb-2 flex items-center justify-between gap-4 text-xs">
+                    <span className="font-medium">
+                      {t("home.focus.lessonProgress")}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {t("home.phase.progress", {
+                        complete: completedUnits,
+                        total: totalUnits,
+                      })}
+                    </span>
+                  </div>
+                  <Progress
+                    value={completedUnits}
+                    max={totalUnits}
+                    aria-label={t("home.focus.lessonProgress")}
+                    aria-valuetext={t("home.phase.progress", {
+                      complete: completedUnits,
+                      total: totalUnits,
+                    })}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <Button
+              data-slot={requiresSelection ? undefined : "home-primary-action"}
+              size="lg"
+              variant={requiresSelection ? "secondary" : "default"}
+              className="w-full shrink-0 sm:w-auto"
+              disabled={start.isPending || requiresSelection}
+              onClick={() => {
+                if (roadmapAction?.kind === "continue") {
+                  router.push(
+                    `/session?id=${encodeURIComponent(roadmapAction.sessionId)}`,
+                  );
+                  return;
+                }
+                if (roadmapAction?.kind === "start") {
+                  start.mutate(roadmapAction.day.id);
+                }
+              }}
             >
-              {t("home.lesson", { number: currentDay.order })} ·{" "}
-              {currentDay.title}
-            </h2>
-            <p className="mt-2 max-w-[70ch] text-sm leading-6 text-muted-foreground">
-              {nextUnit?.title ?? currentDay.goal}
-            </p>
-            <p className="mt-3 text-xs text-muted-foreground">
-              {currentDay.sessionId
-                ? t("home.remaining", { minutes: remaining })
-                : t("home.estimated", { minutes: currentDay.estimatedMinutes })}
-            </p>
+              {start.isPending
+                ? t("home.starting")
+                : roadmapAction?.kind === "continue"
+                  ? t("home.resume")
+                  : t("home.start")}
+              <ArrowRightIcon data-icon="inline-end" aria-hidden />
+            </Button>
           </div>
-          <Button
-            size="lg"
-            disabled={
-              start.isPending ||
-              (selectionTarget !== undefined &&
-                !query.data.courseContext?.selected)
-            }
-            onClick={() =>
-              currentDay.sessionId
-                ? router.push(
-                    `/session?id=${encodeURIComponent(currentDay.sessionId)}`,
-                  )
-                : start.mutate(currentDay.id)
-            }
-          >
-            {start.isPending
-              ? t("home.starting")
-              : currentDay.sessionId
-                ? t("home.resume")
-                : t("home.start")}
-            <ArrowRightIcon aria-hidden />
-          </Button>
+
+          <dl className="grid divide-y divide-border/60 border-t border-border/60 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+            <div className="min-w-0 py-4 sm:pr-5">
+              <dt className="text-xs text-muted-foreground">
+                {t("home.focus.time")}
+              </dt>
+              <dd className="mt-1 text-sm font-medium">
+                {roadmapAction?.kind === "continue"
+                  ? t("home.remaining", { minutes: remaining })
+                  : t("home.estimated", {
+                      minutes: currentDay.estimatedMinutes,
+                    })}
+              </dd>
+            </div>
+            <div className="min-w-0 py-4 sm:px-5">
+              <dt className="text-xs text-muted-foreground">
+                {t("home.focus.courseProgress")}
+              </dt>
+              <dd className="mt-1 text-sm font-medium">
+                {t("home.courseProgress", {
+                  complete: completedDays,
+                  total: days.length,
+                })}
+              </dd>
+            </div>
+            {currentBlock ? (
+              <div className="min-w-0 py-4 sm:pl-5">
+                <dt className="text-xs text-muted-foreground">
+                  {t("home.focus.phase")}
+                </dt>
+                <dd className="mt-1 text-sm font-medium">
+                  {t(phaseLabels[currentBlock.id])} ·{" "}
+                  {t(phaseStatusLabels[currentBlock.status])}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
         </section>
       ) : (
         <EmptyState
-          title={t("home.complete")}
-          description={t("review.empty.description")}
+          title={t(
+            days.length > 0 && days.every((day) => day.status === "completed")
+              ? "home.complete"
+              : "courses.current.revisionUnavailable",
+          )}
+          description={
+            days.length > 0 && days.every((day) => day.status === "completed")
+              ? t("review.empty.description")
+              : t("courses.library.selectionUnknownHelp")
+          }
           action={
             <Button asChild variant="outline">
               <Link href="/review">{t("nav.review")}</Link>
@@ -251,31 +499,26 @@ export function HomeClient({
           }
         />
       )}
+
       {blocks.length > 0 ? (
-        <section aria-labelledby="learning-phases-title">
-          <h2
-            id="learning-phases-title"
-            className="border-b border-border pb-3 text-lg font-semibold"
-          >
+        <section aria-labelledby="learning-phases-title" className="min-w-0">
+          <h2 id="learning-phases-title" className="pb-3 text-lg font-semibold">
             {t("home.phases")}
           </h2>
-          <ol className="divide-y divide-border">
+          <ol className="divide-y divide-border/60 border-y border-border/60">
             {blocks.map((block) => (
-              <li
-                key={block.id}
-                className="grid min-h-16 grid-cols-[auto_1fr_auto] items-center gap-3 py-3"
-              >
-                <span className="grid size-8 place-items-center rounded-full border border-border bg-background">
+              <li key={block.id} className="flex items-start gap-3 py-4">
+                <span className="grid size-8 shrink-0 place-items-center">
                   {block.status === "completed" ? (
                     <CheckCircleIcon
                       aria-hidden
-                      className="size-4 text-success-foreground"
+                      className="text-success-foreground"
                       weight="fill"
                     />
                   ) : block.status === "locked" ? (
                     <LockKeyIcon
                       aria-hidden
-                      className="size-4 text-muted-foreground"
+                      className="text-muted-foreground"
                     />
                   ) : (
                     <span
@@ -284,34 +527,37 @@ export function HomeClient({
                     />
                   )}
                 </span>
-                <div className="min-w-0">
-                  <h3 className="font-medium">{t(phaseLabels[block.id])}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    {t("home.phase.progress", {
-                      complete: block.completedCount,
-                      total: block.totalCount,
-                    })}
-                  </p>
+                <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="font-medium">{t(phaseLabels[block.id])}</h3>
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {t("home.phase.progress", {
+                        complete: block.completedCount,
+                        total: block.totalCount,
+                      })}
+                    </p>
+                  </div>
+                  <Badge
+                    className="w-fit shrink-0"
+                    variant={
+                      block.status === "completed" ? "success" : "outline"
+                    }
+                  >
+                    {t(phaseStatusLabels[block.status])}
+                  </Badge>
                 </div>
-                <Badge
-                  variant={block.status === "completed" ? "success" : "outline"}
-                >
-                  {t(phaseStatusLabels[block.status])}
-                </Badge>
               </li>
             ))}
           </ol>
         </section>
       ) : null}
+
       {upcoming.length > 0 ? (
         <section aria-labelledby="upcoming-title">
-          <h2
-            id="upcoming-title"
-            className="border-b border-border pb-3 text-lg font-semibold"
-          >
+          <h2 id="upcoming-title" className="pb-2 text-lg font-semibold">
             {t("home.upcoming")}
           </h2>
-          <ol className="divide-y divide-border">
+          <ol className="divide-y divide-border/60 border-y border-border/60">
             {upcoming.map((day) => (
               <UpcomingLesson key={day.id} day={day} />
             ))}
@@ -321,20 +567,658 @@ export function HomeClient({
     </div>
   );
 }
+
+function HomePageHeader() {
+  const { t } = useI18n();
+  return (
+    <PageHeader
+      title={t("nav.home")}
+      description={t("page.home.description")}
+    />
+  );
+}
+
+function RevisionPageHeader({
+  title,
+  description,
+  revision,
+  current = false,
+}: {
+  title?: string;
+  description?: string;
+  revision?: number;
+  current?: boolean;
+}) {
+  const { t } = useI18n();
+  const eyebrow =
+    revision === undefined
+      ? t("courses.action.previewRevision")
+      : t(
+          current
+            ? "courses.revisionSurface.current"
+            : "courses.revisionSurface.preview",
+          { revision },
+        );
+  return (
+    <div
+      data-slot="course-revision-preview-header"
+      className="flex min-w-0 flex-col gap-2 [overflow-wrap:anywhere]"
+    >
+      {title ? (
+        <p className="text-sm font-medium text-muted-foreground">{eyebrow}</p>
+      ) : null}
+      <PageHeader
+        title={title ?? t("courses.action.previewRevision")}
+        description={description ?? t("courses.library.selectHelp")}
+        actions={<BackToCourses />}
+      />
+    </div>
+  );
+}
+
+function BackToCourses() {
+  const { t } = useI18n();
+  return (
+    <Button asChild variant="outline">
+      <Link href="/courses">
+        <ArrowLeftIcon data-icon="inline-start" aria-hidden />
+        {t("review.goToCourses")}
+      </Link>
+    </Button>
+  );
+}
+
+function RevisionFailureState({
+  diagnostic,
+  retry,
+}: {
+  diagnostic?: string;
+  retry: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div
+      data-slot="course-revision-preview"
+      className="flex flex-col gap-8 lg:gap-10"
+    >
+      <RevisionPageHeader />
+      <section
+        data-slot="course-revision-preview-error"
+        role="alert"
+        className="flex min-h-40 flex-col items-start justify-center gap-4 rounded-control border border-border/70 bg-card p-6 sm:p-8"
+      >
+        <div>
+          <h2 className="font-semibold">
+            {t("courses.current.revisionUnavailable")}
+          </h2>
+          <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
+            {t("courses.library.selectionUnknownHelp")}
+          </p>
+        </div>
+        {diagnostic ? (
+          <details className="max-w-full text-sm text-muted-foreground">
+            <summary className="cursor-pointer font-medium text-foreground">
+              {t("courses.library.details")}
+            </summary>
+            <p className="mt-2 max-w-[65ch] [overflow-wrap:anywhere]">
+              {diagnostic}
+            </p>
+          </details>
+        ) : null}
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Button type="button" onClick={retry}>
+            {t("query.retry")}
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function RevisionMissingState({ retry }: { retry: () => void }) {
+  const { t } = useI18n();
+  return (
+    <div
+      data-slot="course-revision-preview"
+      className="flex flex-col gap-8 lg:gap-10"
+    >
+      <RevisionPageHeader />
+      <EmptyState
+        title={t("authoring.missingRevision.title")}
+        description={t("courses.current.unavailableDescription")}
+        action={
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            <Button type="button" onClick={retry}>
+              {t("query.retry")}
+            </Button>
+          </div>
+        }
+      />
+    </div>
+  );
+}
+
+function resolveRevisionRoadmapAction(
+  nextAction: LearningPath["nextAction"],
+  days: readonly LearningDay[],
+): RevisionRoadmapAction | null {
+  if (nextAction === null) return null;
+  const day = days.find((candidate) => candidate.id === nextAction.lessonId);
+  if (!day) return null;
+  if (nextAction.type === "start") {
+    return { kind: "start", day, currentUnit: null };
+  }
+  const currentUnit = day.units.find(
+    (unit) => unit.stableId === nextAction.currentStep,
+  );
+  if (!currentUnit) return null;
+  return {
+    kind: "continue",
+    day,
+    sessionId: nextAction.sessionId,
+    currentUnit,
+  };
+}
+
+function RevisionRoadmapView({
+  course,
+  days,
+  action,
+  completedDays,
+  requiresSelection,
+  selecting,
+  continuing,
+  onSelect,
+  onAction,
+}: {
+  course: LearningCourse;
+  days: LearningDay[];
+  action: RevisionRoadmapAction | null;
+  completedDays: number;
+  requiresSelection: boolean;
+  selecting: boolean;
+  continuing: boolean;
+  onSelect: () => void;
+  onAction: () => void;
+}) {
+  const { t } = useI18n();
+  const currentUnitId = action?.currentUnit?.id ?? null;
+  const currentBlockId = action?.currentUnit
+    ? blockForUnitType(action.currentUnit.type)
+    : null;
+  return (
+    <div
+      data-slot="course-revision-preview"
+      className="flex min-w-0 flex-col gap-8 lg:gap-10"
+    >
+      <RevisionPageHeader
+        title={course.title}
+        description={course.description ?? t("courses.library.selectHelp")}
+        revision={course.version.revision}
+        current={!requiresSelection}
+      />
+
+      {requiresSelection ? (
+        <section className="flex min-w-0 flex-col gap-4 border-y border-border/70 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="font-semibold">{t("home.selectCourse.title")}</h2>
+            <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
+              {t("home.selectCourse.description")}
+            </p>
+          </div>
+          <Button
+            type="button"
+            className="w-full shrink-0 sm:w-auto"
+            disabled={selecting}
+            onClick={onSelect}
+          >
+            {selecting
+              ? t("home.selectCourse.selecting")
+              : t("home.selectCourse.action")}
+          </Button>
+        </section>
+      ) : null}
+
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-8 xl:grid-cols-[minmax(0,48rem)_minmax(16rem,20rem)] xl:items-start xl:justify-between">
+        <RevisionContextRail
+          course={course}
+          days={days}
+          action={action}
+          completedDays={completedDays}
+          requiresSelection={requiresSelection}
+          continuing={continuing}
+          onAction={onAction}
+        />
+        <section
+          data-slot="course-roadmap"
+          aria-labelledby="course-roadmap-title"
+          className="mx-auto min-w-0 w-full max-w-3xl xl:col-start-1 xl:row-start-1 xl:mx-0"
+        >
+          <div className="flex min-w-0 flex-col gap-3 border-b border-border/70 pb-5 sm:flex-row sm:items-end sm:justify-between">
+            <div className="min-w-0">
+              <h2 id="course-roadmap-title" className="text-xl font-semibold">
+                {t("home.courseRoadmap")}
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t("home.courseProgress", {
+                  complete: completedDays,
+                  total: days.length,
+                })}
+              </p>
+            </div>
+            {days.length > 0 ? (
+              <Progress
+                className="w-full sm:w-52"
+                value={completedDays}
+                max={days.length}
+                aria-label={t("home.focus.courseProgress")}
+                aria-valuetext={t("home.courseProgress", {
+                  complete: completedDays,
+                  total: days.length,
+                })}
+              />
+            ) : null}
+          </div>
+
+          <div className="mt-7 space-y-9">
+            {course.weeks.map((week) => (
+              <section
+                key={week.id}
+                aria-labelledby={`roadmap-week-${week.id}`}
+                className="min-w-0"
+              >
+                <div className="mb-4 min-w-0 [overflow-wrap:anywhere]">
+                  <h3
+                    id={`roadmap-week-${week.id}`}
+                    className="text-base font-semibold"
+                  >
+                    {week.title}
+                  </h3>
+                  {week.description ? (
+                    <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
+                      {week.description}
+                    </p>
+                  ) : null}
+                </div>
+                <ol className="space-y-4">
+                  {week.days.map((day) => (
+                    <RoadmapLesson
+                      key={day.id}
+                      day={day}
+                      currentDayId={action?.day.id ?? null}
+                      currentBlockId={currentBlockId}
+                      currentUnitId={currentUnitId}
+                    />
+                  ))}
+                </ol>
+              </section>
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function RoadmapLesson({
+  day,
+  currentDayId,
+  currentBlockId,
+  currentUnitId,
+}: {
+  day: LearningDay;
+  currentDayId: string | null;
+  currentBlockId: LearningBlock["id"] | null;
+  currentUnitId: string | null;
+}) {
+  const { t } = useI18n();
+  const isCurrent = day.id === currentDayId;
+  const lessonLocked = day.status === "locked";
+  const blocks = groupDayIntoBlocks(day.units, (unit) =>
+    lessonLocked ? "locked" : (unit.status ?? "locked"),
+  ).filter((block) => block.totalCount > 0);
+  return (
+    <li
+      data-slot="course-roadmap-lesson"
+      data-status={day.status}
+      data-current={isCurrent ? "true" : undefined}
+      aria-current={isCurrent && currentUnitId === null ? "step" : undefined}
+      className={
+        isCurrent
+          ? "min-w-0 rounded-control border border-primary/40 bg-primary/[0.035]"
+          : "min-w-0 rounded-control border border-border/70 bg-card"
+      }
+    >
+      <article className="min-w-0 p-5 sm:p-6">
+        <header className="flex min-w-0 items-start gap-3">
+          <RoadmapStatusIcon status={day.status} />
+          <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+            <h4 className="font-semibold leading-6">
+              {t("home.lesson", { number: day.order })} · {day.title}
+            </h4>
+            <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
+              {day.goal}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+              <RoadmapStatusText status={day.status} />
+              <span>
+                {t("home.estimated", { minutes: day.estimatedMinutes })}
+              </span>
+            </div>
+          </div>
+        </header>
+
+        {blocks.length > 0 ? (
+          <details
+            data-slot="course-roadmap-lesson-details"
+            className="group mt-5 border-t border-border/60"
+            open={isCurrent ? true : undefined}
+          >
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+              {t("session.plan")}
+              <CaretDownIcon
+                aria-hidden
+                className="shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+              />
+            </summary>
+            <ol className="divide-y divide-border/60 border-t border-border/60">
+              {blocks.map((block) => (
+                <RoadmapPhase
+                  key={block.id}
+                  block={block}
+                  isCurrent={isCurrent && block.id === currentBlockId}
+                  currentUnitId={currentUnitId}
+                  lessonLocked={lessonLocked}
+                />
+              ))}
+            </ol>
+          </details>
+        ) : null}
+      </article>
+    </li>
+  );
+}
+
+function RoadmapPhase({
+  block,
+  isCurrent,
+  currentUnitId,
+  lessonLocked,
+}: {
+  block: LearningBlock;
+  isCurrent: boolean;
+  currentUnitId: string | null;
+  lessonLocked: boolean;
+}) {
+  const { t } = useI18n();
+  return (
+    <li
+      data-slot="course-roadmap-phase"
+      data-status={block.status}
+      data-current={isCurrent ? "true" : undefined}
+      className="py-4"
+    >
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <RoadmapStatusIcon status={block.status} compact />
+          <h5 className="min-w-0 font-medium">{t(phaseLabels[block.id])}</h5>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pl-7 text-xs text-muted-foreground sm:justify-end sm:pl-0">
+          <span>{t(phaseStatusLabels[block.status])}</span>
+          <span>
+            {t("home.phase.progress", {
+              complete: block.completedCount,
+              total: block.totalCount,
+            })}
+          </span>
+          <span>
+            {t("home.estimated", { minutes: block.estimatedMinutes })}
+          </span>
+        </div>
+      </div>
+      <ol className="mt-3 space-y-1 pl-7">
+        {block.units.map((unit) => (
+          <RoadmapActivity
+            key={unit.id}
+            unit={unit}
+            isCurrent={unit.id === currentUnitId}
+            status={lessonLocked ? "locked" : (unit.status ?? "locked")}
+          />
+        ))}
+      </ol>
+    </li>
+  );
+}
+
+function RoadmapActivity({
+  unit,
+  isCurrent,
+  status,
+}: {
+  unit: LearningBlock["units"][number];
+  isCurrent: boolean;
+  status: UnitStatus;
+}) {
+  const { t } = useI18n();
+  return (
+    <li
+      data-slot="course-roadmap-activity"
+      data-status={status}
+      aria-current={isCurrent ? "step" : undefined}
+      className={
+        isCurrent
+          ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2.5 rounded-control bg-accent/70 px-3 py-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto]"
+          : "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2.5 rounded-control px-3 py-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto]"
+      }
+    >
+      <RoadmapStatusIcon status={status} compact />
+      <div className="min-w-0 [overflow-wrap:anywhere]">
+        <p className="text-sm font-medium leading-5">{unit.title}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {t(unitTypeMessageKeys[unit.type])}
+        </p>
+      </div>
+      <div className="col-start-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground sm:col-start-3 sm:justify-end">
+        <span>{t(unitStatusMessageKeys[status])}</span>
+        <span>{t("home.estimated", { minutes: unit.estimatedMinutes })}</span>
+      </div>
+    </li>
+  );
+}
+
+function RevisionContextRail({
+  course,
+  days,
+  action,
+  completedDays,
+  requiresSelection,
+  continuing,
+  onAction,
+}: {
+  course: LearningCourse;
+  days: LearningDay[];
+  action: RevisionRoadmapAction | null;
+  completedDays: number;
+  requiresSelection: boolean;
+  continuing: boolean;
+  onAction: () => void;
+}) {
+  const { t } = useI18n();
+  const courseComplete =
+    days.length > 0 && days.every((day) => day.status === "completed");
+  return (
+    <aside
+      data-slot="course-roadmap-context"
+      className="mx-auto min-w-0 w-full max-w-3xl space-y-4 xl:col-start-2 xl:row-start-1 xl:mx-0 xl:sticky xl:top-28 xl:max-w-none"
+    >
+      <section className="rounded-control border border-border/70 bg-card p-5">
+        <h2 className="font-semibold">{t("home.nextAction")}</h2>
+        {action ? (
+          <div className="mt-4 min-w-0 [overflow-wrap:anywhere]">
+            <p className="text-sm font-medium">
+              {t("home.lesson", { number: action.day.order })}
+            </p>
+            <p className="mt-1 text-base font-semibold leading-6">
+              {action.day.title}
+            </p>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              {action.currentUnit?.title ?? action.day.goal}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
+              <RoadmapStatusText status={action.day.status} />
+              <span>
+                {action.kind === "continue"
+                  ? t("home.remaining", {
+                      minutes: remainingDayMinutes(
+                        groupDayIntoBlocks(
+                          action.day.units,
+                          (unit) => unit.status ?? "locked",
+                        ),
+                      ),
+                    })
+                  : t("home.estimated", {
+                      minutes: action.day.estimatedMinutes,
+                    })}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-4 text-sm font-medium">
+            {courseComplete
+              ? t("home.complete")
+              : t("courses.current.revisionUnavailable")}
+          </p>
+        )}
+        {action ? (
+          <Button
+            type="button"
+            size="lg"
+            className="mt-5 w-full"
+            disabled={requiresSelection || continuing}
+            onClick={onAction}
+          >
+            {continuing
+              ? t("home.starting")
+              : action.kind === "continue"
+                ? t("courses.action.continue")
+                : t("home.start")}
+            <ArrowRightIcon data-icon="inline-end" aria-hidden />
+          </Button>
+        ) : null}
+      </section>
+
+      <section className="rounded-control border border-border/70 bg-card p-5">
+        <h2 className="font-semibold">{t("courses.table.progress")}</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {t("home.courseProgress", {
+            complete: completedDays,
+            total: days.length,
+          })}
+        </p>
+        {days.length > 0 ? (
+          <Progress
+            className="mt-3"
+            value={completedDays}
+            max={days.length}
+            aria-label={t("home.focus.courseProgress")}
+            aria-valuetext={t("home.courseProgress", {
+              complete: completedDays,
+              total: days.length,
+            })}
+          />
+        ) : null}
+      </section>
+
+      <details className="rounded-control border border-border/70 bg-card p-5 text-sm">
+        <summary className="cursor-pointer font-medium">
+          {t("courses.library.details")}
+        </summary>
+        <p className="mt-4 text-sm font-medium">
+          {t("home.revision", { revision: course.version.revision })}
+        </p>
+        <dl className="mt-4 space-y-4 text-muted-foreground">
+          <div>
+            <dt className="text-xs">{t("courses.library.revisionId")}</dt>
+            <dd className="mt-1 [overflow-wrap:anywhere]">
+              {course.version.id}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs">{t("courses.preview.contentHash")}</dt>
+            <dd className="mt-1 font-mono text-xs [overflow-wrap:anywhere]">
+              {course.version.contentHash}
+            </dd>
+          </div>
+        </dl>
+      </details>
+    </aside>
+  );
+}
+
+function RoadmapStatusIcon({
+  status,
+  compact = false,
+}: {
+  status: RoadmapStatus;
+  compact?: boolean;
+}) {
+  const className = compact ? "size-4 shrink-0" : "mt-0.5 size-5 shrink-0";
+  if (status === "completed" || status === "skipped") {
+    return (
+      <CheckCircleIcon
+        aria-hidden
+        weight="fill"
+        className={`${className} text-success-foreground`}
+      />
+    );
+  }
+  if (status === "locked") {
+    return (
+      <LockKeyIcon
+        aria-hidden
+        className={`${className} text-muted-foreground`}
+      />
+    );
+  }
+  if (status === "in_progress") {
+    return (
+      <ArrowRightIcon aria-hidden className={`${className} text-primary`} />
+    );
+  }
+  return <CircleIcon aria-hidden className={`${className} text-primary`} />;
+}
+
+function RoadmapStatusText({ status }: { status: LearningDay["status"] }) {
+  const { t } = useI18n();
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <RoadmapStatusIcon status={status} compact />
+      {t(dayStatusLabels[status])}
+    </span>
+  );
+}
+
 function UpcomingLesson({ day }: { day: LearningDay }) {
   const { t } = useI18n();
   return (
-    <li className="grid grid-cols-[1fr_auto] gap-4 py-4">
-      <div className="min-w-0">
-        <p className="truncate font-medium">
+    <li className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="min-w-0 [overflow-wrap:anywhere]">
+        <p className="font-medium leading-6">
           {t("home.lesson", { number: day.order })} · {day.title}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           {t("home.estimated", { minutes: day.estimatedMinutes })}
         </p>
       </div>
-      <span className="self-center text-xs text-muted-foreground">
-        {day.status === "locked" ? t("home.locked") : t("home.completed")}
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+        {day.status === "completed" ? (
+          <CheckCircleIcon aria-hidden weight="fill" />
+        ) : day.status === "locked" ? (
+          <LockKeyIcon aria-hidden />
+        ) : (
+          <span aria-hidden className="size-2 rounded-full bg-primary" />
+        )}
+        {t(dayStatusLabels[day.status])}
       </span>
     </li>
   );

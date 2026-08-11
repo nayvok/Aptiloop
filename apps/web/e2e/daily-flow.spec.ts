@@ -35,13 +35,18 @@ function requiredEnvironment(name: string): string {
 test("hydrates stored light and dark themes without an icon mismatch", async ({
   page,
 }) => {
-  const hydrationErrors: string[] = [];
+  const browserErrors: string[] = [];
   page.on("console", (message) => {
     if (
       message.type() === "error" &&
-      message.text().includes("hydrated but some attributes")
+      (message.text().includes("hydrated but some attributes") ||
+        message
+          .text()
+          .includes(
+            "Can't perform a React state update on a component that hasn't mounted yet",
+          ))
     ) {
-      hydrationErrors.push(message.text());
+      browserErrors.push(message.text());
     }
   });
   await page.addInitScript(() => {
@@ -58,13 +63,16 @@ test("hydrates stored light and dark themes without an icon mismatch", async ({
     page.getByRole("heading", { name: "Choose interface language" }),
   ).toBeVisible();
   await page
+    .getByRole("alertdialog", { name: "Choose interface language" })
     .getByLabel("Interface language", { exact: true })
     .selectOption("ru-RU");
   await page.getByRole("button", { name: "Использовать этот язык" }).click();
+  await expect(page.getByRole("alertdialog")).toBeHidden();
+  await expect(page.locator("html")).toHaveAttribute("lang", "ru-RU");
   await expect(
     page.getByRole("button", { name: "Включить тему: системная" }),
   ).toBeVisible();
-  expect(hydrationErrors).toEqual([]);
+  expect(browserErrors).toEqual([]);
 });
 
 test("completes restart-safe Day 1 through correction, summary, mastery and review", async ({
@@ -85,21 +93,27 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
   const sessionId = new URL(page.url()).searchParams.get("id");
   if (!sessionId) throw new Error("Session ID is missing from the guided flow");
 
-  // The active Activity stays in focus; lesson context opens in a drawer.
-  await expect(page.getByRole("button", { name: "План урока" })).toBeVisible();
-  await page.getByRole("button", { name: "План урока" }).click();
-  await expect(page.getByText("Этапы обучения")).toBeVisible();
-  await expect(page.getByText("Темы", { exact: true })).toBeVisible();
+  // The active Activity stays in focus while desktop keeps lesson context visible.
+  const lessonSteps = page.getByRole("complementary", {
+    name: "Шаги урока",
+  });
+  await expect(lessonSteps).toBeVisible();
+  await expect(lessonSteps.getByText("Этапы обучения")).toBeVisible();
+  await lessonSteps.getByText("Цель", { exact: true }).click();
   await expect(
-    page.getByText("Ожидаемые результаты", { exact: true }),
+    lessonSteps.getByText("Ожидаемые результаты", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("Вне занятия", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Закрыть" }).click();
+  await lessonSteps.getByText("Темы", { exact: true }).click();
+  await expect(
+    lessonSteps.getByText("Вне занятия", { exact: true }),
+  ).toBeVisible();
 
   await startUnit(page);
   await expect(page.getByText("Сегодня разберём")).toBeVisible();
   await expect(page.getByText("После занятия сможете")).toBeVisible();
-  await expect(page.getByText("Глубина")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Глубина", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Перейти к изучению" }).click();
 
   for (const [note, checklistCount] of [
@@ -195,7 +209,9 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
   await expect(page.getByText("Далее: Практика и повторение")).toBeVisible();
   await page.getByRole("button", { name: "Продолжить сейчас" }).click();
   await page.getByRole("button", { name: "Открыть практику" }).click();
-  await expect(page).toHaveURL(/\/exercise\?sessionId=/u);
+  await expect(page).toHaveURL(/\/exercise\?sessionId=/u, {
+    timeout: 15_000,
+  });
   await page.getByRole("button", { name: "Создать попытку" }).click();
   await expect(
     page.getByRole("button", { name: "Открыть в Zed" }),
@@ -204,7 +220,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
   const exerciseResponse = await request.get(
     `${orchestratorOrigin}/api/exercises/current?sessionId=${encodeURIComponent(sessionId)}`,
     {
-      headers: { "X-DLH-Client": "web", Origin: webOrigin },
+      headers: { "X-Aptiloop-Client": "web", Origin: webOrigin },
     },
   );
   expect(exerciseResponse.ok()).toBe(true);
@@ -232,17 +248,16 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
   await writeFile(learnerFile, passingImplementation, "utf8");
 
   await page.getByRole("button", { name: "Обновить Git diff" }).click();
-  await expect(page.getByTestId("exercise-diff")).toContainText(
-    "normalizeProfile(input",
-  );
+  await expectExerciseDiff(page, "normalizeProfile(input");
   await page.getByRole("button", { name: "Запустить тесты" }).click();
-  await expect(page.getByText("Тесты прошли на текущем diff")).toBeVisible();
-  await page.getByRole("button", { name: "Запросить проверку" }).click();
   await expect(
-    page.getByText(
-      "Решение близко, но один краевой случай требует ещё одной попытки.",
-    ),
+    page.getByText("Тесты прошли на текущем diff").first(),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Запросить проверку" }).click();
+  await expectReviewerSummary(
+    page,
+    "Решение близко, но один краевой случай требует ещё одной попытки.",
+  );
   await expect(
     page.getByRole("button", { name: "Принять проверку и продолжить" }),
   ).toHaveCount(0);
@@ -253,15 +268,12 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
     "utf8",
   );
   await page.getByRole("button", { name: "Запустить тесты" }).click();
-  await expect(page.getByTestId("exercise-diff")).toContainText(
-    "correction cycle",
-  );
+  await expectExerciseDiff(page, "correction cycle");
   await page.getByRole("button", { name: "Запросить проверку" }).click();
-  await expect(
-    page.getByText(
-      "Цикл исправлений завершён: протестированное изменение теперь соответствует контракту упражнения.",
-    ),
-  ).toBeVisible();
+  await expectReviewerSummary(
+    page,
+    "Цикл исправлений завершён: протестированное изменение теперь соответствует контракту упражнения.",
+  );
   await page
     .getByRole("button", { name: "Принять проверку и продолжить" })
     .click();
@@ -277,10 +289,14 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
 
   await page.getByRole("link", { name: "Навыки" }).click();
   await expect(
-    page.getByRole("rowheader", { name: /primitive values/u }),
+    page.getByRole("heading", {
+      level: 3,
+      name: "primitive values",
+      exact: true,
+    }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Повторение" }).click();
-  await page.getByRole("link", { name: "Исправления" }).click();
+  await page.getByRole("tab", { name: "Исправления" }).click();
   const primitiveCorrection = page
     .getByRole("article")
     .filter({ hasText: "primitive values" });
@@ -288,13 +304,15 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
   await expect(primitiveCorrection).toContainText(
     "Выполните назначенную активность исправления",
   );
-  await page.getByRole("link", { name: "Очередь повторения" }).click();
+  await page.getByRole("tab", { name: "Очередь повторения" }).click();
   const primitiveReview = page
     .getByRole("article")
     .filter({ hasText: "primitive values" })
     .first();
-  await expect(primitiveReview).toContainText("understanding");
-  await expect(primitiveReview).toContainText(/low_mastery|mistake/u);
+  await expect(primitiveReview).toContainText("Измерение: Понимание");
+  await expect(primitiveReview).toContainText(
+    "Существующие подтверждения ниже детерминированного порога повторения.",
+  );
 
   await page.goto("/");
   await expect(
@@ -310,13 +328,17 @@ test("publishes a curriculum graph and keeps an active session on its original r
   request,
 }) => {
   test.setTimeout(120_000);
-  await page.goto("/settings/curriculum");
-  await page.getByText("Создать новую редакцию").click();
-  await page.getByLabel("ID программы").fill("e2e-curriculum");
-  await page.getByLabel("Slug").fill("a-e2e-curriculum");
+  await page.goto("/courses/new");
+  await page.getByRole("link", { name: "Создать пустой черновик" }).click();
+  await expect(page).toHaveURL(/\/courses\/new\/manual$/u, {
+    timeout: 15_000,
+  });
   await page.getByLabel("Название программы").fill("E2E Curriculum");
-  await page.getByLabel("Название ревизии").fill("E2E Revision");
+  await page.getByLabel("Основная локаль курса").fill("ru-RU");
   await page.getByRole("button", { name: "Создать черновик" }).click();
+  await expect(page).toHaveURL(/\/courses\/studio\?version=/u, {
+    timeout: 15_000,
+  });
 
   await expect(page.getByText("В черновике пока нет недель")).toBeVisible();
   await page.getByRole("button", { name: "Добавить неделю" }).click();
@@ -340,9 +362,18 @@ test("publishes a curriculum graph and keeps an active session on its original r
     .getByRole("button", { name: "Поднять юнит Второй E2E unit" })
     .click();
 
+  const releaseTab = page.getByRole("tab", {
+    name: "Выпуск",
+    exact: true,
+  });
+  await releaseTab.click();
+  await expect(releaseTab).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "Запустить проверку" }).click();
   await expect(page.getByText("Проверка пройдена")).toBeVisible();
   await page.getByRole("button", { name: "Открыть предпросмотр" }).click();
+  await page
+    .getByRole("button", { name: "E2E Curriculum", exact: true })
+    .click();
   await expect(page.getByText("Дней: 1")).toBeVisible();
   await page.getByRole("button", { name: "Проверить изменения" }).click();
   await expect(page.getByText(/Добавлено: \d+/u)).toBeVisible();
@@ -359,7 +390,7 @@ test("publishes a curriculum graph and keeps an active session on its original r
 
   const versionsResponse = await request.get(
     `${orchestratorOrigin}/api/curriculum-editor/versions`,
-    { headers: { "X-DLH-Client": "web", Origin: webOrigin } },
+    { headers: { "X-Aptiloop-Client": "web", Origin: webOrigin } },
   );
   expect(versionsResponse.ok()).toBe(true);
   const versionsBody = (await versionsResponse.json()) as {
@@ -367,17 +398,17 @@ test("publishes a curriculum graph and keeps an active session on its original r
       id: string;
       curriculumId: string;
       status: "draft" | "published" | "archived";
+      title: string;
     }>;
   };
   const publishedVersion = versionsBody.versions.find(
     (version) =>
-      version.curriculumId === "e2e-curriculum" &&
-      version.status === "published",
+      version.title === "E2E Curriculum" && version.status === "published",
   );
   if (!publishedVersion) throw new Error("Published E2E revision is missing");
 
   await page.goto(
-    `/courses/e2e-curriculum/revisions/${encodeURIComponent(publishedVersion.id)}`,
+    `/courses/${encodeURIComponent(publishedVersion.curriculumId)}/revisions/${encodeURIComponent(publishedVersion.id)}`,
   );
   await expect(
     page.getByRole("heading", { name: "E2E Curriculum", exact: true }),
@@ -394,11 +425,13 @@ test("publishes a curriculum graph and keeps an active session on its original r
   expect(currentBefore.snapshot.curriculumTitle).toBe("E2E Curriculum");
   const capturedVersionId = currentBefore.snapshot.curriculumVersionId;
 
-  await page.goto("/settings/curriculum");
+  await page.goto(
+    `/courses/studio?version=${encodeURIComponent(publishedVersion.id)}`,
+  );
   await page.getByRole("button", { name: "Клонировать в черновик" }).click();
   await expect(
     page.getByRole("heading", {
-      name: "E2E Revision — new edition",
+      name: "E2E Curriculum",
       exact: true,
     }),
   ).toBeVisible();
@@ -423,7 +456,8 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
   await page
     .getByRole("textbox", { name: "Темы через запятую" })
     .fill("JavaScript, TypeScript");
-  await page.getByLabel("Количество вопросов").selectOption("2");
+  await page.getByRole("combobox", { name: "Количество вопросов" }).click();
+  await page.getByRole("option", { name: "2", exact: true }).click();
   await page.getByRole("button", { name: "Начать интервью" }).click();
 
   await expect(
@@ -435,7 +469,11 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
       "Microtasks выполняются после текущего стека до следующей macrotask; примером служит Promise callback.",
     );
   await page.getByRole("button", { name: "Отправить ответ" }).click();
-  await expect(page.getByText("1 / 2")).toBeVisible();
+  const answeredProgress = page.getByRole("progressbar", {
+    name: "Отвечено: 1 из 2",
+  });
+  await expect(answeredProgress).toHaveAttribute("aria-valuenow", "1");
+  await expect(answeredProgress).toHaveAttribute("aria-valuemax", "2");
 
   await page
     .getByLabel("Сообщение")
@@ -450,10 +488,19 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
   await page.reload();
   await expect(page.getByText("Отчёт по интервью")).toBeVisible();
   await expect(page.getByText("100 %", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Вернуться к занятию" }),
+  ).toHaveCount(0);
 
   await page.goto("/interview?sessionId=demo-session");
-  await page.getByRole("button", { name: "Вернуться к занятию" }).click();
-  await expect(page).toHaveURL(/\/session\?id=demo-session/u);
+  await expect(
+    page.getByRole("alert").filter({
+      hasText: "Не удалось загрузить интервью. Повторите попытку.",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Вернуться к занятию" }),
+  ).toHaveCount(0);
 });
 
 async function startUnit(page: Page): Promise<void> {
@@ -461,6 +508,28 @@ async function startUnit(page: Page): Promise<void> {
   await expect(button).toBeVisible();
   await button.click();
   await expect(button).toBeHidden();
+}
+
+async function expectExerciseDiff(page: Page, expected: string): Promise<void> {
+  const diff = page.getByTestId("exercise-diff");
+  if (!(await diff.isVisible())) {
+    await page.getByRole("button", { name: /Diff от baseline/u }).click();
+  }
+  await expect(diff).toContainText(expected);
+}
+
+async function expectReviewerSummary(
+  page: Page,
+  expected: string,
+): Promise<void> {
+  const disclosure = page
+    .locator('[data-slot="exercise-review-disclosure"]')
+    .getByRole("button");
+  await expect(disclosure).toBeVisible({ timeout: 15_000 });
+  if ((await disclosure.getAttribute("aria-expanded")) !== "true") {
+    await disclosure.click();
+  }
+  await expect(page.getByText(expected)).toBeVisible();
 }
 
 async function checkChecklist(
@@ -494,7 +563,7 @@ async function currentLearningSession(request: APIRequestContext): Promise<{
 }> {
   const response = await request.get(
     `${orchestratorOrigin}/api/learning/sessions/current`,
-    { headers: { "X-DLH-Client": "web", Origin: webOrigin } },
+    { headers: { "X-Aptiloop-Client": "web", Origin: webOrigin } },
   );
   expect(response.ok()).toBe(true);
   const body = (await response.json()) as {

@@ -6,8 +6,8 @@ import {
   type CoursePackDiagnostic,
   type CoursePackV1,
   type CoursePackValidationReport,
-} from "@dlh/course-authoring-kit";
-import { CourseOperationIdSchema } from "@dlh/shared";
+} from "@aptiloop/course-authoring-kit";
+import { CourseOperationIdSchema } from "@aptiloop/shared";
 
 import { withTransaction, type DatabaseConnection } from "./database.js";
 
@@ -21,7 +21,8 @@ const REQUIRED_M3_TABLES = [
 
 export type CoursePackInstallAction = "install" | "open-as-draft";
 export type CoursePackLifecycleAction = CoursePackInstallAction | "uninstall";
-export type CoursePackRepositoryErrorCode = "conflict" | "not_found";
+export type CoursePackRepositoryErrorCode =
+  "active_session" | "conflict" | "not_found";
 
 export class CoursePackRepositoryError extends Error {
   readonly code: CoursePackRepositoryErrorCode;
@@ -165,6 +166,18 @@ export class CoursePackRepository {
             "Course Pack operation ID is already bound to a different action",
           );
         }
+        const existingManifest = this.#connection.sqlite
+          .prepare(
+            `SELECT content_hash FROM course_pack_manifests WHERE revision_id = ?`,
+          )
+          .get(pack.revision.revisionKey) as
+          { content_hash: string } | undefined;
+        if (existingManifest?.content_hash !== pack.revision.contentHash) {
+          throw new CoursePackRepositoryError(
+            "conflict",
+            "Course Pack operation is bound to different content",
+          );
+        }
         return this.#installResult(pack, input.action, false, true);
       }
 
@@ -178,6 +191,13 @@ export class CoursePackRepository {
           throw new CoursePackRepositoryError(
             "conflict",
             "Course Pack revision identity is already bound to different content",
+          );
+        }
+        const lifecycle = this.#readImportLifecycle(pack.revision.revisionKey);
+        if (!lifecycle || lifecycle.action !== input.action) {
+          throw new CoursePackRepositoryError(
+            "conflict",
+            "Course Pack revision is already bound to a different lifecycle action",
           );
         }
         return this.#installResult(pack, input.action, false, true);
@@ -206,33 +226,10 @@ export class CoursePackRepository {
           now,
         );
       this.#insertPackMetadata(pack);
-      this.#connection.sqlite
-        .prepare(
-          `INSERT INTO course_pack_lifecycle_events
-           (id, revision_id, operation_id, action, occurred_at, details_json)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          this.#id(),
-          pack.revision.revisionKey,
-          operationId,
-          input.action,
-          now,
-          canonicalJson({
-            contentHash: pack.revision.contentHash,
-            sourceBytesHash: input.sourceBytesHash,
-          }),
-        );
+      this.#publishManifestRevision(pack, now);
 
+      let resultRevisionId = pack.revision.revisionKey;
       if (input.action === "install") {
-        this.#connection.sqlite
-          .prepare(
-            `UPDATE course_revisions
-             SET status = 'published', content_hash = ?, published_at = ?,
-                 updated_at = ?
-             WHERE id = ? AND status = 'draft'`,
-          )
-          .run(pack.revision.contentHash, now, now, pack.revision.revisionKey);
         this.#connection.sqlite
           .prepare(
             `UPDATE courses SET active_revision_id = ?, title = ?,
@@ -249,14 +246,6 @@ export class CoursePackRepository {
           );
         this.#connection.sqlite
           .prepare(
-            `UPDATE curriculum_versions
-             SET status = 'published', content_hash = ?, published_at = ?,
-                 updated_at = ?
-             WHERE id = ? AND status = 'draft'`,
-          )
-          .run(pack.revision.contentHash, now, now, pack.revision.revisionKey);
-        this.#connection.sqlite
-          .prepare(
             `UPDATE curricula SET active_version_id = ?, title = ?,
                  description = ?, updated_at = ? WHERE id = ?`,
           )
@@ -267,7 +256,30 @@ export class CoursePackRepository {
             now,
             pack.course.courseKey,
           );
+      } else {
+        resultRevisionId = this.#createEditableDraft(pack, now);
+        this.#archiveManifestRevision(pack, now);
       }
+
+      this.#connection.sqlite
+        .prepare(
+          `INSERT INTO course_pack_lifecycle_events
+           (id, revision_id, operation_id, action, occurred_at, details_json)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          this.#id(),
+          pack.revision.revisionKey,
+          operationId,
+          input.action,
+          now,
+          canonicalJson({
+            contentHash: pack.revision.contentHash,
+            manifestRevisionId: pack.revision.revisionKey,
+            resultRevisionId,
+            sourceBytesHash: input.sourceBytesHash,
+          }),
+        );
 
       return this.#installResult(pack, input.action, true, false);
     });
@@ -279,7 +291,11 @@ export class CoursePackRepository {
       .prepare(
         `SELECT course.id AS course_id, course.stable_id AS course_key,
                 course.title, revision.id AS revision_id,
-                revision.revision_number, revision.status,
+                CAST(json_extract(
+                  manifest.canonical_json,
+                  '$.revision.revisionNumber'
+                ) AS INTEGER) AS revision_number,
+                revision.status,
                 manifest.content_hash, manifest.imported_at,
                 event.action
          FROM course_pack_manifests manifest
@@ -288,7 +304,7 @@ export class CoursePackRepository {
          JOIN course_pack_lifecycle_events event ON event.id = (
            SELECT latest.id FROM course_pack_lifecycle_events latest
            WHERE latest.revision_id = manifest.revision_id
-           ORDER BY latest.occurred_at DESC, latest.id DESC LIMIT 1
+            ORDER BY latest.occurred_at DESC, latest.rowid DESC LIMIT 1
          )
          ORDER BY course.stable_id, revision.revision_number, revision.id`,
       )
@@ -389,6 +405,24 @@ export class CoursePackRepository {
         );
       }
 
+      const activeSession = this.#connection.sqlite
+        .prepare(
+          `SELECT session.id
+           FROM learning_sessions session
+           JOIN session_course_contexts context ON context.session_id = session.id
+           WHERE context.course_id = ? AND context.revision_id = ?
+             AND session.status = 'active'
+           LIMIT 1`,
+        )
+        .get(revision.course_id, input.revisionId) as
+        { id: string } | undefined;
+      if (activeSession) {
+        throw new CoursePackRepositoryError(
+          "active_session",
+          "Course Pack revision is pinned by an active learning session",
+        );
+      }
+
       const now = this.#now();
       if (revision.status === "published") {
         this.#connection.sqlite
@@ -421,9 +455,42 @@ export class CoursePackRepository {
       this.#connection.sqlite
         .prepare(
           `UPDATE adaptation_branches SET status = 'archived', updated_at = ?
-           WHERE course_id = ? AND base_revision_id = ? AND status = 'active'`,
+           WHERE course_id = ? AND base_revision_id = ? AND status = 'active'
+             AND NOT EXISTS (
+               SELECT 1 FROM curriculum_versions revision
+               WHERE revision.adaptation_branch_id = adaptation_branches.id
+                 AND revision.branch_kind = 'personal'
+                 AND revision.status IN ('draft', 'published')
+             )`,
         )
         .run(now, revision.course_id, input.revisionId);
+      this.#connection.sqlite
+        .prepare(
+          `UPDATE learner_state
+           SET current_learning_session_id = NULL, updated_at = ?
+           WHERE current_learning_session_id IN (
+             SELECT context.session_id
+             FROM session_course_contexts context
+             JOIN learning_sessions session ON session.id = context.session_id
+             WHERE context.course_id = ? AND context.revision_id = ?
+               AND session.status != 'active'
+           )`,
+        )
+        .run(now, revision.course_id, input.revisionId);
+      this.#connection.sqlite
+        .prepare(
+          `DELETE FROM learner_course_states
+           WHERE course_id = ? AND active_revision_id = ?
+             AND NOT EXISTS (
+               SELECT 1
+               FROM session_course_contexts context
+               JOIN learning_sessions session ON session.id = context.session_id
+               WHERE context.course_id = learner_course_states.course_id
+                 AND context.revision_id = learner_course_states.active_revision_id
+                 AND session.status = 'active'
+             )`,
+        )
+        .run(revision.course_id, input.revisionId);
       const retainedEvidenceCount = this.#evidenceCount(input.revisionId);
       this.#connection.sqlite
         .prepare(
@@ -450,11 +517,13 @@ export class CoursePackRepository {
   #assertInstallIdentity(pack: CoursePackV1): void {
     const courses = this.#connection.sqlite
       .prepare(
-        `SELECT id, stable_id FROM courses WHERE id = ? OR stable_id = ?`,
+        `SELECT id, stable_id, primary_locale
+         FROM courses WHERE id = ? OR stable_id = ?`,
       )
       .all(pack.course.courseKey, pack.course.courseKey) as Array<{
       id: string;
       stable_id: string;
+      primary_locale: string;
     }>;
     const compatibilityCourse = this.#connection.sqlite
       .prepare(`SELECT id, slug FROM curricula WHERE id = ? OR slug = ?`)
@@ -480,21 +549,24 @@ export class CoursePackRepository {
         "Course Pack Course identity collides with local data",
       );
     }
+    if (
+      courses.some(
+        (course) => course.primary_locale !== pack.course.primaryLocale,
+      )
+    ) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Course Pack primary locale conflicts with the existing Course",
+      );
+    }
 
     const revisionCollision = this.#connection.sqlite
-      .prepare(
-        `SELECT id FROM course_revisions
-         WHERE id = ? OR (course_id = ? AND revision_number = ?)`,
-      )
-      .all(
-        pack.revision.revisionKey,
-        pack.course.courseKey,
-        pack.revision.revisionNumber,
-      ) as Array<{ id: string }>;
+      .prepare(`SELECT id FROM course_revisions WHERE id = ?`)
+      .all(pack.revision.revisionKey) as Array<{ id: string }>;
     if (revisionCollision.length > 0) {
       throw new CoursePackRepositoryError(
         "conflict",
-        "Course Pack revision identity or number already exists",
+        "Course Pack revision identity already exists",
       );
     }
     if (pack.revision.parentRevisionKey === null) return;
@@ -524,11 +596,8 @@ export class CoursePackRepository {
 
   #applyPackTargetMetadata(pack: CoursePackV1): void {
     this.#connection.sqlite
-      .prepare(`UPDATE courses SET primary_locale = ? WHERE id = ?`)
-      .run(pack.course.primaryLocale, pack.course.courseKey);
-    this.#connection.sqlite
       .prepare(
-        `UPDATE course_revisions
+        `UPDATE curriculum_versions
          SET branch_kind = ?, based_on_content_hash = ? WHERE id = ?`,
       )
       .run(
@@ -536,6 +605,16 @@ export class CoursePackRepository {
         pack.revision.basedOnContentHash,
         pack.revision.revisionKey,
       );
+    this.#connection.sqlite
+      .prepare(`UPDATE courses SET primary_locale = ? WHERE id = ?`)
+      .run(pack.course.primaryLocale, pack.course.courseKey);
+    this.#applyPackActivityMetadata(pack, pack.revision.revisionKey);
+  }
+
+  #applyPackActivityMetadata(
+    pack: CoursePackV1,
+    targetRevisionId: string,
+  ): void {
     for (const lesson of pack.lessons) {
       for (const activity of lesson.activities) {
         const result = this.#connection.sqlite
@@ -563,12 +642,8 @@ export class CoursePackRepository {
             canonicalJson(activity.knowledgeNodeIds),
             canonicalJson(activity.protectedMaterial),
             pack.course.courseKey,
-            pack.revision.revisionKey,
-            scopedId(
-              "activity",
-              pack.revision.revisionKey,
-              activity.activityId,
-            ),
+            targetRevisionId,
+            scopedId("activity", targetRevisionId, activity.activityId),
           );
         if (result.changes !== 1) {
           throw new Error("Course Pack activity projection is incomplete");
@@ -577,7 +652,25 @@ export class CoursePackRepository {
     }
   }
 
-  #insertCompatibilityGraph(pack: CoursePackV1, now: number): void {
+  #insertCompatibilityGraph(
+    pack: CoursePackV1,
+    now: number,
+    revision: {
+      readonly id: string;
+      readonly revisionNumber: number;
+      readonly parentRevisionId: string | null;
+      readonly branchKind: "upstream" | "personal";
+      readonly basedOnContentHash: string | null;
+      readonly adaptationBranchId: string | null;
+    } = {
+      id: pack.revision.revisionKey,
+      revisionNumber: pack.revision.revisionNumber,
+      parentRevisionId: pack.revision.parentRevisionKey,
+      branchKind: pack.revision.branchKind,
+      basedOnContentHash: pack.revision.basedOnContentHash,
+      adaptationBranchId: null,
+    },
+  ): void {
     this.#connection.sqlite
       .prepare(
         `INSERT INTO curricula
@@ -609,22 +702,35 @@ export class CoursePackRepository {
     this.#connection.sqlite
       .prepare(
         `INSERT INTO curriculum_versions
-         (id, curriculum_id, revision, parent_version_id, status, title,
-          description, content_hash, created_at, published_at, archived_at,
+         (id, curriculum_id, revision, parent_version_id, branch_kind, status,
+          title, description, content_hash, based_on_content_hash,
+          adaptation_branch_id, created_at, published_at, archived_at,
           updated_at)
-         VALUES (?, ?, ?, ?, 'draft', ?, ?, NULL, ?, NULL, NULL, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, NULL, ?, ?, ?, NULL, NULL, ?)`,
       )
       .run(
-        pack.revision.revisionKey,
+        revision.id,
         pack.course.courseKey,
-        pack.revision.revisionNumber,
-        pack.revision.parentRevisionKey,
+        this.#availableRevisionNumber(
+          pack.course.courseKey,
+          revision.revisionNumber,
+        ),
+        revision.parentRevisionId,
+        revision.branchKind,
         pack.course.title,
         pack.course.description,
+        revision.basedOnContentHash,
+        revision.adaptationBranchId,
         now,
         now,
       );
-    const weekId = scopedId("week", pack.revision.revisionKey, "main");
+    const weekId = scopedId("week", revision.id, "main");
+    const sourceSnapshots = new Map(
+      pack.knowledge.sourceSnapshots.map((snapshot) => [
+        snapshot.snapshotId,
+        snapshot,
+      ]),
+    );
     this.#connection.sqlite
       .prepare(
         `INSERT INTO curriculum_weeks
@@ -634,7 +740,7 @@ export class CoursePackRepository {
       )
       .run(
         weekId,
-        pack.revision.revisionKey,
+        revision.id,
         pack.course.title,
         pack.course.description,
         now,
@@ -642,11 +748,7 @@ export class CoursePackRepository {
       );
 
     for (const lesson of pack.lessons) {
-      const lessonId = scopedId(
-        "lesson",
-        pack.revision.revisionKey,
-        lesson.lessonId,
-      );
+      const lessonId = scopedId("lesson", revision.id, lesson.lessonId);
       this.#connection.sqlite
         .prepare(
           `INSERT INTO curriculum_days_v2
@@ -659,7 +761,7 @@ export class CoursePackRepository {
         )
         .run(
           lessonId,
-          pack.revision.revisionKey,
+          revision.id,
           weekId,
           lesson.lessonId,
           lesson.order,
@@ -675,7 +777,7 @@ export class CoursePackRepository {
       for (const activity of lesson.activities) {
         const activityId = scopedId(
           "activity",
-          pack.revision.revisionKey,
+          revision.id,
           activity.activityId,
         );
         const learnerQuestions = activity.protectedMaterial.questions.map(
@@ -686,6 +788,27 @@ export class CoursePackRepository {
             options: question.options,
           }),
         );
+        const learnerSources = activity.sourceSnapshotIds.map((snapshotId) => {
+          const snapshot = sourceSnapshots.get(snapshotId);
+          if (!snapshot) {
+            throw new Error("Course Pack source projection is incomplete");
+          }
+          return {
+            id: scopedId("source", pack.revision.revisionKey, snapshotId),
+            title: snapshot.title,
+            url: snapshot.canonicalUrl,
+            kind: "source-required" as const,
+            ...(snapshot.authorPublisher
+              ? { author: snapshot.authorPublisher }
+              : {}),
+            ...(snapshot.attribution
+              ? { description: snapshot.attribution }
+              : {}),
+            required: true,
+            estimatedMinutes: 0,
+            examplesToRepeat: [],
+          };
+        });
         this.#connection.sqlite
           .prepare(
             `INSERT INTO curriculum_units
@@ -695,12 +818,12 @@ export class CoursePackRepository {
               reference_answer_json, completion_criteria_json,
               unlock_rules_json, optional, depth_level, payload_json,
               created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', '[]', ?, '[]',
-                     NULL, ?, ?, ?, 'foundation', ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', ?, ?, '[]',
+                     ?, ?, ?, ?, 'foundation', ?, ?, ?)`,
           )
           .run(
             activityId,
-            pack.revision.revisionKey,
+            revision.id,
             lessonId,
             activity.activityId,
             activity.type,
@@ -708,7 +831,11 @@ export class CoursePackRepository {
             activity.title,
             activity.description,
             activity.estimatedMinutes,
+            canonicalJson(learnerSources),
             canonicalJson(learnerQuestions),
+            activity.protectedMaterial.referenceAnswer === null
+              ? null
+              : canonicalJson(activity.protectedMaterial.referenceAnswer),
             canonicalJson(activity.completionCriteria),
             canonicalJson(
               activity.prerequisiteActivityIds.map((unitId) => ({
@@ -865,20 +992,169 @@ export class CoursePackRepository {
     }
   }
 
+  #publishManifestRevision(pack: CoursePackV1, now: number): void {
+    const published = this.#connection.sqlite
+      .prepare(
+        `UPDATE curriculum_versions
+         SET status = 'published', content_hash = ?, published_at = ?,
+             updated_at = ?
+         WHERE id = ? AND status = 'draft'`,
+      )
+      .run(pack.revision.contentHash, now, now, pack.revision.revisionKey);
+    if (published.changes !== 1) {
+      throw new Error("Course Pack manifest revision could not be published");
+    }
+    const projection = this.#connection.sqlite
+      .prepare(`SELECT status, content_hash FROM course_revisions WHERE id = ?`)
+      .get(pack.revision.revisionKey) as
+      { status: string; content_hash: string | null } | undefined;
+    if (
+      projection?.status !== "published" ||
+      projection.content_hash !== pack.revision.contentHash
+    ) {
+      throw new Error("Course Pack manifest projection is inconsistent");
+    }
+  }
+
+  #createEditableDraft(pack: CoursePackV1, now: number): string {
+    const revisionId = scopedId(
+      "draft",
+      pack.revision.revisionKey,
+      pack.revision.contentHash,
+    );
+    const existing = this.#connection.sqlite
+      .prepare(`SELECT id FROM curriculum_versions WHERE id = ?`)
+      .get(revisionId) as { id: string } | undefined;
+    if (existing) return existing.id;
+
+    const activeBranch = this.#connection.sqlite
+      .prepare(
+        `SELECT id, base_revision_id FROM adaptation_branches
+         WHERE course_id = ? AND status = 'active'
+         ORDER BY id LIMIT 1`,
+      )
+      .get(pack.course.courseKey) as
+      { id: string; base_revision_id: string } | undefined;
+    if (
+      activeBranch &&
+      activeBranch.base_revision_id !== pack.revision.revisionKey
+    ) {
+      const existingPersonalRevision = this.#connection.sqlite
+        .prepare(
+          `SELECT id FROM curriculum_versions
+           WHERE adaptation_branch_id = ?
+             AND branch_kind = 'personal'
+             AND status IN ('draft', 'published')
+           LIMIT 1`,
+        )
+        .get(activeBranch.id) as { id: string } | undefined;
+      if (existingPersonalRevision) {
+        throw new CoursePackRepositoryError(
+          "conflict",
+          "Active personal adaptation must be integrated before opening this Course Pack as a draft",
+        );
+      }
+      this.#connection.sqlite
+        .prepare(
+          `UPDATE adaptation_branches
+           SET status = 'archived', updated_at = ?
+           WHERE id = ? AND course_id = ? AND status = 'active'`,
+        )
+        .run(now, activeBranch.id, pack.course.courseKey);
+    }
+    const reusableBranch =
+      activeBranch?.base_revision_id === pack.revision.revisionKey
+        ? activeBranch
+        : undefined;
+    const adaptationBranchId =
+      reusableBranch?.id ??
+      scopedId("branch", pack.revision.revisionKey, "local");
+    if (!reusableBranch) {
+      this.#connection.sqlite
+        .prepare(
+          `INSERT INTO adaptation_branches
+           (id, course_id, owner, base_revision_id, head_revision_id, status,
+            created_at, updated_at)
+           VALUES (?, ?, 'local', ?, NULL, 'active', ?, ?)`,
+        )
+        .run(
+          adaptationBranchId,
+          pack.course.courseKey,
+          pack.revision.revisionKey,
+          now,
+          now,
+        );
+    }
+    const latest = this.#connection.sqlite
+      .prepare(
+        `SELECT COALESCE(MAX(revision), 0) AS revision
+         FROM curriculum_versions WHERE curriculum_id = ?`,
+      )
+      .get(pack.course.courseKey) as { revision: number };
+    this.#insertCompatibilityGraph(pack, now, {
+      id: revisionId,
+      revisionNumber: latest.revision + 1,
+      parentRevisionId: pack.revision.revisionKey,
+      branchKind: "personal",
+      basedOnContentHash: pack.revision.contentHash,
+      adaptationBranchId,
+    });
+    this.#applyPackActivityMetadata(pack, revisionId);
+    return revisionId;
+  }
+
+  #archiveManifestRevision(pack: CoursePackV1, now: number): void {
+    const archived = this.#connection.sqlite
+      .prepare(
+        `UPDATE curriculum_versions
+         SET status = 'archived', archived_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'published'`,
+      )
+      .run(now, now, pack.revision.revisionKey);
+    if (archived.changes !== 1) {
+      throw new Error("Course Pack manifest source could not be archived");
+    }
+  }
+
+  #availableRevisionNumber(courseId: string, preferred: number): number {
+    const collision = this.#connection.sqlite
+      .prepare(
+        `SELECT 1 FROM curriculum_versions
+         WHERE curriculum_id = ? AND revision = ?`,
+      )
+      .get(courseId, preferred);
+    if (!collision) return preferred;
+    const latest = this.#connection.sqlite
+      .prepare(
+        `SELECT COALESCE(MAX(revision), 0) AS revision
+         FROM curriculum_versions WHERE curriculum_id = ?`,
+      )
+      .get(courseId) as { revision: number };
+    return latest.revision + 1;
+  }
+
   #installResult(
     pack: CoursePackV1,
     action: CoursePackInstallAction,
     installed: boolean,
     idempotent: boolean,
   ): CoursePackInstallResult {
+    const revisionId =
+      action === "install"
+        ? pack.revision.revisionKey
+        : scopedId(
+            "draft",
+            pack.revision.revisionKey,
+            pack.revision.contentHash,
+          );
     const row = this.#connection.sqlite
       .prepare(`SELECT status FROM course_revisions WHERE id = ?`)
-      .get(pack.revision.revisionKey) as
+      .get(revisionId) as
       { status: "draft" | "published" | "archived" } | undefined;
     if (!row) throw new Error("Installed Course Pack revision disappeared");
     return {
       courseId: pack.course.courseKey,
-      revisionId: pack.revision.revisionKey,
+      revisionId,
       contentHash: pack.revision.contentHash,
       action,
       revisionStatus: row.status,
@@ -900,6 +1176,18 @@ export class CoursePackRepository {
       )
       .get(operationId) as
       { revision_id: string; action: CoursePackLifecycleAction } | undefined;
+  }
+
+  #readImportLifecycle(
+    revisionId: string,
+  ): { action: CoursePackLifecycleAction } | undefined {
+    return this.#connection.sqlite
+      .prepare(
+        `SELECT action FROM course_pack_lifecycle_events
+         WHERE revision_id = ?
+         ORDER BY occurred_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(revisionId) as { action: CoursePackLifecycleAction } | undefined;
   }
 
   #evidenceCount(revisionId: string): number {

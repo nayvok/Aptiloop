@@ -13,7 +13,7 @@ import type {
   PiCredential as Credential,
   PiCredentialInfo as CredentialInfo,
   PiCredentialStore as CredentialStore,
-} from "@dlh/agent-core";
+} from "@aptiloop/agent-core";
 
 interface CredentialFile {
   readonly version: 1;

@@ -3,7 +3,7 @@ import {
   AgentSessionSchema,
   ProviderStatusSchema,
   ReviewResultSchema,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import { describe, expect, it } from "vitest";
 
 import {

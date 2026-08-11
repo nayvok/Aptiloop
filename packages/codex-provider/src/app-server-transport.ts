@@ -256,8 +256,8 @@ export class CodexAppServerTransport implements CodexTransport {
     try {
       await this.#request("initialize", {
         clientInfo: {
-          name: "dev-learning-harness",
-          title: "Dev Learning Harness",
+          name: "aptiloop",
+          title: "Aptiloop",
           version: "0.1.0",
         },
         capabilities: { experimentalApi: false },

@@ -3,7 +3,7 @@ import {
   SessionSnapshotSchema,
   UnitProgressPayloadSchema,
   UnitProgressSchema,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -129,7 +129,7 @@ export function withTransaction<T>(
   callback: () => T,
 ): T {
   if (connection.sqlite.isTransaction) {
-    const savepoint = `dlh_nested_${nestedTransactionId++}`;
+    const savepoint = `aptiloop_nested_${nestedTransactionId++}`;
     connection.sqlite.exec(`SAVEPOINT ${savepoint}`);
     try {
       const result = callback();

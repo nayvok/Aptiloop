@@ -1,5 +1,5 @@
-import type { AgentProvider } from "@dlh/agent-core";
-import type { AgentRole, ProviderId } from "@dlh/shared";
+import type { AgentProvider } from "@aptiloop/agent-core";
+import type { AgentRole, ProviderId } from "@aptiloop/shared";
 
 export interface ConfiguredLearningSelection {
   role: AgentRole;

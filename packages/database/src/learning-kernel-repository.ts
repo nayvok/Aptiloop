@@ -10,7 +10,7 @@ import {
   type LearningKernelProjection,
   type LearningKernelReductionResult,
   type LearningKernelScope,
-} from "@dlh/learning-core";
+} from "@aptiloop/learning-core";
 
 import { withTransaction, type DatabaseConnection } from "./database.js";
 

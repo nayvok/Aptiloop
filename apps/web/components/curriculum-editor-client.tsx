@@ -1,25 +1,58 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownIcon,
+  ArrowLeftIcon,
   ArrowUpIcon,
+  CaretDownIcon,
   CopyIcon,
   PlusIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
 import {
   AiDisclosureSchema,
+  CourseDesignerPendingDisclosureResponseSchema,
+  CourseLocaleSchema,
   CourseDesignerSourceSchema,
   CourseDesignerWorkflowSchema,
   CourseDraftProposalDiffSchema,
   CourseDraftProposalSchema,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
 
+import { parseAuthoringBriefDescription } from "@/app/courses/new/authoring-brief";
+import { usePageRouteContext } from "@/components/page-route-context";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryError } from "@/components/query-state";
 import {
   Sheet,
@@ -29,7 +62,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import {
   CurriculumSourceSchema,
   DepthLevelSchema,
@@ -41,6 +77,8 @@ import {
   UnitUnlockRuleSchema,
 } from "@/lib/curriculum-authoring-schemas";
 import { type MessageKey, type UiLocale, useI18n } from "@/lib/i18n";
+import type { RouteContext } from "@/lib/route-context";
+import { unitTypeMessageKeys } from "@/lib/unit-labels";
 
 const idSchema = z.string().trim().min(1).max(200);
 const nullableTextSchema = z.string().nullable();
@@ -62,7 +100,10 @@ const versionSchema = z
   })
   .strict();
 const versionListItemSchema = versionSchema
-  .extend({ curriculumSlug: idSchema })
+  .extend({
+    curriculumSlug: idSchema,
+    primaryLocale: CourseLocaleSchema,
+  })
   .strict();
 
 const unitSchema = z
@@ -212,11 +253,28 @@ const changeReviewResponseSchema = z
         added: z.number().int().nonnegative(),
         changed: z.number().int().nonnegative(),
         removed: z.number().int().nonnegative(),
+        changes: z.array(
+          z
+            .object({
+              operation: z.enum(["added", "changed", "removed"]),
+              entityType: z.enum(["week", "day", "unit"]),
+              stableId: idSchema,
+            })
+            .strict(),
+        ),
         ready: z.boolean(),
       })
       .strict(),
   })
   .strict();
+const releaseEvidenceSchema = z
+  .object({
+    validation: validationReportSchema.nullable(),
+    preview: previewResponseSchema.shape.preview.nullable(),
+    review: changeReviewResponseSchema.shape.review.nullable(),
+  })
+  .strict();
+type ReleaseEvidence = z.infer<typeof releaseEvidenceSchema>;
 const proposalAttributionSchema = z
   .object({
     workflowId: idSchema,
@@ -416,7 +474,7 @@ async function checkedApi<T>(
     ...init,
     headers: {
       "Content-Type": "application/json",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
       ...init?.headers,
     },
   });
@@ -481,9 +539,22 @@ function usePendingOperations() {
 }
 
 const fieldClass =
-  "min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
-const labelClass = "grid gap-1.5 text-sm font-medium";
-const panelClass = "rounded-xl border border-border bg-card p-5";
+  "min-h-11 w-full min-w-0 rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
+const labelClass = "flex min-w-0 flex-col gap-2 text-sm font-medium";
+const panelClass =
+  "min-w-0 rounded-[14px] border border-border/60 bg-card p-5 sm:p-6";
+const focusPanelClass =
+  "min-w-0 rounded-[18px] bg-surface-raised p-5 shadow-[0_16px_45px_oklch(0_0_0/0.07)] sm:p-7";
+
+const depthMessageKeys = {
+  foundation: "unit.depth.foundation",
+  "interview-ready": "unit.depth.interviewReady",
+  "deep-dive": "unit.depth.deepDive",
+} satisfies Record<z.infer<typeof DepthLevelSchema>, MessageKey>;
+
+export type AuthoringStart = "manual" | "designer";
+export type StudioWorkspace =
+  "program" | "designer" | "preview" | "release" | "history";
 
 function errorMessage(error: unknown, t: Translate): string {
   if (error instanceof z.ZodError)
@@ -831,56 +902,55 @@ function DeleteAction({
   onConfirm: () => Promise<unknown>;
 }) {
   const { t } = useI18n();
-  const [armed, setArmed] = useState(false);
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!armed) {
-    return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label={t("authoring.delete.button", { label })}
-        disabled={busy}
-        onClick={() => setArmed(true)}
-      >
-        <TrashIcon aria-hidden />
-      </Button>
-    );
-  }
   return (
-    <div
-      className="basis-full rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm"
-      role="group"
-      aria-label={t("authoring.delete.confirmation", { label })}
+    <AlertDialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setError(null);
+      }}
     >
-      <p className="text-destructive">{consequence}</p>
-      <SubmitError message={error} />
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="destructive"
-          size="sm"
-          disabled={busy}
-          onClick={() => {
-            setError(null);
-            void onConfirm()
-              .then(() => setArmed(false))
-              .catch((cause) => setError(errorMessage(cause, t)));
-          }}
-        >
-          {t("authoring.delete.confirm")}
-        </Button>
+      <AlertDialogTrigger asChild>
         <Button
           type="button"
           variant="ghost"
-          size="sm"
+          size="icon-sm"
+          aria-label={t("authoring.delete.button", { label })}
           disabled={busy}
-          onClick={() => setArmed(false)}
         >
-          {t("authoring.common.cancel")}
+          <TrashIcon aria-hidden />
         </Button>
-      </div>
-    </div>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {t("authoring.delete.confirmation", { label })}
+          </AlertDialogTitle>
+          <AlertDialogDescription>{consequence}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <SubmitError message={error} />
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>
+            {t("authoring.common.cancel")}
+          </AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={busy}
+            onClick={(event) => {
+              event.preventDefault();
+              setError(null);
+              void onConfirm()
+                .then(() => setOpen(false))
+                .catch((cause) => setError(errorMessage(cause, t)));
+            }}
+          >
+            {t("authoring.delete.confirm")}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -890,87 +960,6 @@ type Mutate = (
   schema: z.ZodType<unknown>,
   selectId?: string,
 ) => Promise<unknown>;
-
-function CreateDraftPanel({ mutate, busy }: { mutate: Mutate; busy: boolean }) {
-  const { t } = useI18n();
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <details className={panelClass}>
-      <summary className="cursor-pointer font-medium">
-        {t("authoring.createDraft.summary")}
-      </summary>
-      <form
-        className="mt-5 grid gap-4 md:grid-cols-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setError(null);
-          const form = new FormData(event.currentTarget);
-          const id = text(form, "curriculumId");
-          void mutate(
-            "/curriculum-editor/versions",
-            {
-              method: "POST",
-              body: JSON.stringify({
-                operationId: operationId(),
-                curriculum: {
-                  id,
-                  slug: text(form, "slug"),
-                  title: text(form, "curriculumTitle"),
-                  description: optionalText(form, "curriculumDescription"),
-                },
-                title: text(form, "title"),
-                description: optionalText(form, "description"),
-              }),
-            },
-            z.object({ version: versionSchema }).strict(),
-          ).catch((cause) => setError(errorMessage(cause, t)));
-        }}
-      >
-        <label className={labelClass}>
-          {t("authoring.field.curriculumId")}
-          <input
-            className={fieldClass}
-            name="curriculumId"
-            required
-            pattern="[^\s]+"
-          />
-        </label>
-        <label className={labelClass}>
-          {t("authoring.field.slug")}
-          <input
-            className={fieldClass}
-            name="slug"
-            required
-            pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-          />
-        </label>
-        <label className={labelClass}>
-          {t("authoring.field.curriculumTitle")}
-          <input className={fieldClass} name="curriculumTitle" required />
-        </label>
-        <label className={labelClass}>
-          {t("authoring.field.revisionTitle")}
-          <input className={fieldClass} name="title" required />
-        </label>
-        <label className={`${labelClass} md:col-span-2`}>
-          {t("authoring.field.curriculumDescription")}
-          <textarea className={fieldClass} name="curriculumDescription" />
-        </label>
-        <label className={`${labelClass} md:col-span-2`}>
-          {t("authoring.field.revisionDescription")}
-          <textarea className={fieldClass} name="description" />
-        </label>
-        <div className="flex flex-col items-start gap-3 md:col-span-2">
-          <SubmitError message={error} />
-          <Button disabled={busy} type="submit">
-            <PlusIcon aria-hidden />
-            {t("authoring.createDraft.submit")}
-          </Button>
-        </div>
-      </form>
-    </details>
-  );
-}
 
 function WeekForm({
   versionId,
@@ -1006,8 +995,8 @@ function WeekForm({
           description: optionalText(form, "description"),
         };
         const path = initial
-          ? `/curriculum-editor/versions/${versionId}/weeks/${initial.id}`
-          : `/curriculum-editor/versions/${versionId}/weeks`;
+          ? `/curriculum-editor/versions/${encodeURIComponent(versionId)}/weeks/${encodeURIComponent(initial.id)}`
+          : `/curriculum-editor/versions/${encodeURIComponent(versionId)}/weeks`;
         void mutate(
           path,
           { method: initial ? "PATCH" : "POST", body: JSON.stringify(body) },
@@ -1123,8 +1112,8 @@ function DayForm({
             ),
           };
           const path = initial
-            ? `/curriculum-editor/versions/${versionId}/days/${initial.id}`
-            : `/curriculum-editor/versions/${versionId}/weeks/${weekId}/days`;
+            ? `/curriculum-editor/versions/${encodeURIComponent(versionId)}/days/${encodeURIComponent(initial.id)}`
+            : `/curriculum-editor/versions/${encodeURIComponent(versionId)}/weeks/${encodeURIComponent(weekId)}/days`;
           void mutate(
             path,
             { method: initial ? "PATCH" : "POST", body: JSON.stringify(body) },
@@ -1176,9 +1165,11 @@ function DayForm({
             name="depthLevel"
             defaultValue={initial?.depthLevel ?? "foundation"}
           >
-            <option value="foundation">foundation</option>
-            <option value="interview-ready">interview-ready</option>
-            <option value="deep-dive">deep-dive</option>
+            {DepthLevelSchema.options.map((depth) => (
+              <option key={depth} value={depth}>
+                {t(depthMessageKeys[depth])}
+              </option>
+            ))}
           </select>
         </label>
       </div>
@@ -1373,8 +1364,8 @@ function UnitForm({
             payload,
           };
           const path = initial
-            ? `/curriculum-editor/versions/${versionId}/units/${initial.id}`
-            : `/curriculum-editor/versions/${versionId}/days/${dayId}/units`;
+            ? `/curriculum-editor/versions/${encodeURIComponent(versionId)}/units/${encodeURIComponent(initial.id)}`
+            : `/curriculum-editor/versions/${encodeURIComponent(versionId)}/days/${encodeURIComponent(dayId)}/units`;
           void mutate(
             path,
             { method: initial ? "PATCH" : "POST", body: JSON.stringify(body) },
@@ -1439,9 +1430,11 @@ function UnitForm({
             defaultValue={initial?.depthLevel ?? ""}
           >
             <option value="">{t("authoring.field.inherit")}</option>
-            <option value="foundation">foundation</option>
-            <option value="interview-ready">interview-ready</option>
-            <option value="deep-dive">deep-dive</option>
+            {DepthLevelSchema.options.map((depth) => (
+              <option key={depth} value={depth}>
+                {t(depthMessageKeys[depth])}
+              </option>
+            ))}
           </select>
         </label>
         <label className="flex min-h-11 items-center gap-2 self-end text-sm">
@@ -1549,34 +1542,136 @@ function designerSources(lines: readonly string[]) {
   }));
 }
 
+function displayedAuthoringDescription(value: string | null): string | null {
+  if (!value) return null;
+  return parseAuthoringBriefDescription(value)?.topicGoal ?? value;
+}
+
+const designerDraftSchema = z
+  .object({
+    goal: z.string().max(50_000),
+    targetOutcome: z.string().max(50_000),
+    currentLevel: z.string().max(50_000),
+    constraints: z.string().max(50_000),
+    sources: z.string().max(50_000),
+    activityPreferences: z.string().max(50_000),
+    runtimeRequirements: z.string().max(50_000),
+    diagnosticAnswers: z.record(z.string(), z.string().max(50_000)),
+    revisionRequest: z.string().max(50_000),
+  })
+  .strict();
+
+type DesignerDraft = z.infer<typeof designerDraftSchema>;
+
+function useDesignerDraft(versionId: string, initial: DesignerDraft) {
+  const storageKey = `aptiloop:studio-designer:${versionId}`;
+  const [state, setState] = useState<{
+    storageKey: string | null;
+    value: DesignerDraft;
+  }>({ storageKey: null, value: initial });
+
+  useEffect(() => {
+    let restored = initial;
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = designerDraftSchema.safeParse(JSON.parse(raw));
+        if (parsed.success) restored = parsed.data;
+      }
+    } catch {
+      // The controlled form remains usable when localStorage is unavailable.
+    }
+    setState({ storageKey, value: restored });
+  }, [
+    initial.activityPreferences,
+    initial.constraints,
+    initial.currentLevel,
+    initial.goal,
+    initial.runtimeRequirements,
+    initial.sources,
+    initial.targetOutcome,
+    storageKey,
+  ]);
+
+  useEffect(() => {
+    if (state.storageKey !== storageKey) return;
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(state.value));
+    } catch {
+      // Local persistence never changes server authority or blocks editing.
+    }
+  }, [state, storageKey]);
+
+  const draft = state.storageKey === storageKey ? state.value : initial;
+  const update = (patch: Partial<DesignerDraft>) =>
+    setState((previous) => ({
+      storageKey,
+      value: {
+        ...(previous.storageKey === storageKey ? previous.value : initial),
+        ...patch,
+      },
+    }));
+  const clear = () => {
+    try {
+      window.localStorage.removeItem(storageKey);
+    } catch {
+      // The in-memory reset still succeeds when storage is unavailable.
+    }
+    setState({ storageKey, value: initial });
+  };
+
+  return { draft, update, clear };
+}
+
 function CourseDesignerPanel({
   graph,
   mutate,
   busy,
+  initialGoal,
 }: {
   graph: Graph;
   mutate: Mutate;
   busy: boolean;
+  initialGoal?: string;
 }) {
   const { locale, t } = useI18n();
   const queryClient = useQueryClient();
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [diagnosticAnswers, setDiagnosticAnswers] = useState<
-    Record<string, string>
-  >({});
-  const [revisionRequest, setRevisionRequest] = useState("");
-  const [pendingDisclosure, setPendingDisclosure] = useState<{
-    authoringOperationId: string;
-    workflowId: string;
-    disclosure: z.infer<typeof AiDisclosureSchema>;
-  } | null>(null);
+  const creationBrief = parseAuthoringBriefDescription(initialGoal);
+  const initialConstraints = creationBrief
+    ? [
+        `${t("authoring.brief.primaryLocale")}: ${creationBrief.primaryLocale}`,
+        `${t("authoring.brief.pacing")}: ${creationBrief.pacing}`,
+        creationBrief.accessibility
+          ? `${t("authoring.brief.accessibility")}: ${creationBrief.accessibility}`
+          : "",
+        creationBrief.constraints,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : undefined;
+  const {
+    draft: designerDraft,
+    update: updateDesignerDraft,
+    clear: clearDesignerDraft,
+  } = useDesignerDraft(graph.version.id, {
+    goal: creationBrief?.topicGoal ?? initialGoal ?? "",
+    targetOutcome: creationBrief?.targetOutcome ?? "",
+    currentLevel: creationBrief?.currentLevel ?? "",
+    constraints: initialConstraints ?? "",
+    sources: "",
+    activityPreferences: "",
+    runtimeRequirements: creationBrief?.tools ?? "",
+    diagnosticAnswers: {},
+    revisionRequest: "",
+  });
   const workflows = useQuery({
     queryKey: ["curriculum-editor", "designer-workflows", graph.version.id],
     enabled: graph.version.status === "draft",
     queryFn: () =>
       checkedApi(
-        `/curriculum-editor/versions/${graph.version.id}/designer/workflows`,
+        `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows`,
         courseDesignerWorkflowListSchema,
         t,
       ),
@@ -1586,12 +1681,33 @@ function CourseDesignerPanel({
     enabled: graph.version.status === "draft",
     queryFn: () =>
       checkedApi(
-        `/curriculum-editor/versions/${graph.version.id}/designer/proposals`,
+        `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/proposals`,
         courseProposalListSchema,
         t,
       ),
   });
   const activeWorkflow = workflows.data?.workflows[0] ?? null;
+  const pendingDisclosureQuery = useQuery({
+    queryKey: [
+      "curriculum-editor",
+      "designer-pending-disclosure",
+      graph.version.id,
+      activeWorkflow?.id ?? null,
+    ],
+    enabled:
+      graph.version.status === "draft" &&
+      activeWorkflow?.state === "CURRICULUM_PROPOSAL",
+    queryFn: () =>
+      checkedApi(
+        `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(activeWorkflow?.id ?? "")}/disclosures`,
+        CourseDesignerPendingDisclosureResponseSchema,
+        t,
+      ),
+  });
+  const pendingDisclosure =
+    activeWorkflow?.state === "CURRICULUM_PROPOSAL"
+      ? (pendingDisclosureQuery.data?.pendingDisclosure ?? null)
+      : null;
 
   if (graph.version.status !== "draft") return null;
 
@@ -1621,7 +1737,7 @@ function CourseDesignerPanel({
     setError(null);
     try {
       await mutate(
-        `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/advance`,
+        `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/advance`,
         { method: "POST", body: JSON.stringify({ action, ...extra }) },
         courseDesignerWorkflowResponseSchema,
       );
@@ -1636,7 +1752,7 @@ function CourseDesignerPanel({
     disclosureOperationId?: string,
   ) => {
     await checkedApi(
-      `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(workflowId)}/generate`,
+      `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(workflowId)}/generate`,
       courseProposalResponseSchema,
       t,
       {
@@ -1657,7 +1773,7 @@ function CourseDesignerPanel({
     const authoringOperationId = operationId();
     try {
       const preparation = await checkedApi(
-        `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/disclosures`,
+        `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/disclosures`,
         disclosurePreparationSchema,
         t,
         {
@@ -1666,11 +1782,7 @@ function CourseDesignerPanel({
         },
       );
       if (preparation.required) {
-        setPendingDisclosure({
-          authoringOperationId,
-          workflowId: activeWorkflow.id,
-          disclosure: preparation.disclosure,
-        });
+        await pendingDisclosureQuery.refetch();
         return;
       }
       await generate(activeWorkflow.id, authoringOperationId);
@@ -1696,15 +1808,15 @@ function CourseDesignerPanel({
       if (approved) {
         await generate(
           pendingDisclosure.workflowId,
-          pendingDisclosure.authoringOperationId,
+          pendingDisclosure.operationId,
           pendingDisclosure.disclosure.operationId,
         );
       }
-      setPendingDisclosure(null);
     } catch (cause) {
       setError(errorMessage(cause, t));
       await refreshDesigner();
     } finally {
+      await pendingDisclosureQuery.refetch();
       setWorking(false);
     }
   };
@@ -1714,7 +1826,11 @@ function CourseDesignerPanel({
     ? proposalRows.find(({ id }) => id === activeWorkflow.activeProposalId)
     : undefined;
   return (
-    <section className={panelClass} aria-labelledby="course-designer-heading">
+    <section
+      className={panelClass}
+      aria-labelledby="course-designer-heading"
+      data-slot="course-designer"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -1739,16 +1855,24 @@ function CourseDesignerPanel({
         </div>
       </div>
 
-      {!activeWorkflow ? (
+      {workflows.isLoading || proposals.isLoading ? (
+        <p
+          className="mt-5 flex min-h-20 items-center gap-2 text-sm text-muted-foreground"
+          role="status"
+        >
+          <Spinner />
+          {t("authoring.designer.loading")}
+        </p>
+      ) : !activeWorkflow ? (
         <form
-          className="mt-5 grid gap-4 md:grid-cols-2"
+          className="mt-5 flex min-w-0 flex-col gap-5"
           onSubmit={(event) => {
             event.preventDefault();
             const form = new FormData(event.currentTarget);
             const sourceLines = designerLines(form.get("sources"));
             setError(null);
             void mutate(
-              `/curriculum-editor/versions/${graph.version.id}/designer/workflows`,
+              `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows`,
               {
                 method: "POST",
                 body: JSON.stringify({
@@ -1770,69 +1894,156 @@ function CourseDesignerPanel({
                 }),
               },
               courseDesignerWorkflowResponseSchema,
-            ).catch((cause) => setError(errorMessage(cause, t)));
+            )
+              .then(() => clearDesignerDraft())
+              .catch((cause) => setError(errorMessage(cause, t)));
           }}
         >
-          <label className={labelClass}>
-            {t("authoring.designer.form.goal")}
-            <textarea
-              className={`${fieldClass} min-h-24`}
-              name="goal"
-              required
-              maxLength={50_000}
-            />
-          </label>
-          <label className={labelClass}>
-            {t("authoring.designer.form.targetOutcome")}
-            <textarea
-              className={`${fieldClass} min-h-24`}
-              name="targetOutcome"
-              required
-              maxLength={50_000}
-            />
-          </label>
-          <label className={labelClass}>
-            {t("authoring.designer.form.currentLevel")}
-            <textarea
-              className={`${fieldClass} min-h-24`}
-              name="currentLevel"
-              required
-              maxLength={50_000}
-            />
-          </label>
-          <label className={labelClass}>
-            {t("authoring.designer.form.constraints")}
-            <textarea
-              className={`${fieldClass} min-h-24`}
-              name="constraints"
-              placeholder={t("authoring.designer.form.onePerLine")}
-            />
-          </label>
-          <label className={labelClass}>
-            {t("authoring.designer.form.sources")}
-            <textarea
-              className={`${fieldClass} min-h-24`}
-              name="sources"
-              placeholder={t("authoring.designer.form.sourcesHint")}
-            />
-          </label>
-          <label className={labelClass}>
-            {t("authoring.designer.form.activities")}
-            <textarea
-              className={`${fieldClass} min-h-24`}
-              name="activityPreferences"
-              placeholder={t("authoring.designer.form.onePerLine")}
-            />
-          </label>
-          <label className={`${labelClass} md:col-span-2`}>
-            {t("authoring.designer.form.runtime")}
-            <textarea
-              className={`${fieldClass} min-h-24`}
-              name="runtimeRequirements"
-              placeholder={t("authoring.designer.form.onePerLine")}
-            />
-          </label>
-          <div className="md:col-span-2">
+          <FieldGroup className="grid gap-4 md:grid-cols-2">
+            <Field className="md:col-span-2">
+              <FieldLabel htmlFor="designer-goal">
+                {t("authoring.designer.form.goal")}
+              </FieldLabel>
+              <Textarea
+                id="designer-goal"
+                className="min-h-28"
+                name="goal"
+                required
+                maxLength={50_000}
+                value={designerDraft.goal}
+                onChange={(event) =>
+                  updateDesignerDraft({ goal: event.target.value })
+                }
+                autoComplete="off"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="designer-target-outcome">
+                {t("authoring.designer.form.targetOutcome")}
+              </FieldLabel>
+              <Textarea
+                id="designer-target-outcome"
+                className="min-h-24"
+                name="targetOutcome"
+                required
+                maxLength={50_000}
+                value={designerDraft.targetOutcome}
+                onChange={(event) =>
+                  updateDesignerDraft({ targetOutcome: event.target.value })
+                }
+                autoComplete="off"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="designer-current-level">
+                {t("authoring.designer.form.currentLevel")}
+              </FieldLabel>
+              <Textarea
+                id="designer-current-level"
+                className="min-h-24"
+                name="currentLevel"
+                required
+                maxLength={50_000}
+                value={designerDraft.currentLevel}
+                onChange={(event) =>
+                  updateDesignerDraft({ currentLevel: event.target.value })
+                }
+                autoComplete="off"
+              />
+            </Field>
+          </FieldGroup>
+
+          <Collapsible className="group/advanced rounded-lg border border-border/70 bg-background">
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-auto w-full justify-between gap-3 whitespace-normal px-4 py-3 text-left"
+              >
+                <span className="min-w-0 break-words">
+                  {t("authoring.designer.form.constraints")} ·{" "}
+                  {t("authoring.designer.form.sources")}
+                </span>
+                <CaretDownIcon
+                  aria-hidden
+                  className="shrink-0 transition-transform group-data-[state=open]/advanced:rotate-180 motion-reduce:transition-none"
+                />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="border-t border-border/60 p-4">
+              <FieldGroup className="grid gap-4 md:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="designer-constraints">
+                    {t("authoring.designer.form.constraints")}
+                  </FieldLabel>
+                  <Textarea
+                    id="designer-constraints"
+                    className="min-h-24"
+                    name="constraints"
+                    value={designerDraft.constraints}
+                    onChange={(event) =>
+                      updateDesignerDraft({ constraints: event.target.value })
+                    }
+                    placeholder={t("authoring.designer.form.onePerLine")}
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="designer-sources">
+                    {t("authoring.designer.form.sources")}
+                  </FieldLabel>
+                  <Textarea
+                    id="designer-sources"
+                    className="min-h-24"
+                    name="sources"
+                    value={designerDraft.sources}
+                    onChange={(event) =>
+                      updateDesignerDraft({ sources: event.target.value })
+                    }
+                    placeholder={t("authoring.designer.form.sourcesHint")}
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="designer-activities">
+                    {t("authoring.designer.form.activities")}
+                  </FieldLabel>
+                  <Textarea
+                    id="designer-activities"
+                    className="min-h-24"
+                    name="activityPreferences"
+                    value={designerDraft.activityPreferences}
+                    onChange={(event) =>
+                      updateDesignerDraft({
+                        activityPreferences: event.target.value,
+                      })
+                    }
+                    placeholder={t("authoring.designer.form.onePerLine")}
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="designer-runtime">
+                    {t("authoring.designer.form.runtime")}
+                  </FieldLabel>
+                  <Textarea
+                    id="designer-runtime"
+                    className="min-h-24"
+                    name="runtimeRequirements"
+                    value={designerDraft.runtimeRequirements}
+                    onChange={(event) =>
+                      updateDesignerDraft({
+                        runtimeRequirements: event.target.value,
+                      })
+                    }
+                    placeholder={t("authoring.designer.form.onePerLine")}
+                    autoComplete="off"
+                  />
+                </Field>
+              </FieldGroup>
+            </CollapsibleContent>
+          </Collapsible>
+          <div>
             <Button disabled={busy} type="submit">
               {t("authoring.designer.form.start")}
             </Button>
@@ -1866,7 +2077,12 @@ function CourseDesignerPanel({
             {activeWorkflow.state === "CURRICULUM_PROPOSAL" ? (
               <Button
                 type="button"
-                disabled={busy || working}
+                disabled={
+                  busy ||
+                  working ||
+                  pendingDisclosureQuery.isFetching ||
+                  Boolean(pendingDisclosure)
+                }
                 onClick={() => void requestProposal()}
               >
                 {t(
@@ -1883,7 +2099,7 @@ function CourseDesignerPanel({
                 onClick={() => {
                   setError(null);
                   void mutate(
-                    `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/retry`,
+                    `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/retry`,
                     { method: "POST", body: JSON.stringify({}) },
                     courseDesignerWorkflowResponseSchema,
                   ).catch((cause) => setError(errorMessage(cause, t)));
@@ -1904,12 +2120,14 @@ function CourseDesignerPanel({
                   {question.prompt}
                   <textarea
                     className={`${fieldClass} min-h-20`}
-                    value={diagnosticAnswers[question.id] ?? ""}
+                    value={designerDraft.diagnosticAnswers[question.id] ?? ""}
                     onChange={(event) =>
-                      setDiagnosticAnswers((current) => ({
-                        ...current,
-                        [question.id]: event.target.value,
-                      }))
+                      updateDesignerDraft({
+                        diagnosticAnswers: {
+                          ...designerDraft.diagnosticAnswers,
+                          [question.id]: event.target.value,
+                        },
+                      })
                     }
                   />
                 </label>
@@ -1920,14 +2138,16 @@ function CourseDesignerPanel({
                   disabled={
                     busy ||
                     activeWorkflow.diagnostic.questions.some(
-                      ({ id }) => !diagnosticAnswers[id]?.trim(),
+                      ({ id }) => !designerDraft.diagnosticAnswers[id]?.trim(),
                     )
                   }
-                  onClick={() =>
+                  onClick={() => {
                     void advance("answer-diagnostic", {
-                      answers: diagnosticAnswers,
-                    })
-                  }
+                      answers: designerDraft.diagnosticAnswers,
+                    }).then(() =>
+                      updateDesignerDraft({ diagnosticAnswers: {} }),
+                    );
+                  }}
                 >
                   {t("authoring.designer.action.answerDiagnostic")}
                 </Button>
@@ -1969,20 +2189,23 @@ function CourseDesignerPanel({
                 {t("authoring.designer.revisionLabel")}
                 <textarea
                   className={`${fieldClass} min-h-20`}
-                  value={revisionRequest}
-                  onChange={(event) => setRevisionRequest(event.target.value)}
+                  value={designerDraft.revisionRequest}
+                  onChange={(event) =>
+                    updateDesignerDraft({
+                      revisionRequest: event.target.value,
+                    })
+                  }
                 />
               </label>
               <div>
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={busy || !revisionRequest.trim()}
+                  disabled={busy || !designerDraft.revisionRequest.trim()}
                   onClick={() => {
                     void advance("request-revision", {
-                      revisionRequest: revisionRequest.trim(),
-                    });
-                    setRevisionRequest("");
+                      revisionRequest: designerDraft.revisionRequest.trim(),
+                    }).then(() => updateDesignerDraft({ revisionRequest: "" }));
                   }}
                 >
                   {t("authoring.designer.action.requestRevision")}
@@ -1999,7 +2222,7 @@ function CourseDesignerPanel({
                 onClick={() => {
                   setError(null);
                   void mutate(
-                    `/curriculum-editor/versions/${graph.version.id}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/proposals/${encodeURIComponent(activeProposal.id)}/apply`,
+                    `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/proposals/${encodeURIComponent(activeProposal.id)}/apply`,
                     { method: "POST", body: JSON.stringify({}) },
                     z
                       .object({
@@ -2071,11 +2294,19 @@ function CourseDesignerPanel({
       ) : null}
 
       <SubmitError message={error} />
-      {workflows.isError || proposals.isError ? (
+      {workflows.isError ||
+      proposals.isError ||
+      (activeWorkflow?.state === "CURRICULUM_PROPOSAL" &&
+        pendingDisclosureQuery.isError) ? (
         <div className="mt-5">
           <QueryError
             message={t("authoring.designer.proposalsUnavailable")}
-            retry={() => void refreshDesigner()}
+            retry={() => {
+              void Promise.all([
+                refreshDesigner(),
+                pendingDisclosureQuery.refetch(),
+              ]);
+            }}
           />
         </div>
       ) : proposalRows.length > 0 ? (
@@ -2084,21 +2315,36 @@ function CourseDesignerPanel({
             {t("authoring.designer.proposalsTitle")}
           </h4>
           {proposalRows.map((record) => (
-            <article
+            <Collapsible
               key={record.id}
-              className="rounded-lg border border-border bg-background p-4"
+              className="group/proposal rounded-xl border border-border/60 bg-surface-soft/35"
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium">{record.proposal.summary}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {t("authoring.designer.changeCount", {
-                      count:
-                        record.proposal.changes.length.toLocaleString(locale),
-                    })}
+              <div className="flex min-w-0 flex-wrap items-start justify-between gap-3 p-4">
+                <div className="min-w-0 flex-1">
+                  <p className="break-words font-medium">
+                    {record.proposal.summary}
                   </p>
+                  <CollapsibleTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="-ml-2 mt-1 h-auto max-w-full justify-start whitespace-normal text-left text-xs text-muted-foreground"
+                    >
+                      {t("authoring.designer.changeCount", {
+                        count:
+                          record.proposal.changes.length.toLocaleString(locale),
+                      })}
+                      <CaretDownIcon
+                        aria-hidden
+                        data-icon="inline-end"
+                        className="shrink-0 transition-transform group-data-[state=open]/proposal:rotate-180 motion-reduce:transition-none"
+                      />
+                    </Button>
+                  </CollapsibleTrigger>
                 </div>
                 <Badge
+                  className="shrink-0"
                   variant={
                     record.status === "applied"
                       ? "success"
@@ -2110,64 +2356,66 @@ function CourseDesignerPanel({
                   {t(`authoring.designer.status.${record.status}`)}
                 </Badge>
               </div>
-              <ul className="mt-3 grid gap-2 text-sm">
-                {record.proposal.changes.map((change, index) => {
-                  const target =
-                    "stableId" in change
-                      ? change.stableId
-                      : change.targetStableId;
-                  const title = "title" in change ? change.title : undefined;
-                  return (
-                    <li
-                      key={`${record.id}:${index}`}
-                      className="rounded-md border border-border px-3 py-2"
-                    >
-                      <span className="font-medium">
-                        {t(`authoring.designer.change.${change.kind}`)}
-                      </span>{" "}
-                      · {title ? `${title} · ` : null}
-                      <code>{target}</code>
-                    </li>
-                  );
-                })}
-              </ul>
-              {record.attribution ? (
-                <div className="mt-4 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
-                  <p>
-                    {t("authoring.designer.attribution", {
-                      provider: record.attribution.providerType,
-                      model: record.attribution.modelId,
-                      version: record.attribution.promptTemplateVersion,
-                    })}
-                  </p>
-                  <p className="mt-1">
-                    {t("authoring.designer.provenance", {
-                      count:
-                        record.attribution.provenance.sourceIds.length.toLocaleString(
-                          locale,
-                        ),
-                    })}
-                  </p>
-                  <p className="mt-1">
-                    {t(
-                      record.attribution.validation.valid
-                        ? "authoring.designer.validProposal"
-                        : "authoring.designer.invalidProposal",
-                      {
-                        errors:
-                          record.attribution.validation.errors.toLocaleString(
+              <CollapsibleContent className="border-t border-border/60 p-4 pt-3">
+                <ul className="grid min-w-0 gap-2 text-sm">
+                  {record.proposal.changes.map((change, index) => {
+                    const target =
+                      "stableId" in change
+                        ? change.stableId
+                        : change.targetStableId;
+                    const title = "title" in change ? change.title : undefined;
+                    return (
+                      <li
+                        key={`${record.id}:${index}`}
+                        className="min-w-0 break-words rounded-lg bg-card px-3 py-2 shadow-sm"
+                      >
+                        <span className="font-medium">
+                          {t(`authoring.designer.change.${change.kind}`)}
+                        </span>{" "}
+                        · {title ? `${title} · ` : null}
+                        <code className="break-all">{target}</code>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {record.attribution ? (
+                  <div className="mt-4 min-w-0 break-words rounded-lg bg-card p-3 text-xs text-muted-foreground shadow-sm">
+                    <p>
+                      {t("authoring.designer.attribution", {
+                        provider: record.attribution.providerType,
+                        model: record.attribution.modelId,
+                        version: record.attribution.promptTemplateVersion,
+                      })}
+                    </p>
+                    <p className="mt-1">
+                      {t("authoring.designer.provenance", {
+                        count:
+                          record.attribution.provenance.sourceIds.length.toLocaleString(
                             locale,
                           ),
-                        warnings:
-                          record.attribution.validation.warnings.toLocaleString(
-                            locale,
-                          ),
-                      },
-                    )}
-                  </p>
-                </div>
-              ) : null}
-            </article>
+                      })}
+                    </p>
+                    <p className="mt-1">
+                      {t(
+                        record.attribution.validation.valid
+                          ? "authoring.designer.validProposal"
+                          : "authoring.designer.invalidProposal",
+                        {
+                          errors:
+                            record.attribution.validation.errors.toLocaleString(
+                              locale,
+                            ),
+                          warnings:
+                            record.attribution.validation.warnings.toLocaleString(
+                              locale,
+                            ),
+                        },
+                      )}
+                    </p>
+                  </div>
+                ) : null}
+              </CollapsibleContent>
+            </Collapsible>
           ))}
         </div>
       ) : (
@@ -2177,6 +2425,241 @@ function CourseDesignerPanel({
       )}
     </section>
   );
+}
+
+function StudioPreviewPanel({ version }: { version: Version }) {
+  const { locale, t } = useI18n();
+  const preview = useQuery({
+    queryKey: [
+      "curriculum-editor",
+      "learner-preview",
+      version.id,
+      version.updatedAt,
+    ],
+    queryFn: () =>
+      checkedApi(
+        `/curriculum-editor/versions/${encodeURIComponent(version.id)}/preview`,
+        previewResponseSchema,
+        t,
+      ),
+  });
+
+  if (preview.isLoading) {
+    return (
+      <div
+        role="status"
+        aria-label={t("authoring.preview.loading")}
+        className="grid gap-4"
+      >
+        <Skeleton className="h-28" />
+        <Skeleton className="h-56" />
+      </div>
+    );
+  }
+
+  if (preview.isError || !preview.data) {
+    return (
+      <QueryError
+        message={t("authoring.preview.unavailable")}
+        retry={() => void preview.refetch()}
+      />
+    );
+  }
+
+  const learnerPreview = preview.data.preview;
+  const creationBrief = parseAuthoringBriefDescription(
+    learnerPreview.description,
+  );
+  const description = creationBrief?.topicGoal ?? learnerPreview.description;
+  const firstLesson = learnerPreview.weeks
+    .flatMap((week) => week.days)
+    .at(0)?.stableId;
+
+  return (
+    <section
+      data-slot="adaptive-studio-preview"
+      aria-labelledby="studio-preview-heading"
+      className={`${panelClass} grid min-w-0 gap-6`}
+    >
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">
+            {t("authoring.preview.eyebrow")}
+          </p>
+          <h3
+            id="studio-preview-heading"
+            className="mt-2 break-words text-xl font-semibold [overflow-wrap:anywhere]"
+          >
+            {learnerPreview.title}
+          </h3>
+          {description ? (
+            <p className="mt-2 max-w-[70ch] break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+              {description}
+            </p>
+          ) : null}
+        </div>
+        <Badge className="shrink-0" variant="outline">
+          {t(versionStatusMessageKeys[version.status])}
+        </Badge>
+      </div>
+
+      {learnerPreview.weeks.length === 0 ? (
+        <EmptyState
+          title={t("authoring.preview.emptyTitle")}
+          description={t("authoring.preview.emptyDescription")}
+        />
+      ) : (
+        <div className="grid min-w-0 gap-7">
+          {learnerPreview.weeks.map((week) => (
+            <section
+              key={week.stableId}
+              className="min-w-0"
+              aria-labelledby={`preview-week-${week.stableId}`}
+            >
+              <div className="mb-3 min-w-0">
+                <h4
+                  id={`preview-week-${week.stableId}`}
+                  className="break-words font-semibold [overflow-wrap:anywhere]"
+                >
+                  {week.title}
+                </h4>
+                {week.description ? (
+                  <p className="mt-1 max-w-[70ch] break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                    {week.description}
+                  </p>
+                ) : null}
+              </div>
+              <Accordion
+                type="single"
+                collapsible
+                {...(firstLesson ? { defaultValue: firstLesson } : {})}
+                className="border-y border-border/70"
+              >
+                {week.days.map((day) => (
+                  <AccordionItem key={day.stableId} value={day.stableId}>
+                    <AccordionTrigger
+                      headingLevel={5}
+                      className="min-w-0 px-1 no-underline hover:no-underline"
+                    >
+                      <span className="min-w-0">
+                        <span className="block break-words [overflow-wrap:anywhere]">
+                          {day.title}
+                        </span>
+                        <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                          {t("authoring.preview.lessonMeta", {
+                            activities:
+                              day.activities.length.toLocaleString(locale),
+                            minutes:
+                              day.estimatedMinutes.toLocaleString(locale),
+                          })}
+                        </span>
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent className="grid min-w-0 gap-5 px-1">
+                      <div className="max-w-[70ch] min-w-0">
+                        <p className="break-words text-sm leading-6 [overflow-wrap:anywhere]">
+                          {day.goal}
+                        </p>
+                        {day.description ? (
+                          <p className="mt-2 break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                            {day.description}
+                          </p>
+                        ) : null}
+                      </div>
+                      <ol className="min-w-0 divide-y divide-border/60 border-y border-border/60">
+                        {day.activities.map((activity, index) => (
+                          <li
+                            key={activity.stableId}
+                            className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-4"
+                          >
+                            <div className="min-w-0">
+                              <p className="break-words font-medium [overflow-wrap:anywhere]">
+                                {index + 1}. {activity.title}
+                              </p>
+                              {activity.description ? (
+                                <p className="mt-1 break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                                  {activity.description}
+                                </p>
+                              ) : null}
+                            </div>
+                            <Badge
+                              variant="secondary"
+                              className="w-fit self-start"
+                            >
+                              {t(unitTypeMessageKeys[activity.type])}
+                            </Badge>
+                          </li>
+                        ))}
+                      </ol>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </section>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+const emptyReleaseEvidence: ReleaseEvidence = {
+  validation: null,
+  preview: null,
+  review: null,
+};
+
+function useReleaseEvidence(version: Version) {
+  const storageKey = `aptiloop:studio-release:${version.id}:${version.updatedAt}`;
+  const [state, setState] = useState<{
+    storageKey: string | null;
+    evidence: ReleaseEvidence;
+  }>({ storageKey: null, evidence: emptyReleaseEvidence });
+
+  useEffect(() => {
+    let evidence = emptyReleaseEvidence;
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = releaseEvidenceSchema.safeParse(JSON.parse(raw));
+        if (parsed.success) evidence = parsed.data;
+      }
+    } catch {
+      // Release checks remain repeatable when localStorage is unavailable.
+    }
+    setState({ storageKey, evidence });
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (state.storageKey !== storageKey) return;
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(state.evidence));
+    } catch {
+      // Server-side publication revalidates every hash; persistence is UX only.
+    }
+  }, [state, storageKey]);
+
+  const evidence =
+    state.storageKey === storageKey ? state.evidence : emptyReleaseEvidence;
+  const update = (patch: Partial<ReleaseEvidence>) =>
+    setState((previous) => ({
+      storageKey,
+      evidence: {
+        ...(previous.storageKey === storageKey
+          ? previous.evidence
+          : emptyReleaseEvidence),
+        ...patch,
+      },
+    }));
+  const clear = () => {
+    try {
+      window.localStorage.removeItem(storageKey);
+    } catch {
+      // The current view still clears after a confirmed publication.
+    }
+    setState({ storageKey, evidence: emptyReleaseEvidence });
+  };
+  return { ...evidence, update, clear };
 }
 
 function PublishPanel({
@@ -2190,22 +2673,14 @@ function PublishPanel({
 }) {
   const { t } = useI18n();
   const [confirmed, setConfirmed] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const [checking, setChecking] = useState<
+    "validation" | "preview" | "change-review" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
-  const [validation, setValidation] = useState<
-    z.infer<typeof validationReportSchema> | undefined
-  >();
-  const [preview, setPreview] = useState<
-    z.infer<typeof previewResponseSchema>["preview"] | undefined
-  >();
-  const [review, setReview] = useState<
-    z.infer<typeof changeReviewResponseSchema>["review"] | undefined
-  >();
+  const { validation, preview, review, update, clear } =
+    useReleaseEvidence(version);
   useEffect(() => {
     setConfirmed(false);
-    setValidation(undefined);
-    setPreview(undefined);
-    setReview(undefined);
   }, [version.id, version.updatedAt]);
   if (version.status !== "draft") return null;
 
@@ -2213,11 +2688,11 @@ function PublishPanel({
     suffix: "validation" | "preview" | "change-review",
     schema: z.ZodType<T>,
   ): Promise<T> => {
-    setChecking(true);
+    setChecking(suffix);
     setError(null);
     try {
       return await checkedApi(
-        `/curriculum-editor/versions/${version.id}/${suffix}`,
+        `/curriculum-editor/versions/${encodeURIComponent(version.id)}/${suffix}`,
         schema,
         t,
       );
@@ -2225,7 +2700,7 @@ function PublishPanel({
       setError(errorMessage(cause, t));
       throw cause;
     } finally {
-      setChecking(false);
+      setChecking(null);
     }
   };
   const releaseReady =
@@ -2236,60 +2711,231 @@ function PublishPanel({
 
   return (
     <section
-      className={`${panelClass} grid gap-5`}
+      className={`${panelClass} grid gap-6`}
       aria-labelledby="publish-heading"
       data-slot="adaptive-studio-release"
     >
       <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">
           {t("authoring.release.eyebrow")}
         </p>
-        <h3 id="publish-heading" className="mt-1 font-medium">
+        <h3 id="publish-heading" className="mt-2 text-lg font-semibold">
           {t("authoring.publish.title")}
         </h3>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 max-w-[70ch] text-sm leading-6 text-muted-foreground">
           {t("authoring.publish.description")}
         </p>
       </div>
 
-      <ol className="grid gap-3 lg:grid-cols-3">
-        <li className="rounded-lg border border-border bg-background p-4">
-          <p className="font-medium">{t("authoring.release.validateTitle")}</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("authoring.release.validateDescription")}
-          </p>
-          <Button
-            className="mt-4"
-            type="button"
-            variant="outline"
-            disabled={busy || checking}
-            onClick={() => {
-              void inspect("validation", validationResponseSchema)
-                .then(({ report }) => setValidation(report))
-                .catch(() => undefined);
-            }}
-          >
-            {t("authoring.release.validateAction")}
-          </Button>
+      <ol className="divide-y divide-border/60 overflow-hidden rounded-[14px] border border-border/60 bg-surface-soft/35">
+        <li className="p-4 sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="font-medium">
+                {t("authoring.release.validateTitle")}
+              </p>
+              <p className="mt-1 max-w-[62ch] text-sm leading-6 text-muted-foreground">
+                {t("authoring.release.validateDescription")}
+              </p>
+            </div>
+            <Button
+              className="w-full shrink-0 sm:w-auto"
+              type="button"
+              variant="outline"
+              disabled={busy || checking !== null}
+              onClick={() => {
+                void inspect("validation", validationResponseSchema)
+                  .then(({ report }) => update({ validation: report }))
+                  .catch(() => undefined);
+              }}
+            >
+              {checking === "validation" ? (
+                <Spinner data-icon="inline-start" />
+              ) : null}
+              {t(
+                checking === "validation"
+                  ? "authoring.release.checking"
+                  : "authoring.release.validateAction",
+              )}
+            </Button>
+          </div>
           {validation ? (
-            <div className="mt-3 text-sm" role="status">
+            <div className="mt-4 text-sm" role="status">
               <Badge variant={validation.valid ? "success" : "error"}>
                 {validation.valid
                   ? t("authoring.release.passed")
                   : t("authoring.release.blocked")}
               </Badge>
-              <p className="mt-2 text-muted-foreground">
-                {t("authoring.release.diagnosticCounts", {
-                  errors: validation.errors,
-                  warnings: validation.warnings,
+              <Collapsible className="group/release-validation mt-2">
+                <CollapsibleTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="-ml-2 h-auto max-w-full justify-start whitespace-normal text-left text-muted-foreground"
+                  >
+                    {t("authoring.release.diagnosticCounts", {
+                      errors: validation.errors,
+                      warnings: validation.warnings,
+                    })}
+                    <CaretDownIcon
+                      aria-hidden
+                      data-icon="inline-end"
+                      className="shrink-0 transition-transform group-data-[state=open]/release-validation:rotate-180 motion-reduce:transition-none"
+                    />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  {validation.diagnostics.length ? (
+                    <ul className="mt-2 divide-y divide-border/60 rounded-lg bg-card px-3">
+                      {validation.diagnostics.map((diagnostic) => (
+                        <li
+                          className="min-w-0 break-words py-2"
+                          key={`${diagnostic.code}:${diagnostic.path}`}
+                        >
+                          <span className="break-all font-medium">
+                            {diagnostic.path}
+                          </span>
+                          : {diagnostic.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+          ) : null}
+        </li>
+
+        <li className="p-4 sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="font-medium">
+                {t("authoring.release.previewTitle")}
+              </p>
+              <p className="mt-1 max-w-[62ch] text-sm leading-6 text-muted-foreground">
+                {t("authoring.release.previewDescription")}
+              </p>
+            </div>
+            <Button
+              className="w-full shrink-0 sm:w-auto"
+              type="button"
+              variant="outline"
+              disabled={busy || checking !== null}
+              onClick={() => {
+                void inspect("preview", previewResponseSchema)
+                  .then(({ preview: nextPreview }) =>
+                    update({ preview: nextPreview }),
+                  )
+                  .catch(() => undefined);
+              }}
+            >
+              {checking === "preview" ? (
+                <Spinner data-icon="inline-start" />
+              ) : null}
+              {t(
+                checking === "preview"
+                  ? "authoring.release.checking"
+                  : "authoring.release.previewAction",
+              )}
+            </Button>
+          </div>
+          {preview ? (
+            <Collapsible className="group/release-preview mt-4 text-sm">
+              <CollapsibleTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-auto w-full justify-between gap-3 whitespace-normal px-0 py-3 text-left"
+                >
+                  <span className="min-w-0 break-words">{preview.title}</span>
+                  <CaretDownIcon
+                    aria-hidden
+                    className="shrink-0 transition-transform group-data-[state=open]/release-preview:rotate-180 motion-reduce:transition-none"
+                  />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <ul className="divide-y divide-border/60 rounded-lg bg-card px-3 text-muted-foreground">
+                  {preview.weeks.map((week) => (
+                    <li
+                      className="min-w-0 break-words py-2"
+                      key={week.stableId}
+                    >
+                      {week.title} ·{" "}
+                      {t("authoring.release.dayCount", {
+                        count: week.days.length,
+                      })}
+                    </li>
+                  ))}
+                </ul>
+              </CollapsibleContent>
+            </Collapsible>
+          ) : null}
+        </li>
+
+        <li className="p-4 sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="font-medium">
+                {t("authoring.release.reviewTitle")}
+              </p>
+              <p className="mt-1 max-w-[62ch] text-sm leading-6 text-muted-foreground">
+                {t("authoring.release.reviewDescription")}
+              </p>
+            </div>
+            <Button
+              className="w-full shrink-0 sm:w-auto"
+              type="button"
+              variant="outline"
+              disabled={busy || checking !== null}
+              onClick={() => {
+                void inspect("change-review", changeReviewResponseSchema)
+                  .then(({ review: nextReview }) =>
+                    update({ review: nextReview }),
+                  )
+                  .catch(() => undefined);
+              }}
+            >
+              {checking === "change-review" ? (
+                <Spinner data-icon="inline-start" />
+              ) : null}
+              {t(
+                checking === "change-review"
+                  ? "authoring.release.checking"
+                  : "authoring.release.reviewAction",
+              )}
+            </Button>
+          </div>
+          {review ? (
+            <div className="mt-4 grid gap-3 text-sm" role="status">
+              <p className="text-muted-foreground">
+                {t("authoring.release.changeCounts", {
+                  added: review.added,
+                  changed: review.changed,
+                  removed: review.removed,
                 })}
               </p>
-              {validation.diagnostics.length ? (
-                <ul className="mt-2 grid gap-1">
-                  {validation.diagnostics.map((diagnostic) => (
-                    <li key={`${diagnostic.code}:${diagnostic.path}`}>
-                      <span className="font-medium">{diagnostic.path}</span>:{" "}
-                      {diagnostic.message}
+              {review.changes.length ? (
+                <ul className="divide-y divide-border/60 border-y border-border/60">
+                  {review.changes.map((change) => (
+                    <li
+                      key={`${change.operation}:${change.entityType}:${change.stableId}`}
+                      className="flex min-w-0 flex-wrap items-center gap-2 py-2"
+                    >
+                      <Badge variant="secondary">
+                        {t(
+                          `authoring.release.change.${change.operation}` as MessageKey,
+                        )}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {t(
+                          `authoring.release.entity.${change.entityType}` as MessageKey,
+                        )}
+                      </span>
+                      <code className="min-w-0 break-words text-xs [overflow-wrap:anywhere]">
+                        {change.stableId}
+                      </code>
                     </li>
                   ))}
                 </ul>
@@ -2297,98 +2943,37 @@ function PublishPanel({
             </div>
           ) : null}
         </li>
-
-        <li className="rounded-lg border border-border bg-background p-4">
-          <p className="font-medium">{t("authoring.release.previewTitle")}</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("authoring.release.previewDescription")}
-          </p>
-          <Button
-            className="mt-4"
-            type="button"
-            variant="outline"
-            disabled={busy || checking}
-            onClick={() => {
-              void inspect("preview", previewResponseSchema)
-                .then(({ preview: nextPreview }) => setPreview(nextPreview))
-                .catch(() => undefined);
-            }}
-          >
-            {t("authoring.release.previewAction")}
-          </Button>
-          {preview ? (
-            <details className="mt-3 text-sm" open>
-              <summary className="cursor-pointer font-medium">
-                {preview.title}
-              </summary>
-              <div className="mt-2 grid gap-2 text-muted-foreground">
-                {preview.weeks.map((week) => (
-                  <div key={week.stableId}>
-                    {week.title} ·{" "}
-                    {t("authoring.release.dayCount", {
-                      count: week.days.length,
-                    })}
-                  </div>
-                ))}
-              </div>
-            </details>
-          ) : null}
-        </li>
-
-        <li className="rounded-lg border border-border bg-background p-4">
-          <p className="font-medium">{t("authoring.release.reviewTitle")}</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("authoring.release.reviewDescription")}
-          </p>
-          <Button
-            className="mt-4"
-            type="button"
-            variant="outline"
-            disabled={busy || checking}
-            onClick={() => {
-              void inspect("change-review", changeReviewResponseSchema)
-                .then(({ review: nextReview }) => setReview(nextReview))
-                .catch(() => undefined);
-            }}
-          >
-            {t("authoring.release.reviewAction")}
-          </Button>
-          {review ? (
-            <p className="mt-3 text-sm text-muted-foreground" role="status">
-              {t("authoring.release.changeCounts", {
-                added: review.added,
-                changed: review.changed,
-                removed: review.removed,
-              })}
-            </p>
-          ) : null}
-        </li>
       </ol>
 
-      <label className="flex items-start gap-3 text-sm">
-        <input
-          className="mt-1"
-          type="checkbox"
-          checked={confirmed}
-          disabled={!releaseReady}
-          onChange={(event) => setConfirmed(event.target.checked)}
-        />
-        {t("authoring.publish.confirmation")}
-      </label>
-      {!releaseReady ? (
-        <p className="text-sm text-muted-foreground">
-          {t("authoring.release.required")}
-        </p>
-      ) : null}
-      <SubmitError message={error} />
-      <div>
+      <div className="border-t border-border/60 pt-5">
+        <label className="flex min-h-11 items-start gap-3 text-sm leading-6">
+          <input
+            className="mt-1 size-4 shrink-0 accent-primary"
+            type="checkbox"
+            checked={confirmed}
+            disabled={!releaseReady}
+            onChange={(event) => setConfirmed(event.target.checked)}
+          />
+          <span>{t("authoring.publish.confirmation")}</span>
+        </label>
+        {!releaseReady ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            {t("authoring.release.required")}
+          </p>
+        ) : (
+          <Badge className="mt-2" variant="success">
+            {t("authoring.release.ready")}
+          </Badge>
+        )}
+        <SubmitError message={error} />
         <Button
-          disabled={busy || checking || !confirmed || !releaseReady}
+          className="mt-4 w-full max-w-full whitespace-normal text-center sm:w-auto"
+          disabled={busy || checking !== null || !confirmed || !releaseReady}
           onClick={() => {
             if (!validation || !preview || !review) return;
             setError(null);
             void mutate(
-              `/curriculum-editor/versions/${version.id}/publish`,
+              `/curriculum-editor/versions/${encodeURIComponent(version.id)}/publish`,
               {
                 method: "POST",
                 body: JSON.stringify({
@@ -2399,10 +2984,15 @@ function PublishPanel({
                 }),
               },
               z.object({ version: versionSchema }).strict(),
-            ).catch((cause) => setError(errorMessage(cause, t)));
+            )
+              .then(() => clear())
+              .catch((cause) => setError(errorMessage(cause, t)));
           }}
         >
-          {t("authoring.publish.submit")}
+          {busy ? <Spinner data-icon="inline-start" /> : null}
+          {t(
+            busy ? "authoring.publish.publishing" : "authoring.publish.submit",
+          )}
         </Button>
       </div>
     </section>
@@ -2419,8 +3009,24 @@ function GraphEditor({
   busy: boolean;
 }) {
   const { t } = useI18n();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [addWeek, setAddWeek] = useState(false);
   const editable = graph.version.status === "draft";
+  const requestedWeekId = searchParams.get("week");
+  const openWeekId =
+    graph.weeks.find((week) => week.id === requestedWeekId)?.id ??
+    graph.weeks[0]?.id ??
+    "";
+  const requestedDayId = searchParams.get("day");
+  const selectStructure = (weekId: string, dayId?: string) => {
+    const next = new URLSearchParams(searchParams.toString());
+    if (weekId) next.set("week", weekId);
+    else next.delete("week");
+    if (dayId) next.set("day", dayId);
+    else next.delete("day");
+    router.replace(`/courses/studio?${next.toString()}`, { scroll: false });
+  };
   const reorder = (
     path: string,
     ids: string[],
@@ -2451,7 +3057,22 @@ function GraphEditor({
       z.object({ deleted: z.literal(true) }).strict(),
     );
   return (
-    <div className="grid gap-5">
+    <section
+      className={`${focusPanelClass} grid gap-5`}
+      aria-labelledby="manual-editor-heading"
+      data-slot="manual-course-editor"
+    >
+      <header>
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">
+          {t("authoring.manual.eyebrow")}
+        </p>
+        <h3 id="manual-editor-heading" className="mt-2 text-lg font-semibold">
+          {t("authoring.manual.title")}
+        </h3>
+        <p className="mt-1 max-w-[70ch] text-sm leading-6 text-muted-foreground">
+          {t("authoring.manual.description")}
+        </p>
+      </header>
       {!editable ? (
         <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm">
           <strong>{t("authoring.graph.readOnly.title")}</strong>{" "}
@@ -2464,20 +3085,38 @@ function GraphEditor({
           description={t("authoring.graph.empty.description")}
         />
       ) : null}
-      {graph.weeks.map((week, weekIndex) => (
-        <WeekEditor
-          key={week.id}
-          versionId={graph.version.id}
-          week={week}
-          index={weekIndex}
-          siblings={graph.weeks}
-          editable={editable}
-          busy={busy}
-          mutate={mutate}
-          reorder={reorder}
-          remove={remove}
-        />
-      ))}
+      {graph.weeks.length > 0 ? (
+        <Accordion
+          type="single"
+          collapsible
+          value={openWeekId}
+          onValueChange={(weekId) => {
+            const firstDayId = graph.weeks.find(({ id }) => id === weekId)
+              ?.days[0]?.id;
+            selectStructure(weekId, firstDayId);
+          }}
+          className="grid min-w-0 gap-3"
+        >
+          {graph.weeks.map((week, weekIndex) => (
+            <WeekEditor
+              key={week.id}
+              versionId={graph.version.id}
+              week={week}
+              index={weekIndex}
+              siblings={graph.weeks}
+              editable={editable}
+              busy={busy}
+              mutate={mutate}
+              reorder={reorder}
+              remove={remove}
+              requestedDayId={
+                openWeekId === week.id ? (requestedDayId ?? null) : null
+              }
+              onDayChange={(dayId) => selectStructure(week.id, dayId)}
+            />
+          ))}
+        </Accordion>
+      ) : null}
       {editable ? (
         addWeek ? (
           <WeekForm
@@ -2495,8 +3134,7 @@ function GraphEditor({
           </div>
         )
       ) : null}
-      <PublishPanel version={graph.version} mutate={mutate} busy={busy} />
-    </div>
+    </section>
   );
 }
 
@@ -2518,6 +3156,8 @@ function WeekEditor({
   mutate,
   reorder,
   remove,
+  requestedDayId,
+  onDayChange,
 }: {
   versionId: string;
   week: Week;
@@ -2528,30 +3168,47 @@ function WeekEditor({
   mutate: Mutate;
   reorder: Reorder;
   remove: Remove;
+  requestedDayId?: string | null;
+  onDayChange: (dayId: string) => void;
 }) {
   const { locale, t } = useI18n();
   const [edit, setEdit] = useState(false);
   const [addDay, setAddDay] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const openDayId =
+    week.days.find((day) => day.id === requestedDayId)?.id ??
+    week.days[0]?.id ??
+    "";
   return (
-    <section className={panelClass} data-editor-week={week.id}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs text-muted-foreground">
-            {t("authoring.week.meta", {
-              number: (index + 1).toLocaleString(locale),
-              id: week.stableId,
-            })}
-          </p>
-          <h3 className="mt-1 text-lg font-semibold">{week.title}</h3>
-          {week.description ? (
-            <p className="mt-1 text-sm text-muted-foreground">
-              {week.description}
-            </p>
-          ) : null}
-        </div>
+    <AccordionItem
+      value={week.id}
+      className="min-w-0 overflow-hidden rounded-[14px] border border-border/60 bg-card"
+      data-editor-week={week.id}
+    >
+      <div className="flex min-w-0 items-start gap-2 px-4 sm:px-5">
+        <AccordionTrigger
+          headingLevel={3}
+          className="min-w-0 flex-1 py-4 hover:no-underline sm:py-5"
+        >
+          <span className="min-w-0 text-left">
+            <span className="block break-all text-xs font-normal text-muted-foreground">
+              {t("authoring.week.meta", {
+                number: (index + 1).toLocaleString(locale),
+                id: week.stableId,
+              })}
+            </span>
+            <span className="mt-1 block break-words text-base font-semibold sm:text-lg">
+              {week.title}
+            </span>
+            {week.description ? (
+              <span className="mt-1 block break-words text-sm font-normal text-muted-foreground">
+                {week.description}
+              </span>
+            ) : null}
+          </span>
+        </AccordionTrigger>
         {editable ? (
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1 py-4 sm:py-5">
             <ReorderControls
               label={t("authoring.entity.week", { title: week.title })}
               index={index}
@@ -2560,7 +3217,7 @@ function WeekEditor({
               move={(direction) => {
                 setError(null);
                 void reorder(
-                  `/curriculum-editor/versions/${versionId}/weeks/reorder`,
+                  `/curriculum-editor/versions/${encodeURIComponent(versionId)}/weeks/reorder`,
                   siblings.map(({ id }) => id),
                   index,
                   direction,
@@ -2580,65 +3237,77 @@ function WeekEditor({
               busy={busy}
               onConfirm={() =>
                 remove(
-                  `/curriculum-editor/versions/${versionId}/weeks/${week.id}`,
+                  `/curriculum-editor/versions/${encodeURIComponent(versionId)}/weeks/${encodeURIComponent(week.id)}`,
                 )
               }
             />
           </div>
         ) : null}
       </div>
-      <SubmitError message={error} />
-      {edit ? (
-        <div className="mt-4">
-          <WeekForm
-            versionId={versionId}
-            initial={week}
-            mutate={mutate}
-            busy={busy}
-            onClose={() => setEdit(false)}
-          />
-        </div>
-      ) : null}
-      <div className="mt-5 grid gap-4">
-        {week.days.map((day, dayIndex) => (
-          <DayEditor
-            key={day.id}
-            versionId={versionId}
-            weekId={week.id}
-            day={day}
-            index={dayIndex}
-            siblings={week.days}
-            editable={editable}
-            busy={busy}
-            mutate={mutate}
-            reorder={reorder}
-            remove={remove}
-          />
-        ))}
-        {editable ? (
-          addDay ? (
-            <DayForm
+      <AccordionContent className="px-4 sm:px-5">
+        <SubmitError message={error} />
+        {edit ? (
+          <div className="mb-4">
+            <WeekForm
               versionId={versionId}
-              weekId={week.id}
+              initial={week}
               mutate={mutate}
               busy={busy}
-              onClose={() => setAddDay(false)}
+              onClose={() => setEdit(false)}
             />
-          ) : (
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setAddDay(true)}
-              >
-                <PlusIcon aria-hidden />
-                {t("authoring.day.add")}
-              </Button>
-            </div>
-          )
+          </div>
         ) : null}
-      </div>
-    </section>
+        <div className="grid min-w-0 gap-3">
+          {week.days.length > 0 ? (
+            <Accordion
+              type="single"
+              collapsible
+              value={openDayId}
+              onValueChange={onDayChange}
+              className="grid min-w-0 gap-2"
+            >
+              {week.days.map((day, dayIndex) => (
+                <DayEditor
+                  key={day.id}
+                  versionId={versionId}
+                  weekId={week.id}
+                  day={day}
+                  index={dayIndex}
+                  siblings={week.days}
+                  editable={editable}
+                  busy={busy}
+                  mutate={mutate}
+                  reorder={reorder}
+                  remove={remove}
+                />
+              ))}
+            </Accordion>
+          ) : null}
+          {editable ? (
+            addDay ? (
+              <DayForm
+                versionId={versionId}
+                weekId={week.id}
+                mutate={mutate}
+                busy={busy}
+                onClose={() => setAddDay(false)}
+              />
+            ) : (
+              <div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAddDay(true)}
+                >
+                  <PlusIcon aria-hidden />
+                  {t("authoring.day.add")}
+                </Button>
+              </div>
+            )
+          ) : null}
+        </div>
+      </AccordionContent>
+    </AccordionItem>
   );
 }
 
@@ -2670,24 +3339,34 @@ function DayEditor({
   const [addUnit, setAddUnit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <section
-      className="rounded-lg border border-border bg-muted/20 p-4"
+    <AccordionItem
+      value={day.id}
+      className="min-w-0 overflow-hidden rounded-lg border border-border bg-muted/20"
       data-editor-day={day.id}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs text-muted-foreground">
-            {t("authoring.day.meta", {
-              number: (index + 1).toLocaleString(locale),
-              id: day.stableId,
-              minutes: day.estimatedMinutes.toLocaleString(locale),
-            })}
-          </p>
-          <h4 className="mt-1 font-medium">{day.title}</h4>
-          <p className="mt-1 text-sm text-muted-foreground">{day.goal}</p>
-        </div>
+      <div className="flex min-w-0 items-start gap-2 px-3 sm:px-4">
+        <AccordionTrigger
+          headingLevel={4}
+          className="min-w-0 flex-1 py-3 hover:no-underline sm:py-4"
+        >
+          <span className="min-w-0 text-left">
+            <span className="block break-all text-xs font-normal text-muted-foreground">
+              {t("authoring.day.meta", {
+                number: (index + 1).toLocaleString(locale),
+                id: day.stableId,
+                minutes: day.estimatedMinutes.toLocaleString(locale),
+              })}
+            </span>
+            <span className="mt-1 block break-words font-medium">
+              {day.title}
+            </span>
+            <span className="mt-1 block break-words text-sm font-normal text-muted-foreground">
+              {day.goal}
+            </span>
+          </span>
+        </AccordionTrigger>
         {editable ? (
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1 py-3 sm:py-4">
             <ReorderControls
               label={t("authoring.entity.day", { title: day.title })}
               index={index}
@@ -2696,7 +3375,7 @@ function DayEditor({
               move={(direction) => {
                 setError(null);
                 void reorder(
-                  `/curriculum-editor/versions/${versionId}/weeks/${weekId}/days/reorder`,
+                  `/curriculum-editor/versions/${encodeURIComponent(versionId)}/weeks/${encodeURIComponent(weekId)}/days/reorder`,
                   siblings.map(({ id }) => id),
                   index,
                   direction,
@@ -2716,66 +3395,68 @@ function DayEditor({
               busy={busy}
               onConfirm={() =>
                 remove(
-                  `/curriculum-editor/versions/${versionId}/days/${day.id}`,
+                  `/curriculum-editor/versions/${encodeURIComponent(versionId)}/days/${encodeURIComponent(day.id)}`,
                 )
               }
             />
           </div>
         ) : null}
       </div>
-      <SubmitError message={error} />
-      {edit ? (
-        <div className="mt-4">
-          <DayForm
-            versionId={versionId}
-            weekId={weekId}
-            initial={day}
-            mutate={mutate}
-            busy={busy}
-            onClose={() => setEdit(false)}
-          />
-        </div>
-      ) : null}
-      <div className="mt-4 grid gap-3">
-        {day.units.map((unit, unitIndex) => (
-          <UnitEditor
-            key={unit.id}
-            versionId={versionId}
-            dayId={day.id}
-            unit={unit}
-            index={unitIndex}
-            siblings={day.units}
-            editable={editable}
-            busy={busy}
-            mutate={mutate}
-            reorder={reorder}
-            remove={remove}
-          />
-        ))}
-        {editable ? (
-          addUnit ? (
-            <UnitForm
+      <AccordionContent className="px-3 sm:px-4">
+        <SubmitError message={error} />
+        {edit ? (
+          <div className="mb-4">
+            <DayForm
               versionId={versionId}
-              dayId={day.id}
+              weekId={weekId}
+              initial={day}
               mutate={mutate}
               busy={busy}
-              onClose={() => setAddUnit(false)}
+              onClose={() => setEdit(false)}
             />
-          ) : (
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setAddUnit(true)}
-              >
-                <PlusIcon aria-hidden />
-                {t("authoring.unit.add")}
-              </Button>
-            </div>
-          )
+          </div>
         ) : null}
-      </div>
-    </section>
+        <div className="grid min-w-0 gap-2">
+          {day.units.map((unit, unitIndex) => (
+            <UnitEditor
+              key={unit.id}
+              versionId={versionId}
+              dayId={day.id}
+              unit={unit}
+              index={unitIndex}
+              siblings={day.units}
+              editable={editable}
+              busy={busy}
+              mutate={mutate}
+              reorder={reorder}
+              remove={remove}
+            />
+          ))}
+          {editable ? (
+            addUnit ? (
+              <UnitForm
+                versionId={versionId}
+                dayId={day.id}
+                mutate={mutate}
+                busy={busy}
+                onClose={() => setAddUnit(false)}
+              />
+            ) : (
+              <div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAddUnit(true)}
+                >
+                  <PlusIcon aria-hidden />
+                  {t("authoring.unit.add")}
+                </Button>
+              </div>
+            )
+          ) : null}
+        </div>
+      </AccordionContent>
+    </AccordionItem>
   );
 }
 
@@ -2807,19 +3488,25 @@ function UnitEditor({
   const [error, setError] = useState<string | null>(null);
   return (
     <article
-      className="rounded-lg border border-border bg-card p-3"
+      className="min-w-0 rounded-lg border border-border bg-card px-3 py-2.5"
       data-editor-unit={unit.id}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{unit.type}</Badge>
-            <span className="font-medium">{unit.title}</span>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Badge className="shrink-0" variant="outline">
+              {unit.type}
+            </Badge>
+            <span className="min-w-0 break-words font-medium">
+              {unit.title}
+            </span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">{unit.stableId}</p>
+          <p className="mt-1 break-all text-xs text-muted-foreground">
+            {unit.stableId}
+          </p>
         </div>
         {editable ? (
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <ReorderControls
               label={t("authoring.entity.unit", { title: unit.title })}
               index={index}
@@ -2828,7 +3515,7 @@ function UnitEditor({
               move={(direction) => {
                 setError(null);
                 void reorder(
-                  `/curriculum-editor/versions/${versionId}/days/${dayId}/units/reorder`,
+                  `/curriculum-editor/versions/${encodeURIComponent(versionId)}/days/${encodeURIComponent(dayId)}/units/reorder`,
                   siblings.map(({ id }) => id),
                   index,
                   direction,
@@ -2848,7 +3535,7 @@ function UnitEditor({
               busy={busy}
               onConfirm={() =>
                 remove(
-                  `/curriculum-editor/versions/${versionId}/units/${unit.id}`,
+                  `/curriculum-editor/versions/${encodeURIComponent(versionId)}/units/${encodeURIComponent(unit.id)}`,
                 )
               }
             />
@@ -2956,7 +3643,7 @@ function PersonalAdaptationPanel({
     queryKey: ["curriculum-editor", "adaptation", courseId],
     queryFn: () =>
       checkedApi(
-        `/curriculum-editor/courses/${courseId}/adaptation`,
+        `/curriculum-editor/courses/${encodeURIComponent(courseId)}/adaptation`,
         adaptationResponseSchema,
         t,
       ),
@@ -2991,7 +3678,7 @@ function PersonalAdaptationPanel({
   const integrate = async () => {
     if (!strategy) return;
     await mutate(
-      `/curriculum-editor/courses/${courseId}/adaptation/integrate`,
+      `/curriculum-editor/courses/${encodeURIComponent(courseId)}/adaptation/integrate`,
       {
         method: "POST",
         body: JSON.stringify({
@@ -3112,7 +3799,7 @@ function PersonalAdaptationPanel({
             disabled={busy}
             onClick={() => {
               void mutate(
-                `/curriculum-editor/versions/${comparison.upstreamRevisionId}/adaptation`,
+                `/curriculum-editor/versions/${encodeURIComponent(comparison.upstreamRevisionId)}/adaptation`,
                 { method: "POST", body: "{}" },
                 adaptationMutationResponseSchema,
               ).catch(() => undefined);
@@ -3170,15 +3857,13 @@ function PersonalAdaptationPanel({
   );
 }
 
-function CurrentProgramCard({
+function CourseStudioHeader({
   version,
-  published,
   graph,
   mutate,
   busy,
 }: {
   version: VersionListItem;
-  published: VersionListItem | undefined;
   graph: Graph | undefined;
   mutate: Mutate;
   busy: boolean;
@@ -3189,43 +3874,49 @@ function CurrentProgramCard({
     graph?.weeks.reduce((total, week) => total + week.days.length, 0) ?? 0;
   const date = version.publishedAt ?? version.createdAt;
   const isPublished = version.status === "published";
-  const cloneTarget = isPublished ? version : published;
+  const description = displayedAuthoringDescription(version.description);
   return (
-    <section data-slot="current-program" className={panelClass}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">
-            {t("authoring.current.label")}
-          </p>
-          <h2 className="mt-1 text-xl font-semibold">
-            {t("authoring.revision.heading", {
-              revision: version.revision.toLocaleString(locale),
-              title: version.title,
-            })}
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+    <header
+      data-slot="course-studio-header"
+      className="flex min-w-0 flex-col gap-5 border-b border-border/70 pb-6 sm:flex-row sm:items-start sm:justify-between"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          {t("authoring.revision.label", {
+            revision: version.revision.toLocaleString(locale),
+          })}
+        </p>
+        <h2 className="mt-2 break-words text-2xl font-semibold tracking-[-0.025em]">
+          {version.title}
+        </h2>
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+          <span className="break-words">
             {t(
               isPublished
                 ? "authoring.current.publishedAt"
                 : "authoring.current.draftCreatedAt",
               { date: formatDate(date, authoringDateOptions) },
             )}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
+          </span>
+          <span aria-hidden>·</span>
+          <span className="break-words">
             {graph
               ? t("authoring.current.structure", {
                   weeks: formatQuantity("week", weeksCount, locale, t),
                   days: formatQuantity("day", daysCount, locale, t),
                 })
               : t("authoring.current.structureLoading")}
-          </p>
-          {version.description ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              {version.description}
-            </p>
-          ) : null}
+          </span>
         </div>
+        {description ? (
+          <p className="mt-2 max-w-[70ch] break-words text-sm leading-6 text-muted-foreground">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
         <Badge
+          className="shrink-0"
           variant={
             isPublished
               ? "success"
@@ -3238,21 +3929,19 @@ function CurrentProgramCard({
             ? t("authoring.status.publishedReadOnly")
             : t(versionStatusMessageKeys[version.status])}
         </Badge>
-      </div>
-      <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-        <CreateDraftPanel mutate={mutate} busy={busy} />
-        {cloneTarget ? (
+        {isPublished ? (
           <Button
             variant="outline"
+            className="w-full sm:w-auto"
             disabled={busy}
             onClick={() => {
               void mutate(
-                `/curriculum-editor/versions/${cloneTarget.id}/clone`,
+                `/curriculum-editor/versions/${encodeURIComponent(version.id)}/clone`,
                 {
                   method: "POST",
                   body: JSON.stringify({
                     operationId: operationId(),
-                    title: `${cloneTarget.title} — new edition`,
+                    title: version.title,
                   }),
                 },
                 z.object({ version: versionSchema }).strict(),
@@ -3264,7 +3953,7 @@ function CurrentProgramCard({
           </Button>
         ) : null}
       </div>
-    </section>
+    </header>
   );
 }
 
@@ -3277,34 +3966,32 @@ function VersionHistory({
 }) {
   const { formatDate, locale, t } = useI18n();
   return (
-    <details className={panelClass} data-slot="version-history">
-      <summary className="cursor-pointer font-medium">
-        {t("authoring.history.title")}
-      </summary>
+    <section className={panelClass} data-slot="version-history">
+      <h3 className="font-medium">{t("authoring.history.title")}</h3>
       {versions.length === 0 ? (
         <p className="mt-4 text-sm text-muted-foreground">
           {t("authoring.history.empty")}
         </p>
       ) : (
-        <ul className="mt-4 grid gap-2">
+        <ul className="mt-4 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
           {versions.map((version) => (
             <li
               key={version.id}
-              className="rounded-lg border border-border p-3"
+              className="min-w-0 rounded-lg border border-border p-3"
             >
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <button
                   type="button"
-                  className="min-w-0 text-left"
+                  className="min-w-0 flex-1 overflow-hidden text-left"
                   onClick={() => onSelect(version.id)}
                 >
-                  <span className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
                     <strong className="text-sm">
                       {t("authoring.revision.label", {
                         revision: version.revision.toLocaleString(locale),
                       })}
                     </strong>
-                    <span className="truncate font-mono text-xs text-muted-foreground">
+                    <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
                       r{version.revision} · {version.title}
                     </span>
                   </span>
@@ -3313,11 +4000,11 @@ function VersionHistory({
                   {t(versionStatusMessageKeys[version.status])}
                 </Badge>
               </div>
-              <details className="mt-2">
+              <details className="mt-2 min-w-0">
                 <summary className="cursor-pointer text-xs text-muted-foreground">
                   {t("authoring.history.details")}
                 </summary>
-                <dl className="mt-2 grid gap-1 text-xs leading-5 text-muted-foreground">
+                <dl className="mt-2 grid min-w-0 gap-1 break-words text-xs leading-5 text-muted-foreground">
                   <div>
                     {t("authoring.history.createdAt", {
                       date: formatDate(version.createdAt, authoringDateOptions),
@@ -3330,10 +4017,12 @@ function VersionHistory({
                         : "—",
                     })}
                   </div>
-                  {version.description ? (
+                  {displayedAuthoringDescription(version.description) ? (
                     <div>
                       {t("authoring.history.description", {
-                        description: version.description,
+                        description:
+                          displayedAuthoringDescription(version.description) ??
+                          "",
                       })}
                     </div>
                   ) : null}
@@ -3343,7 +4032,7 @@ function VersionHistory({
           ))}
         </ul>
       )}
-    </details>
+    </section>
   );
 }
 
@@ -3418,29 +4107,25 @@ function AddWeekSheet({
           selectVersion(versionId);
         } else {
           const created = (await mutate(
-            "/curriculum-editor/versions",
+            `/curriculum-editor/versions/${encodeURIComponent(current.id)}/clone`,
             {
               method: "POST",
               body: JSON.stringify({
                 operationId: operationId(),
-                curriculum: {
-                  id: current.curriculumId,
-                  slug: current.curriculumSlug,
-                  title: current.title,
-                },
-                title: `${current.title} — new edition`,
-                description: null,
+                title: current.title,
+                description: current.description,
               }),
             },
             z.object({ version: versionSchema }).strict(),
           )) as { version: Version };
           versionId = created.version.id;
+          selectVersion(versionId);
         }
       }
 
       const weekBase = `${slugify(title) || "week"}-${Date.now()}`;
       const createdWeek = (await mutate(
-        `/curriculum-editor/versions/${versionId}/weeks`,
+        `/curriculum-editor/versions/${encodeURIComponent(versionId)}/weeks`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -3457,7 +4142,7 @@ function AddWeekSheet({
 
       for (let index = 1; index <= daysCount; index += 1) {
         await mutate(
-          `/curriculum-editor/versions/${versionId}/weeks/${createdWeek.week.id}/days`,
+          `/curriculum-editor/versions/${encodeURIComponent(versionId)}/weeks/${encodeURIComponent(createdWeek.week.id)}/days`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -3580,18 +4265,68 @@ function AddWeekSheet({
   );
 }
 
-export function CurriculumEditorClient() {
-  const { locale, t } = useI18n();
+export function CurriculumEditorClient({
+  initialVersionId = null,
+  initialMode = null,
+  initialWorkspace = null,
+}: {
+  initialVersionId?: string | null;
+  initialMode?: AuthoringStart | null;
+  initialWorkspace?: StudioWorkspace | null;
+} = {}) {
+  const { t } = useI18n();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const pendingOperations = usePendingOperations();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selectedIdRef = useRef<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialVersionId);
+  const authoringStart = initialMode;
+  const requestedWorkspace =
+    initialWorkspace ?? (initialMode === "designer" ? "designer" : "program");
+  const [workspace, setWorkspace] =
+    useState<StudioWorkspace>(requestedWorkspace);
+  const workspaceRef = useRef<StudioWorkspace>(requestedWorkspace);
+  useEffect(() => {
+    workspaceRef.current = requestedWorkspace;
+    setWorkspace(requestedWorkspace);
+  }, [requestedWorkspace]);
+  const selectedIdRef = useRef<string | null>(initialVersionId);
+  const searchParamString = searchParams.toString();
+  const studioParamsRef = useRef(searchParamString);
+  useEffect(() => {
+    studioParamsRef.current = searchParamString;
+  }, [searchParamString]);
   const [addWeekOpen, setAddWeekOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const replaceStudioLocation = (
+    mutateParams?: (params: URLSearchParams) => void,
+  ) => {
+    const next = new URLSearchParams(studioParamsRef.current);
+    mutateParams?.(next);
+    const versionId = selectedIdRef.current;
+    if (versionId) next.set("version", versionId);
+    else next.delete("version");
+    next.set("tab", workspaceRef.current);
+    const serialized = next.toString();
+    studioParamsRef.current = serialized;
+    router.replace(`/courses/studio?${serialized}`, { scroll: false });
+  };
   const selectVersion = (id: string | null) => {
+    const previousId = selectedIdRef.current;
     selectedIdRef.current = id;
     setSelectedId(id);
+    if (id && id !== previousId) {
+      replaceStudioLocation((next) => {
+        next.delete("week");
+        next.delete("day");
+      });
+    }
+  };
+  const selectWorkspace = (nextWorkspace: StudioWorkspace) => {
+    workspaceRef.current = nextWorkspace;
+    setWorkspace(nextWorkspace);
+    replaceStudioLocation();
   };
   const versions = useQuery({
     queryKey: ["curriculum-editor", "versions"],
@@ -3602,20 +4337,54 @@ export function CurriculumEditorClient() {
         t,
       ),
   });
-  useEffect(() => {
-    if (!selectedId && versions.data?.versions[0])
-      selectVersion(versions.data.versions[0].id);
-  }, [selectedId, versions.data]);
+  const requestedVersionMissing = Boolean(
+    initialVersionId !== null &&
+    versions.data &&
+    !versions.data.versions.some(
+      (candidate) => candidate.id === initialVersionId,
+    ),
+  );
+  const graphVersionId =
+    versions.data?.versions.some((candidate) => candidate.id === selectedId) ===
+    true
+      ? selectedId
+      : null;
   const graph = useQuery({
-    queryKey: ["curriculum-editor", "version", selectedId],
-    enabled: Boolean(selectedId),
+    queryKey: ["curriculum-editor", "version", graphVersionId],
+    enabled: Boolean(graphVersionId),
     queryFn: () =>
       checkedApi(
-        `/curriculum-editor/versions/${selectedId ?? ""}`,
+        `/curriculum-editor/versions/${encodeURIComponent(graphVersionId ?? "")}`,
         z.object({ curriculum: graphSchema }).strict(),
         t,
       ),
   });
+  const selectedVersion = versions.data?.versions.find(
+    (version) => version.id === graphVersionId,
+  );
+  const pageRouteContext = useMemo<RouteContext | null>(
+    () =>
+      selectedVersion
+        ? {
+            sectionHref: "/courses",
+            breadcrumbs: [
+              { href: "/courses", label: "nav.courses" },
+              {
+                href: `/courses/${encodeURIComponent(selectedVersion.curriculumId)}/revisions/${encodeURIComponent(selectedVersion.id)}`,
+                text: selectedVersion.title,
+              },
+              { label: "shell.route.studio" },
+            ],
+          }
+        : null,
+    [selectedVersion],
+  );
+  usePageRouteContext(pageRouteContext);
+  const selectedCourseVersions = selectedVersion
+    ? (versions.data?.versions.filter(
+        (version) => version.curriculumId === selectedVersion.curriculumId,
+      ) ?? [])
+    : [];
   const mutate: Mutate = async (path, init, schema, selectId) => {
     setBusy(true);
     setActionError(null);
@@ -3655,61 +4424,41 @@ export function CurriculumEditorClient() {
         retry={() => void versions.refetch()}
       />
     );
-  const selectedVersion =
-    versions.data.versions.find((version) => version.id === selectedId) ??
-    versions.data.versions[0]!;
-
   return (
-    <div className="grid gap-6">
+    <div className="flex min-w-0 flex-col gap-8">
       {actionError ? (
-        <div
-          role="alert"
-          className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
-        >
-          {actionError}
-        </div>
+        <Alert variant="destructive" data-slot="studio-action-error">
+          <AlertTitle>{t("authoring.error.actionTitle")}</AlertTitle>
+          <AlertDescription>{actionError}</AlertDescription>
+        </Alert>
       ) : null}
-      {versions.data.versions.length === 0 ? (
-        <section className={panelClass}>
-          <h2 className="text-lg font-semibold">
-            {t("authoring.emptyProgram.title")}
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("authoring.emptyProgram.description")}
-          </p>
-          <div className="mt-5">
-            <CreateDraftPanel mutate={mutate} busy={busy} />
-          </div>
-        </section>
-      ) : (
+      {requestedVersionMissing ? (
+        <EmptyState
+          title={t("authoring.missingRevision.title")}
+          description={t("authoring.missingRevision.description")}
+          action={
+            <Button asChild>
+              <Link href="/courses">{t("nav.courses")}</Link>
+            </Button>
+          }
+        />
+      ) : versions.data.versions.length === 0 ? (
+        <EmptyState
+          title={t("authoring.emptyProgram.title")}
+          description={t("authoring.emptyProgram.description")}
+          action={
+            <Button asChild>
+              <Link href="/courses/new">{t("courses.create.action")}</Link>
+            </Button>
+          }
+        />
+      ) : selectedVersion ? (
         <>
-          <CurrentProgramCard
-            version={selectedVersion}
-            published={versions.data.versions.find(
-              (version) => version.status === "published",
-            )}
-            graph={graph.data?.curriculum}
-            mutate={mutate}
-            busy={busy}
-          />
-          <PersonalAdaptationPanel
-            courseId={selectedVersion.curriculumId}
-            mutate={mutate}
-            busy={busy}
-            onSelect={selectVersion}
-          />
-          <AddWeekCard onOpen={() => setAddWeekOpen(true)} disabled={busy} />
-          <VersionHistory
-            versions={versions.data.versions.filter(
-              (version) => version.id !== selectedVersion.id,
-            )}
-            onSelect={selectVersion}
-          />
           <section
             className="min-w-0"
             aria-label={t("authoring.graph.selectedRevision")}
           >
-            {!selectedId ? (
+            {!graphVersionId ? (
               <EmptyState
                 title={t("authoring.selectRevision.title")}
                 description={t("authoring.selectRevision.description")}
@@ -3724,61 +4473,208 @@ export function CurriculumEditorClient() {
                 retry={() => void graph.refetch()}
               />
             ) : (
-              <div className="grid gap-5">
-                <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-5">
-                  <div>
-                    <p className="text-sm text-muted-foreground">
-                      {t("authoring.revision.label", {
-                        revision:
-                          graph.data.curriculum.version.revision.toLocaleString(
-                            locale,
-                          ),
-                      })}
-                    </p>
-                    <h2 className="mt-1 text-xl font-semibold">
-                      {graph.data.curriculum.version.title}
-                    </h2>
-                    {graph.data.curriculum.version.description ? (
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {graph.data.curriculum.version.description}
-                      </p>
-                    ) : null}
-                  </div>
-                  <Badge
-                    variant={
-                      graph.data.curriculum.version.status === "published"
-                        ? "success"
-                        : "warning"
-                    }
+              <div className="grid gap-6">
+                <CourseStudioHeader
+                  version={selectedVersion}
+                  graph={graph.data.curriculum}
+                  mutate={mutate}
+                  busy={busy}
+                />
+
+                <Tabs
+                  className="min-w-0"
+                  value={workspace}
+                  onValueChange={(value) =>
+                    selectWorkspace(value as StudioWorkspace)
+                  }
+                >
+                  <div
+                    data-slot="studio-workspace-tabs-scroll"
+                    className="min-w-0 overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-border/70"
                   >
-                    {graph.data.curriculum.version.status === "published"
-                      ? t("authoring.status.publishedReadOnly")
-                      : t("authoring.status.draft")}
-                  </Badge>
-                </header>
-                <CourseDesignerPanel
-                  graph={graph.data.curriculum}
-                  mutate={mutate}
-                  busy={busy}
-                />
-                <GraphEditor
-                  graph={graph.data.curriculum}
-                  mutate={mutate}
-                  busy={busy}
-                />
+                    <TabsList
+                      variant="line"
+                      className="min-w-full justify-start"
+                      aria-label={t("authoring.workspace.aria")}
+                    >
+                      {(
+                        [
+                          ["program", "authoring.workspace.program"],
+                          ["designer", "authoring.workspace.designer"],
+                          ["preview", "authoring.workspace.preview"],
+                          ["release", "authoring.workspace.release"],
+                          ["history", "authoring.workspace.history"],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <TabsTrigger
+                          key={value}
+                          value={value}
+                          className="min-w-max flex-none px-3 py-3 sm:px-4"
+                        >
+                          {t(label)}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </div>
+
+                  <TabsContent
+                    value="program"
+                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    <div className="grid gap-6">
+                      <GraphEditor
+                        graph={graph.data.curriculum}
+                        mutate={mutate}
+                        busy={busy}
+                      />
+                      <AddWeekCard
+                        onOpen={() => setAddWeekOpen(true)}
+                        disabled={busy}
+                      />
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent
+                    value="designer"
+                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    {graph.data.curriculum.version.status === "draft" ? (
+                      <CourseDesignerPanel
+                        graph={graph.data.curriculum}
+                        mutate={mutate}
+                        busy={busy}
+                        {...(authoringStart === "designer"
+                          ? {
+                              initialGoal:
+                                graph.data.curriculum.version.description ?? "",
+                            }
+                          : {})}
+                      />
+                    ) : (
+                      <EmptyState
+                        title={t(
+                          "authoring.workspace.designerUnavailable.title",
+                        )}
+                        description={t(
+                          "authoring.workspace.designerUnavailable.description",
+                        )}
+                      />
+                    )}
+                  </TabsContent>
+
+                  <TabsContent
+                    value="preview"
+                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    <StudioPreviewPanel
+                      version={graph.data.curriculum.version}
+                    />
+                  </TabsContent>
+
+                  <TabsContent
+                    value="release"
+                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    {graph.data.curriculum.version.status === "draft" ? (
+                      <PublishPanel
+                        version={graph.data.curriculum.version}
+                        mutate={mutate}
+                        busy={busy}
+                      />
+                    ) : (
+                      <EmptyState
+                        title={t(
+                          "authoring.workspace.releaseUnavailable.title",
+                        )}
+                        description={t(
+                          "authoring.workspace.releaseUnavailable.description",
+                        )}
+                      />
+                    )}
+                  </TabsContent>
+
+                  <TabsContent
+                    value="history"
+                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    <div className="grid gap-6">
+                      <VersionHistory
+                        versions={selectedCourseVersions.filter(
+                          (version) => version.id !== selectedVersion.id,
+                        )}
+                        onSelect={selectVersion}
+                      />
+                      <PersonalAdaptationPanel
+                        courseId={selectedVersion.curriculumId}
+                        mutate={mutate}
+                        busy={busy}
+                        onSelect={selectVersion}
+                      />
+                    </div>
+                  </TabsContent>
+                </Tabs>
               </div>
             )}
           </section>
+
+          <AddWeekSheet
+            open={addWeekOpen}
+            onOpenChange={setAddWeekOpen}
+            current={selectedVersion}
+            versions={selectedCourseVersions}
+            mutate={mutate}
+            busy={busy}
+            selectVersion={selectVersion}
+          />
         </>
+      ) : (
+        <EmptyState
+          title={t("authoring.selectRevision.title")}
+          description={t("authoring.selectRevision.description")}
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button asChild>
+                <Link href="/courses">{t("nav.courses")}</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href="/courses/new">{t("courses.create.action")}</Link>
+              </Button>
+            </div>
+          }
+        />
       )}
-      <AddWeekSheet
-        open={addWeekOpen}
-        onOpenChange={setAddWeekOpen}
-        current={selectedVersion}
-        versions={versions.data.versions}
-        mutate={mutate}
-        busy={busy}
-        selectVersion={selectVersion}
+    </div>
+  );
+}
+
+export function CurriculumStudioClient({
+  initialVersionId = null,
+  initialMode = null,
+  initialWorkspace = null,
+}: {
+  initialVersionId?: string | null;
+  initialMode?: AuthoringStart | null;
+  initialWorkspace?: StudioWorkspace | null;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex min-w-0 flex-col gap-6">
+      <div>
+        <Button asChild variant="ghost" size="sm" className="-ml-3">
+          <Link href="/courses">
+            <ArrowLeftIcon aria-hidden data-icon="inline-start" />
+            {t("nav.courses")}
+          </Link>
+        </Button>
+      </div>
+      <PageHeader
+        title={t("authoring.entry.eyebrow")}
+        description={t("authoring.page.description")}
+      />
+      <CurriculumEditorClient
+        initialVersionId={initialVersionId}
+        initialMode={initialMode}
+        initialWorkspace={initialWorkspace}
       />
     </div>
   );

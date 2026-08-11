@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { canonicalJson, hashCanonicalJson } from "@dlh/database";
-import { SessionSnapshotSchema, type SessionSnapshot } from "@dlh/shared";
+import { canonicalJson, hashCanonicalJson } from "@aptiloop/database";
+import { SessionSnapshotSchema, type SessionSnapshot } from "@aptiloop/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -26,7 +26,7 @@ afterEach(async () => {
 });
 
 function runtime() {
-  const root = mkdtempSync(path.join(tmpdir(), "dlh-session-policy-"));
+  const root = mkdtempSync(path.join(tmpdir(), "aptiloop-session-policy-"));
   roots.push(root);
   const created = createApp({
     projectRoot: path.resolve("../.."),

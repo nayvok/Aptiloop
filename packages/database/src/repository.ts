@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   createUnitProgression,
   resolveExplicitUnitDefinitions,
-} from "@dlh/learning-core";
+} from "@aptiloop/learning-core";
 import {
   SessionSnapshotSchema,
   UnitProgressPayloadSchema,
@@ -14,7 +14,7 @@ import {
   type UnitProgress as ContractUnitProgress,
   type UnitProgressPayload,
   type UnitStatus,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import {
   and,
   asc,
@@ -1629,15 +1629,35 @@ export class LearningRepository {
   }
 
   async setSetting(key: string, value: unknown): Promise<void> {
-    const values = {
+    await this.setSettings([[key, value]]);
+  }
+
+  async setSettings(
+    entries: ReadonlyArray<readonly [key: string, value: unknown]>,
+  ): Promise<void> {
+    if (entries.length === 0) return;
+    const rows = entries.map(([key, value]) => ({
       key,
       valueJson: stringifyJson(value, `setting ${key}`),
-      updatedAt: this.#now(),
-    };
-    await this.#connection.db
-      .insert(applicationSettings)
-      .values(values)
-      .onConflictDoUpdate({ target: applicationSettings.key, set: values });
+    }));
+    const updatedAt = this.#now();
+    const statement = this.#connection.sqlite.prepare(
+      `INSERT INTO application_settings (key, value_json, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         value_json = excluded.value_json,
+         updated_at = excluded.updated_at`,
+    );
+    this.#connection.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      for (const row of rows) {
+        statement.run(row.key, row.valueJson, updatedAt);
+      }
+      this.#connection.sqlite.exec("COMMIT");
+    } catch (error) {
+      this.#connection.sqlite.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async getSetting<T>(key: string): Promise<T | null> {

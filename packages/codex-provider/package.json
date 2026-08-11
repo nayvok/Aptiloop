@@ -1,5 +1,5 @@
 {
-  "name": "@dlh/codex-provider",
+  "name": "@aptiloop/codex-provider",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,8 +13,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@dlh/agent-core": "0.1.0",
-    "@dlh/shared": "0.1.0"
+    "@aptiloop/agent-core": "0.1.0",
+    "@aptiloop/shared": "0.1.0"
   },
   "devDependencies": {
     "tsup": "^8.5.1"

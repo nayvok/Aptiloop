@@ -2,8 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { weekOneCurriculum } from "@dlh/curriculum";
-import type { DatabaseConnection, LearningRepository } from "@dlh/database";
+import { weekOneCurriculum } from "@aptiloop/curriculum";
+import type {
+  DatabaseConnection,
+  LearningRepository,
+} from "@aptiloop/database";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 
@@ -36,7 +39,7 @@ const composeStartup = {
 const browserMutationHeaders = {
   "Content-Type": "application/json",
   Origin: webOrigin,
-  "X-DLH-Client": "web",
+  "X-Aptiloop-Client": "web",
 };
 const legacyLearningMutationError = {
   error: "Legacy learning mutations are frozen; use /api/learning/sessions/v2",
@@ -52,7 +55,7 @@ const settingsMutation = { theme: "dark" } as const;
 function productionRuntime(
   startupConfig: NonNullable<AppOptions["startupConfig"]> = directStartup,
 ): TestRuntime {
-  const root = mkdtempSync(path.join(tmpdir(), "dlh-http-boundary-"));
+  const root = mkdtempSync(path.join(tmpdir(), "aptiloop-http-boundary-"));
   roots.push(root);
   const previousNodeEnvironment = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
@@ -431,7 +434,7 @@ describe("production HTTP boundary", () => {
     expect(
       (
         await mutation(app, directAuthority, {
-          "X-DLH-Client": "desktop",
+          "X-Aptiloop-Client": "desktop",
         })
       ).status,
     ).toBe(403);
@@ -458,7 +461,7 @@ describe("production HTTP boundary", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-DLH-Client": "web",
+          "X-Aptiloop-Client": "web",
         },
         body: "{}",
       },

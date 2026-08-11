@@ -1,5 +1,5 @@
-import { CoursePackClient } from "@/components/course-pack-client";
+import { CourseLibraryClient } from "@/components/course-pack-client";
 
 export default function CoursesPage() {
-  return <CoursePackClient />;
+  return <CourseLibraryClient />;
 }

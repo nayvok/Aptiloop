@@ -7,7 +7,7 @@ import type {
   ProviderId,
   ProviderStatus,
   StreamAgentMessageInput,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 export interface AgentProvider {
   readonly id: ProviderId;

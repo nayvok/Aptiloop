@@ -10,7 +10,7 @@ import {
   type VersionedCurriculumSource as AuthoredSource,
   type VersionedCurriculumUnit as AuthoredUnit,
   type VersionedCurriculumVersion as AuthoredVersion,
-} from "@dlh/curriculum";
+} from "@aptiloop/curriculum";
 import {
   CurriculumVersionSchema,
   type CurriculumSource,
@@ -18,7 +18,7 @@ import {
   type CurriculumVersion,
   type UnitCompletionCriterion,
   type UnitPayload,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import { publishDraftCurriculumVersionWithinTransaction } from "./authoring-repository.js";
 
 import { withTransaction, type DatabaseConnection } from "./database.js";

@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
 
 import {
+  CourseIdentityConflictError,
   CurriculumAuthoringRepository,
+  hashCanonicalJson,
   type CurriculumVersionGraph,
   type DatabaseConnection,
-} from "@dlh/database";
+} from "@aptiloop/database";
 import {
   resolveExplicitUnitDefinitions,
   validateActivityGraph,
-} from "@dlh/learning-core";
+} from "@aptiloop/learning-core";
 import {
   CurriculumSourceSchema,
   CurriculumUnitSchema,
+  CourseLocaleSchema,
   DepthLevelSchema,
   UnitChecklistItemSchema,
   UnitCompletionCriterionSchema,
@@ -19,7 +22,7 @@ import {
   UnitQuestionSchema,
   UnitTypeSchema,
   UnitUnlockRuleSchema,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { authoringDraftHash } from "./authoring-draft-hash.js";
@@ -54,6 +57,7 @@ const createDraftSchema = z
           .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
         title: shortTextSchema,
         description: descriptionSchema.optional(),
+        primaryLocale: CourseLocaleSchema,
       })
       .strict(),
     title: shortTextSchema,
@@ -239,7 +243,14 @@ interface AuthoringChangeReview {
   readonly added: number;
   readonly changed: number;
   readonly removed: number;
+  readonly changes: readonly AuthoringChange[];
   readonly ready: boolean;
+}
+
+interface AuthoringChange {
+  readonly operation: "added" | "changed" | "removed";
+  readonly entityType: "week" | "day" | "unit";
+  readonly stableId: string;
 }
 
 class EditorError extends Error {
@@ -259,6 +270,39 @@ function deterministicIds(operationId: string, scope: string): () => string {
       .update(`${scope}\0${operationId}\0${index++}`)
       .digest("hex")
       .slice(0, 40)}`;
+}
+
+interface BoundOperationIds {
+  readonly resultId: string;
+  readonly resultPrefix: string;
+  readonly ids: () => string;
+}
+
+function boundOperationIds(
+  operationId: string,
+  scope: string,
+  requestIdentity: unknown,
+): BoundOperationIds {
+  const operationHash = createHash("sha256")
+    .update(`${scope}\0${operationId}`)
+    .digest("hex")
+    .slice(0, 40);
+  const requestHash = hashCanonicalJson(requestIdentity);
+  const resultPrefix = `ceo-${operationHash}-`;
+  const resultId = `${resultPrefix}${requestHash}`;
+  let index = 0;
+  return {
+    resultId,
+    resultPrefix,
+    ids: () => {
+      const current = index++;
+      if (current === 0) return resultId;
+      return `ce-${createHash("sha256")
+        .update(`${scope}\0${operationId}\0${requestHash}\0${current}`)
+        .digest("hex")
+        .slice(0, 40)}`;
+    },
+  };
 }
 
 async function readBody<T>(context: Context, schema: z.ZodType<T>): Promise<T> {
@@ -313,6 +357,29 @@ function versionStatus(
     .get(versionId) as
     { status: "draft" | "published" | "archived" } | undefined;
   return row?.status ?? null;
+}
+
+function priorBoundOperationResult(
+  connection: DatabaseConnection,
+  binding: BoundOperationIds,
+  legacyResultId: string,
+): string | null {
+  if (versionStatus(connection, legacyResultId)) return legacyResultId;
+  const rows = connection.sqlite
+    .prepare(
+      `SELECT id FROM curriculum_versions
+       WHERE id LIKE ? ORDER BY id`,
+    )
+    .all(`${binding.resultPrefix}%`) as Array<{ id: string }>;
+  if (rows.length === 0) return null;
+  if (rows.length !== 1 || rows[0]?.id !== binding.resultId) {
+    throw new EditorError(
+      409,
+      "operation_conflict",
+      "Operation ID was already used for a different authoring request",
+    );
+  }
+  return binding.resultId;
 }
 
 function assertDraft(connection: DatabaseConnection, versionId: string): void {
@@ -481,7 +548,7 @@ function toEditorDto<T>(value: T): T {
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => !key.endsWith("Json"))
+      .filter(([key]) => key !== "primaryLocale" && !key.endsWith("Json"))
       .map(([key, nested]) => [key, toEditorDto(nested)]),
   ) as T;
 }
@@ -683,22 +750,46 @@ async function authoringChangeReview(
         await repository.getVersionGraph(graph.version.parentVersionId),
       )
     : new Map<string, string>();
-  let added = 0;
-  let changed = 0;
-  let removed = 0;
+  const changes: AuthoringChange[] = [];
+  const describe = (
+    key: string,
+    operation: AuthoringChange["operation"],
+  ): AuthoringChange => {
+    const separator = key.indexOf(":");
+    const entityType = key.slice(0, separator);
+    const stableId = key.slice(separator + 1);
+    if (
+      (entityType !== "week" &&
+        entityType !== "day" &&
+        entityType !== "unit") ||
+      !stableId
+    ) {
+      throw new Error("Authoring change identity is invalid");
+    }
+    return { operation, entityType, stableId };
+  };
   for (const [key, value] of current) {
-    if (!parent.has(key)) added += 1;
-    else if (parent.get(key) !== value) changed += 1;
+    if (!parent.has(key)) changes.push(describe(key, "added"));
+    else if (parent.get(key) !== value) changes.push(describe(key, "changed"));
   }
-  for (const key of parent.keys()) if (!current.has(key)) removed += 1;
+  for (const key of parent.keys()) {
+    if (!current.has(key)) changes.push(describe(key, "removed"));
+  }
+  changes.sort(
+    (left, right) =>
+      left.entityType.localeCompare(right.entityType) ||
+      left.stableId.localeCompare(right.stableId) ||
+      left.operation.localeCompare(right.operation),
+  );
   const draftHash = authoringDraftHash(graph);
   const reviewBody = {
     versionId: graph.version.id,
     parentVersionId: graph.version.parentVersionId,
     draftHash,
-    added,
-    changed,
-    removed,
+    added: changes.filter(({ operation }) => operation === "added").length,
+    changed: changes.filter(({ operation }) => operation === "changed").length,
+    removed: changes.filter(({ operation }) => operation === "removed").length,
+    changes,
     ready: authoringValidationReport(graph).valid,
   };
   return {
@@ -770,7 +861,7 @@ async function graphOrNotFound(
   versionId: string,
 ): Promise<CurriculumVersionGraph> {
   try {
-    return toEditorDto(await repository.getVersionGraph(versionId));
+    return await repository.getVersionGraph(versionId);
   } catch {
     throw new EditorError(404, "not_found", "Curriculum version was not found");
   }
@@ -796,6 +887,17 @@ async function handle(
         );
       return context.json(
         { error: { code: error.code, message: error.message } },
+        409,
+      );
+    }
+    if (error instanceof CourseIdentityConflictError) {
+      return context.json(
+        {
+          error: {
+            code: "course_identity_conflict",
+            message: "A Course with that ID or slug already exists",
+          },
+        },
         409,
       );
     }
@@ -852,12 +954,14 @@ export function registerCurriculumEditorRoutes(
       const rows = state.connection.sqlite
         .prepare(
           `SELECT v.id, v.curriculum_id AS curriculumId, c.slug AS curriculumSlug,
+                  course.primary_locale AS primaryLocale,
                   v.revision, v.parent_version_id AS parentVersionId, v.status,
                   v.title, v.description, v.content_hash AS contentHash,
                   v.created_at AS createdAt, v.published_at AS publishedAt,
                   v.archived_at AS archivedAt, v.updated_at AS updatedAt
            FROM curriculum_versions v
            JOIN curricula c ON c.id = v.curriculum_id
+           JOIN courses course ON course.id = v.curriculum_id
            ORDER BY c.slug, v.revision DESC, v.id`,
         )
         .all();
@@ -871,22 +975,37 @@ export function registerCurriculumEditorRoutes(
         editorRepository(state),
         routeId(context, "versionId"),
       );
-      return context.json({ curriculum: graph });
+      return context.json({ curriculum: toEditorDto(graph) });
     }),
   );
 
   app.post("/api/curriculum-editor/versions", (context) =>
     handle(context, async () => {
       const input = await readBody(context, createDraftSchema);
-      const repository = editorRepository(
-        state,
-        input.operationId,
-        "create-draft",
+      const scope = "create-draft";
+      const binding = boundOperationIds(input.operationId, scope, {
+        curriculum: {
+          id: input.curriculum.id,
+          slug: input.curriculum.slug,
+          title: input.curriculum.title,
+          description: input.curriculum.description ?? null,
+          primaryLocale: input.curriculum.primaryLocale,
+        },
+        title: input.title,
+        description: input.description ?? null,
+      });
+      const legacyVersionId = deterministicIds(input.operationId, scope)();
+      const priorVersionId = priorBoundOperationResult(
+        state.connection,
+        binding,
+        legacyVersionId,
       );
-      const versionId = deterministicIds(input.operationId, "create-draft")();
-      if (versionStatus(state.connection, versionId)) {
+      const repository = new CurriculumAuthoringRepository(state.connection, {
+        id: binding.ids,
+      });
+      if (priorVersionId) {
         return context.json({
-          version: (await repository.getVersionGraph(versionId)).version,
+          version: (await repository.getVersionGraph(priorVersionId)).version,
         });
       }
       const version = await repository.createDraft({
@@ -897,6 +1016,7 @@ export function registerCurriculumEditorRoutes(
           ...(input.curriculum.description !== undefined
             ? { description: input.curriculum.description }
             : {}),
+          primaryLocale: input.curriculum.primaryLocale,
         },
         title: input.title,
         ...(input.description !== undefined
@@ -912,12 +1032,54 @@ export function registerCurriculumEditorRoutes(
       const input = await readBody(context, cloneSchema);
       const sourceVersionId = routeId(context, "versionId");
       const scope = `clone:${sourceVersionId}`;
-      const repository = editorRepository(state, input.operationId, scope);
-      const versionId = deterministicIds(input.operationId, scope)();
-      if (versionStatus(state.connection, versionId)) {
+      const binding = boundOperationIds(input.operationId, scope, {
+        title:
+          input.title === undefined
+            ? { mode: "inherit" }
+            : { mode: "set", value: input.title },
+        description:
+          input.description === undefined
+            ? { mode: "inherit" }
+            : { mode: "set", value: input.description },
+      });
+      const legacyVersionId = deterministicIds(input.operationId, scope)();
+      const priorVersionId = priorBoundOperationResult(
+        state.connection,
+        binding,
+        legacyVersionId,
+      );
+      const repository = new CurriculumAuthoringRepository(state.connection, {
+        id: binding.ids,
+      });
+      if (priorVersionId) {
         return context.json({
-          version: (await repository.getVersionGraph(versionId)).version,
+          version: (await repository.getVersionGraph(priorVersionId)).version,
         });
+      }
+      const source = state.connection.sqlite
+        .prepare(
+          `SELECT status, branch_kind AS branchKind
+           FROM curriculum_versions WHERE id = ?`,
+        )
+        .get(sourceVersionId) as
+        | {
+            status: "draft" | "published" | "archived";
+            branchKind: "upstream" | "personal";
+          }
+        | undefined;
+      if (!source) {
+        throw new EditorError(
+          404,
+          "not_found",
+          "Curriculum version was not found",
+        );
+      }
+      if (source.status !== "published" || source.branchKind !== "upstream") {
+        throw new EditorError(
+          409,
+          "invalid_clone_source",
+          "Only a published upstream revision can be cloned into a generic Draft",
+        );
       }
       const version = await repository.cloneRevision(sourceVersionId, {
         ...(input.title !== undefined ? { title: input.title } : {}),

@@ -153,7 +153,7 @@ describe("CodexAppServerTransport", () => {
       id: 1,
       method: "initialize",
       params: {
-        clientInfo: { name: "dev-learning-harness", version: "0.1.0" },
+        clientInfo: { name: "aptiloop", version: "0.1.0" },
       },
     });
     expect(server.requests[1]).toEqual({ method: "initialized" });

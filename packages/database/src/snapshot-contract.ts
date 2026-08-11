@@ -10,7 +10,7 @@ import {
   type UnitPayload,
   type UnitProgressPayload,
   type UnitType,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 const object = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value)

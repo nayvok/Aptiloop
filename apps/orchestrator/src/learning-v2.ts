@@ -12,7 +12,7 @@ import {
   withAsyncTransaction,
   withTransaction,
   type LearningKernelRepository,
-} from "@dlh/database";
+} from "@aptiloop/database";
 import {
   applyMasteryEvidenceBatch,
   createUnitProgression,
@@ -20,7 +20,9 @@ import {
   learningKernelSha256,
   deriveDaySummary,
   isLessonComplete,
+  isLearningKernelReviewDue,
   resolveExplicitUnitDefinitions,
+  selectLessonNextAction,
   transitionUnitProgression,
   type LearningKernelEvidenceBody,
   type LearningKernelFactProvenance,
@@ -30,24 +32,30 @@ import {
   type HintLevel,
   type LearningKernelProjection,
   type LearningKernelReviewItem,
+  type LessonProgressionStatus,
   type MasteryDimension,
   type MasteryProfile,
   type UnitDefinition,
   type UnitProgressionEvent,
-} from "@dlh/learning-core";
+} from "@aptiloop/learning-core";
 import {
   CourseEntityIdSchema,
+  LearningKnowledgeNodeIdSchema,
+  LearningMistakesResponseSchema,
+  LearningPathNextActionSchema,
+  LearningReviewsResponseSchema,
   UnitUnlockRuleSchema,
   CurriculumUnitSchema,
   SessionSnapshotSchema,
   UnitProgressPayloadSchema,
   UnitStatusSchema,
   type CurriculumUnit,
+  type LearningPathNextAction,
   type SessionSnapshot,
   type UnitProgress,
   type UnitProgressPayload,
   type UnitStatus,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import type { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -250,17 +258,25 @@ export function registerVersionedLearningRoutes(
     }),
   );
 
-  app.get("/api/learning/mistakes", async (context) =>
-    context.json({
-      mistakes: await readKernelMistakes(state, kernelRepository),
-    }),
-  );
+  app.get("/api/learning/mistakes", async (context) => {
+    const asOf = observedAt();
+    return context.json(
+      LearningMistakesResponseSchema.parse({
+        asOf,
+        mistakes: await readKernelMistakes(state, kernelRepository, asOf),
+      }),
+    );
+  });
 
-  app.get("/api/learning/reviews", async (context) =>
-    context.json({
-      reviews: await readKernelReviews(state, kernelRepository),
-    }),
-  );
+  app.get("/api/learning/reviews", async (context) => {
+    const asOf = observedAt();
+    return context.json(
+      LearningReviewsResponseSchema.parse({
+        asOf,
+        reviews: await readKernelReviews(state, kernelRepository, asOf),
+      }),
+    );
+  });
 
   app.get("/api/learning/courses", async (context) => {
     return context.json({ courses: await readCourseCollection(state) });
@@ -275,7 +291,15 @@ export function registerVersionedLearningRoutes(
       const revisionId = CourseEntityIdSchema.parse(
         context.req.param("revisionId"),
       );
-      return context.json(await readLearnerPath(state, courseId, revisionId));
+      return context.json(
+        await readLearnerPath(
+          state,
+          kernelRepository,
+          observedAt(),
+          courseId,
+          revisionId,
+        ),
+      );
     },
   );
 
@@ -298,8 +322,14 @@ export function registerVersionedLearningRoutes(
     const target = await readCompatibilityCourseTarget(state);
     return context.json(
       target
-        ? await readLearnerPath(state, target.courseId, target.revisionId)
-        : { curriculum: null, courseContext: null },
+        ? await readLearnerPath(
+            state,
+            kernelRepository,
+            observedAt(),
+            target.courseId,
+            target.revisionId,
+          )
+        : { curriculum: null, courseContext: null, nextAction: null },
     );
   });
 
@@ -928,8 +958,114 @@ interface PathCourseTarget {
   revisionId: string;
 }
 
+interface RevisionLearningSummary {
+  state: "not-started" | "in-progress" | "completed";
+  completedLessons: number;
+  totalLessons: number;
+  progressPercent: number;
+  lastActivityAt: string | null;
+}
+
+interface RevisionLearningSummaryRow {
+  course_id: string;
+  revision_id: string;
+  total_lessons: number;
+  completed_lessons: number;
+  has_active_session: number;
+  last_activity_at: number | null;
+}
+
+function courseRevisionKey(courseId: string, revisionId: string): string {
+  return `${courseId}\u0000${revisionId}`;
+}
+
+function readRevisionLearningSummaries(
+  state: VersionedLearningState,
+): Map<string, RevisionLearningSummary> {
+  const rows = state.connection.sqlite
+    .prepare(
+      `WITH lesson_totals AS (
+         SELECT course_id, revision_id, COUNT(*) AS total_lessons
+         FROM course_lessons
+         GROUP BY course_id, revision_id
+       ), session_totals AS (
+         SELECT context.course_id, context.revision_id,
+                COUNT(DISTINCT CASE
+                  WHEN session.status = 'completed' THEN context.lesson_id
+                END) AS completed_lessons,
+                MAX(CASE WHEN session.status = 'active' THEN 1 ELSE 0 END)
+                  AS has_active_session,
+                MAX(session.updated_at) AS last_activity_at
+         FROM session_course_contexts context
+         JOIN learning_sessions session ON session.id = context.session_id
+         GROUP BY context.course_id, context.revision_id
+       )
+       SELECT revision.course_id, revision.id AS revision_id,
+              COALESCE(lesson.total_lessons, 0) AS total_lessons,
+              COALESCE(session.completed_lessons, 0) AS completed_lessons,
+              COALESCE(session.has_active_session, 0) AS has_active_session,
+              session.last_activity_at
+       FROM course_revisions revision
+       LEFT JOIN lesson_totals lesson
+         ON lesson.course_id = revision.course_id
+        AND lesson.revision_id = revision.id
+       LEFT JOIN session_totals session
+         ON session.course_id = revision.course_id
+        AND session.revision_id = revision.id`,
+    )
+    .all() as unknown as RevisionLearningSummaryRow[];
+
+  return new Map(
+    rows.map((row) => {
+      const totalLessons = row.total_lessons;
+      const completedLessons = Math.min(row.completed_lessons, totalLessons);
+      const progressPercent =
+        totalLessons === 0
+          ? 0
+          : Math.min(
+              100,
+              Math.max(0, Math.round((completedLessons / totalLessons) * 100)),
+            );
+      const summary: RevisionLearningSummary = {
+        state:
+          totalLessons > 0 && completedLessons === totalLessons
+            ? "completed"
+            : row.has_active_session === 1
+              ? "in-progress"
+              : "not-started",
+        completedLessons,
+        totalLessons,
+        progressPercent,
+        lastActivityAt:
+          row.last_activity_at === null
+            ? null
+            : new Date(row.last_activity_at).toISOString(),
+      };
+      return [
+        courseRevisionKey(row.course_id, row.revision_id),
+        summary,
+      ] as const;
+    }),
+  );
+}
+
+function requireRevisionLearningSummary(
+  summaries: ReadonlyMap<string, RevisionLearningSummary>,
+  courseId: string,
+  revisionId: string,
+): RevisionLearningSummary {
+  const summary = summaries.get(courseRevisionKey(courseId, revisionId));
+  if (!summary) {
+    throw new Error(
+      `Missing learning summary for Course revision ${revisionId}`,
+    );
+  }
+  return summary;
+}
+
 async function readCourseCollection(state: VersionedLearningState) {
   const courses = await state.courseFoundationRepository.listCourses();
+  const summaries = readRevisionLearningSummaries(state);
   const states = new Map(
     (
       state.connection.sqlite
@@ -970,6 +1106,11 @@ async function readCourseCollection(state: VersionedLearningState) {
             status: revision.status,
             branchKind: revision.branchKind,
             contentHash: revision.contentHash,
+            learningSummary: requireRevisionLearningSummary(
+              summaries,
+              course.id,
+              revision.id,
+            ),
           })),
       };
     })
@@ -1112,6 +1253,7 @@ async function readKernelSkills(
 async function readKernelMistakes(
   state: VersionedLearningState,
   kernelRepository: LearningKernelRepository,
+  asOf: string,
 ) {
   const records = await readSelectedKernelProjections(state, kernelRepository);
   const target = await state.repository.getSelectedCourseTarget();
@@ -1136,15 +1278,18 @@ async function readKernelMistakes(
       right.latestOccurrenceAt.localeCompare(left.latestOccurrenceAt),
     )
     .map((mistake) => {
-      const reviewAt = reviews
+      const scheduledReview = reviews
         .filter(
           (review) =>
             review.knowledgeNodeId === mistake.knowledgeNodeId &&
             review.reasonCode === "mistake" &&
             review.state === "pending",
         )
-        .map((review) => review.dueAt)
-        .sort()[0];
+        .sort(
+          (left, right) =>
+            left.dueAt.localeCompare(right.dueAt) ||
+            left.id.localeCompare(right.id),
+        )[0];
       return {
         id: mistake.fingerprint,
         topic: readKnowledgeNode(
@@ -1154,7 +1299,10 @@ async function readKernelMistakes(
         ).title,
         errorFamily: mistake.errorFamily,
         occurrenceCount: mistake.occurrenceFactIds.length,
-        reviewAt: reviewAt ?? mistake.latestOccurrenceAt,
+        reviewAt: scheduledReview?.dueAt ?? mistake.latestOccurrenceAt,
+        isDue:
+          scheduledReview !== undefined &&
+          isLearningKernelReviewDue(scheduledReview, asOf),
       };
     });
 }
@@ -1162,6 +1310,7 @@ async function readKernelMistakes(
 async function readKernelReviews(
   state: VersionedLearningState,
   kernelRepository: LearningKernelRepository,
+  asOf: string,
 ) {
   const records = await readSelectedKernelProjections(state, kernelRepository);
   const target = await state.repository.getSelectedCourseTarget();
@@ -1207,6 +1356,7 @@ async function readKernelReviews(
           break;
         }
       }
+      const isDue = isLearningKernelReviewDue(review, asOf);
       return {
         id: review.id,
         topic: readKnowledgeNode(
@@ -1220,8 +1370,10 @@ async function readKernelReviews(
         reasonCode: review.reasonCode,
         dueAt: review.dueAt,
         state: review.state,
+        isDue,
         sessionId,
         activityId,
+        nextActionHref: null,
       };
     });
 }
@@ -1463,6 +1615,8 @@ async function readCompatibilityCourseTarget(
 
 async function readLearnerPath(
   state: VersionedLearningState,
+  kernelRepository: LearningKernelRepository,
+  observedAt: string,
   courseId: string,
   revisionId: string,
 ) {
@@ -1559,6 +1713,132 @@ async function readLearnerPath(
     revisionId,
   );
   const current = pinnedToCurrentSession ? currentDetail : null;
+  const currentKernel = current
+    ? requireCurrentPathKernelState(kernelRepository, current, observedAt)
+    : null;
+
+  const curriculum = {
+    id: sourceCourse.id,
+    slug: sourceCourse.slug,
+    title: sourceCourse.title,
+    description: sourceCourse.description,
+    version: {
+      id: graph.version.id,
+      revision: graph.version.revision,
+      contentHash: graph.version.contentHash,
+      status: graph.version.status,
+    },
+    weeks: graph.weeks.map((week) => ({
+      id: week.id,
+      stableId: week.stableId,
+      order: week.orderIndex + 1,
+      title: week.title,
+      description: week.description,
+      days: week.days.map((day) => {
+        const units = day.units.map((unit) =>
+          CurriculumUnitSchema.parse({
+            id: unit.id,
+            stableId: unit.stableId,
+            type: unit.type,
+            order: unit.orderIndex + 1,
+            title: unit.title,
+            description: unit.description ?? unit.title,
+            estimatedMinutes: unit.estimatedMinutes ?? 0,
+            objectives: unit.objectives,
+            checklist: unit.checklist,
+            sources: unit.sources,
+            questions: unit.questions,
+            misconceptions: unit.misconceptions,
+            referenceAnswer: unit.referenceAnswer,
+            completionCriteria: unit.completionCriteria,
+            unlockRules: unit.unlockRules,
+            optional: unit.optional,
+            depthLevel: unit.depthLevel ?? "foundation",
+            payload: unit.payload,
+          }),
+        );
+        const session = latestSessions.get(day.stableId);
+        const currentDay =
+          current !== null && current.snapshot.day.id === day.id;
+        const prerequisitesCompleted = CourseEntityIdSchema.array()
+          .parse(day.prerequisites)
+          .every((stableId) => completedDayStableIds.has(stableId));
+        const dayStatus: LessonProgressionStatus = completedDayStableIds.has(
+          day.stableId,
+        )
+          ? "completed"
+          : currentDay
+            ? "in_progress"
+            : prerequisitesCompleted
+              ? "available"
+              : "locked";
+        const kernelProgress =
+          currentDay && currentKernel
+            ? new Map(
+                currentKernel.projection.progress.map((item) => [
+                  item.unitId,
+                  item.status,
+                ]),
+              )
+            : null;
+        const initial = new Map(
+          createUnitProgression(toDefinitions(units)).map((item) => [
+            item.unitId,
+            item.status,
+          ]),
+        );
+        return {
+          id: day.id,
+          stableId: day.stableId,
+          order: day.orderIndex + 1,
+          title: day.title,
+          description: day.description ?? day.title,
+          goal: day.goal,
+          estimatedMinutes: day.estimatedMinutes,
+          prerequisites: day.prerequisites,
+          expectedOutcomes: day.expectedOutcomes,
+          depthLevel: day.depthLevel,
+          outOfScope: day.outOfScope,
+          topics: day.topics,
+          status: dayStatus,
+          sessionId: currentDay && current ? current.session.id : null,
+          units: units.map((unit) => ({
+            ...toLearnerUnit(unit),
+            status:
+              session?.status === "completed"
+                ? unit.optional
+                  ? "skipped"
+                  : "completed"
+                : (kernelProgress?.get(unit.id) ??
+                  initial.get(unit.id) ??
+                  "locked"),
+          })),
+        };
+      }),
+    })),
+  };
+  const lessonAction = selectLessonNextAction(
+    curriculum.weeks.flatMap((week) =>
+      week.days.map((day) => ({
+        lessonId: day.id,
+        status: day.status,
+        sessionId: day.sessionId,
+      })),
+    ),
+  );
+  let nextAction: LearningPathNextAction = null;
+  if (lessonAction?.type === "start") {
+    nextAction = lessonAction;
+  } else if (
+    lessonAction?.type === "resume" &&
+    currentKernel !== null &&
+    currentKernel.currentStep !== null
+  ) {
+    nextAction = {
+      ...lessonAction,
+      currentStep: currentKernel.currentStep,
+    };
+  }
 
   return {
     courseContext: {
@@ -1567,110 +1847,65 @@ async function readLearnerPath(
       selected:
         selected?.courseId === courseId && selected.revisionId === revisionId,
     },
-    curriculum: {
-      id: sourceCourse.id,
-      slug: sourceCourse.slug,
-      title: sourceCourse.title,
-      description: sourceCourse.description,
-      version: {
-        id: graph.version.id,
-        revision: graph.version.revision,
-        contentHash: graph.version.contentHash,
-        status: graph.version.status,
-      },
-      weeks: graph.weeks.map((week) => ({
-        id: week.id,
-        stableId: week.stableId,
-        order: week.orderIndex + 1,
-        title: week.title,
-        description: week.description,
-        days: week.days.map((day) => {
-          const units = day.units.map((unit) =>
-            CurriculumUnitSchema.parse({
-              id: unit.id,
-              stableId: unit.stableId,
-              type: unit.type,
-              order: unit.orderIndex + 1,
-              title: unit.title,
-              description: unit.description ?? unit.title,
-              estimatedMinutes: unit.estimatedMinutes ?? 0,
-              objectives: unit.objectives,
-              checklist: unit.checklist,
-              sources: unit.sources,
-              questions: unit.questions,
-              misconceptions: unit.misconceptions,
-              referenceAnswer: unit.referenceAnswer,
-              completionCriteria: unit.completionCriteria,
-              unlockRules: unit.unlockRules,
-              optional: unit.optional,
-              depthLevel: unit.depthLevel ?? "foundation",
-              payload: unit.payload,
-            }),
-          );
-          const session = latestSessions.get(day.stableId);
-          const currentDay =
-            current !== null && current.snapshot.day.id === day.id;
-          const prerequisitesCompleted = CourseEntityIdSchema.array()
-            .parse(day.prerequisites)
-            .every((stableId) => completedDayStableIds.has(stableId));
-          const dayStatus = completedDayStableIds.has(day.stableId)
-            ? "completed"
-            : currentDay
-              ? "in_progress"
-              : prerequisitesCompleted
-                ? "available"
-                : "locked";
-          const sessionProgress =
-            currentDay && current
-              ? new Map(
-                  current.unitProgress.flatMap((item) => {
-                    const snapshotUnit = current.snapshot.units.find(
-                      (unit) => unit.id === item.unitId,
-                    );
-                    return snapshotUnit ? [[snapshotUnit.stableId, item]] : [];
-                  }),
-                )
-              : null;
-          const initial = new Map(
-            createUnitProgression(toDefinitions(units)).map((item) => [
-              item.unitId,
-              item.status,
-            ]),
-          );
-          return {
-            id: day.id,
-            stableId: day.stableId,
-            order: day.orderIndex + 1,
-            title: day.title,
-            description: day.description ?? day.title,
-            goal: day.goal,
-            estimatedMinutes: day.estimatedMinutes,
-            prerequisites: day.prerequisites,
-            expectedOutcomes: day.expectedOutcomes,
-            depthLevel: day.depthLevel,
-            outOfScope: day.outOfScope,
-            topics: day.topics,
-            status: dayStatus,
-            sessionId:
-              currentDay && current
-                ? current.session.id
-                : (session?.id ?? null),
-            units: units.map((unit) => ({
-              ...toLearnerUnit(unit),
-              status:
-                session?.status === "completed"
-                  ? unit.optional
-                    ? "skipped"
-                    : "completed"
-                  : (sessionProgress?.get(unit.stableId)?.status ??
-                    initial.get(unit.id) ??
-                    "locked"),
-            })),
-          };
-        }),
-      })),
-    },
+    curriculum,
+    nextAction: LearningPathNextActionSchema.parse(nextAction),
   };
+}
+
+function requireCurrentPathKernelState(
+  kernelRepository: LearningKernelRepository,
+  detail: VersionedSessionDetail,
+  observedAt: string,
+): {
+  projection: LearningKernelProjection;
+  currentStep: string | null;
+} {
+  if (detail.session.status !== "active") {
+    throw new Error("Current Course path session is not active");
+  }
+  const scope = kernelRepository.resolveSessionScope(detail.session.id);
+  const projection = kernelRepository.reproject(scope, observedAt);
+  const snapshotById = new Map(
+    detail.snapshot.units.map((unit) => [unit.id, unit]),
+  );
+  const persistedStep = detail.snapshot.units.find(
+    (unit) => unit.stableId === detail.session.currentStep,
+  );
+  if (!persistedStep) {
+    throw new Error("Current Course path step is outside its session snapshot");
+  }
+  const kernelProgressIds = new Set(
+    projection.progress.map((item) => item.unitId),
+  );
+  if (
+    projection.progress.length !== snapshotById.size ||
+    kernelProgressIds.size !== snapshotById.size ||
+    projection.progress.some((item) => !snapshotById.has(item.unitId))
+  ) {
+    throw new Error(
+      "Learning Kernel progress does not match the session snapshot",
+    );
+  }
+  if (projection.nextAction?.type !== "activity") {
+    return { projection, currentStep: null };
+  }
+  const kernelStep = snapshotById.get(projection.nextAction.activityId);
+  if (!kernelStep || kernelStep.stableId !== detail.session.currentStep) {
+    throw new Error(
+      "Persisted current step conflicts with the Learning Kernel next action",
+    );
+  }
+  const kernelProgress = projection.progress.find(
+    (item) => item.unitId === kernelStep.id,
+  );
+  const expectedStatus =
+    projection.nextAction.reasonCode === "resume" ? "in_progress" : "ready";
+  if (kernelProgress?.status !== expectedStatus) {
+    throw new Error(
+      "Learning Kernel next action has an invalid progress state",
+    );
+  }
+  return { projection, currentStep: kernelStep.stableId };
 }
 
 async function requireVerifiedSessionDetail(
@@ -3401,9 +3636,9 @@ function resolveLegacyKernelActivity(
   if (!row) throw new Error("Session activity has no Course activity mapping");
   return {
     id: row.id,
-    knowledgeNodeIds: z
-      .array(operationIdSchema)
-      .parse(JSON.parse(row.knowledge_node_ids_json)),
+    knowledgeNodeIds: LearningKnowledgeNodeIdSchema.array().parse(
+      JSON.parse(row.knowledge_node_ids_json),
+    ),
   };
 }
 

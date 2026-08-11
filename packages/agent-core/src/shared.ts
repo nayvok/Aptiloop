@@ -1,2 +1,2 @@
-export * from "@dlh/shared";
+export * from "@aptiloop/shared";
 export * from "./provider.js";

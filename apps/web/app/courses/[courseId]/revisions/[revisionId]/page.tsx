@@ -10,6 +10,7 @@ export default async function CourseRevisionPage({
   const apiRevisionId = encodeURIComponent(decodeURIComponent(revisionId));
   return (
     <HomeClient
+      surface="revision"
       pathEndpoint={`/learning/courses/${apiCourseId}/revisions/${apiRevisionId}/path`}
       selectionTarget={{
         courseId: decodeURIComponent(courseId),

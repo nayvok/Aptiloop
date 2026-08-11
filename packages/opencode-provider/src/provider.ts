@@ -13,7 +13,7 @@ import {
   type CreateAgentSessionInput,
   type ProviderStatus,
   type StreamAgentMessageInput,
-} from "@dlh/agent-core/shared";
+} from "@aptiloop/agent-core/shared";
 
 import {
   OpenCodeConfigurationError,
@@ -461,7 +461,7 @@ export class OpenCodeAgentProvider implements AgentProvider {
         this.#requireTransport().createSession(
           {
             directory: this.#directory,
-            title: `Dev Learning Harness · ${input.role}`,
+            title: `Aptiloop · ${input.role}`,
             ...(input.role === "reviewer"
               ? { permission: REVIEWER_PERMISSION }
               : {}),

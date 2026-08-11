@@ -1072,9 +1072,8 @@ function selectNextAction(
       reasonCode: "resume",
     };
   }
-  const dueReview = reviewItems.find(
-    (item) =>
-      item.state === "pending" && Date.parse(item.dueAt) <= observedTimestamp,
+  const dueReview = reviewItems.find((item) =>
+    isLearningKernelReviewDueAt(item, observedTimestamp),
   );
   if (dueReview) {
     return {
@@ -1093,6 +1092,27 @@ function selectNextAction(
   return ready
     ? { type: "activity", activityId: ready.unitId, reasonCode: "ready" }
     : null;
+}
+
+/** Resolves due state against the explicit server-observed clock. */
+export function isLearningKernelReviewDue(
+  review: LearningKernelReviewItem,
+  observedAt: string,
+): boolean {
+  return isLearningKernelReviewDueAt(
+    review,
+    Date.parse(parseIsoInstant(observedAt)),
+  );
+}
+
+function isLearningKernelReviewDueAt(
+  review: LearningKernelReviewItem,
+  observedTimestamp: number,
+): boolean {
+  return (
+    review.state === "pending" &&
+    Date.parse(parseIsoInstant(review.dueAt)) <= observedTimestamp
+  );
 }
 
 function projectSummary(

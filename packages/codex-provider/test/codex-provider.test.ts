@@ -1,4 +1,4 @@
-import type { AgentEvent } from "@dlh/shared";
+import type { AgentEvent } from "@aptiloop/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import { CodexProvider } from "../src/codex-provider.js";

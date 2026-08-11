@@ -8,6 +8,18 @@ describe("browser agent event parser", () => {
   it.each([
     { type: "message.delta", turnId, content: "часть" },
     { type: "message.completed", turnId, content: "полный ответ" },
+    {
+      type: "tool.summary",
+      turnId,
+      name: "lesson.readLearnerSafeContext",
+      status: "started",
+    },
+    {
+      type: "tool.summary",
+      turnId,
+      name: "lesson.readLearnerSafeContext",
+      status: "completed",
+    },
     { type: "error", turnId, message: "safe error" },
     { type: "session.completed", turnId, reason: "completed" },
     { type: "session.completed", turnId, reason: "failed" },
@@ -19,6 +31,19 @@ describe("browser agent event parser", () => {
   it.each([
     "not-json",
     JSON.stringify({ type: "tool.started", turnId, name: "shell" }),
+    JSON.stringify({
+      type: "tool.summary",
+      turnId,
+      name: "shell",
+      status: "started",
+    }),
+    JSON.stringify({
+      type: "tool.summary",
+      turnId,
+      name: "lesson.readLearnerSafeContext",
+      status: "completed",
+      output: "private provider payload",
+    }),
     JSON.stringify({ type: "message.delta", turnId, content: 42 }),
     JSON.stringify({ type: "message.completed", content: "missing turn" }),
     JSON.stringify({

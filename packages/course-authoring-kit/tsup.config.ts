@@ -7,7 +7,8 @@ export default defineConfig({
   target: "node24",
   removeNodeProtocol: false,
   sourcemap: true,
+  clean: true,
   dts: true,
   outDir: "dist",
-  noExternal: [/^@dlh\//u],
+  noExternal: [/^@aptiloop\//u],
 });

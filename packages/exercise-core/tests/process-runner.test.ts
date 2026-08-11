@@ -6,7 +6,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { AllowedProcessRunner } from "../src/process-runner.js";
 
-const cwd = await mkdtemp(path.join(tmpdir(), "dlh-process-runner-"));
+const cwd = await mkdtemp(path.join(tmpdir(), "aptiloop-process-runner-"));
 
 afterAll(async () => await rm(cwd, { recursive: true, force: true }));
 afterEach(() => {
@@ -22,7 +22,7 @@ describe("AllowedProcessRunner", () => {
           executable: process.execPath,
           args: [
             "-e",
-            "process.stdout.write(JSON.stringify({ path: Boolean(process.env.PATH), token: process.env.OPENAI_API_KEY, password: process.env.DLH_TEST_PASSWORD, auth: process.env.PROVIDER_AUTH }))",
+            "process.stdout.write(JSON.stringify({ path: Boolean(process.env.PATH), token: process.env.OPENAI_API_KEY, password: process.env.APTILOOP_TEST_PASSWORD, auth: process.env.PROVIDER_AUTH }))",
           ],
         },
       },
@@ -31,7 +31,7 @@ describe("AllowedProcessRunner", () => {
           PATH: process.env.PATH,
           SystemRoot: process.env.SystemRoot,
           OPENAI_API_KEY: "provider-secret",
-          DLH_TEST_PASSWORD: "password-secret",
+          APTILOOP_TEST_PASSWORD: "password-secret",
           PROVIDER_AUTH: "auth-secret",
         },
       },

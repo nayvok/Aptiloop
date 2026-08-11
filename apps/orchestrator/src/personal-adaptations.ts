@@ -5,7 +5,7 @@ import {
   synchronizeDraftCourseProjectionWithinTransaction,
   type CurriculumVersionGraph,
   type DatabaseConnection,
-} from "@dlh/database";
+} from "@aptiloop/database";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 
@@ -89,6 +89,109 @@ function versionDto(row: VersionMetadataRow) {
     archivedAt: row.archived_at,
     updatedAt: row.updated_at,
   };
+}
+
+function inheritCoursePackActivityMetadata(
+  connection: DatabaseConnection,
+  sourceRevisionId: string | null,
+  targetRevisionId: string,
+): void {
+  if (sourceRevisionId === null) return;
+  const manifest = connection.sqlite
+    .prepare("SELECT 1 FROM course_pack_manifests WHERE revision_id = ?")
+    .get(sourceRevisionId);
+  if (!manifest) return;
+  const sourceRows = connection.sqlite
+    .prepare(
+      `SELECT stable_id, capability_ids_json, knowledge_node_ids_json,
+              protected_material_json
+       FROM course_activities WHERE revision_id = ?`,
+    )
+    .all(sourceRevisionId) as Array<{
+    stable_id: string;
+    capability_ids_json: string;
+    knowledge_node_ids_json: string;
+    protected_material_json: string;
+  }>;
+  const targetRows = connection.sqlite
+    .prepare(
+      `SELECT id, stable_id, protected_material_json
+       FROM course_activities WHERE revision_id = ?`,
+    )
+    .all(targetRevisionId) as Array<{
+    id: string;
+    stable_id: string;
+    protected_material_json: string;
+  }>;
+  if (sourceRows.length !== targetRows.length) {
+    throw new Error("Imported Course Pack draft metadata is incomplete");
+  }
+  const sourceByStableId = new Map(
+    sourceRows.map((row) => [row.stable_id, row]),
+  );
+  const update = connection.sqlite.prepare(
+    `UPDATE course_activities
+     SET capability_ids_json = ?, knowledge_node_ids_json = ?,
+         protected_material_json = ?
+     WHERE id = ? AND revision_id = ?`,
+  );
+  for (const target of targetRows) {
+    const source = sourceByStableId.get(target.stable_id);
+    if (!source) {
+      throw new Error("Imported Course Pack draft metadata is incomplete");
+    }
+    const sourceProtected = JSON.parse(
+      source.protected_material_json,
+    ) as Record<string, unknown>;
+    const targetProtected = JSON.parse(
+      target.protected_material_json,
+    ) as Record<string, unknown>;
+    const sourceQuestions = new Map(
+      (Array.isArray(sourceProtected.questions)
+        ? sourceProtected.questions
+        : []
+      ).flatMap((question) =>
+        question &&
+        typeof question === "object" &&
+        "id" in question &&
+        typeof question.id === "string"
+          ? [[question.id, question as Record<string, unknown>] as const]
+          : [],
+      ),
+    );
+    const targetQuestions = Array.isArray(targetProtected.questions)
+      ? targetProtected.questions
+      : [];
+    const protectedMaterial = {
+      ...sourceProtected,
+      ...targetProtected,
+      questions: targetQuestions.map((question) => {
+        if (
+          !question ||
+          typeof question !== "object" ||
+          !("id" in question) ||
+          typeof question.id !== "string"
+        ) {
+          return question;
+        }
+        return {
+          ...(sourceQuestions.get(question.id) ?? {}),
+          ...question,
+        };
+      }),
+    };
+    if (
+      update.run(
+        source.capability_ids_json,
+        source.knowledge_node_ids_json,
+        JSON.stringify(protectedMaterial),
+        target.id,
+        targetRevisionId,
+      ).changes !== 1
+    ) {
+      throw new Error("Imported Course Pack draft metadata is incomplete");
+    }
+  }
 }
 
 function branchDto(row: AdaptationBranchRow) {
@@ -375,10 +478,20 @@ function changedKeys(
 
 async function comparison(connection: DatabaseConnection, courseId: string) {
   const versions = courseVersions(connection, courseId);
-  const upstream = versions.find(
-    (version) =>
-      version.branch_kind === "upstream" && version.status === "published",
-  );
+  const branch = activeBranch(connection, courseId);
+  const upstream =
+    versions.find(
+      (version) =>
+        version.branch_kind === "upstream" && version.status === "published",
+    ) ??
+    (branch
+      ? versions.find(
+          (version) =>
+            version.id === branch.base_revision_id &&
+            version.branch_kind === "upstream" &&
+            version.status === "archived",
+        )
+      : undefined);
   if (!upstream) {
     throw new AdaptationError(
       404,
@@ -386,7 +499,6 @@ async function comparison(connection: DatabaseConnection, courseId: string) {
       "Published upstream revision was not found",
     );
   }
-  const branch = activeBranch(connection, courseId);
   if (!branch) {
     return {
       status: "current" as const,
@@ -468,6 +580,11 @@ export async function publishPersonalAdaptation(
   try {
     const graph = await repository.getVersionGraph(versionId);
     synchronizeDraftCourseProjectionWithinTransaction(connection, graph);
+    inheritCoursePackActivityMetadata(
+      connection,
+      metadata.parent_version_id,
+      versionId,
+    );
     const contentHash = hashCanonicalJson(publicationContent(graph));
     const now = Date.now();
     connection.sqlite

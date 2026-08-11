@@ -2,8 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   resolveExplicitUnitDefinitions,
   validateActivityGraph,
-} from "@dlh/learning-core";
-import { CourseEntityIdSchema, UnitUnlockRuleSchema } from "@dlh/shared";
+} from "@aptiloop/learning-core";
+import {
+  CourseEntityIdSchema,
+  CourseLocaleSchema,
+  UnitUnlockRuleSchema,
+  type CourseLocale,
+} from "@aptiloop/shared";
 
 import { withTransaction, type DatabaseConnection } from "./database.js";
 import type {
@@ -18,7 +23,61 @@ export interface CurriculumAuthoringRepositoryOptions {
   id?: () => string;
 }
 
+export class CourseIdentityConflictError extends Error {
+  constructor(readonly conflict: "id" | "slug") {
+    super(`Course ${conflict} already belongs to an existing Course`);
+    this.name = "CourseIdentityConflictError";
+  }
+}
+
+type AddWeekInput = {
+  versionId: string;
+  stableId: string;
+  title: string;
+  description?: string | null;
+  orderIndex?: number;
+};
+
+type AddDayInput = {
+  versionId: string;
+  weekId: string;
+  stableId: string;
+  title: string;
+  description?: string | null;
+  goal: string;
+  estimatedMinutes: number;
+  prerequisites?: unknown[];
+  expectedOutcomes?: unknown[];
+  depthLevel: string;
+  outOfScope?: unknown[];
+  topics?: unknown[];
+  orderIndex?: number;
+};
+
+type AddUnitInput = {
+  versionId: string;
+  dayId: string;
+  stableId: string;
+  type: string;
+  title: string;
+  description?: string | null;
+  estimatedMinutes?: number | null;
+  objectives?: unknown[];
+  checklist?: unknown[];
+  sources?: unknown[];
+  questions?: unknown[];
+  misconceptions?: unknown[];
+  referenceAnswer?: unknown;
+  completionCriteria: unknown[];
+  unlockRules?: unknown[];
+  optional?: boolean;
+  depthLevel?: string | null;
+  payload?: Record<string, unknown>;
+  orderIndex?: number;
+};
+
 export interface CurriculumVersionGraph {
+  primaryLocale: CourseLocale;
   version: CurriculumVersion;
   weeks: Array<
     CurriculumWeek & {
@@ -264,6 +323,26 @@ function loadVersionGraph(
     .prepare("SELECT * FROM curriculum_versions WHERE id = ?")
     .get(versionId) as VersionRow | undefined;
   if (!versionRow) throw new Error(`Unknown curriculum version: ${versionId}`);
+  const hasCoursesTable =
+    connection.sqlite
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'courses'",
+      )
+      .get() !== undefined;
+  const primaryLocale = hasCoursesTable
+    ? (() => {
+        const courseRow = connection.sqlite
+          .prepare("SELECT primary_locale FROM courses WHERE id = ?")
+          .get(versionRow.curriculum_id) as
+          { primary_locale: CourseLocale } | undefined;
+        if (!courseRow) {
+          throw new Error(
+            `Unknown Course for curriculum version: ${versionId}`,
+          );
+        }
+        return CourseLocaleSchema.parse(courseRow.primary_locale);
+      })()
+    : CourseLocaleSchema.parse("und");
   const weekRows = connection.sqlite
     .prepare(
       "SELECT * FROM curriculum_weeks WHERE version_id = ? ORDER BY order_index, id",
@@ -280,6 +359,7 @@ function loadVersionGraph(
     )
     .all(versionId) as UnitRow[];
   return {
+    primaryLocale,
     version: mapVersion(versionRow),
     weeks: weekRows.map((weekRow) => ({
       ...mapWeek(weekRow),
@@ -433,6 +513,7 @@ function resolveGraphPrerequisites(
 export function publicationContent(graph: CurriculumVersionGraph): unknown {
   return {
     curriculumId: graph.version.curriculumId,
+    primaryLocale: graph.primaryLocale,
     revision: graph.version.revision,
     title: graph.version.title,
     description: graph.version.description,
@@ -455,6 +536,24 @@ function hasCourseProjectionSchema(connection: DatabaseConnection): boolean {
         "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'course_revisions'",
       )
       .get() !== undefined
+  );
+}
+
+function isCoursePackManifestRevision(
+  connection: DatabaseConnection,
+  versionId: string,
+): boolean {
+  const hasManifestStorage =
+    connection.sqlite
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'course_pack_manifests'",
+      )
+      .get() !== undefined;
+  if (!hasManifestStorage) return false;
+  return (
+    connection.sqlite
+      .prepare("SELECT 1 FROM course_pack_manifests WHERE revision_id = ?")
+      .get(versionId) !== undefined
   );
 }
 
@@ -647,6 +746,9 @@ export function publishDraftCurriculumVersionWithinTransaction(
   if (graph.version.status !== "draft") {
     throw new Error("Only a draft curriculum version can be published");
   }
+  if (isCoursePackManifestRevision(connection, input.versionId)) {
+    throw new Error("Imported Course Pack manifest revision is immutable");
+  }
   const hasPersonalAdaptationColumns = Boolean(
     connection.sqlite
       .prepare(
@@ -753,21 +855,55 @@ export class CurriculumAuthoringRepository {
       slug: string;
       title: string;
       description?: string | null;
+      primaryLocale: CourseLocale;
     };
     title: string;
     description?: string | null;
-    parentVersionId?: string | null;
   }): Promise<CurriculumVersion> {
+    const primaryLocale = CourseLocaleSchema.parse(
+      input.curriculum.primaryLocale,
+    );
     const versionId = this.#id();
     withTransaction(this.#connection, () => {
       const now = this.#now();
+      const collision = this.#connection.sqlite
+        .prepare(
+          `SELECT CASE
+             WHEN EXISTS (
+               SELECT 1 FROM courses WHERE id = ? OR slug = ? OR stable_id = ?
+             ) OR EXISTS (
+               SELECT 1 FROM curricula WHERE id = ? OR slug = ?
+             )
+               THEN 'id'
+             WHEN EXISTS (
+               SELECT 1 FROM courses WHERE id = ? OR slug = ? OR stable_id = ?
+             ) OR EXISTS (
+               SELECT 1 FROM curricula WHERE id = ? OR slug = ?
+             )
+               THEN 'slug'
+             ELSE NULL
+           END AS conflict`,
+        )
+        .get(
+          input.curriculum.id,
+          input.curriculum.id,
+          input.curriculum.id,
+          input.curriculum.id,
+          input.curriculum.id,
+          input.curriculum.slug,
+          input.curriculum.slug,
+          input.curriculum.slug,
+          input.curriculum.slug,
+          input.curriculum.slug,
+        ) as { conflict: "id" | "slug" | null };
+      if (collision.conflict) {
+        throw new CourseIdentityConflictError(collision.conflict);
+      }
       this.#connection.sqlite
         .prepare(
           `INSERT INTO curricula
            (id, slug, title, description, active_version_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, NULL, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET title = excluded.title,
-             description = excluded.description, updated_at = excluded.updated_at`,
+           VALUES (?, ?, ?, ?, NULL, ?, ?)`,
         )
         .run(
           input.curriculum.id,
@@ -777,39 +913,26 @@ export class CurriculumAuthoringRepository {
           now,
           now,
         );
-      const latest = this.#connection.sqlite
-        .prepare(
-          "SELECT COALESCE(MAX(revision), 0) AS revision FROM curriculum_versions WHERE curriculum_id = ?",
-        )
-        .get(input.curriculum.id) as { revision: number };
       this.#connection.sqlite
-        .prepare(
-          `INSERT INTO curriculum_versions
-           (id, curriculum_id, revision, parent_version_id, status, title, description,
-            content_hash, created_at, published_at, archived_at, updated_at)
-           VALUES (?, ?, ?, ?, 'draft', ?, ?, NULL, ?, NULL, NULL, ?)`,
-        )
-        .run(
-          versionId,
-          input.curriculum.id,
-          latest.revision + 1,
-          input.parentVersionId ?? null,
-          input.title,
-          input.description ?? null,
-          now,
-          now,
-        );
+        .prepare("UPDATE courses SET primary_locale = ? WHERE id = ?")
+        .run(primaryLocale, input.curriculum.id);
+      this.#insertDraftVersion({
+        versionId,
+        curriculumId: input.curriculum.id,
+        title: input.title,
+        description: input.description ?? null,
+        parentVersionId: null,
+        now,
+      });
     });
     return this.#getVersion(versionId);
   }
 
-  async addWeek(input: {
-    versionId: string;
-    stableId: string;
-    title: string;
-    description?: string | null;
-    orderIndex?: number;
-  }): Promise<CurriculumWeek> {
+  async addWeek(input: AddWeekInput): Promise<CurriculumWeek> {
+    return this.#addWeek(input);
+  }
+
+  #addWeek(input: AddWeekInput): CurriculumWeek {
     this.#assertDraft(input.versionId);
     const id = this.#id();
     const now = this.#now();
@@ -876,21 +999,11 @@ export class CurriculumAuthoringRepository {
     );
   }
 
-  async addDay(input: {
-    versionId: string;
-    weekId: string;
-    stableId: string;
-    title: string;
-    description?: string | null;
-    goal: string;
-    estimatedMinutes: number;
-    prerequisites?: unknown[];
-    expectedOutcomes?: unknown[];
-    depthLevel: string;
-    outOfScope?: unknown[];
-    topics?: unknown[];
-    orderIndex?: number;
-  }): Promise<CurriculumDayV2> {
+  async addDay(input: AddDayInput): Promise<CurriculumDayV2> {
+    return this.#addDay(input);
+  }
+
+  #addDay(input: AddDayInput): CurriculumDayV2 {
     this.#assertDraft(input.versionId);
     const week = this.#connection.sqlite
       .prepare("SELECT version_id FROM curriculum_weeks WHERE id = ?")
@@ -997,27 +1110,11 @@ export class CurriculumAuthoringRepository {
     );
   }
 
-  async addUnit(input: {
-    versionId: string;
-    dayId: string;
-    stableId: string;
-    type: string;
-    title: string;
-    description?: string | null;
-    estimatedMinutes?: number | null;
-    objectives?: unknown[];
-    checklist?: unknown[];
-    sources?: unknown[];
-    questions?: unknown[];
-    misconceptions?: unknown[];
-    referenceAnswer?: unknown;
-    completionCriteria: unknown[];
-    unlockRules?: unknown[];
-    optional?: boolean;
-    depthLevel?: string | null;
-    payload?: Record<string, unknown>;
-    orderIndex?: number;
-  }): Promise<CurriculumUnit> {
+  async addUnit(input: AddUnitInput): Promise<CurriculumUnit> {
+    return this.#addUnit(input);
+  }
+
+  #addUnit(input: AddUnitInput): CurriculumUnit {
     this.#assertDraft(input.versionId);
     if (!unitTypes.has(input.type))
       throw new Error(`Unknown unit type: ${input.type}`);
@@ -1252,73 +1349,102 @@ export class CurriculumAuthoringRepository {
     sourceVersionId: string,
     input: { title?: string; description?: string | null } = {},
   ): Promise<CurriculumVersion> {
-    const graph = await this.getVersionGraph(sourceVersionId);
-    const curriculum = this.#connection.sqlite
-      .prepare(
-        "SELECT id, slug, title, description FROM curricula WHERE id = ?",
-      )
-      .get(graph.version.curriculumId) as {
-      id: string;
-      slug: string;
-      title: string;
-      description: string | null;
-    };
-    const draft = await this.createDraft({
-      curriculum,
-      title: input.title ?? graph.version.title,
-      description: input.description ?? graph.version.description,
-      parentVersionId: sourceVersionId,
-    });
-    for (const week of graph.weeks) {
-      const newWeek = await this.addWeek({
-        versionId: draft.id,
-        stableId: week.stableId,
-        title: week.title,
-        description: week.description,
-        orderIndex: week.orderIndex,
+    return withTransaction(this.#connection, () => {
+      const graph = loadVersionGraph(this.#connection, sourceVersionId);
+      const versionId = this.#id();
+      const now = this.#now();
+      this.#insertDraftVersion({
+        versionId,
+        curriculumId: graph.version.curriculumId,
+        title: input.title ?? graph.version.title,
+        description: input.description ?? graph.version.description,
+        parentVersionId: sourceVersionId,
+        now,
       });
-      for (const day of week.days) {
-        const newDay = await this.addDay({
+      const draft = this.#getVersion(versionId);
+      for (const week of graph.weeks) {
+        const newWeek = this.#addWeek({
           versionId: draft.id,
-          weekId: newWeek.id,
-          stableId: day.stableId,
-          title: day.title,
-          description: day.description,
-          goal: day.goal,
-          estimatedMinutes: day.estimatedMinutes,
-          prerequisites: day.prerequisites,
-          expectedOutcomes: day.expectedOutcomes,
-          depthLevel: day.depthLevel,
-          outOfScope: day.outOfScope,
-          topics: day.topics,
-          orderIndex: day.orderIndex,
+          stableId: week.stableId,
+          title: week.title,
+          description: week.description,
+          orderIndex: week.orderIndex,
         });
-        for (const unit of day.units) {
-          await this.addUnit({
+        for (const day of week.days) {
+          const newDay = this.#addDay({
             versionId: draft.id,
-            dayId: newDay.id,
-            stableId: unit.stableId,
-            type: unit.type,
-            title: unit.title,
-            description: unit.description,
-            estimatedMinutes: unit.estimatedMinutes,
-            objectives: unit.objectives,
-            checklist: unit.checklist,
-            sources: unit.sources,
-            questions: unit.questions,
-            misconceptions: unit.misconceptions,
-            referenceAnswer: unit.referenceAnswer,
-            completionCriteria: unit.completionCriteria,
-            unlockRules: unit.unlockRules,
-            optional: unit.optional,
-            depthLevel: unit.depthLevel,
-            payload: unit.payload,
-            orderIndex: unit.orderIndex,
+            weekId: newWeek.id,
+            stableId: day.stableId,
+            title: day.title,
+            description: day.description,
+            goal: day.goal,
+            estimatedMinutes: day.estimatedMinutes,
+            prerequisites: day.prerequisites,
+            expectedOutcomes: day.expectedOutcomes,
+            depthLevel: day.depthLevel,
+            outOfScope: day.outOfScope,
+            topics: day.topics,
+            orderIndex: day.orderIndex,
           });
+          for (const unit of day.units) {
+            this.#addUnit({
+              versionId: draft.id,
+              dayId: newDay.id,
+              stableId: unit.stableId,
+              type: unit.type,
+              title: unit.title,
+              description: unit.description,
+              estimatedMinutes: unit.estimatedMinutes,
+              objectives: unit.objectives,
+              checklist: unit.checklist,
+              sources: unit.sources,
+              questions: unit.questions,
+              misconceptions: unit.misconceptions,
+              referenceAnswer: unit.referenceAnswer,
+              completionCriteria: unit.completionCriteria,
+              unlockRules: unit.unlockRules,
+              optional: unit.optional,
+              depthLevel: unit.depthLevel,
+              payload: unit.payload,
+              orderIndex: unit.orderIndex,
+            });
+          }
         }
       }
-    }
-    return draft;
+      return draft;
+    });
+  }
+
+  #insertDraftVersion(input: {
+    versionId: string;
+    curriculumId: string;
+    title: string;
+    description: string | null;
+    parentVersionId: string | null;
+    now: number;
+  }): void {
+    const latest = this.#connection.sqlite
+      .prepare(
+        "SELECT COALESCE(MAX(revision), 0) AS revision FROM curriculum_versions WHERE curriculum_id = ?",
+      )
+      .get(input.curriculumId) as { revision: number };
+    this.#connection.sqlite
+      .prepare(
+        `INSERT INTO curriculum_versions
+         (id, curriculum_id, revision, parent_version_id, status, title, description,
+          content_hash, created_at, published_at, archived_at, updated_at)
+         VALUES (?, ?, ?, ?, 'draft', ?, ?, NULL, ?, NULL, NULL, ?)`,
+      )
+      .run(
+        input.versionId,
+        input.curriculumId,
+        latest.revision + 1,
+        input.parentVersionId,
+        input.title,
+        input.description,
+        input.now,
+        input.now,
+      );
   }
 
   #assertDraft(versionId: string): void {
@@ -1328,6 +1454,9 @@ export class CurriculumAuthoringRepository {
     if (!version) throw new Error(`Unknown curriculum version: ${versionId}`);
     if (version.status !== "draft") {
       throw new Error("Published curriculum version is immutable");
+    }
+    if (isCoursePackManifestRevision(this.#connection, versionId)) {
+      throw new Error("Imported Course Pack manifest revision is immutable");
     }
   }
 

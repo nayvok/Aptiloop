@@ -18,7 +18,7 @@ RUN npm ci --no-audit --no-fund
 
 FROM dependencies AS builder
 COPY . .
-RUN npm run build --workspace=@dlh/orchestrator
+RUN npm run build --workspace=@aptiloop/orchestrator
 
 FROM node:24.15.0-bookworm-slim AS runner
 ENV NODE_ENV=production

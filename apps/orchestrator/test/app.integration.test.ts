@@ -80,7 +80,7 @@ afterEach(async () => {
 });
 
 function runtime(options: Parameters<typeof createApp>[0] = {}) {
-  const root = mkdtempSync(path.join(tmpdir(), "dlh-orchestrator-"));
+  const root = mkdtempSync(path.join(tmpdir(), "aptiloop-orchestrator-"));
   roots.push(root);
   const created = createApp({
     projectRoot: path.resolve("../.."),
@@ -101,7 +101,7 @@ const request = (
     ...init,
     headers: {
       Host: "127.0.0.1:8787",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
       ...init?.headers,
@@ -110,7 +110,7 @@ const request = (
 
 describe("orchestrator vertical flow", () => {
   it("rejects an alternate database before changing its bytes", () => {
-    const projectRoot = mkdtempSync(path.join(tmpdir(), "dlh-db-guard-"));
+    const projectRoot = mkdtempSync(path.join(tmpdir(), "aptiloop-db-guard-"));
     roots.push(projectRoot);
     const alternateDirectory = path.join(projectRoot, "data");
     const alternateDatabase = path.join(
@@ -128,7 +128,7 @@ describe("orchestrator vertical flow", () => {
   });
 
   it("rejects a stale exact-path database before app writable open", () => {
-    const projectRoot = mkdtempSync(path.join(tmpdir(), "dlh-stale-db-"));
+    const projectRoot = mkdtempSync(path.join(tmpdir(), "aptiloop-stale-db-"));
     roots.push(projectRoot);
     const dataDirectory = path.join(projectRoot, ".data");
     const databasePath = path.join(
@@ -157,9 +157,9 @@ describe("orchestrator vertical flow", () => {
   });
 
   it("rejects a linked launcher-owned E2E run root before changing external bytes", (context) => {
-    const projectRoot = mkdtempSync(path.join(tmpdir(), "dlh-e2e-guard-"));
+    const projectRoot = mkdtempSync(path.join(tmpdir(), "aptiloop-e2e-guard-"));
     const externalRunRoot = mkdtempSync(
-      path.join(tmpdir(), "dlh-e2e-external-"),
+      path.join(tmpdir(), "aptiloop-e2e-external-"),
     );
     roots.push(projectRoot, externalRunRoot);
     const runId = "linked-run-12345678";
@@ -189,8 +189,12 @@ describe("orchestrator vertical flow", () => {
   });
 
   it("revalidates the active target before writable SQLite pragmas", (context) => {
-    const projectRoot = mkdtempSync(path.join(tmpdir(), "dlh-open-guard-"));
-    const externalData = mkdtempSync(path.join(tmpdir(), "dlh-open-external-"));
+    const projectRoot = mkdtempSync(
+      path.join(tmpdir(), "aptiloop-open-guard-"),
+    );
+    const externalData = mkdtempSync(
+      path.join(tmpdir(), "aptiloop-open-external-"),
+    );
     roots.push(projectRoot, externalData);
     const dataDirectory = path.join(projectRoot, ".data");
     const displacedData = path.join(projectRoot, ".data-displaced");

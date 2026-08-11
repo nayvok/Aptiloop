@@ -1,8 +1,16 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentChat } from "@/components/agent-chat";
+import type { ChatRole } from "@/lib/chat-role";
 import { LocaleProvider } from "@/lib/i18n";
 
 const mockAgentState = vi.hoisted(() => ({
@@ -14,6 +22,13 @@ const mockAgentState = vi.hoisted(() => ({
   events: [] as Array<Record<string, unknown>>,
   streamFails: false,
   disclosureRequired: false,
+  aiOff: false,
+  connectionEnabled: true,
+  connectionState: "connected",
+  authenticated: true,
+  streaming: true,
+  modelAvailable: true,
+  assignedModelId: "mock-deterministic" as string | null,
   disclosureApproved: false,
   streamInputs: [] as Array<{
     role?: string;
@@ -76,27 +91,49 @@ vi.mock("@/lib/api", () => {
           connections: [
             {
               connectionId: "conn:mock",
+              adapterId: "mock",
               displayName: "Deterministic Mock",
+              enabled: mockAgentState.connectionEnabled,
+              state: mockAgentState.connectionState,
+              observedCapabilities: {
+                connection: {
+                  authenticated: mockAgentState.authenticated,
+                  streaming: mockAgentState.streaming,
+                  cancellation: true,
+                },
+                models: [
+                  {
+                    modelId: "mock-deterministic",
+                    available: mockAgentState.modelAvailable,
+                  },
+                ],
+              },
             },
           ],
           roleProfiles: [
             {
               role: "tutor",
-              mode: "connection",
-              connectionId: "conn:mock",
-              modelId: "mock-deterministic",
+              mode: mockAgentState.aiOff ? "no-ai" : "connection",
+              connectionId: mockAgentState.aiOff ? null : "conn:mock",
+              modelId: mockAgentState.aiOff
+                ? null
+                : mockAgentState.assignedModelId,
             },
             {
               role: "evaluator",
-              mode: "connection",
-              connectionId: "conn:mock",
-              modelId: "mock-deterministic",
+              mode: mockAgentState.aiOff ? "no-ai" : "connection",
+              connectionId: mockAgentState.aiOff ? null : "conn:mock",
+              modelId: mockAgentState.aiOff
+                ? null
+                : mockAgentState.assignedModelId,
             },
             {
               role: "reviewer",
-              mode: "connection",
-              connectionId: "conn:mock",
-              modelId: "mock-deterministic",
+              mode: mockAgentState.aiOff ? "no-ai" : "connection",
+              connectionId: mockAgentState.aiOff ? null : "conn:mock",
+              modelId: mockAgentState.aiOff
+                ? null
+                : mockAgentState.assignedModelId,
             },
           ],
         },
@@ -132,6 +169,13 @@ beforeEach(() => {
   mockAgentState.streamFails = false;
   mockAgentState.disclosureRequired = false;
   mockAgentState.disclosureApproved = false;
+  mockAgentState.aiOff = false;
+  mockAgentState.connectionEnabled = true;
+  mockAgentState.connectionState = "connected";
+  mockAgentState.authenticated = true;
+  mockAgentState.streaming = true;
+  mockAgentState.modelAvailable = true;
+  mockAgentState.assignedModelId = "mock-deterministic";
   mockAgentState.streamInputs = [];
   mockAgentState.events = [
     { type: "message.delta", turnId: "turn-1", content: "Уточни механизм" },
@@ -148,10 +192,15 @@ function renderAgentChat() {
     defaultOptions: { queries: { retry: false } },
   });
 
+  function AgentChatHarness() {
+    const [role, setRole] = useState<ChatRole>("teacher");
+    return <AgentChat key={role} role={role} onRoleChange={setRole} />;
+  }
+
   return render(
     <QueryClientProvider client={queryClient}>
       <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
-        <AgentChat />
+        <AgentChatHarness />
       </LocaleProvider>
     </QueryClientProvider>,
   );
@@ -165,10 +214,58 @@ describe("AgentChat", () => {
     fireEvent.change(input, {
       target: { value: "Мой самостоятельный ответ" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+    await screen.findByText("Ответ готов");
 
     expect(screen.getByText("Мой самостоятельный ответ")).toBeInTheDocument();
     expect(await screen.findByText("Уточни механизм")).toBeInTheDocument();
+  });
+
+  it("keeps AI Off non-mutating and links to configuration", async () => {
+    mockAgentState.aiOff = true;
+    const view = renderAgentChat();
+
+    expect(
+      await screen.findByRole("link", { name: "Настроить AI" }),
+    ).toHaveAttribute("href", "/settings?section=ai");
+    expect(screen.getByLabelText("Сообщение агенту")).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Отправить" }),
+    ).not.toBeInTheDocument();
+    expect(
+      view.container.querySelector('[data-slot="agent-chat"]'),
+    ).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
+    expect(
+      view.container.querySelector('[data-slot="message-scroller"]'),
+    ).toHaveClass("min-h-0", "flex-1");
+    expect(view.container.querySelector("form")).toHaveClass("shrink-0");
+  });
+
+  it.each([
+    { state: "degraded", authenticated: true },
+    { state: "connected", authenticated: false },
+  ])(
+    "routes $state connection recovery to Connections",
+    async ({ state, authenticated }) => {
+      mockAgentState.connectionState = state;
+      mockAgentState.authenticated = authenticated;
+      renderAgentChat();
+
+      expect(
+        await screen.findByRole("link", { name: "Настроить AI" }),
+      ).toHaveAttribute("href", "/settings?section=connections");
+      expect(screen.getByLabelText("Сообщение агенту")).toBeDisabled();
+    },
+  );
+
+  it("routes a missing assigned model to AI roles", async () => {
+    mockAgentState.assignedModelId = "missing-model";
+    renderAgentChat();
+
+    expect(
+      await screen.findByRole("link", { name: "Настроить AI" }),
+    ).toHaveAttribute("href", "/settings?section=ai");
+    expect(screen.getByLabelText("Сообщение агенту")).toBeDisabled();
   });
 
   it("requires exact one-time approval before an external AI request", async () => {
@@ -178,7 +275,7 @@ describe("AgentChat", () => {
     fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
       target: { value: "Поясни замыкания" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
 
     expect(
       await screen.findByRole("heading", {
@@ -186,10 +283,11 @@ describe("AgentChat", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("OpenAI via Pi")).toBeInTheDocument();
-    expect(screen.getByText(/learner-message · 26 bytes/u)).toBeInTheDocument();
+    expect(screen.getByText(/learner-message · 26 Б/u)).toBeInTheDocument();
     expect(mockAgentState.streamInputs).toHaveLength(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Разрешить один раз" }));
+    await screen.findByText("Ответ готов");
 
     expect(await screen.findByText("Уточни механизм")).toBeInTheDocument();
     expect(mockAgentState.disclosureApproved).toBe(true);
@@ -220,7 +318,8 @@ describe("AgentChat", () => {
     fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
       target: { value: "Объясни механизм" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+    await screen.findByText("Ответ готов");
 
     expect(await screen.findByText("Полный ответ без дельт")).toBeVisible();
     expect(
@@ -247,10 +346,61 @@ describe("AgentChat", () => {
     fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
       target: { value: "Дай итог" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+    await screen.findByText("Ответ готов");
 
     expect(await screen.findByText("Итоговый ответ")).toBeVisible();
     expect(screen.queryByText("Черновик")).not.toBeInTheDocument();
+  });
+
+  it("discloses only allowlisted tool names and lifecycle status", async () => {
+    mockAgentState.events = [
+      {
+        type: "tool.summary",
+        turnId: "turn-1",
+        name: "lesson.readLearnerSafeContext",
+        status: "started",
+        toolCallId: "private-call-id",
+        args: { protected: "private-argument" },
+      },
+      {
+        type: "tool.summary",
+        turnId: "turn-1",
+        name: "lesson.readLearnerSafeContext",
+        status: "completed",
+        output: "private-output",
+      },
+      {
+        type: "message.completed",
+        turnId: "turn-1",
+        content: "Готово",
+      },
+      {
+        type: "session.completed",
+        turnId: "turn-1",
+        reason: "completed",
+      },
+    ];
+    renderAgentChat();
+
+    fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
+      target: { value: "Покажи границу" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+    await screen.findByText("Ответ готов");
+    fireEvent.click(
+      screen.getByRole("button", { name: "События инструментов (2)" }),
+    );
+
+    expect(
+      screen.getByText("lesson.readLearnerSafeContext · started"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("lesson.readLearnerSafeContext · completed"),
+    ).toBeVisible();
+    expect(screen.queryByText(/private-call-id/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/private-argument/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/private-output/u)).not.toBeInTheDocument();
   });
 
   it.each([
@@ -269,6 +419,7 @@ describe("AgentChat", () => {
         },
       ],
       expected: "Не удалось получить ответ.",
+      liveStatus: "Ответ не получен",
     },
     {
       reason: "cancelled",
@@ -280,19 +431,26 @@ describe("AgentChat", () => {
         },
       ],
       expected: "Ответ остановлен.",
+      liveStatus: "Ответ остановлен.",
     },
   ])(
     "renders explicit $reason terminal state",
-    async ({ events, expected }) => {
+    async ({ events, expected, liveStatus }) => {
       mockAgentState.events = events;
       renderAgentChat();
 
       fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
         target: { value: "Продолжай" },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+      const assistantMessage = await screen.findByRole("article", {
+        name: "Тьютор",
+      });
 
-      expect(await screen.findByText(expected)).toBeVisible();
+      expect(await within(assistantMessage).findByText(expected)).toBeVisible();
+      expect(
+        screen.getByText(liveStatus, { selector: 'p[role="status"]' }),
+      ).toBeInTheDocument();
       expect(
         screen.queryByText("Агент завершил ответ без текста."),
       ).not.toBeInTheDocument();
@@ -302,29 +460,28 @@ describe("AgentChat", () => {
     },
   );
 
-  it("switches agent role without hiding the learning boundary", () => {
+  it("switches agent role without hiding the learning boundary", async () => {
     renderAgentChat();
 
-    fireEvent.click(screen.getByRole("button", { name: "reviewer" }));
-    expect(screen.getByRole("button", { name: "reviewer" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Ревьюер решения" }));
     expect(
-      screen.getByText(
+      screen.getByRole("button", { name: "Ревьюер решения" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      await screen.findByText(
         /Проверка решения работает только с зафиксированным diff/u,
       ),
     ).toBeInTheDocument();
   });
 
-  it("shows a transport failure as an actionable assistant state", async () => {
+  it("shows a transport failure once and preserves the retry input", async () => {
     mockAgentState.streamFails = true;
     renderAgentChat();
 
     fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
       target: { value: "Проверь мой ответ" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Не удалось получить ответ: provider transport failed",
@@ -333,7 +490,11 @@ describe("AgentChat", () => {
       screen.getAllByText(
         "Не удалось получить ответ: provider transport failed",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(screen.getByLabelText("Сообщение агенту")).toHaveValue(
+      "Проверь мой ответ",
+    );
+    expect(screen.getByRole("button", { name: "Повторить" })).toBeEnabled();
     expect(screen.queryByText("Ответ был отменён.")).not.toBeInTheDocument();
   });
 });

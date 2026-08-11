@@ -118,7 +118,7 @@ describe("createExerciseAttemptWorkspace", () => {
 
 async function temporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(
-    path.join(tmpdir(), "dlh-attempt-workspace-"),
+    path.join(tmpdir(), "aptiloop-attempt-workspace-"),
   );
   temporaryDirectories.push(directory);
   return directory;

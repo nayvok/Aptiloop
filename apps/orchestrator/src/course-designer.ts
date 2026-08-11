@@ -4,15 +4,18 @@ import {
   AgentProviderError,
   ProviderHubError,
   type PiAgentProviderOptions,
-} from "@dlh/agent-core";
+} from "@aptiloop/agent-core";
 import {
   CurriculumAuthoringRepository,
+  ProviderHubRepository,
   type CurriculumVersionGraph,
   type DatabaseConnection,
-} from "@dlh/database";
-import { getLatestPrompt } from "@dlh/prompt-library";
+} from "@aptiloop/database";
+import { getLatestPrompt } from "@aptiloop/prompt-library";
 import {
+  CourseDesignerPendingDisclosureSchema,
   CourseDesignerRequestSchema,
+  CourseDesignerPendingDisclosureResponseSchema,
   CourseDesignerWorkflowSchema,
   CourseDraftProposalDiffSchema,
   CourseDraftProposalSchema,
@@ -23,7 +26,7 @@ import {
   type CourseDraftProposal,
   type CourseDraftProposalDiff,
   type JsonValue,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import type { Context, Hono } from "hono";
 import { Type } from "typebox";
 import { z } from "zod";
@@ -90,6 +93,10 @@ interface WorkflowRow {
   failure_message: string | null;
   created_at: number;
   updated_at: number;
+}
+
+interface DisclosureOperationRow {
+  operation_id: string;
 }
 
 const toolMetadataSchema = z
@@ -314,6 +321,63 @@ function workflowDto(row: WorkflowRow): CourseDesignerWorkflow {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
+}
+
+function pendingDesignerDisclosure(
+  connection: DatabaseConnection,
+  input: {
+    versionId: string;
+    workflowId: string;
+    now?: number;
+  },
+) {
+  const repository = new ProviderHubRepository(connection);
+  const rows = connection.sqlite
+    .prepare(
+      `SELECT operation.operation_id
+       FROM ai_disclosure_operations operation
+       JOIN ai_disclosure_events event
+         ON event.operation_id = operation.operation_id
+        AND event.sequence = (
+          SELECT MAX(latest.sequence)
+          FROM ai_disclosure_events latest
+          WHERE latest.operation_id = operation.operation_id
+        )
+       WHERE operation.role = 'course-designer'
+         AND event.status = 'pending'
+       ORDER BY operation.created_at DESC, operation.operation_id DESC`,
+    )
+    .all() as unknown as DisclosureOperationRow[];
+  const now = input.now ?? Date.now();
+  const matches = rows.flatMap(({ operation_id }) => {
+    const disclosure = repository.getDisclosure(operation_id);
+    if (!disclosure || Date.parse(disclosure.expiresAt) <= now) return [];
+    const entities = disclosure.scope.entityIds;
+    const operationId = entities["course-designer-authoring-operation"];
+    if (
+      entities["course-revision"] !== input.versionId ||
+      entities["course-designer-workflow"] !== input.workflowId ||
+      !operationId
+    ) {
+      return [];
+    }
+    return [
+      CourseDesignerPendingDisclosureSchema.parse({
+        operationId,
+        workflowId: input.workflowId,
+        versionId: input.versionId,
+        disclosure,
+      }),
+    ];
+  });
+  if (matches.length > 1) {
+    throw new CourseDesignerError(
+      409,
+      "ambiguous_pending_disclosure",
+      "Course Designer has more than one pending disclosure for this workflow",
+    );
+  }
+  return matches[0] ?? null;
 }
 
 function insertProposal(
@@ -1590,7 +1654,7 @@ export function registerCourseDesignerRoutes(
     "/api/curriculum-editor/versions/:versionId/designer/workflows/:workflowId/disclosures",
     (context) =>
       route(context, async () => {
-        await readJson(context, workflowOperationSchema);
+        const input = await readJson(context, workflowOperationSchema);
         const versionId = routeVersionId(context);
         const row = readWorkflow(
           state.connection,
@@ -1609,6 +1673,16 @@ export function registerCourseDesignerRoutes(
         ).getVersionGraph(versionId);
         assertDraft(graph);
         const workflow = workflowDto(row);
+        const pendingDisclosure = pendingDesignerDisclosure(state.connection, {
+          versionId,
+          workflowId: workflow.id,
+        });
+        if (pendingDisclosure) {
+          return {
+            required: true as const,
+            disclosure: pendingDisclosure.disclosure,
+          };
+        }
         return state.providerRuntime.prepareDisclosure({
           role: "course-designer",
           payload: designerPayload(graph, workflow),
@@ -1616,12 +1690,35 @@ export function registerCourseDesignerRoutes(
           entityIds: {
             "course-revision": versionId,
             "course-designer-workflow": workflow.id,
+            "course-designer-authoring-operation": input.operationId,
           },
           exclusions: [
             "No URL or repository source is fetched by Course Designer",
             "No learner evidence, credentials, or protected answers",
           ],
           destinationPurpose: "optional Course draft authoring assistance",
+        });
+      }),
+  );
+
+  app.get(
+    "/api/curriculum-editor/versions/:versionId/designer/workflows/:workflowId/disclosures",
+    (context) =>
+      route(context, async () => {
+        const versionId = routeVersionId(context);
+        const row = readWorkflow(
+          state.connection,
+          routeWorkflowId(context),
+          versionId,
+        );
+        return CourseDesignerPendingDisclosureResponseSchema.parse({
+          pendingDisclosure:
+            row.state === "CURRICULUM_PROPOSAL"
+              ? pendingDesignerDisclosure(state.connection, {
+                  versionId,
+                  workflowId: row.id,
+                })
+              : null,
         });
       }),
   );

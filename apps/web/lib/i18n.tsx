@@ -17,18 +17,30 @@ import { api } from "@/lib/api";
 
 export type UiLocale = "en-US" | "ru-RU";
 
+export function isUiLocale(value: unknown): value is UiLocale {
+  return value === "en-US" || value === "ru-RU";
+}
+
 const enUS = {
   "brand.name": "Aptiloop",
   "brand.tagline": "Local learning workbench",
   "a11y.skipToContent": "Skip to main content",
   "a11y.primaryNavigation": "Primary navigation",
   "a11y.mobileNavigation": "Mobile navigation",
+  "a11y.breadcrumbs": "Breadcrumbs",
+  "toast.notifications": "Notifications",
+  "toast.close": "Close notification",
   "shell.workspace": "Workspace",
-  "shell.theme.system": "system",
-  "shell.theme.light": "light",
-  "shell.theme.dark": "dark",
+  "shell.theme.system": "System",
+  "shell.theme.light": "Light",
+  "shell.theme.dark": "Dark",
   "shell.theme.change": "Use {theme} theme",
   "shell.theme.current": "Theme: {theme}",
+  "shell.sidebar.collapse": "Collapse sidebar",
+  "shell.sidebar.expand": "Expand sidebar",
+  "shell.route.course": "Course",
+  "shell.route.lesson": "Lesson",
+  "shell.route.studio": "Adaptive Studio",
   "nav.home": "Home",
   "nav.courses": "Courses",
   "nav.review": "Review",
@@ -40,8 +52,25 @@ const enUS = {
   "home.unavailable": "Aptiloop Core is unavailable.",
   "home.noCourse.title": "No active Course",
   "home.noCourse.description":
-    "Create a Course or import a validated Course Pack to begin.",
+    "Choose an existing Course, create one in Adaptive Studio, or import a validated Course Pack to begin.",
   "home.openCourses": "Open Courses",
+  "home.chooseCourse": "Choose a Course",
+  "home.createCourse": "Create Course",
+  "home.importCoursePack": "Import Course Pack",
+  "home.currentCourse": "Current Course",
+  "home.switchCourse": "Switch Course",
+  "home.focus.lessonProgress": "Lesson progress",
+  "home.focus.time": "Time",
+  "home.focus.courseProgress": "Course progress",
+  "home.courseProgress": "{complete} of {total} lessons complete",
+  "home.courseRoadmap": "Course roadmap",
+  "courses.revisionSurface.current":
+    "Current Course · Published revision {revision}",
+  "courses.revisionSurface.preview":
+    "Course preview · Published revision {revision}",
+  "home.focus.phase": "Current phase",
+  "home.focus.evidenceBasis": "Evidence basis",
+  "home.revision": "Published revision {revision}",
   "home.defaultCourseDescription":
     "A finite route from understanding to independent explanation and practice.",
   "home.startError": "Could not start the lesson.",
@@ -112,9 +141,9 @@ const enUS = {
   "activity.unsupported.description":
     "This activity type is not supported by this Aptiloop version. No progress was changed.",
   "page.courses.description":
-    "Create, import, inspect, and continue immutable Course revisions.",
+    "Create courses by hand or import Course Packs. All content stays on your device.",
   "page.review.description":
-    "Work through due evidence, corrections, cards, and interview practice.",
+    "Work through due evidence, corrections, the review queue, and interview practice.",
   "page.skills.description":
     "Inspect topic evidence across independent dimensions. No invented overall score.",
   "page.settings.description":
@@ -148,6 +177,14 @@ const enUS = {
     "Choose one exact reviewed connection and model, or keep AI Off. There is no Mock fallback.",
   "settings.serverPolicy": "Server-owned policy",
   "settings.aiOff": "AI Off",
+  "settings.aiMixedConfiguration": "Mixed configuration",
+  "settings.defaultModel": "Default model",
+  "settings.model.search": "Search connections and model IDs…",
+  "settings.model.noMatches": "No matching models.",
+  "settings.roleOverrides": "Role overrides (advanced)",
+  "settings.roleOverridesDescription":
+    "Customize only the roles that need a different exact model.",
+  "settings.customizeRoles": "Customize roles",
   "settings.externalDisclosure":
     "External turns require one-time disclosure approval",
   "settings.aiSaved": "AI role profiles saved",
@@ -158,10 +195,15 @@ const enUS = {
   "settings.section.connectionsDescription":
     "Readiness is observed and time-scoped. Credentials stay in provider-owned storage.",
   "settings.connection.add": "Add connection",
+  "settings.connection.details": "Details",
+  "settings.connection.legacyReadOnly":
+    "This legacy connection exposes read-only diagnostics but has no safe credential-management metadata. Add a managed connection to sign in or replace credentials.",
+  "settings.connection.addManaged": "Add managed connection",
   "settings.connection.cancelAdd": "Cancel",
   "settings.connection.provider": "Provider",
   "settings.connection.name": "Connection name",
   "settings.connection.apiKey": "{label}",
+  "settings.connection.apiKeyDefault": "API key",
   "settings.connection.secretHelp":
     "Stored only in Aptiloop's local credential file and never returned to the browser.",
   "settings.connection.subscriptionHelp":
@@ -210,6 +252,7 @@ const enUS = {
   "settings.status.starting": "Starting",
   "settings.status.connected": "Connected",
   "query.failed": "Could not load data",
+  "query.technicalDetails": "Technical details",
   "ui.developerTools.title": "Developer tools",
   "ui.developerTools.description":
     "Diagnostics and manual tools for checking the provider lifecycle. They are not part of the primary learning path.",
@@ -227,6 +270,37 @@ const enUS = {
   "settings.status.unavailable": "Unavailable",
   "settings.status.misconfigured": "Configuration required",
   "settings.status.error": "Error",
+  "settings.savedRoleSummary": "Saved: {connection} · {model}",
+  "settings.unsavedWarning":
+    "You have unsaved interface or role assignments. Save before leaving this page.",
+  "settings.connection.requirements":
+    "Credentials stay in local provider storage and are never returned to this page.",
+  "settings.connection.emptyTitle": "No connections yet",
+  "settings.connection.emptyDescription":
+    "Add a provider connection to observe readiness and exact available model IDs.",
+  "settings.connection.providerKind": "Provider type",
+  "settings.connection.scope": "Traffic scope",
+  "settings.connection.modelsObserved": "Available models observed",
+  "settings.connection.lastChecked": "Last readiness check",
+  "settings.connection.notChecked": "Not checked yet",
+  "settings.connection.endpoint": "Endpoint",
+  "settings.connection.credentialState": "Credential state",
+  "settings.connection.credentialStored": "Stored",
+  "settings.connection.credentialMissing": "Required",
+  "settings.connection.loginUnavailable":
+    "Provider sign-in status is unavailable. Start sign-in again to retry.",
+  "settings.connection.answering": "Sending response…",
+  "settings.connection.loginRunning": "Waiting for the provider…",
+  "settings.connection.updating": "Updating…",
+  "settings.connection.cancelling": "Cancelling…",
+  "settings.connection.loginCancelled":
+    "Provider sign-in was cancelled. The connection was not authorized.",
+  "ui.developerTools.compatibilityBadge": "Compatibility surface",
+  "ui.developerTools.boundaryTitle": "Deliberate execution boundaries",
+  "ui.developerTools.executionBoundary": "Command execution",
+  "ui.developerTools.serverAllowlist": "Server allowlist only",
+  "ui.developerTools.reviewerBoundary": "Reviewer role",
+  "ui.developerTools.readOnly": "Read-only · cannot apply changes",
   "role.courseDesigner": "Course Designer",
   "role.courseDesigner.help":
     "Draft-only proposals. Apply and Publish remain separate actions.",
@@ -253,17 +327,24 @@ const enUS = {
   "query.loadingSettings": "Loading settings…",
   "query.settingsUnavailable": "Settings are unavailable",
   "query.retry": "Try again",
-  "chat.page.title": "Agent learning room",
+  "chat.page.title": "Agent diagnostic",
   "chat.page.description":
-    "Switch roles deliberately: Teacher checks understanding, Solution review reads the diff, Interviewer asks questions, and Summary and review collect evidence of progress.",
+    "An optional, bounded conversation for checking reasoning or selected evidence. Courses and lessons remain the primary learning path.",
   "chat.error.response": "Could not get a response.",
   "chat.status.cancelled": "Response stopped.",
+  "chat.status.loading": "Loading conversation…",
   "chat.label.you": "You",
+  "chat.role.teacher": "Tutor",
+  "chat.role.reviewer": "Solution reviewer",
+  "chat.role.interviewer": "Interviewer",
+  "chat.role.curator": "Learning curator",
+  "chat.role.codexExpert": "Architecture expert",
   "chat.error.prepare": "Could not prepare the request: {error}",
   "chat.error.send": "Could not send the request: {error}",
   "chat.error.responseDetail": "Could not get a response: {error}",
   "chat.error.emptyResponse": "The agent completed the response without text.",
   "chat.a11y.roleSelector": "Agent role",
+  "chat.a11y.transcript": "Agent conversation transcript",
   "chat.error.history": "History is unavailable: {error}",
   "chat.error.settings": "Provider settings are unavailable: {error}",
   "chat.error.dataUnavailable": "Agent data is temporarily unavailable.",
@@ -279,11 +360,18 @@ const enUS = {
   "chat.composer.placeholder": "Write your answer or ask a follow-up question…",
   "chat.composer.stop": "Stop response",
   "chat.composer.send": "Send",
+  "chat.composer.configureAi": "Configure AI",
+  "chat.composer.unavailablePlaceholder":
+    "Configure an available provider and model in Settings to use this diagnostic.",
+  "chat.composer.context": "Conversation context: {context}",
+  "chat.tools.title": "Tool events ({count})",
+  "chat.tools.boundary": "Read-only activity",
   "chat.disclosure.title": "Send data to an external AI?",
   "chat.disclosure.description":
     "Permission applies once and only to the specified request.",
   "chat.disclosure.destination": "Recipient",
   "chat.disclosure.data": "Data",
+  "chat.disclosure.payload": "{categories} · {bytes} bytes",
   "chat.disclosure.exclusions": "Not sent",
   "chat.disclosure.cancel": "Do not send",
   "chat.disclosure.approve": "Allow once",
@@ -293,8 +381,19 @@ const enUS = {
   "review.view.interviews": "Interviews",
   "review.empty.title": "Nothing is due yet",
   "review.empty.description":
-    "Complete learning activities to create deterministic review items.",
+    "No review is due now. Future and historical items remain visible in Review queue.",
   "review.goToCourses": "Browse Courses",
+  "review.viewDescription.due":
+    "Pending review items whose scheduled time has arrived, ordered by due date.",
+  "review.viewDescription.mistakes":
+    "Open corrections explain the error family, evidence count, and next deterministic correction.",
+  "review.viewDescription.cards":
+    "The full deterministic review queue, including completed, dismissed, and superseded history.",
+  "review.viewDescription.interviews":
+    "Run structured interview practice and inspect saved interview observations.",
+  "review.dueCount": "Due now: {count}",
+  "review.actionUnavailable":
+    "This review is scheduled, but a safe review activity is not available yet. Aptiloop will not reopen the source lesson as a substitute.",
   "skills.loading": "Loading skills…",
   "skills.unavailable": "Skills are unavailable",
   "skills.empty.title": "No recorded skill evidence yet",
@@ -302,9 +401,11 @@ const enUS = {
     "Complete an activity that records evidence. Skills never infer mastery from page visits.",
   "skills.topic": "Topic",
   "skills.evidence": "Evidence",
-  "skills.evidenceCount": "{count} evidence records",
+  "skills.evidenceCount": "Evidence records: {count}",
   "skills.reviewDue": "Review due",
   "skills.level": "{value} of 5",
+  "skills.scaleDescription":
+    "Each topic keeps six evidence-backed dimensions separate on a 0–5 scale.",
   "skills.dimension.understanding": "Understanding",
   "skills.dimension.explanation": "Explanation",
   "skills.dimension.codeReading": "Code reading",
@@ -322,6 +423,9 @@ const enUS = {
   "mistakes.occurrences": "{count} recorded occurrences",
   "mistakes.correctThroughReview":
     "Complete the scheduled correction activity; the deterministic kernel will evaluate new evidence.",
+  "mistakes.dueDate": "Due {date}",
+  "mistakes.whyDue": "Why it is due",
+  "mistakes.evidenceBasis": "Evidence basis",
   "cards.loading": "Loading the review queue…",
   "cards.unavailable": "The review queue is unavailable",
   "cards.empty.title": "No review items yet",
@@ -334,6 +438,15 @@ const enUS = {
   "cards.topic": "Knowledge node",
   "cards.reviewReason": "Review reason",
   "cards.reviewDetail": "{dimension} · {reason}",
+  "cards.dueAt": "Due {date}",
+  "cards.dimensionValue": "{dimension} dimension",
+  "cards.evidenceBasis": "Evidence basis",
+  "cards.sourceSession": "Source session {session}",
+  "cards.reason.mistake": "A recorded mistake scheduled this correction.",
+  "cards.reason.lowMastery":
+    "Existing evidence is below the deterministic review threshold.",
+  "cards.activity.recall": "Recall evidence",
+  "cards.activity.correction": "Correction evidence",
   "cards.dismiss": "Dismiss review item",
   "cards.saveError": "Could not dismiss the review item.",
   "session.error.unknown": "Unknown error",
@@ -355,7 +468,7 @@ const enUS = {
     "Phase {phase} of {phaseTotal} · {name} · Activity {activity} of {activityTotal}",
   "session.lessonComplete": "Lesson complete",
   "session.phaseRemaining": "Remaining in phase: {duration}",
-  "session.plan": "Lesson plan",
+  "session.plan": "Lesson steps",
   "session.continueLater": "Continue later",
   "session.progress": "Lesson progress",
   "session.transition.complete": "Phase {phase} of {total} complete",
@@ -484,27 +597,84 @@ const enUS = {
   "session.sources.primary": "Primary",
   "session.sources.additional": "Additional",
   "session.sources.focus": "Focus",
+  "session.learningBrief.title": "What to learn",
+  "session.learningBrief.completion": "Completion evidence",
+  "session.criteria.acknowledgement":
+    "Acknowledge the activity after reviewing it",
+  "session.criteria.checklist": "Required checklist items: {count}",
+  "session.criteria.attempts": "Minimum attempts: {count}",
+  "session.criteria.dialogue": "Minimum tutor dialogue turns: {count}",
+  "session.criteria.dialogueWithRevision":
+    "Minimum tutor dialogue turns: {count}; revise the answer",
+  "session.criteria.score":
+    "Minimum score: {score}; minimum attempts: {attempts}",
+  "session.criteria.fields": "Complete the required fields: {fields}",
+  "session.criteria.exercise": "Complete the practice activity",
+  "session.criteria.exerciseTests": "Pass the trusted checks",
+  "session.criteria.exerciseReview": "Receive an accepted read-only review",
+  "session.criteria.exerciseTestsAndReview":
+    "Pass the trusted checks and receive an accepted read-only review",
+  "session.criteria.custom": "Satisfy Course requirement {key}",
   "session.sources.open": "Open source",
   "session.completed": "Activity complete and saved",
   "courses.status.draft": "Draft",
-  "courses.status.published": "Installed",
-  "courses.status.archived": "Removed from library",
+  "courses.status.published": "Published",
+  "courses.status.archived": "Archived",
   "courses.error.validateFirst": "Validate the Course Pack first.",
+  "courses.error.activeSessionPinned":
+    "Return to the active lesson and finish it before removing this Course Pack. Your current session and progress remain available.",
   "courses.notice.installed":
     "Course Pack installed. Opening the learning path.",
   "courses.notice.draftSaved": "Course Pack saved as a draft.",
+  "courses.notice.alreadyInstalled":
+    "This exact Course Pack revision was already installed. Opening the existing learning path.",
+  "courses.notice.draftAlreadySaved":
+    "This Course Pack was already saved as a local draft. Opening the existing draft.",
   "courses.notice.uninstalled":
     "Course Pack removed from the active library. History was preserved.",
+  "courses.notice.selected":
+    "This Course revision is now current. Home will use its deterministic path and next action.",
+  "courses.create.primaryPath": "Primary authoring path",
+  "courses.create.title": "Create Course",
+  "courses.create.description":
+    "Choose how you want to begin. You can edit everything before publishing.",
+  "courses.create.action": "Create Course",
+  "courses.current.title": "Current Course",
+  "courses.current.loading": "Loading current Course",
+  "courses.current.unavailable": "Current Course is unavailable",
+  "courses.current.unavailableDescription":
+    "The local library is still available, but the current selection cannot be confirmed.",
+  "courses.current.revision": "Published revision {revision}",
+  "courses.current.revisionUnavailable": "Course revision unavailable",
+  "courses.current.sessionActive": "Session in progress",
+  "courses.current.none": "No current Course",
+  "courses.current.noneDescription":
+    "Create a Course, import a Course Pack, or make an eligible published library revision current.",
   "courses.page.title": "Courses",
   "courses.page.description":
     "Validate a declarative Course Pack before installing it. The file cannot provide commands, paths, credentials, or provider settings.",
   "courses.import.title": "Import Course Pack",
   "courses.import.description":
     "Local validation and Preview come first. Installation requires a separate explicit confirmation.",
+  "courses.import.secondaryPath": "Alternative: bring an existing pack",
   "courses.import.fileLabel": "JSON file",
   "courses.import.fileDescription":
     "UTF-8 JSON, up to 1 MiB. Invalid source bytes are not stored.",
   "courses.import.validate": "Validate Pack",
+  "courses.intake.title": "Course Pack inspection",
+  "courses.intake.description":
+    "This temporary server-staged result restores Preview and diagnostics without storing Pack bytes in the browser or installing anything on load.",
+  "courses.intake.selectAnother": "Import another Pack",
+  "courses.intake.loading": "Loading staged Course Pack inspection",
+  "courses.intake.unavailable.title":
+    "This staged validation is no longer available",
+  "courses.intake.unavailable.description":
+    "It was consumed, expired, or is unknown. Select the local file again to create a new validation.",
+  "courses.intake.loadFailed.title": "Could not restore this inspection",
+  "courses.intake.loadFailed.description":
+    "The staged validation could not be read safely. Retry the read or select the local file again.",
+  "courses.intake.retry": "Retry",
+  "courses.intake.reselect": "Select file again",
   "courses.storageUnavailable.title": "M3 storage is unavailable",
   "courses.storageUnavailable.description":
     "Preview still works, but installation is blocked until the Course Pack migration is applied.",
@@ -512,12 +682,58 @@ const enUS = {
   "courses.alert.successTitle": "Done",
   "courses.library.title": "Local library",
   "courses.library.description":
-    "Imported revisions are immutable; removal hides the Course but preserves learning facts.",
+    "All locally authored and imported Course revisions. Making one current changes Home and future sessions; pack-only Export and Remove actions stay explicit.",
+  "courses.library.revisionMeta": "Revision {revision} · {locale}",
+  "courses.library.revisionNumber": "Revision {revision}",
+  "courses.library.details": "Technical details",
+  "courses.library.courseId": "Course ID",
+  "courses.library.personalRevision": "Personal adaptation",
+  "courses.library.upstreamRevision": "Upstream revision",
+  "courses.library.branch": "Revision branch",
+  "courses.library.source": "Source",
+  "courses.library.revisionId": "Revision ID",
+  "courses.library.importedAt": "Imported from Course Pack {date}",
+  "courses.library.localRevision": "Local authored revision",
+  "courses.library.hashUnavailable": "Not available",
+  "courses.library.currentHelp":
+    "Home and learning sessions currently use this exact revision.",
+  "courses.library.draftHelp":
+    "This editable draft opens in Adaptive Studio. It cannot become current until it is explicitly published.",
+  "courses.library.selectHelp":
+    "Preview leaves the current Course unchanged. Make current switches Home and future sessions to this revision.",
+  "courses.library.selectionUnknownHelp":
+    "Current selection is unavailable, so this revision cannot be switched here right now.",
+  "courses.library.notSelectableHelp":
+    "This library record is not an eligible published revision for selection. Preview remains read-only.",
   "courses.library.revisions": "Revisions: {count}",
   "courses.library.loading": "Loading Course library",
-  "courses.library.empty.title": "No Course Packs installed yet",
+  "courses.library.empty.title": "No local Courses yet",
   "courses.library.empty.description":
-    "Choose a JSON file above. The system will first show errors, provenance, requirements, and the Preview hash.",
+    "Create a Course in Adaptive Studio, or choose a JSON Course Pack above to validate provenance and requirements before installation.",
+  "courses.library.filteredEmpty.title": "No matching courses",
+  "courses.library.filteredEmpty.description":
+    "Try another search or clear the status filter.",
+  "courses.library.results": "Courses {start}–{end} of {total}",
+  "courses.search.label": "Search courses",
+  "courses.search.placeholder": "Search courses…",
+  "courses.filter.action": "Filter",
+  "courses.filter.label": "Course status",
+  "courses.filter.all": "All courses",
+  "courses.filter.clear": "Clear filters",
+  "courses.table.course": "Course",
+  "courses.table.revisionStatus": "Revision & status",
+  "courses.table.progress": "Progress",
+  "courses.table.actions": "Actions",
+  "courses.progress.notStarted": "Not started",
+  "courses.progress.inProgress": "In progress",
+  "courses.progress.completed": "Completed",
+  "courses.progress.neverOpened": "No learning activity yet",
+  "courses.progress.lastActivity": "Last activity {date}",
+  "courses.progress.label":
+    "{percent}% complete, {completed} of {total} lessons",
+  "courses.pagination.label": "Course pages",
+  "courses.pagination.previous": "Previous page",
+  "courses.pagination.next": "Next page",
   "courses.preview.empty.title": "Preview will appear here",
   "courses.preview.empty.description":
     "Installation is unavailable until the schema, references, graph, hashes, and policy gates pass validation.",
@@ -525,6 +741,11 @@ const enUS = {
   "courses.preview.errors": "Errors: {count}",
   "courses.preview.validated": "Validated Preview",
   "courses.preview.ready": "Ready to install",
+  "courses.validation.expired.badge": "Validation expired",
+  "courses.validation.expired.title": "Validation expired",
+  "courses.validation.expired.description":
+    "This validation can no longer be used. Select and validate the local file again before installing it or creating a draft.",
+  "courses.validation.expired.revalidate": "Validate file again",
   "courses.revision": "{courseKey} · revision {revision}",
   "courses.preview.metric.lessons": "Lessons",
   "courses.preview.metric.activities": "Activities",
@@ -541,9 +762,35 @@ const enUS = {
   "courses.preview.notRequired": "Not required",
   "courses.action.installAndOpen": "Install and open",
   "courses.action.openAsDraft": "Open as draft",
+  "courses.confirm.description":
+    "Confirm the exact revision, local destination, and consequence before continuing.",
+  "courses.confirm.revision": "Revision",
+  "courses.confirm.contentHash": "Content hash",
+  "courses.confirm.destination": "Destination",
+  "courses.confirm.consequence": "Consequence",
+  "courses.confirm.install.title": "Install this immutable revision?",
+  "courses.confirm.install.destination":
+    "Local Course library, then the read-only learning roadmap",
+  "courses.confirm.install.consequence":
+    "The imported published revision is immutable and cannot be edited in place.",
+  "courses.confirm.install.action": "Install immutable revision",
+  "courses.confirm.draft.title": "Create this local draft?",
+  "courses.confirm.draft.destination":
+    "A local editable draft in Adaptive Studio",
+  "courses.confirm.draft.consequence":
+    "The source Pack remains unchanged; publishing is a separate explicit action.",
+  "courses.confirm.draft.action": "Create local draft",
   "courses.action.open": "Open",
+  "courses.action.continue": "Continue",
+  "courses.action.edit": "Edit",
+  "courses.action.unavailable": "Unavailable",
+  "courses.action.openCurrent": "Open current Course",
+  "courses.action.openStudio": "Open in Adaptive Studio",
+  "courses.action.previewRevision": "Preview revision",
+  "courses.action.makeCurrent": "Make current",
   "courses.action.export": "Export",
   "courses.action.remove": "Remove",
+  "courses.action.more": "More actions for {title}",
   "courses.remove.title": "Remove Course Pack from the library?",
   "courses.remove.description":
     "Revision {revisionId} will be archived. The Course Pack, sessions, and learning facts are not deleted, so replay and history remain auditable.",
@@ -657,8 +904,17 @@ const enUS = {
     "Could not get the next question. Your answer remains in the form.",
   "interview.error.finish": "Could not finish the interview.",
   "interview.error.disclosureApprove": "Could not approve sending the data.",
+  "interview.error.disclosureCancel":
+    "Could not cancel the pending disclosure. No data was sent.",
   "interview.error.disclosureCanceled":
     "No data was sent. You can continue the interview later.",
+  "interview.error.invalidPayload":
+    "The saved interview data failed validation. Nothing protected was displayed.",
+  "interview.error.scopeMismatch":
+    "The interview session could not be verified. Return to the lesson and try again.",
+  "interview.error.associationMismatch":
+    "This interview does not belong to the requested lesson session.",
+  "interview.error.load": "Could not load the interview. Try again.",
   "interview.error.unknown": "Unknown error",
   "interview.scope.studied.label": "Studied topics only",
   "interview.scope.studied.description":
@@ -682,7 +938,7 @@ const enUS = {
   "interview.disclosure.decline": "Do not send",
   "interview.disclosure.approve": "Allow once",
   "interview.setup.description":
-    "Choose the topics and format. The interviewer asks one question at a time; the report records skill evidence without inventing a technical assessment.",
+    "Choose the topics and format. The interviewer asks one question at a time; the report records answer observations without claiming technical correctness.",
   "interview.setup.workflow": "Separate flow",
   "interview.setup.title": "Interview setup",
   "interview.setup.help":
@@ -726,6 +982,7 @@ const enUS = {
   "interview.chat.interviewer": "Interviewer",
   "interview.chat.you": "You",
   "interview.chat.typing": "Interviewer is typing…",
+  "interview.chat.transcript": "Interview transcript",
   "interview.chat.readyDescription":
     "The server will create an honest report from the saved transcript. Technical correctness without review will not count as proven.",
   "interview.chat.finishing": "Preparing report…",
@@ -742,17 +999,20 @@ const enUS = {
   "interview.report.limitsAria": "Assessment limits",
   "interview.report.limits":
     "Answer structure and completeness were assessed. Technical correctness was not checked.",
-  "interview.report.summary": "Overall assessment",
+  "interview.report.summary": "Answer observations",
   "interview.report.metricsAria": "Interview metrics",
   "interview.report.metric.asked": "Asked",
   "interview.report.metric.answered": "Answered",
   "interview.report.metric.completion": "Completion",
   "interview.report.strengths": "Strengths",
   "interview.report.growthAreas": "Growth areas",
-  "interview.report.evidence": "Skill evidence",
+  "interview.report.evidence": "Answer excerpts and observations",
   "interview.report.question": "Question {number}",
   "interview.report.answerExcerpt": "“{excerpt}”",
   "interview.report.new": "New interview",
+  "interview.report.nextTitle": "Continue practising",
+  "interview.report.nextDescription":
+    "Start a fresh interview when you are ready to work through another topic.",
   "authoring.page.title": "Course editor",
   "authoring.page.description":
     "Create a versioned graph of weeks, days, and units. Published revisions are immutable; continue work from a draft clone.",
@@ -776,10 +1036,176 @@ const enUS = {
   "authoring.addWeek.weekGoal": "Week goal",
   "authoring.addWeek.weekTitle": "Week title",
   "authoring.clone.submit": "Clone as draft",
+  "authoring.common.back": "Back",
   "authoring.common.cancel": "Cancel",
+  "authoring.common.continue": "Continue",
   "authoring.common.edit": "Edit",
   "authoring.createDraft.submit": "Create draft",
   "authoring.createDraft.summary": "Create a new revision",
+  "authoring.createDraft.creating": "Creating local draft…",
+  "authoring.entry.eyebrow": "Adaptive Studio",
+  "authoring.entry.title": "Choose how to begin this Course",
+  "authoring.entry.description":
+    "Choose the assisted workflow that fits the model you have. External work returns a Course Pack for import; connected work begins with an explicit local Draft. Neither path publishes.",
+  "authoring.entry.choose": "Choose one Course creation path",
+  "authoring.entry.manual.title": "Create manually",
+  "authoring.entry.manual.badge": "Works with AI Off",
+  "authoring.entry.manual.description":
+    "Start with the complete typed editor for weeks, days, units, and protected authoring fields.",
+  "authoring.entry.manual.next":
+    "Create the local Draft below, then build its structure directly in the complete manual editor.",
+  "authoring.entry.designer.title": "Describe a learning goal",
+  "authoring.entry.designer.badge": "Optional AI · review required",
+  "authoring.entry.designer.description":
+    "Start with the guided Course Designer. AI can return a typed proposal only; you review it before Apply.",
+  "authoring.entry.designer.next":
+    "Name the Course and describe the learning goal. This creates an editable local Draft and opens Designer with the goal ready for a proposal.",
+  "authoring.entry.unselected":
+    "Choose a path to reveal the shared local Draft details. No option is preselected.",
+  "authoring.entry.continueHint": "Select a path to continue",
+  "authoring.entry.continueReady": "Continue to the shared authoring brief",
+  "authoring.entry.assistedTitle": "Choose an assisted start",
+  "authoring.entry.assistedDescription":
+    "Choose based on the model you actually have. Aptiloop checks technical compatibility for connected models, but it does not score model strength or output quality.",
+  "authoring.external.title": "Use an external model",
+  "authoring.external.description":
+    "Describe the Course once, then download a self-contained instruction file with the exact Course Pack V1 schema and template.",
+  "authoring.external.guidance":
+    "Prefer this path when another model offers stronger reasoning, broader context, web research, or tools that your connected model does not have.",
+  "authoring.external.badge": "Aptiloop sends nothing",
+  "authoring.external.start": "Prepare external instructions",
+  "authoring.external.pageDescription":
+    "Complete the brief and download one model instruction file. Give it to the model you choose, then upload the returned JSON only through Course Pack import.",
+  "authoring.external.form": "External model authoring brief",
+  "authoring.external.privacyTitle": "External handoff",
+  "authoring.external.privacyDescription":
+    "The download contains only this brief and version-matched bundled format guidance. Aptiloop does not contact the model or receive its result automatically. Do not put secrets in the brief.",
+  "authoring.external.download": "Download instruction file",
+  "authoring.external.downloaded": "Authoring instructions downloaded.",
+  "authoring.external.downloadError":
+    "The authoring instruction file could not be prepared.",
+  "authoring.external.uploadResult": "Upload the returned Course Pack",
+  "authoring.external.nextStep":
+    "The model should return one UTF-8 JSON document. Treat it as untrusted and validate it at /courses/import.",
+  "authoring.connected.title": "Use the connected Course Designer",
+  "authoring.connected.description":
+    "Create an explicit local Draft from the same brief, then open guided Designer for typed proposals against that Draft.",
+  "authoring.connected.guidance":
+    "Choose this when the configured model is technically ready and you consider its context and reasoning suitable for the Course. Readiness is checked on the next screen.",
+  "authoring.connected.badge": "Capability check required",
+  "authoring.connected.start": "Check and use connected model",
+  "authoring.connected.pageDescription":
+    "Aptiloop shows the exact provider, model, and observed technical capabilities before it creates the local Draft. Model quality is still your decision.",
+  "authoring.connected.form": "Connected Course Designer authoring brief",
+  "authoring.connected.readinessTitle": "Course Designer readiness",
+  "authoring.connected.state.checking": "Checking",
+  "authoring.connected.state.ready": "Technically ready",
+  "authoring.connected.state.off": "AI Off",
+  "authoring.connected.state.unavailable": "Unavailable",
+  "authoring.connected.state.unknown": "Capability unknown",
+  "authoring.connected.state.unsupported": "Capability unavailable",
+  "authoring.connected.stateDescription.checking":
+    "Reading the server-owned provider, model, and capability snapshot.",
+  "authoring.connected.stateDescription.ready":
+    "The exact selected model is available and the observed provider capabilities satisfy the persisted Course Designer role contract.",
+  "authoring.connected.stateDescription.off":
+    "Course Designer is set to AI Off. External instructions and complete manual authoring remain available.",
+  "authoring.connected.stateDescription.unavailable":
+    "The selected connection or model is not currently available. Aptiloop will not substitute another provider or Mock.",
+  "authoring.connected.stateDescription.unknown":
+    "Aptiloop has no current capability snapshot for this eligible connection. You may continue; the server will validate the exact role and return a structured failure if needed.",
+  "authoring.connected.stateDescription.unsupported":
+    "The exact model or connection is missing a required capability: {capability}.",
+  "authoring.connected.refresh": "Refresh",
+  "authoring.connected.evidence.model": "Exact model",
+  "authoring.connected.evidence.tools": "Typed tools",
+  "authoring.connected.evidence.transport": "Stream and cancel",
+  "authoring.connected.evidence.observed": "Observed",
+  "authoring.connected.evidence.notAvailable": "Not available",
+  "authoring.connected.qualityNote":
+    "Technical readiness is not a weak/strong model rating. If this model has limited context, search, or reasoning, use the external instruction-file path.",
+  "authoring.connected.create": "Create Draft and open Designer",
+  "authoring.connected.openSettings": "Open AI settings",
+  "authoring.connected.nextStep":
+    "This action creates one local editable Draft. Provider disclosure, proposal Apply, Preview, and Publish remain separate later actions.",
+  "authoring.connected.alternatives": "Continue another way",
+  "authoring.brief.title": "Authoring brief",
+  "authoring.brief.description":
+    "The same brief works for either assisted path and stays in this browser until you explicitly clear it.",
+  "authoring.brief.topicGoal": "Topic or learning goal",
+  "authoring.brief.topicGoalPlaceholder":
+    "For example: Practical asynchronous JavaScript",
+  "authoring.brief.targetOutcome": "Target outcome",
+  "authoring.brief.targetOutcomePlaceholder":
+    "What should the learner be able to explain, decide, or build independently?",
+  "authoring.brief.currentLevel": "Current level",
+  "authoring.brief.currentLevelPlaceholder":
+    "For example: Comfortable with JavaScript syntax, new to concurrency",
+  "authoring.brief.primaryLocale": "Primary Course locale",
+  "authoring.brief.primaryLocaleDescription":
+    "Use a BCP 47 locale such as en-US, ru-RU, de-DE, or ja-JP. This is independent from the interface language.",
+  "authoring.brief.primaryLocaleError":
+    "Enter a valid BCP 47 Course locale, such as en-US or ru-RU.",
+  "authoring.brief.pacing": "Pacing and available time",
+  "authoring.brief.pacingPlaceholder":
+    "For example: 30 minutes per day for four weeks",
+  "authoring.brief.tools": "Tools and access",
+  "authoring.brief.accessibility": "Accessibility needs",
+  "authoring.brief.constraints": "Other constraints",
+  "authoring.brief.optionalPlaceholder": "Optional — add only what matters",
+  "authoring.brief.clear": "Clear brief",
+  "authoring.brief.savedLocally":
+    "Saved locally in this browser. It is not sent anywhere by entering it here.",
+  "authoring.brief.storageErrorTitle": "Brief persistence is unavailable",
+  "authoring.brief.storageErrorDescription":
+    "You can continue in this tab, but the brief may not survive a reload. Copy important details before leaving.",
+  "authoring.brief.validationError":
+    "Complete the required brief fields and use a valid BCP 47 Course locale before continuing.",
+  "authoring.manual.fallback": "Create manually without AI",
+  "authoring.manual.fallbackDescription":
+    "Create a blank local Draft and use the complete structured editor. This path remains available regardless of provider state.",
+  "authoring.manual.start": "Create a blank Draft",
+  "authoring.manual.form": "Manual Course Draft details",
+  "authoring.creation.error": "The local Draft could not be created.",
+  "authoring.details.title": "Course details",
+  "authoring.details.manualTitle": "Course details",
+  "authoring.details.designerTitle": "Learning goal",
+  "authoring.creation.learningGoal": "What should the learner achieve?",
+  "authoring.creation.learningGoalPlaceholder":
+    "For example: Build and explain a small asynchronous JavaScript workflow without relying on step-by-step hints.",
+  "authoring.creation.designerGuardrailTitle": "Editable Draft first",
+  "authoring.creation.designerGuardrailDescription":
+    "Designer can propose changes only. You review and explicitly apply them; publishing remains a separate action.",
+  "authoring.manual.eyebrow": "Manual authoring",
+  "authoring.manual.title": "Course structure",
+  "authoring.manual.description":
+    "Edit every typed week, day, and unit directly. Manual authoring remains complete when AI is Off.",
+  "authoring.workspace.aria": "Course Studio workspace",
+  "authoring.workspace.program": "Program",
+  "authoring.workspace.designer": "Designer",
+  "authoring.workspace.preview": "Preview",
+  "authoring.workspace.release": "Release",
+  "authoring.workspace.history": "History & adaptation",
+  "authoring.workspace.designerUnavailable.title":
+    "Designer needs an editable Draft",
+  "authoring.workspace.designerUnavailable.description":
+    "Clone this immutable revision into a Draft before requesting or applying a proposal.",
+  "authoring.workspace.releaseUnavailable.title":
+    "This revision is already immutable",
+  "authoring.workspace.releaseUnavailable.description":
+    "Published revisions cannot be released again. Clone it into a Draft to prepare another revision.",
+  "authoring.preview.eyebrow": "Learner preview",
+  "authoring.preview.loading": "Loading the learner preview",
+  "authoring.preview.unavailable":
+    "The learner preview is unavailable. Your Course revision was not changed.",
+  "authoring.preview.emptyTitle": "Nothing to preview yet",
+  "authoring.preview.emptyDescription":
+    "Add a lesson and at least one learner activity in Program, then return to Preview.",
+  "authoring.preview.lessonMeta": "Activities: {activities} · {minutes} min",
+  "authoring.error.actionTitle": "The Studio action did not complete",
+  "authoring.release.checking": "Checking…",
+  "authoring.release.ready": "Ready for explicit Publish",
+  "authoring.publish.publishing": "Publishing immutable revision…",
   "authoring.current.draftCreatedAt": "Draft created {date}",
   "authoring.current.label": "Current Course",
   "authoring.current.publishedAt": "Published {date}",
@@ -884,6 +1310,7 @@ const enUS = {
   "authoring.designer.eyebrow": "Adaptive Studio · Course Designer",
   "authoring.designer.generate": "Generate proposal",
   "authoring.designer.generating": "Generating proposal…",
+  "authoring.designer.loading": "Loading guided design state…",
   "authoring.designer.prompt": "Authoring request",
   "authoring.designer.promptPlaceholder":
     "For example: add a foundation week with a recall activity.",
@@ -992,6 +1419,12 @@ const enUS = {
   "authoring.release.dayCount": "{count} days",
   "authoring.release.changeCounts":
     "Added: {added} · Changed: {changed} · Removed: {removed}",
+  "authoring.release.change.added": "Added",
+  "authoring.release.change.changed": "Changed",
+  "authoring.release.change.removed": "Removed",
+  "authoring.release.entity.week": "Week",
+  "authoring.release.entity.day": "Lesson",
+  "authoring.release.entity.unit": "Activity",
   "authoring.release.required":
     "Validation, learner preview, and change review must match the current draft before publication.",
 
@@ -1014,8 +1447,11 @@ const enUS = {
   "authoring.reorder.up": "Move {label} up",
   "authoring.revision.heading": "Version {revision} · {title}",
   "authoring.revision.label": "Version {revision}",
+  "authoring.missingRevision.description":
+    "This Studio link points to a revision that is no longer available. No other Course was opened.",
+  "authoring.missingRevision.title": "Course revision not found",
   "authoring.selectRevision.description":
-    "Open an existing revision or create a new draft.",
+    "Choose a Course revision from Courses or create a new Draft. Studio will not open another Course automatically.",
   "authoring.selectRevision.title": "Select a revision",
   "authoring.status.archived": "Archived",
   "authoring.status.draft": "Draft",
@@ -1040,12 +1476,20 @@ const ruRU: Record<MessageKey, string> = {
   "a11y.skipToContent": "К основному содержимому",
   "a11y.primaryNavigation": "Основная навигация",
   "a11y.mobileNavigation": "Мобильная навигация",
+  "a11y.breadcrumbs": "Навигационная цепочка",
+  "toast.notifications": "Уведомления",
+  "toast.close": "Закрыть уведомление",
   "shell.workspace": "Рабочая область",
-  "shell.theme.system": "системная",
-  "shell.theme.light": "светлая",
-  "shell.theme.dark": "тёмная",
+  "shell.theme.system": "Системная",
+  "shell.theme.light": "Светлая",
+  "shell.theme.dark": "Тёмная",
   "shell.theme.change": "Включить тему: {theme}",
   "shell.theme.current": "Тема: {theme}",
+  "shell.sidebar.collapse": "Свернуть боковую панель",
+  "shell.sidebar.expand": "Развернуть боковую панель",
+  "shell.route.course": "Курс",
+  "shell.route.lesson": "Урок",
+  "shell.route.studio": "Adaptive Studio",
   "nav.home": "Главная",
   "nav.courses": "Курсы",
   "nav.review": "Повторение",
@@ -1057,8 +1501,25 @@ const ruRU: Record<MessageKey, string> = {
   "home.unavailable": "Aptiloop Core недоступен.",
   "home.noCourse.title": "Нет активного курса",
   "home.noCourse.description":
-    "Создайте курс или импортируйте проверенный Course Pack, чтобы начать.",
+    "Выберите существующий курс, создайте новый в Adaptive Studio или импортируйте проверенный Course Pack, чтобы начать.",
   "home.openCourses": "Открыть курсы",
+  "home.chooseCourse": "Выбрать курс",
+  "home.createCourse": "Создать курс",
+  "home.importCoursePack": "Импортировать Course Pack",
+  "home.currentCourse": "Текущий курс",
+  "home.switchCourse": "Сменить курс",
+  "home.focus.lessonProgress": "Прогресс урока",
+  "home.focus.time": "Время",
+  "home.focus.courseProgress": "Прогресс курса",
+  "home.courseProgress": "Завершено уроков: {complete} из {total}",
+  "home.courseRoadmap": "Дорожная карта курса",
+  "courses.revisionSurface.current":
+    "Текущий курс · Опубликованная ревизия {revision}",
+  "courses.revisionSurface.preview":
+    "Предпросмотр курса · Опубликованная ревизия {revision}",
+  "home.focus.phase": "Текущий этап",
+  "home.focus.evidenceBasis": "Основа данных",
+  "home.revision": "Опубликованная ревизия {revision}",
   "home.defaultCourseDescription":
     "Конечный маршрут от понимания до самостоятельного объяснения и практики.",
   "home.startError": "Не удалось начать занятие.",
@@ -1129,9 +1590,9 @@ const ruRU: Record<MessageKey, string> = {
     "Эта версия Aptiloop не поддерживает такой тип активности. Прогресс не изменён.",
   "home.completed": "Завершено",
   "page.courses.description":
-    "Создавай, импортируй, проверяй и продолжай неизменяемые ревизии курсов.",
+    "Создавайте курсы вручную или импортируйте Course Pack. Все материалы остаются на этом устройстве.",
   "page.review.description":
-    "Разбирай запланированные подтверждения, исправления, карточки и интервью.",
+    "Разбирай назначенные подтверждения, исправления, очередь повторения и интервью.",
   "page.skills.description":
     "Проверяй подтверждения по независимым измерениям. Единого придуманного балла нет.",
   "page.settings.description":
@@ -1165,6 +1626,14 @@ const ruRU: Record<MessageKey, string> = {
     "Выберите одно точное проверенное подключение и модель или оставьте AI выключенным. Подмены на Mock нет.",
   "settings.serverPolicy": "Серверная политика",
   "settings.aiOff": "AI выключен",
+  "settings.aiMixedConfiguration": "Смешанная конфигурация",
+  "settings.defaultModel": "Модель по умолчанию",
+  "settings.model.search": "Искать подключения и ID моделей…",
+  "settings.model.noMatches": "Подходящие модели не найдены.",
+  "settings.roleOverrides": "Модели для ролей (расширенные)",
+  "settings.roleOverridesDescription":
+    "Настройте только те роли, которым нужна другая точная модель.",
+  "settings.customizeRoles": "Настроить роли",
   "settings.externalDisclosure":
     "Внешний запрос требует одноразового подтверждения передачи данных",
   "settings.aiSaved": "Профили AI-ролей сохранены",
@@ -1175,10 +1644,15 @@ const ruRU: Record<MessageKey, string> = {
   "settings.section.connectionsDescription":
     "Готовность проверяется и устаревает. Учётные данные остаются в хранилище провайдера.",
   "settings.connection.add": "Добавить подключение",
+  "settings.connection.details": "Подробнее",
+  "settings.connection.legacyReadOnly":
+    "Для этого устаревшего подключения доступны только диагностические данные: безопасных метаданных для управления учётными данными нет. Добавьте управляемое подключение, чтобы войти или заменить данные доступа.",
+  "settings.connection.addManaged": "Добавить управляемое подключение",
   "settings.connection.cancelAdd": "Отмена",
   "settings.connection.provider": "Провайдер",
   "settings.connection.name": "Название подключения",
   "settings.connection.apiKey": "{label}",
+  "settings.connection.apiKeyDefault": "API-ключ",
   "settings.connection.secretHelp":
     "Хранится только в локальном хранилище учётных данных Aptiloop и не возвращается в браузер.",
   "settings.connection.subscriptionHelp":
@@ -1227,6 +1701,7 @@ const ruRU: Record<MessageKey, string> = {
   "settings.status.starting": "Запускается",
   "settings.status.connected": "Подключено",
   "query.failed": "Не удалось получить данные",
+  "query.technicalDetails": "Технические подробности",
   "ui.developerTools.title": "Инструменты разработчика",
   "ui.developerTools.description":
     "Диагностика и ручные инструменты для проверки provider lifecycle. Они не входят в основной учебный маршрут.",
@@ -1244,6 +1719,37 @@ const ruRU: Record<MessageKey, string> = {
   "settings.status.unavailable": "Недоступно",
   "settings.status.misconfigured": "Нужна настройка",
   "settings.status.error": "Ошибка",
+  "settings.savedRoleSummary": "Сохранено: {connection} · {model}",
+  "settings.unsavedWarning":
+    "Есть несохранённые настройки интерфейса или назначения ролей. Сохраните их перед уходом со страницы.",
+  "settings.connection.requirements":
+    "Учётные данные остаются в локальном хранилище провайдера и никогда не возвращаются на эту страницу.",
+  "settings.connection.emptyTitle": "Подключений пока нет",
+  "settings.connection.emptyDescription":
+    "Добавьте провайдера, чтобы проверить готовность и увидеть точные доступные ID моделей.",
+  "settings.connection.providerKind": "Тип провайдера",
+  "settings.connection.scope": "Область трафика",
+  "settings.connection.modelsObserved": "Обнаружено доступных моделей",
+  "settings.connection.lastChecked": "Последняя проверка готовности",
+  "settings.connection.notChecked": "Ещё не проверялось",
+  "settings.connection.endpoint": "Точка доступа",
+  "settings.connection.credentialState": "Состояние учётных данных",
+  "settings.connection.credentialStored": "Сохранены",
+  "settings.connection.credentialMissing": "Требуются",
+  "settings.connection.loginUnavailable":
+    "Состояние авторизации у провайдера недоступно. Запустите авторизацию снова.",
+  "settings.connection.answering": "Отправляю ответ…",
+  "settings.connection.loginRunning": "Ожидаю ответ провайдера…",
+  "settings.connection.updating": "Обновляю…",
+  "settings.connection.cancelling": "Отменяю…",
+  "settings.connection.loginCancelled":
+    "Авторизация у провайдера отменена. Подключение не авторизовано.",
+  "ui.developerTools.compatibilityBadge": "Режим совместимости",
+  "ui.developerTools.boundaryTitle": "Явные границы выполнения",
+  "ui.developerTools.executionBoundary": "Выполнение команд",
+  "ui.developerTools.serverAllowlist": "Только серверный список разрешений",
+  "ui.developerTools.reviewerBoundary": "Роль Reviewer",
+  "ui.developerTools.readOnly": "Только чтение · не применяет изменения",
   "role.courseDesigner": "Дизайнер курса",
   "role.courseDesigner.help":
     "Только предложения для черновика. Применение и публикация остаются отдельными действиями.",
@@ -1270,17 +1776,24 @@ const ruRU: Record<MessageKey, string> = {
   "query.loadingSettings": "Загружаю настройки…",
   "query.settingsUnavailable": "Настройки недоступны",
   "query.retry": "Повторить",
-  "chat.page.title": "Агентная учебная комната",
+  "chat.page.title": "Диагностика с агентом",
   "chat.page.description":
-    "Переключай роль осознанно: Преподаватель проверяет понимание, Проверка решения читает diff, Интервьюер задаёт вопросы, Итоги и повторение собирают подтверждения прогресса.",
+    "Необязательный ограниченный диалог для проверки рассуждений или выбранных подтверждений. Основной учебный путь остаётся в курсах и занятиях.",
   "chat.error.response": "Не удалось получить ответ.",
   "chat.status.cancelled": "Ответ остановлен.",
+  "chat.status.loading": "Загружаю диалог…",
   "chat.label.you": "Ты",
+  "chat.role.teacher": "Тьютор",
+  "chat.role.reviewer": "Ревьюер решения",
+  "chat.role.interviewer": "Интервьюер",
+  "chat.role.curator": "Куратор обучения",
+  "chat.role.codexExpert": "Эксперт по архитектуре",
   "chat.error.prepare": "Не удалось подготовить запрос: {error}",
   "chat.error.send": "Не удалось отправить запрос: {error}",
   "chat.error.responseDetail": "Не удалось получить ответ: {error}",
   "chat.error.emptyResponse": "Агент завершил ответ без текста.",
   "chat.a11y.roleSelector": "Роль агента",
+  "chat.a11y.transcript": "История диалога с агентом",
   "chat.error.history": "История недоступна: {error}",
   "chat.error.settings": "Настройки провайдера недоступны: {error}",
   "chat.error.dataUnavailable": "Данные агента временно недоступны.",
@@ -1297,11 +1810,18 @@ const ruRU: Record<MessageKey, string> = {
     "Напиши свой ответ или попроси уточняющий вопрос…",
   "chat.composer.stop": "Остановить ответ",
   "chat.composer.send": "Отправить",
+  "chat.composer.configureAi": "Настроить AI",
+  "chat.composer.unavailablePlaceholder":
+    "Настройте доступного провайдера и модель, чтобы использовать эту диагностику.",
+  "chat.composer.context": "Контекст диалога: {context}",
+  "chat.tools.title": "События инструментов ({count})",
+  "chat.tools.boundary": "Только чтение",
   "chat.disclosure.title": "Отправить данные внешнему AI?",
   "chat.disclosure.description":
     "Разрешение действует один раз только для указанного запроса.",
   "chat.disclosure.destination": "Получатель",
   "chat.disclosure.data": "Данные",
+  "chat.disclosure.payload": "{categories} · {bytes} Б",
   "chat.disclosure.exclusions": "Не отправляется",
   "chat.disclosure.cancel": "Не отправлять",
   "chat.disclosure.approve": "Разрешить один раз",
@@ -1311,8 +1831,19 @@ const ruRU: Record<MessageKey, string> = {
   "review.view.interviews": "Интервью",
   "review.empty.title": "Пока ничего не назначено",
   "review.empty.description":
-    "Выполняйте учебные активности, чтобы детерминированное ядро создало повторения.",
+    "Сейчас ничего не назначено. Будущие и прошлые задания остаются в очереди повторения.",
   "review.goToCourses": "Открыть курсы",
+  "review.viewDescription.due":
+    "Назначенные повторения, время которых наступило, в порядке срока выполнения.",
+  "review.viewDescription.mistakes":
+    "Открытые исправления показывают семейство ошибки, число подтверждений и следующее детерминированное действие.",
+  "review.viewDescription.cards":
+    "Полная детерминированная очередь, включая выполненные, отложенные и заменённые задания.",
+  "review.viewDescription.interviews":
+    "Структурированная практика интервью и сохранённые наблюдения об ответах.",
+  "review.dueCount": "Сейчас назначено: {count}",
+  "review.actionUnavailable":
+    "Повторение назначено, но безопасная активность для него пока недоступна. Aptiloop не будет подменять её повторным открытием исходного занятия.",
   "skills.loading": "Загружаю навыки…",
   "skills.unavailable": "Навыки недоступны",
   "skills.empty.title": "Подтверждений навыков пока нет",
@@ -1323,6 +1854,8 @@ const ruRU: Record<MessageKey, string> = {
   "skills.evidenceCount": "Подтверждений: {count}",
   "skills.reviewDue": "Нужно повторить",
   "skills.level": "{value} из 5",
+  "skills.scaleDescription":
+    "Для каждой темы шесть независимых измерений с подтверждениями по шкале от 0 до 5.",
   "skills.dimension.understanding": "Понимание",
   "skills.dimension.explanation": "Объяснение",
   "skills.dimension.codeReading": "Чтение кода",
@@ -1340,6 +1873,9 @@ const ruRU: Record<MessageKey, string> = {
   "mistakes.occurrences": "Зафиксировано случаев: {count}",
   "mistakes.correctThroughReview":
     "Выполните назначенную активность исправления: детерминированное ядро оценит новые подтверждения.",
+  "mistakes.dueDate": "Срок: {date}",
+  "mistakes.whyDue": "Почему назначено",
+  "mistakes.evidenceBasis": "Основа подтверждения",
   "cards.loading": "Загружаю очередь повторения…",
   "cards.unavailable": "Очередь повторения недоступна",
   "cards.empty.title": "Заданий для повторения пока нет",
@@ -1352,6 +1888,15 @@ const ruRU: Record<MessageKey, string> = {
   "cards.topic": "Узел знаний",
   "cards.reviewReason": "Причина повторения",
   "cards.reviewDetail": "{dimension} · {reason}",
+  "cards.dueAt": "Срок: {date}",
+  "cards.dimensionValue": "Измерение: {dimension}",
+  "cards.evidenceBasis": "Основа подтверждения",
+  "cards.sourceSession": "Исходная сессия {session}",
+  "cards.reason.mistake": "Зафиксированная ошибка назначила это исправление.",
+  "cards.reason.lowMastery":
+    "Существующие подтверждения ниже детерминированного порога повторения.",
+  "cards.activity.recall": "Подтверждение воспроизведением",
+  "cards.activity.correction": "Подтверждение исправлением",
   "cards.dismiss": "Убрать задание из очереди",
   "cards.saveError": "Не удалось убрать задание из очереди.",
   "session.error.unknown": "Неизвестная ошибка",
@@ -1373,7 +1918,7 @@ const ruRU: Record<MessageKey, string> = {
     "Этап {phase} из {phaseTotal} · {name} · Активность {activity} из {activityTotal}",
   "session.lessonComplete": "Урок завершён",
   "session.phaseRemaining": "Осталось на этапе: {duration}",
-  "session.plan": "План урока",
+  "session.plan": "Шаги урока",
   "session.continueLater": "Продолжить позже",
   "session.progress": "Прогресс урока",
   "session.transition.complete": "Этап {phase} из {total} завершён",
@@ -1502,46 +2047,155 @@ const ruRU: Record<MessageKey, string> = {
   "session.sources.primary": "Основной",
   "session.sources.additional": "Дополнительный",
   "session.sources.focus": "Обратите внимание",
+  "session.learningBrief.title": "Что изучить",
+  "session.learningBrief.completion": "Подтверждения завершения",
+  "session.criteria.acknowledgement": "Подтвердить ознакомление с активностью",
+  "session.criteria.checklist": "Отметить обязательные пункты: {count}",
+  "session.criteria.attempts": "Отправить минимум попыток: {count}",
+  "session.criteria.dialogue":
+    "Завершить минимум реплик в диалоге с преподавателем: {count}",
+  "session.criteria.dialogueWithRevision":
+    "Завершить минимум реплик: {count} — и доработать ответ",
+  "session.criteria.score":
+    "Минимальный результат: {score}; минимум попыток: {attempts}",
+  "session.criteria.fields": "Заполнить обязательные поля: {fields}",
+  "session.criteria.exercise": "Завершить практическую активность",
+  "session.criteria.exerciseTests": "Пройти доверенные проверки",
+  "session.criteria.exerciseReview":
+    "Получить принятую проверку решения в режиме только чтения",
+  "session.criteria.exerciseTestsAndReview":
+    "Пройти доверенные проверки и получить принятую проверку решения",
+  "session.criteria.custom": "Выполнить требование курса {key}",
   "session.sources.open": "Открыть материал",
   "session.completed": "Активность завершена и сохранена",
   "courses.status.draft": "Черновик",
-  "courses.status.published": "Установлен",
-  "courses.status.archived": "Удалён из библиотеки",
+  "courses.status.published": "Опубликован",
+  "courses.status.archived": "Архивный",
   "courses.error.validateFirst": "Сначала проверьте Course Pack.",
+  "courses.error.activeSessionPinned":
+    "Вернитесь к активному занятию и завершите его перед удалением Course Pack. Текущая сессия и прогресс остаются доступны.",
   "courses.notice.installed": "Course Pack установлен. Открываем учебный путь.",
   "courses.notice.draftSaved": "Course Pack сохранён как черновик.",
+  "courses.notice.alreadyInstalled":
+    "Эта точная ревизия Course Pack уже установлена. Открываем существующий учебный путь.",
+  "courses.notice.draftAlreadySaved":
+    "Этот Course Pack уже сохранён как локальный черновик. Открываем существующий черновик.",
   "courses.notice.uninstalled":
     "Course Pack удалён из активной библиотеки. История сохранена.",
+  "courses.notice.selected":
+    "Эта ревизия курса стала текущей. Главная будет использовать её детерминированный маршрут и следующее действие.",
+  "courses.create.primaryPath": "Основной путь создания",
+  "courses.create.title": "Создать курс",
+  "courses.create.description":
+    "Выберите, с чего начать. До публикации можно изменить всё.",
+  "courses.create.action": "Создать курс",
+  "courses.current.title": "Текущий курс",
+  "courses.current.loading": "Загружаю текущий курс",
+  "courses.current.unavailable": "Текущий курс недоступен",
+  "courses.current.unavailableDescription":
+    "Локальная библиотека доступна, но подтвердить текущий выбор не удалось.",
+  "courses.current.revision": "Опубликованная ревизия {revision}",
+  "courses.current.revisionUnavailable": "Ревизия курса недоступна",
+  "courses.current.sessionActive": "Занятие продолжается",
+  "courses.current.none": "Текущий курс не выбран",
+  "courses.current.noneDescription":
+    "Создайте курс, импортируйте Course Pack или сделайте текущей подходящую опубликованную ревизию из библиотеки.",
   "courses.page.title": "Курсы",
   "courses.page.description":
     "Проверяйте декларативный Course Pack до установки. Файл не может передавать команды, пути, учётные данные или настройки провайдера.",
   "courses.import.title": "Импорт Course Pack",
   "courses.import.description":
-    "Сначала — локальная проверка и Preview. Установка выполняется только отдельным подтверждённым действием.",
+    "Сначала — локальная проверка и предпросмотр. Установка выполняется только отдельным подтверждённым действием.",
+  "courses.import.secondaryPath": "Другой путь: импорт готового Pack",
   "courses.import.fileLabel": "JSON-файл",
   "courses.import.fileDescription":
     "UTF-8 JSON, не более 1 MiB. Невалидные исходные байты не сохраняются.",
   "courses.import.validate": "Проверить Pack",
+  "courses.intake.title": "Проверка Course Pack",
+  "courses.intake.description":
+    "Этот временный результат серверной проверки восстанавливает предпросмотр и диагностику, не сохраняя байты Pack в браузере и ничего не устанавливая при загрузке.",
+  "courses.intake.selectAnother": "Импортировать другой Pack",
+  "courses.intake.loading": "Загружаю сохранённую проверку Course Pack",
+  "courses.intake.unavailable.title":
+    "Эта сохранённая проверка больше недоступна",
+  "courses.intake.unavailable.description":
+    "Она уже использована, истекла или неизвестна. Выберите локальный файл повторно, чтобы создать новую проверку.",
+  "courses.intake.loadFailed.title": "Не удалось восстановить проверку",
+  "courses.intake.loadFailed.description":
+    "Безопасно прочитать сохранённую проверку не удалось. Повторите чтение или снова выберите локальный файл.",
+  "courses.intake.retry": "Повторить",
+  "courses.intake.reselect": "Выбрать файл повторно",
   "courses.storageUnavailable.title": "Хранилище M3 недоступно",
   "courses.storageUnavailable.description":
-    "Preview работает, но установка заблокирована до применения миграции Course Pack.",
+    "Предпросмотр работает, но установка заблокирована до применения миграции Course Pack.",
   "courses.alert.errorTitle": "Операция не выполнена",
   "courses.alert.successTitle": "Готово",
   "courses.library.title": "Локальная библиотека",
   "courses.library.description":
-    "Импортированные ревизии неизменяемы; удаление скрывает курс, но сохраняет факты обучения.",
+    "Все локально созданные и импортированные ревизии курсов. Выбор текущей меняет Главную и будущие сессии; действия экспорта и удаления доступны только для Course Pack.",
+  "courses.library.revisionMeta": "Ревизия {revision} · {locale}",
+  "courses.library.revisionNumber": "Ревизия {revision}",
+  "courses.library.details": "Технические сведения",
+  "courses.library.courseId": "ID курса",
+  "courses.library.personalRevision": "Личная адаптация",
+  "courses.library.upstreamRevision": "Исходная ревизия",
+  "courses.library.branch": "Ветка ревизии",
+  "courses.library.source": "Источник",
+  "courses.library.revisionId": "ID ревизии",
+  "courses.library.importedAt": "Импортировано из Course Pack {date}",
+  "courses.library.localRevision": "Локально созданная ревизия",
+  "courses.library.hashUnavailable": "Недоступен",
+  "courses.library.currentHelp":
+    "Главная и учебные сессии сейчас используют именно эту ревизию.",
+  "courses.library.draftHelp":
+    "Этот редактируемый черновик открывается в Adaptive Studio. Сделать его текущим можно только после явной публикации.",
+  "courses.library.selectHelp":
+    "Предпросмотр не меняет текущий курс. Действие «Сделать текущей» переключит Главную и будущие сессии на эту ревизию.",
+  "courses.library.selectionUnknownHelp":
+    "Текущий выбор недоступен, поэтому сейчас переключиться на эту ревизию здесь нельзя.",
+  "courses.library.notSelectableHelp":
+    "Эта запись библиотеки не является подходящей опубликованной ревизией. Предпросмотр остаётся доступен только для чтения.",
   "courses.library.revisions": "Ревизий: {count}",
   "courses.library.loading": "Загрузка библиотеки курсов",
-  "courses.library.empty.title": "Course Pack пока не установлены",
+  "courses.library.empty.title": "Локальных курсов пока нет",
   "courses.library.empty.description":
-    "Выберите JSON-файл выше: сначала система покажет ошибки, provenance, требования и хэш Preview.",
-  "courses.preview.empty.title": "Preview появится здесь",
+    "Создайте курс в Adaptive Studio или выберите JSON Course Pack выше, чтобы проверить происхождение и требования перед установкой.",
+  "courses.library.filteredEmpty.title": "Курсы не найдены",
+  "courses.library.filteredEmpty.description":
+    "Измените запрос или сбросьте фильтр статуса.",
+  "courses.library.results": "Показано {start}–{end} из {total}",
+  "courses.search.label": "Поиск курсов",
+  "courses.search.placeholder": "Найти курс…",
+  "courses.filter.action": "Фильтр",
+  "courses.filter.label": "Статус курса",
+  "courses.filter.all": "Все курсы",
+  "courses.filter.clear": "Сбросить фильтры",
+  "courses.table.course": "Курс",
+  "courses.table.revisionStatus": "Ревизия и статус",
+  "courses.table.progress": "Прогресс",
+  "courses.table.actions": "Действия",
+  "courses.progress.notStarted": "Не начат",
+  "courses.progress.inProgress": "В процессе",
+  "courses.progress.completed": "Завершён",
+  "courses.progress.neverOpened": "Учебной активности ещё не было",
+  "courses.progress.lastActivity": "Последняя активность: {date}",
+  "courses.progress.label":
+    "Выполнено {percent}%, уроков завершено: {completed} из {total}",
+  "courses.pagination.label": "Страницы курсов",
+  "courses.pagination.previous": "Предыдущая страница",
+  "courses.pagination.next": "Следующая страница",
+  "courses.preview.empty.title": "Предпросмотр появится здесь",
   "courses.preview.empty.description":
     "Установка недоступна, пока схема, ссылки, граф, хэши и policy gates не пройдут проверку.",
   "courses.preview.rejected": "Pack отклонён",
   "courses.preview.errors": "Ошибок: {count}",
-  "courses.preview.validated": "Проверенный Preview",
+  "courses.preview.validated": "Проверенный предпросмотр",
   "courses.preview.ready": "Готов к установке",
+  "courses.validation.expired.badge": "Проверка истекла",
+  "courses.validation.expired.title": "Срок проверки истёк",
+  "courses.validation.expired.description":
+    "Этот результат проверки больше нельзя использовать. Снова выберите и проверьте локальный файл перед установкой или созданием черновика.",
+  "courses.validation.expired.revalidate": "Проверить файл повторно",
   "courses.revision": "{courseKey} · ревизия {revision}",
   "courses.preview.metric.lessons": "Уроки",
   "courses.preview.metric.activities": "Активности",
@@ -1558,9 +2212,35 @@ const ruRU: Record<MessageKey, string> = {
   "courses.preview.notRequired": "Не требуются",
   "courses.action.installAndOpen": "Установить и открыть",
   "courses.action.openAsDraft": "Открыть как черновик",
+  "courses.confirm.description":
+    "Перед продолжением проверьте точную ревизию, локальное назначение и последствие действия.",
+  "courses.confirm.revision": "Ревизия",
+  "courses.confirm.contentHash": "Хэш содержимого",
+  "courses.confirm.destination": "Назначение",
+  "courses.confirm.consequence": "Последствие",
+  "courses.confirm.install.title": "Установить эту неизменяемую ревизию?",
+  "courses.confirm.install.destination":
+    "Локальная библиотека курсов, затем учебный маршрут только для чтения",
+  "courses.confirm.install.consequence":
+    "Импортированная опубликованная ревизия неизменяема: её нельзя редактировать на месте.",
+  "courses.confirm.install.action": "Установить неизменяемую ревизию",
+  "courses.confirm.draft.title": "Создать этот локальный черновик?",
+  "courses.confirm.draft.destination":
+    "Локальный редактируемый черновик в Adaptive Studio",
+  "courses.confirm.draft.consequence":
+    "Исходный Pack останется неизменным; публикация выполняется отдельным явным действием.",
+  "courses.confirm.draft.action": "Создать локальный черновик",
   "courses.action.open": "Открыть",
+  "courses.action.continue": "Продолжить",
+  "courses.action.edit": "Редактировать",
+  "courses.action.unavailable": "Недоступно",
+  "courses.action.openCurrent": "Открыть текущий курс",
+  "courses.action.openStudio": "Открыть в Adaptive Studio",
+  "courses.action.previewRevision": "Предпросмотр ревизии",
+  "courses.action.makeCurrent": "Сделать текущей",
   "courses.action.export": "Экспорт",
   "courses.action.remove": "Удалить",
+  "courses.action.more": "Другие действия для курса «{title}»",
   "courses.remove.title": "Удалить Course Pack из библиотеки?",
   "courses.remove.description":
     "Ревизия {revisionId} станет архивной. Course Pack, сессии и факты обучения не удаляются, чтобы replay и история оставались проверяемыми.",
@@ -1675,8 +2355,17 @@ const ruRU: Record<MessageKey, string> = {
   "interview.error.finish": "Не удалось завершить интервью.",
   "interview.error.disclosureApprove":
     "Не удалось подтвердить отправку данных.",
+  "interview.error.disclosureCancel":
+    "Не удалось отменить ожидающую отправку. Данные не отправлены.",
   "interview.error.disclosureCanceled":
     "Данные не отправлены. Интервью можно продолжить позже.",
+  "interview.error.invalidPayload":
+    "Сохранённые данные интервью не прошли проверку. Защищённые данные не показаны.",
+  "interview.error.scopeMismatch":
+    "Не удалось подтвердить сессию интервью. Вернитесь к занятию и повторите попытку.",
+  "interview.error.associationMismatch":
+    "Это интервью не относится к запрошенной сессии занятия.",
+  "interview.error.load": "Не удалось загрузить интервью. Повторите попытку.",
   "interview.error.unknown": "Неизвестная ошибка",
   "interview.scope.studied.label": "Только изученные",
   "interview.scope.studied.description":
@@ -1698,7 +2387,7 @@ const ruRU: Record<MessageKey, string> = {
   "interview.disclosure.decline": "Не отправлять",
   "interview.disclosure.approve": "Разрешить один раз",
   "interview.setup.description":
-    "Настрой темы и формат. Интервьюер задаёт по одному вопросу; отчёт фиксирует подтверждения навыка, но не выдумывает техническую оценку.",
+    "Настрой темы и формат. Интервьюер задаёт по одному вопросу; отчёт фиксирует наблюдения об ответах, но не подтверждает техническую корректность.",
   "interview.setup.workflow": "Отдельный процесс",
   "interview.setup.title": "Настройка интервью",
   "interview.setup.help":
@@ -1735,14 +2424,15 @@ const ruRU: Record<MessageKey, string> = {
   "interview.opening.retrying": "Повторяю…",
   "interview.opening.retry": "Повторить запуск",
   "interview.session.description":
-    "Отвечай на текущий вопрос. Transcript и прогресс сохраняются сервером после каждого шага.",
+    "Отвечай на текущий вопрос. История диалога и прогресс сохраняются сервером после каждого шага.",
   "interview.session.questionProgress": "Вопрос {current} из {total}",
   "interview.session.answeredProgress": "Отвечено: {answered} из {total}",
   "interview.chat.interviewer": "Интервьюер",
   "interview.chat.you": "Вы",
   "interview.chat.typing": "Интервьюер печатает…",
+  "interview.chat.transcript": "История технического интервью",
   "interview.chat.readyDescription":
-    "Сервер сформирует честный отчёт по сохранённому transcript. Техническая корректность без review не будет считаться доказанной.",
+    "Сервер сформирует честный отчёт по сохранённой истории диалога. Без отдельной проверки техническая корректность не считается подтверждённой.",
   "interview.chat.finishing": "Формирую отчёт…",
   "interview.chat.finish": "Завершить и открыть отчёт",
   "interview.chat.messageLabel": "Сообщение",
@@ -1756,17 +2446,20 @@ const ruRU: Record<MessageKey, string> = {
   "interview.report.limitsAria": "Границы оценки",
   "interview.report.limits":
     "Оценена структура и полнота ответа. Техническая корректность не проверялась.",
-  "interview.report.summary": "Общая оценка",
+  "interview.report.summary": "Наблюдения об ответах",
   "interview.report.metricsAria": "Метрики интервью",
   "interview.report.metric.asked": "Задано",
   "interview.report.metric.answered": "Отвечено",
   "interview.report.metric.completion": "Полнота",
   "interview.report.strengths": "Сильные стороны",
   "interview.report.growthAreas": "Зоны роста",
-  "interview.report.evidence": "Подтверждения навыка",
+  "interview.report.evidence": "Фрагменты ответов и наблюдения",
   "interview.report.question": "Вопрос {number}",
   "interview.report.answerExcerpt": "«{excerpt}»",
   "interview.report.new": "Новое интервью",
+  "interview.report.nextTitle": "Продолжить практику",
+  "interview.report.nextDescription":
+    "Начните новое интервью, когда будете готовы разобрать следующую тему.",
   "authoring.page.title": "Редактор программы",
   "authoring.page.description":
     "Создавайте версионный граф недель, дней и юнитов. Опубликованные ревизии неизменяемы; продолжение работы начинается с клона-черновика.",
@@ -1789,10 +2482,176 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.addWeek.weekGoal": "Цель недели",
   "authoring.addWeek.weekTitle": "Название недели",
   "authoring.clone.submit": "Клонировать в черновик",
+  "authoring.common.back": "Назад",
   "authoring.common.cancel": "Отмена",
+  "authoring.common.continue": "Продолжить",
   "authoring.common.edit": "Изменить",
   "authoring.createDraft.submit": "Создать черновик",
   "authoring.createDraft.summary": "Создать новую редакцию",
+  "authoring.createDraft.creating": "Создаю локальный черновик…",
+  "authoring.entry.eyebrow": "Adaptive Studio",
+  "authoring.entry.title": "Выберите, как начать этот курс",
+  "authoring.entry.description":
+    "Выберите вариант, который подходит вашей модели. Внешний путь возвращает Course Pack для импорта, а подключённый начинается с явного локального черновика. Ни один путь не публикует курс.",
+  "authoring.entry.choose": "Выберите один путь создания курса",
+  "authoring.entry.manual.title": "Создать вручную",
+  "authoring.entry.manual.badge": "Работает без AI",
+  "authoring.entry.manual.description":
+    "Начните с полного типизированного редактора недель, дней, юнитов и защищённых полей авторинга.",
+  "authoring.entry.manual.next":
+    "Создайте локальный черновик ниже, затем соберите его структуру в полном ручном редакторе.",
+  "authoring.entry.designer.title": "Описать учебную цель",
+  "authoring.entry.designer.badge": "AI необязателен · нужна проверка",
+  "authoring.entry.designer.description":
+    "Начните с направляемого Course Designer. AI возвращает только типизированное предложение, которое вы проверяете перед применением.",
+  "authoring.entry.designer.next":
+    "Назовите курс и опишите учебную цель. Будет создан редактируемый локальный черновик, а Designer откроется с готовой целью для предложения.",
+  "authoring.entry.unselected":
+    "Выберите путь, чтобы открыть общие данные локального черновика. Ни один вариант не выбран заранее.",
+  "authoring.entry.continueHint": "Выберите путь, чтобы продолжить",
+  "authoring.entry.continueReady": "Перейти к общему брифу курса",
+  "authoring.entry.assistedTitle": "Выберите вариант с помощником",
+  "authoring.entry.assistedDescription":
+    "Ориентируйтесь на модель, которая у вас действительно есть. Aptiloop проверяет техническую совместимость подключённых моделей, но не оценивает их силу и качество результата.",
+  "authoring.external.title": "Использовать внешнюю модель",
+  "authoring.external.description":
+    "Опишите курс один раз и скачайте самодостаточную инструкцию с точной схемой и шаблоном Course Pack V1.",
+  "authoring.external.guidance":
+    "Выберите этот путь, если другая модель лучше рассуждает, держит больше контекста, умеет искать в интернете или располагает нужными инструментами.",
+  "authoring.external.badge": "Aptiloop ничего не отправляет",
+  "authoring.external.start": "Подготовить инструкцию",
+  "authoring.external.pageDescription":
+    "Заполните бриф и скачайте один файл-инструкцию. Передайте его выбранной модели, а полученный JSON загрузите только через импорт Course Pack.",
+  "authoring.external.form": "Бриф для внешней модели",
+  "authoring.external.privacyTitle": "Передача внешней модели",
+  "authoring.external.privacyDescription":
+    "В скачанном файле будут только этот бриф и встроенные правила совместимого формата. Aptiloop не связывается с моделью и не получает результат автоматически. Не добавляйте в бриф секреты.",
+  "authoring.external.download": "Скачать файл-инструкцию",
+  "authoring.external.downloaded": "Инструкция для авторинга скачана.",
+  "authoring.external.downloadError":
+    "Не удалось подготовить файл-инструкцию для авторинга.",
+  "authoring.external.uploadResult": "Загрузить полученный Course Pack",
+  "authoring.external.nextStep":
+    "Модель должна вернуть один UTF-8 JSON-документ. Считайте его недоверенным и проверьте на /courses/import.",
+  "authoring.connected.title": "Использовать подключённый Course Designer",
+  "authoring.connected.description":
+    "Создайте явный локальный черновик из того же брифа и откройте Designer для типизированных предложений к этому черновику.",
+  "authoring.connected.guidance":
+    "Выберите этот путь, если настроенная модель технически готова, а её контекст и качество рассуждений подходят для курса. Готовность проверяется на следующем экране.",
+  "authoring.connected.badge": "Нужна проверка возможностей",
+  "authoring.connected.start": "Проверить подключённую модель",
+  "authoring.connected.pageDescription":
+    "Перед созданием локального черновика Aptiloop покажет точного провайдера, модель и наблюдаемые технические возможности. Качество модели оцениваете вы.",
+  "authoring.connected.form": "Бриф для подключённого Course Designer",
+  "authoring.connected.readinessTitle": "Готовность Course Designer",
+  "authoring.connected.state.checking": "Проверка",
+  "authoring.connected.state.ready": "Технически готово",
+  "authoring.connected.state.off": "AI выключен",
+  "authoring.connected.state.unavailable": "Недоступно",
+  "authoring.connected.state.unknown": "Возможности неизвестны",
+  "authoring.connected.state.unsupported": "Возможность недоступна",
+  "authoring.connected.stateDescription.checking":
+    "Читаем серверные данные о провайдере, модели и её возможностях.",
+  "authoring.connected.stateDescription.ready":
+    "Точная выбранная модель доступна, а наблюдаемые возможности провайдера соответствуют сохранённому контракту роли Course Designer.",
+  "authoring.connected.stateDescription.off":
+    "Для Course Designer выбран режим без AI. Внешняя инструкция и полный ручной авторинг остаются доступны.",
+  "authoring.connected.stateDescription.unavailable":
+    "Выбранное подключение или модель сейчас недоступны. Aptiloop не подменит провайдера и не включит Mock.",
+  "authoring.connected.stateDescription.unknown":
+    "У Aptiloop нет актуального снимка возможностей этого допустимого подключения. Можно продолжить: сервер проверит точную роль и при необходимости вернёт структурированную ошибку.",
+  "authoring.connected.stateDescription.unsupported":
+    "У точной модели или подключения нет обязательной возможности: {capability}.",
+  "authoring.connected.refresh": "Обновить",
+  "authoring.connected.evidence.model": "Точная модель",
+  "authoring.connected.evidence.tools": "Типизированные инструменты",
+  "authoring.connected.evidence.transport": "Поток и отмена",
+  "authoring.connected.evidence.observed": "Подтверждено",
+  "authoring.connected.evidence.notAvailable": "Недоступно",
+  "authoring.connected.qualityNote":
+    "Техническая готовность — не оценка силы модели. Если ей не хватает контекста, поиска или рассуждений, используйте путь с внешним файлом-инструкцией.",
+  "authoring.connected.create": "Создать черновик и открыть Designer",
+  "authoring.connected.openSettings": "Открыть настройки AI",
+  "authoring.connected.nextStep":
+    "Это действие создаст один локальный редактируемый черновик. Передача провайдеру, применение предложения, Preview и публикация останутся отдельными действиями.",
+  "authoring.connected.alternatives": "Продолжить другим способом",
+  "authoring.brief.title": "Бриф курса",
+  "authoring.brief.description":
+    "Один и тот же бриф подходит для обоих вариантов и хранится в этом браузере, пока вы явно его не очистите.",
+  "authoring.brief.topicGoal": "Тема или учебная цель",
+  "authoring.brief.topicGoalPlaceholder":
+    "Например: Практический асинхронный JavaScript",
+  "authoring.brief.targetOutcome": "Целевой результат",
+  "authoring.brief.targetOutcomePlaceholder":
+    "Что ученик должен уметь самостоятельно объяснить, выбрать или собрать?",
+  "authoring.brief.currentLevel": "Текущий уровень",
+  "authoring.brief.currentLevelPlaceholder":
+    "Например: Знает синтаксис JavaScript, но не знаком с конкурентностью",
+  "authoring.brief.primaryLocale": "Основная локаль курса",
+  "authoring.brief.primaryLocaleDescription":
+    "Укажите локаль BCP 47, например en-US, ru-RU, de-DE или ja-JP. Она не зависит от языка интерфейса.",
+  "authoring.brief.primaryLocaleError":
+    "Укажите корректную локаль курса BCP 47, например en-US или ru-RU.",
+  "authoring.brief.pacing": "Темп и доступное время",
+  "authoring.brief.pacingPlaceholder":
+    "Например: 30 минут в день в течение четырёх недель",
+  "authoring.brief.tools": "Инструменты и доступ",
+  "authoring.brief.accessibility": "Потребности доступности",
+  "authoring.brief.constraints": "Другие ограничения",
+  "authoring.brief.optionalPlaceholder":
+    "Необязательно — только важные условия",
+  "authoring.brief.clear": "Очистить бриф",
+  "authoring.brief.savedLocally":
+    "Сохранено локально в этом браузере. Ввод текста сам по себе никуда его не отправляет.",
+  "authoring.brief.storageErrorTitle": "Не удалось сохранить бриф",
+  "authoring.brief.storageErrorDescription":
+    "Можно продолжить в этой вкладке, но после перезагрузки бриф может пропасть. Скопируйте важные данные перед выходом.",
+  "authoring.brief.validationError":
+    "Заполните обязательные поля брифа и укажите корректную локаль курса BCP 47.",
+  "authoring.manual.fallback": "Создать вручную без AI",
+  "authoring.manual.fallbackDescription":
+    "Создайте пустой локальный черновик и используйте полный структурированный редактор. Этот путь доступен при любом состоянии провайдера.",
+  "authoring.manual.start": "Создать пустой черновик",
+  "authoring.manual.form": "Данные ручного черновика курса",
+  "authoring.creation.error": "Не удалось создать локальный черновик.",
+  "authoring.details.title": "Данные курса",
+  "authoring.details.manualTitle": "Данные курса",
+  "authoring.details.designerTitle": "Учебная цель",
+  "authoring.creation.learningGoal": "Чего должен достичь ученик?",
+  "authoring.creation.learningGoalPlaceholder":
+    "Например: самостоятельно собрать и объяснить небольшой асинхронный сценарий на JavaScript без пошаговых подсказок.",
+  "authoring.creation.designerGuardrailTitle": "Сначала редактируемый черновик",
+  "authoring.creation.designerGuardrailDescription":
+    "Designer может только предложить изменения. Вы проверяете и явно применяете их; публикация остаётся отдельным действием.",
+  "authoring.manual.eyebrow": "Ручной авторинг",
+  "authoring.manual.title": "Структура курса",
+  "authoring.manual.description":
+    "Редактируйте каждую типизированную неделю, день и юнит напрямую. Ручной авторинг полностью доступен при выключенном AI.",
+  "authoring.workspace.aria": "Рабочая область Course Studio",
+  "authoring.workspace.program": "Программа",
+  "authoring.workspace.designer": "Designer",
+  "authoring.workspace.preview": "Предпросмотр",
+  "authoring.workspace.release": "Выпуск",
+  "authoring.workspace.history": "История и адаптация",
+  "authoring.workspace.designerUnavailable.title":
+    "Для Designer нужен редактируемый черновик",
+  "authoring.workspace.designerUnavailable.description":
+    "Клонируйте неизменяемую ревизию в черновик, прежде чем запрашивать или применять предложение.",
+  "authoring.workspace.releaseUnavailable.title": "Эта ревизия уже неизменяема",
+  "authoring.workspace.releaseUnavailable.description":
+    "Опубликованную ревизию нельзя выпустить повторно. Клонируйте её в черновик, чтобы подготовить новую.",
+  "authoring.preview.eyebrow": "Предпросмотр ученика",
+  "authoring.preview.loading": "Загружаю предпросмотр ученика",
+  "authoring.preview.unavailable":
+    "Предпросмотр ученика недоступен. Ревизия курса не была изменена.",
+  "authoring.preview.emptyTitle": "Пока нечего показывать",
+  "authoring.preview.emptyDescription":
+    "Добавьте занятие и хотя бы одну учебную активность в «Программе», затем вернитесь в предпросмотр.",
+  "authoring.preview.lessonMeta": "Активностей: {activities} · {minutes} мин",
+  "authoring.error.actionTitle": "Действие Studio не завершилось",
+  "authoring.release.checking": "Проверяю…",
+  "authoring.release.ready": "Готово к явной публикации",
+  "authoring.publish.publishing": "Публикую неизменяемую ревизию…",
   "authoring.current.draftCreatedAt": "Черновик создан {date}",
   "authoring.current.label": "Текущая программа",
   "authoring.current.publishedAt": "Опубликована {date}",
@@ -1899,6 +2758,7 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.designer.eyebrow": "Adaptive Studio · Course Designer",
   "authoring.designer.generate": "Сгенерировать предложение",
   "authoring.designer.generating": "Генерирую предложение…",
+  "authoring.designer.loading": "Загружаю состояние пошагового проектирования…",
   "authoring.designer.prompt": "Запрос на авторинг",
   "authoring.designer.promptPlaceholder":
     "Например: добавь вводную неделю с активностью на воспроизведение.",
@@ -2006,6 +2866,12 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.release.dayCount": "Дней: {count}",
   "authoring.release.changeCounts":
     "Добавлено: {added} · Изменено: {changed} · Удалено: {removed}",
+  "authoring.release.change.added": "Добавлено",
+  "authoring.release.change.changed": "Изменено",
+  "authoring.release.change.removed": "Удалено",
+  "authoring.release.entity.week": "Неделя",
+  "authoring.release.entity.day": "Урок",
+  "authoring.release.entity.unit": "Активность",
   "authoring.release.required":
     "Проверка, предпросмотр ученика и обзор изменений должны соответствовать текущему черновику.",
   "authoring.publish.confirmation":
@@ -2027,8 +2893,11 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.reorder.up": "Поднять {label}",
   "authoring.revision.heading": "Версия {revision} · {title}",
   "authoring.revision.label": "Версия {revision}",
+  "authoring.missingRevision.description":
+    "Ссылка Studio ведёт на ревизию, которой больше нет. Другой курс не был открыт вместо неё.",
+  "authoring.missingRevision.title": "Ревизия курса не найдена",
   "authoring.selectRevision.description":
-    "Откройте существующую ревизию или создайте новый черновик.",
+    "Выберите ревизию курса в разделе «Курсы» или создайте новый черновик. Studio не откроет другой курс автоматически.",
   "authoring.selectRevision.title": "Выберите ревизию",
   "authoring.status.archived": "Архив",
   "authoring.status.draft": "Черновик",
@@ -2102,7 +2971,7 @@ export function LocaleProvider({
   const [locale, setLocaleState] = useState<UiLocale>(initialLocale);
   const [draftLocale, setDraftLocale] = useState<UiLocale>(initialLocale);
   const settings = useQuery({
-    queryKey: ["settings"],
+    queryKey: ["settings", "locale"],
     queryFn: () => api<SettingsLocaleResponse>("/settings"),
     enabled: syncSettings,
   });
@@ -2116,7 +2985,7 @@ export function LocaleProvider({
       setLocaleState(result.uiLocale);
       document.cookie = `aptiloop.ui-locale=${result.uiLocale}; Path=/; Max-Age=31536000; SameSite=Strict`;
       queryClient.setQueryData<SettingsLocaleResponse>(
-        ["settings"],
+        ["settings", "locale"],
         (current) =>
           current ? { ...current, uiLocale: result.uiLocale } : current,
       );
@@ -2125,7 +2994,9 @@ export function LocaleProvider({
 
   useEffect(() => {
     if (!syncSettings || !settings.data) return;
-    const resolved = settings.data.uiLocale ?? browserLocale();
+    const resolved = isUiLocale(settings.data.uiLocale)
+      ? settings.data.uiLocale
+      : browserLocale();
     setLocaleState(resolved);
     setDraftLocale(resolved);
   }, [settings.data, syncSettings]);
@@ -2137,6 +3008,7 @@ export function LocaleProvider({
   const value: LocaleContextValue = {
     locale,
     setLocale: (nextLocale) => {
+      if (!isUiLocale(nextLocale)) return;
       setLocaleState(nextLocale);
       document.cookie = `aptiloop.ui-locale=${nextLocale}; Path=/; Max-Age=31536000; SameSite=Strict`;
     },

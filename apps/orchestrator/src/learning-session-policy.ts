@@ -4,8 +4,8 @@ import {
   canonicalJson,
   hashCanonicalJson,
   type DatabaseConnection,
-} from "@dlh/database";
-import { SessionSnapshotSchema } from "@dlh/shared";
+} from "@aptiloop/database";
+import { SessionSnapshotSchema } from "@aptiloop/shared";
 
 const currentSessionSnapshotSchemaVersion = 2;
 const strictSessionSnapshotSchema = SessionSnapshotSchema.strict();

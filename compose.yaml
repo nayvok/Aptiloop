@@ -1,4 +1,4 @@
-name: dev-learning-harness
+name: aptiloop
 
 services:
   orchestrator:
@@ -62,6 +62,7 @@ services:
       retries: 20
     restart: unless-stopped
 
+# Preserve the historical external volume names to keep existing local data attached.
 volumes:
   harness-data:
     name: ${APTILOOP_DATA_VOLUME:-dev-learning-harness_harness-data}

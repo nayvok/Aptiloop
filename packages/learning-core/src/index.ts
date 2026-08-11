@@ -4,6 +4,7 @@ export * from "./day-summary.js";
 export * from "./flashcard-export.js";
 export * from "./hints.js";
 export * from "./kernel.js";
+export * from "./lesson-next-action.js";
 export * from "./mastery.js";
 export * from "./review-selection.js";
 export * from "./unit-progression.js";

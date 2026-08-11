@@ -68,6 +68,18 @@ const ShortTextSchema = z
     "Text cannot have outer whitespace",
   )
   .refine((value) => value.trim().length > 0, "Text cannot be blank");
+
+/**
+ * A knowledge-node key carried by learning projections.
+ *
+ * Target Course Packs use stable IDs, while migrated sessions preserve
+ * bounded semantic topic keys such as "primitive values".
+ */
+export const LearningKnowledgeNodeIdSchema = ShortTextSchema;
+export type LearningKnowledgeNodeId = z.infer<
+  typeof LearningKnowledgeNodeIdSchema
+>;
+
 const TextSchema = z
   .string()
   .min(1)
@@ -1171,4 +1183,118 @@ export const StableIdentityReuseInputSchema = z
   });
 export type StableIdentityReuseInput = z.infer<
   typeof StableIdentityReuseInputSchema
+>;
+
+/**
+ * The server-selected learning action exposed by a Course path.
+ *
+ * A resume action carries the stable Activity identity persisted in
+ * learning_sessions.current_step. A start action intentionally does not name
+ * an Activity because no immutable session snapshot exists until the lesson is
+ * started.
+ */
+export const LearningPathNextActionSchema = z
+  .discriminatedUnion("type", [
+    z
+      .object({
+        type: z.literal("start"),
+        lessonId: CourseEntityIdSchema,
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("resume"),
+        lessonId: CourseEntityIdSchema,
+        sessionId: CourseEntityIdSchema,
+        currentStep: StableCourseIdSchema,
+      })
+      .strict(),
+  ])
+  .nullable();
+export type LearningPathNextAction = z.infer<
+  typeof LearningPathNextActionSchema
+>;
+
+export const LearningReviewQueueItemSchema = z
+  .object({
+    id: CourseEntityIdSchema,
+    topic: ShortTextSchema,
+    knowledgeNodeId: LearningKnowledgeNodeIdSchema,
+    dimension: z.enum([
+      "understanding",
+      "explanation",
+      "codeReading",
+      "implementation",
+      "debugging",
+      "interview",
+    ]),
+    activityKind: z.enum(["recall", "correction"]),
+    reasonCode: z.enum(["mistake", "low_mastery"]),
+    dueAt: IsoDateTimeSchema,
+    state: ReviewItemStatusSchema,
+    isDue: z.boolean(),
+    sessionId: CourseEntityIdSchema,
+    activityId: CourseEntityIdSchema.nullable(),
+    nextActionHref: z.null(),
+  })
+  .strict();
+export type LearningReviewQueueItem = z.infer<
+  typeof LearningReviewQueueItemSchema
+>;
+
+export const LearningReviewsResponseSchema = z
+  .object({
+    asOf: IsoDateTimeSchema,
+    reviews: z.array(LearningReviewQueueItemSchema).max(MAX_LIST_ITEMS),
+  })
+  .strict()
+  .superRefine(({ asOf, reviews }, context) => {
+    reviews.forEach((review, index) => {
+      const expectedDue =
+        review.state === "pending" &&
+        Date.parse(review.dueAt) <= Date.parse(asOf);
+      if (review.isDue !== expectedDue) {
+        context.addIssue({
+          code: "custom",
+          path: ["reviews", index, "isDue"],
+          message: "Review due state must match the server observation time",
+        });
+      }
+    });
+  });
+export type LearningReviewsResponse = z.infer<
+  typeof LearningReviewsResponseSchema
+>;
+
+export const LearningMistakeItemSchema = z
+  .object({
+    id: CourseEntityIdSchema,
+    topic: ShortTextSchema,
+    errorFamily: ShortTextSchema,
+    occurrenceCount: z.number().int().positive().max(1_000_000),
+    reviewAt: IsoDateTimeSchema,
+    isDue: z.boolean(),
+  })
+  .strict();
+export type LearningMistakeItem = z.infer<typeof LearningMistakeItemSchema>;
+
+export const LearningMistakesResponseSchema = z
+  .object({
+    asOf: IsoDateTimeSchema,
+    mistakes: z.array(LearningMistakeItemSchema).max(MAX_LIST_ITEMS),
+  })
+  .strict()
+  .superRefine(({ asOf, mistakes }, context) => {
+    mistakes.forEach((mistake, index) => {
+      if (mistake.isDue && Date.parse(mistake.reviewAt) > Date.parse(asOf)) {
+        context.addIssue({
+          code: "custom",
+          path: ["mistakes", index, "isDue"],
+          message: "A future Correction cannot be due",
+        });
+      }
+    });
+  });
+export type LearningMistakesResponse = z.infer<
+  typeof LearningMistakesResponseSchema
 >;

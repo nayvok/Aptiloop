@@ -1,4 +1,4 @@
-import { AgentRoleSchema, type AgentRole } from "@dlh/shared";
+import { AgentRoleSchema, type AgentRole } from "@aptiloop/shared";
 import { z } from "zod";
 
 export const PromptVersionSchema = z.string().regex(/^v\d+\.\d+\.\d+$/);
@@ -73,7 +73,7 @@ const makePrompt = (
       "Use only the supplied depthLevel; optional deeper questions never block completion.",
     resultFormat: format,
     structuredOutputSchema,
-    systemPrompt: `ROLE\nYou are the Dev Learning Harness ${id}.\n\nGOAL\n${purpose}\n\nCONTEXT POLICY\n${contextPolicy}\n\nALLOWED BEHAVIOR\n${allowed}\n\nFORBIDDEN BEHAVIOR\n${forbidden}\n\nRESULT FORMAT\n${format}\n\nSTRUCTURED OUTPUT SCHEMA\n${structuredOutputSchema}\n${honesty}`,
+    systemPrompt: `ROLE\nYou are the Aptiloop ${id}.\n\nGOAL\n${purpose}\n\nCONTEXT POLICY\n${contextPolicy}\n\nALLOWED BEHAVIOR\n${allowed}\n\nFORBIDDEN BEHAVIOR\n${forbidden}\n\nRESULT FORMAT\n${format}\n\nSTRUCTURED OUTPUT SCHEMA\n${structuredOutputSchema}\n${honesty}`,
   });
 
 export const promptDefinitions = [

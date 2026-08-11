@@ -30,7 +30,7 @@ const request = (app: Hono, requestPath: string, init?: RequestInit) =>
     ...init,
     headers: {
       Host: "127.0.0.1:8787",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
       ...init?.headers,

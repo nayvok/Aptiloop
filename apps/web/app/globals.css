@@ -11,6 +11,8 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-soft: var(--surface-soft);
   --color-primary: var(--primary);
   --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
@@ -31,6 +33,11 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);
+  --color-overlay: var(--overlay);
+  --radius-control: var(--shape-control);
+  --radius-panel: var(--shape-panel);
+  --radius-focus: var(--shape-focus);
+  --shadow-focus: var(--focus-shadow);
   --color-activity-theory: var(--activity-theory);
   --color-activity-theory-surface: var(--activity-theory-surface);
   --color-activity-study: var(--activity-study);
@@ -57,106 +64,121 @@
 
 :root {
   color-scheme: light;
-  --background: oklch(0.977 0.006 255);
-  --foreground: oklch(0.25 0.025 255);
+  --background: oklch(0.994 0.001 260);
+  --foreground: oklch(0.205 0.009 260);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.25 0.025 255);
+  --card-foreground: oklch(0.205 0.009 260);
+  --surface-raised: oklch(1 0 0);
+  --surface-soft: oklch(0.965 0.004 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.25 0.025 255);
-  --primary: oklch(0.49 0.14 151);
-  --primary-hover: oklch(0.44 0.13 151);
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.94 0.012 255);
-  --secondary-foreground: oklch(0.31 0.025 255);
-  --muted: oklch(0.95 0.009 255);
-  --muted-foreground: oklch(0.47 0.025 255);
-  --accent: oklch(0.93 0.025 151);
-  --accent-foreground: oklch(0.34 0.09 151);
-  --destructive: oklch(0.55 0.2 27);
-  --destructive-hover: oklch(0.49 0.19 27);
-  --destructive-foreground: oklch(0.99 0 0);
-  --success: oklch(0.86 0.065 151);
-  --success-foreground: oklch(0.36 0.105 151);
-  --warning: oklch(0.9 0.075 78);
-  --warning-foreground: oklch(0.38 0.095 68);
-  --border: oklch(0.88 0.015 255);
-  --input: oklch(0.84 0.018 255);
-  --ring: oklch(0.49 0.14 151);
-  --sidebar: oklch(0.955 0.012 255);
-  --activity-theory: oklch(0.48 0.17 293);
-  --activity-theory-surface: oklch(0.94 0.035 293);
-  --activity-study: oklch(0.45 0.17 293);
-  --activity-study-surface: oklch(0.94 0.035 293);
-  --activity-practice: oklch(0.5 0.13 160);
-  --activity-practice-surface: oklch(0.93 0.04 160);
-  --activity-recall: oklch(0.43 0.105 76);
-  --activity-recall-surface: oklch(0.94 0.055 76);
-  --activity-teacher: oklch(0.5 0.11 225);
-  --activity-teacher-surface: oklch(0.93 0.035 225);
-  --activity-quiz: oklch(0.48 0.15 255);
-  --activity-quiz-surface: oklch(0.93 0.035 255);
-  --activity-code-reading: oklch(0.44 0.15 275);
-  --activity-code-reading-surface: oklch(0.93 0.04 275);
-  --activity-review: oklch(0.55 0.16 30);
-  --activity-review-surface: oklch(0.95 0.045 30);
-  --activity-interview: oklch(0.55 0.16 350);
-  --activity-interview-surface: oklch(0.94 0.04 350);
-  --activity-summary: oklch(0.5 0.13 145);
-  --activity-summary-surface: oklch(0.93 0.04 145);
-  --activity-ai: oklch(0.43 0.1 210);
-  --activity-ai-surface: oklch(0.94 0.04 210);
+  --popover-foreground: oklch(0.205 0.009 260);
+  --primary: oklch(0.5 0.13 151);
+  --primary-hover: oklch(0.445 0.13 151);
+  --primary-foreground: oklch(0.99 0.003 260);
+  --secondary: oklch(0.96 0.004 260);
+  --secondary-foreground: oklch(0.27 0.011 260);
+  --muted: oklch(0.96 0.004 260);
+  --muted-foreground: oklch(0.455 0.011 260);
+  --accent: oklch(0.95 0.005 260);
+  --accent-foreground: oklch(0.25 0.011 260);
+  --destructive: oklch(0.535 0.185 27);
+  --destructive-hover: oklch(0.485 0.18 27);
+  --destructive-foreground: oklch(0.99 0.003 260);
+  --success: oklch(0.51 0.12 152);
+  --success-foreground: oklch(0.34 0.09 152);
+  --warning: oklch(0.875 0.07 78);
+  --warning-foreground: oklch(0.37 0.09 68);
+  --border: oklch(0.895 0.006 260);
+  --input: oklch(0.664 0.009 260);
+  --ring: oklch(0.5 0.13 151);
+  --sidebar: oklch(0.982 0.002 260);
+  --overlay: oklch(0.14 0.01 260 / 0.44);
+  --shape-control: 0.5rem;
+  --shape-panel: 0.5rem;
+  --shape-focus: 0.5rem;
+  --focus-shadow:
+    0 1px 2px oklch(0.2 0.012 260 / 0.05),
+    0 16px 44px oklch(0.2 0.012 260 / 0.07);
+  --activity-theory: oklch(0.48 0.11 293);
+  --activity-theory-surface: oklch(0.94 0.025 293);
+  --activity-study: oklch(0.46 0.105 293);
+  --activity-study-surface: oklch(0.94 0.025 293);
+  --activity-practice: oklch(0.48 0.1 160);
+  --activity-practice-surface: oklch(0.94 0.03 160);
+  --activity-recall: oklch(0.44 0.09 76);
+  --activity-recall-surface: oklch(0.945 0.035 76);
+  --activity-teacher: oklch(0.48 0.085 225);
+  --activity-teacher-surface: oklch(0.94 0.025 225);
+  --activity-quiz: oklch(0.47 0.1 255);
+  --activity-quiz-surface: oklch(0.94 0.025 255);
+  --activity-code-reading: oklch(0.46 0.1 275);
+  --activity-code-reading-surface: oklch(0.94 0.027 275);
+  --activity-review: oklch(0.52 0.11 30);
+  --activity-review-surface: oklch(0.95 0.03 30);
+  --activity-interview: oklch(0.52 0.105 350);
+  --activity-interview-surface: oklch(0.945 0.028 350);
+  --activity-summary: oklch(0.48 0.095 145);
+  --activity-summary-surface: oklch(0.94 0.028 145);
+  --activity-ai: oklch(0.46 0.08 210);
+  --activity-ai-surface: oklch(0.94 0.025 210);
 }
 
 .dark {
   color-scheme: dark;
-  --background: oklch(0.19 0.018 255);
-  --foreground: oklch(0.97 0.006 255);
-  --card: oklch(0.23 0.022 255);
-  --card-foreground: oklch(0.97 0.006 255);
-  --popover: oklch(0.23 0.022 255);
-  --popover-foreground: oklch(0.97 0.006 255);
-  --primary: oklch(0.77 0.14 151);
-  --primary-hover: oklch(0.82 0.13 151);
-  --primary-foreground: oklch(0.19 0.018 255);
-  --secondary: oklch(0.28 0.022 255);
-  --secondary-foreground: oklch(0.93 0.008 255);
-  --muted: oklch(0.27 0.02 255);
-  --muted-foreground: oklch(0.72 0.018 255);
-  --accent: oklch(0.31 0.045 151);
-  --accent-foreground: oklch(0.9 0.08 151);
-  --destructive: oklch(0.66 0.18 27);
-  --destructive-hover: oklch(0.72 0.17 27);
-  --destructive-foreground: oklch(0.18 0.018 255);
-  --success: oklch(0.32 0.065 151);
-  --success-foreground: oklch(0.82 0.12 151);
-  --warning: oklch(0.34 0.07 78);
-  --warning-foreground: oklch(0.84 0.11 78);
-  --border: oklch(0.34 0.025 255);
-  --input: oklch(0.39 0.025 255);
-  --ring: oklch(0.77 0.14 151);
-  --sidebar: oklch(0.215 0.02 255);
-  --activity-theory: oklch(0.76 0.13 293);
-  --activity-theory-surface: oklch(0.31 0.055 293);
-  --activity-study: oklch(0.78 0.12 293);
-  --activity-study-surface: oklch(0.31 0.05 293);
-  --activity-practice: oklch(0.8 0.11 160);
-  --activity-practice-surface: oklch(0.3 0.045 160);
-  --activity-recall: oklch(0.82 0.115 76);
-  --activity-recall-surface: oklch(0.32 0.055 76);
-  --activity-teacher: oklch(0.8 0.1 225);
-  --activity-teacher-surface: oklch(0.31 0.045 225);
-  --activity-quiz: oklch(0.78 0.12 255);
-  --activity-quiz-surface: oklch(0.31 0.05 255);
-  --activity-code-reading: oklch(0.79 0.11 275);
-  --activity-code-reading-surface: oklch(0.31 0.05 275);
-  --activity-review: oklch(0.82 0.13 30);
-  --activity-review-surface: oklch(0.33 0.055 30);
-  --activity-interview: oklch(0.82 0.12 350);
-  --activity-interview-surface: oklch(0.32 0.05 350);
-  --activity-summary: oklch(0.8 0.11 145);
-  --activity-summary-surface: oklch(0.3 0.045 145);
-  --activity-ai: oklch(0.8 0.1 210);
-  --activity-ai-surface: oklch(0.31 0.045 210);
+  --background: oklch(0.14 0.006 260);
+  --foreground: oklch(0.945 0.005 260);
+  --card: oklch(0.18 0.008 260);
+  --card-foreground: oklch(0.94 0.006 260);
+  --surface-raised: oklch(0.205 0.009 260);
+  --surface-soft: oklch(0.175 0.007 260);
+  --popover: oklch(0.205 0.009 260);
+  --popover-foreground: oklch(0.94 0.006 260);
+  --primary: oklch(0.72 0.13 151);
+  --primary-hover: oklch(0.77 0.125 151);
+  --primary-foreground: oklch(0.15 0.01 260);
+  --secondary: oklch(0.225 0.009 260);
+  --secondary-foreground: oklch(0.91 0.007 260);
+  --muted: oklch(0.185 0.007 260);
+  --muted-foreground: oklch(0.72 0.012 260);
+  --accent: oklch(0.235 0.01 260);
+  --accent-foreground: oklch(0.93 0.007 260);
+  --destructive: oklch(0.7 0.16 27);
+  --destructive-hover: oklch(0.755 0.15 27);
+  --destructive-foreground: oklch(0.16 0.009 260);
+  --success: oklch(0.72 0.11 152);
+  --success-foreground: oklch(0.83 0.075 152);
+  --warning: oklch(0.35 0.065 78);
+  --warning-foreground: oklch(0.875 0.09 78);
+  --border: oklch(0.285 0.01 260);
+  --input: oklch(0.49 0.012 260);
+  --ring: oklch(0.72 0.13 151);
+  --sidebar: oklch(0.155 0.006 260);
+  --overlay: oklch(0.03 0.006 260 / 0.68);
+  --focus-shadow:
+    0 1px 2px oklch(0.03 0.006 260 / 0.28),
+    0 16px 44px oklch(0.03 0.006 260 / 0.22);
+  --activity-theory: oklch(0.78 0.095 293);
+  --activity-theory-surface: oklch(0.3 0.038 293);
+  --activity-study: oklch(0.8 0.09 293);
+  --activity-study-surface: oklch(0.3 0.035 293);
+  --activity-practice: oklch(0.79 0.09 160);
+  --activity-practice-surface: oklch(0.29 0.035 160);
+  --activity-recall: oklch(0.82 0.09 76);
+  --activity-recall-surface: oklch(0.31 0.04 76);
+  --activity-teacher: oklch(0.8 0.08 225);
+  --activity-teacher-surface: oklch(0.3 0.035 225);
+  --activity-quiz: oklch(0.79 0.09 255);
+  --activity-quiz-surface: oklch(0.3 0.037 255);
+  --activity-code-reading: oklch(0.8 0.085 275);
+  --activity-code-reading-surface: oklch(0.3 0.037 275);
+  --activity-review: oklch(0.82 0.1 30);
+  --activity-review-surface: oklch(0.32 0.04 30);
+  --activity-interview: oklch(0.82 0.09 350);
+  --activity-interview-surface: oklch(0.31 0.038 350);
+  --activity-summary: oklch(0.8 0.09 145);
+  --activity-summary-surface: oklch(0.29 0.035 145);
+  --activity-ai: oklch(0.8 0.08 210);
+  --activity-ai-surface: oklch(0.3 0.035 210);
 }
 
 * {
@@ -184,6 +206,13 @@ body {
 
 ::selection {
   background: color-mix(in oklch, var(--primary) 30%, transparent);
+}
+
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

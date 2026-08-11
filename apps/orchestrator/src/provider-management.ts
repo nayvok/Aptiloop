@@ -9,13 +9,13 @@ import {
   type PiAgentProvider,
   type PiAuthInteraction,
   type PiProviderAuthKind,
-} from "@dlh/agent-core";
+} from "@aptiloop/agent-core";
 import {
   ProviderHubRepository,
   type DatabaseConnection,
   type LearningRepository,
-} from "@dlh/database";
-import type { ProviderConnection } from "@dlh/shared";
+} from "@aptiloop/database";
+import type { ProviderConnection } from "@aptiloop/shared";
 import { z } from "zod";
 
 import { LocalPiCredentialStore } from "./local-pi-credential-store.js";

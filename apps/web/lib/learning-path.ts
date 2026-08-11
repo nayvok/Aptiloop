@@ -1,3 +1,4 @@
+import { LearningPathNextActionSchema } from "@aptiloop/shared";
 import { z } from "zod";
 
 const unitTypeSchema = z.enum([
@@ -46,6 +47,7 @@ const learnerUnitSchema = z
 
 export const learningPathSchema = z
   .object({
+    nextAction: LearningPathNextActionSchema,
     courseContext: z
       .object({
         courseId: z.string().min(1),
@@ -107,12 +109,78 @@ export const learningPathSchema = z
   })
   .superRefine((value, context) => {
     const leak = findProtectedField(value);
-    if (!leak) return;
-    context.addIssue({
-      code: "custom",
-      path: leak.path,
-      message: `Protected curriculum field received: ${leak.field}`,
-    });
+    if (leak) {
+      context.addIssue({
+        code: "custom",
+        path: leak.path,
+        message: `Protected curriculum field received: ${leak.field}`,
+      });
+    }
+
+    if (value.curriculum === null) {
+      if (value.nextAction !== null) {
+        context.addIssue({
+          code: "custom",
+          path: ["nextAction"],
+          message: "A missing Course cannot expose a next action",
+        });
+      }
+      return;
+    }
+
+    const days = value.curriculum.weeks.flatMap((week) => week.days);
+    const action = value.nextAction;
+    if (action === null) return;
+    const matchingDays = days.filter((day) => day.id === action.lessonId);
+    if (matchingDays.length !== 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["nextAction", "lessonId"],
+        message: "The next action must identify exactly one Course lesson",
+      });
+      return;
+    }
+    const day = matchingDays[0]!;
+
+    if (action.type === "start") {
+      const availableDays = days.filter(
+        (candidate) => candidate.status === "available",
+      );
+      if (
+        day.status !== "available" ||
+        day.sessionId !== null ||
+        availableDays.length !== 1
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["nextAction"],
+          message:
+            "A start action requires exactly one available lesson without an active session",
+        });
+      }
+      return;
+    }
+
+    const currentDays = days.filter(
+      (candidate) => candidate.status === "in_progress",
+    );
+    const matchingSteps = day.units.filter(
+      (unit) => unit.stableId === action.currentStep,
+    );
+    if (
+      day.status !== "in_progress" ||
+      day.sessionId !== action.sessionId ||
+      currentDays.length !== 1 ||
+      matchingSteps.length !== 1 ||
+      !["ready", "in_progress"].includes(matchingSteps[0]!.status)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["nextAction"],
+        message:
+          "A resume action must match the one active lesson, session, and persisted current step",
+      });
+    }
   });
 
 export type LearningPath = z.infer<typeof learningPathSchema>;

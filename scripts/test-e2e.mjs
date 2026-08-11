@@ -165,7 +165,7 @@ async function runSuite() {
 
     playwrightChild = spawn(
       process.execPath,
-      [npmCli, "run", "test:e2e", "--workspace=@dlh/web"],
+      [npmCli, "run", "test:e2e", "--workspace=@aptiloop/web"],
       {
         cwd: root,
         detached: process.platform !== "win32",

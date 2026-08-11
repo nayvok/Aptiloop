@@ -172,7 +172,9 @@ function hasGit(): boolean {
 }
 
 async function temporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), "dlh-git-baseline-"));
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "aptiloop-git-baseline-"),
+  );
   temporaryDirectories.push(directory);
   return directory;
 }

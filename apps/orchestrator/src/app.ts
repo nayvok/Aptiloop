@@ -10,8 +10,8 @@ import {
   parseReviewResult,
   ProviderHubError,
   type AgentProvider,
-} from "@dlh/agent-core";
-import { CodexProvider } from "@dlh/codex-provider";
+} from "@aptiloop/agent-core";
+import { CodexProvider } from "@aptiloop/codex-provider";
 import {
   assertM1E2EDatabaseTarget,
   assertM1WritableDatabaseTarget,
@@ -29,7 +29,7 @@ import {
   type LearningRepository,
   type M1DatabaseTargetValidation,
   type M1WritableDatabaseOpenOptions,
-} from "@dlh/database";
+} from "@aptiloop/database";
 import {
   buildZedOpenPlan,
   createCoreExecutionFabric,
@@ -44,16 +44,18 @@ import {
   snapshotCompleteWorkspace,
   type ExecutionResult,
   type TrustedExecutionFabric,
-} from "@dlh/exercise-core";
-import { exportFlashcards } from "@dlh/learning-core";
-import { validateOpenCodeEndpoint } from "@dlh/opencode-provider";
-import { getLatestPrompt } from "@dlh/prompt-library";
+} from "@aptiloop/exercise-core";
+import { exportFlashcards } from "@aptiloop/learning-core";
+import { validateOpenCodeEndpoint } from "@aptiloop/opencode-provider";
+import { getLatestPrompt } from "@aptiloop/prompt-library";
 import {
   AgentRoleSchema,
   AptiloopAiRoleSchema,
+  AptiloopToolNameSchema,
+  type AptiloopToolName,
   type ReviewResult,
   type ProviderId,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
@@ -231,6 +233,12 @@ interface AppState {
 type BrowserAgentEvent =
   | { type: "message.delta"; turnId: string; content: string }
   | { type: "message.completed"; turnId: string; content: string }
+  | {
+      type: "tool.summary";
+      turnId: string;
+      name: AptiloopToolName;
+      status: "started" | "completed";
+    }
   | { type: "error"; turnId: string; message: string }
   | {
       type: "session.completed";
@@ -275,6 +283,7 @@ const settingsSchema = z
 const settingsMutationSchema = z
   .object({
     theme: z.enum(["system", "light", "dark"]),
+    uiLocale: z.enum(["en-US", "ru-RU"]).optional(),
   })
   .strict();
 const localeMutationSchema = z
@@ -492,7 +501,7 @@ export function createApp(options: AppOptions = {}) {
 
     const isMutation =
       mutationMethods[context.req.method.toUpperCase()] === true;
-    if (isMutation && context.req.header("X-DLH-Client") !== "web") {
+    if (isMutation && context.req.header("X-Aptiloop-Client") !== "web") {
       return context.json(
         { error: "Local browser client marker is required" },
         403,
@@ -899,7 +908,7 @@ export function createApp(options: AppOptions = {}) {
       );
     }
     try {
-      context.header("X-DLH-Agent-Turn-Id", turnId);
+      context.header("X-Aptiloop-Agent-Turn-Id", turnId);
       state.activeProviderTurns.set(turnId, { key, session: storedSession });
       return streamSSE(context, async (stream) => {
         let assistantContent = "";
@@ -907,6 +916,7 @@ export function createApp(options: AppOptions = {}) {
         let status: "completed" | "failed" | "cancelled" = "failed";
         let messageCompleted = false;
         let completedClientEvent: BrowserAgentEvent | undefined;
+        const activeToolSummaries = new Map<string, AptiloopToolName>();
         let responsePersisted = false;
         let providerStreamCompleted = false;
         const persistResponse = async () => {
@@ -967,14 +977,55 @@ export function createApp(options: AppOptions = {}) {
                 continue;
               }
               case "session.completed":
+                if (activeToolSummaries.size > 0) {
+                  throw new ProviderHubError(
+                    "invalid_output",
+                    safeAgentFailureMessage,
+                  );
+                }
                 terminalReason = event.reason;
                 if (event.reason === "failed") {
                   throw new Error(safeAgentFailureMessage);
                 }
                 continue;
-              case "tool.started":
-              case "tool.completed":
-                continue;
+              case "tool.started": {
+                const name = AptiloopToolNameSchema.safeParse(event.toolName);
+                if (
+                  !name.success ||
+                  activeToolSummaries.has(event.toolCallId)
+                ) {
+                  throw new ProviderHubError(
+                    "invalid_output",
+                    safeAgentFailureMessage,
+                  );
+                }
+                activeToolSummaries.set(event.toolCallId, name.data);
+                clientEvent = {
+                  type: "tool.summary",
+                  turnId,
+                  name: name.data,
+                  status: "started",
+                };
+                break;
+              }
+              case "tool.completed": {
+                const name = AptiloopToolNameSchema.safeParse(event.toolName);
+                const startedName = activeToolSummaries.get(event.toolCallId);
+                if (!name.success || startedName !== name.data) {
+                  throw new ProviderHubError(
+                    "invalid_output",
+                    safeAgentFailureMessage,
+                  );
+                }
+                activeToolSummaries.delete(event.toolCallId);
+                clientEvent = {
+                  type: "tool.summary",
+                  turnId,
+                  name: name.data,
+                  status: "completed",
+                };
+                break;
+              }
               case "error":
                 throw new ProviderHubError(
                   "provider_error",
@@ -1175,6 +1226,7 @@ export function createApp(options: AppOptions = {}) {
       : null;
     return context.json({
       sessionId: resolved.sessionId,
+      lessonContext: versioned?.lessonContext ?? null,
       exerciseUnitId: versioned?.exerciseUnitId ?? null,
       reviewUnitId: versioned?.reviewUnitId ?? null,
       exerciseUnitProgress: versioned?.exerciseUnitProgress ?? null,
@@ -1857,8 +1909,17 @@ export function createApp(options: AppOptions = {}) {
 
   app.put("/api/settings", async (context) => {
     const settings = settingsMutationSchema.parse(await context.req.json());
-    await state.repository.setSetting("theme", settings.theme);
-    return context.json({ saved: true });
+    await state.repository.setSettings([
+      ["theme", settings.theme],
+      ...(settings.uiLocale
+        ? ([["uiLocale", settings.uiLocale]] as const)
+        : []),
+    ]);
+    return context.json(
+      settings.uiLocale
+        ? { saved: true, uiLocale: settings.uiLocale }
+        : { saved: true },
+    );
   });
   app.put("/api/settings/locale", async (context) => {
     const settings = localeMutationSchema.parse(await context.req.json());
@@ -2192,6 +2253,13 @@ async function readVersionedExerciseProgress(
   state: AppState,
   sessionId: string,
 ): Promise<{
+  lessonContext: {
+    courseId: string;
+    revisionId: string;
+    courseTitle: string;
+    lessonOrder: number;
+    lessonTitle: string;
+  };
   exerciseUnitId: string;
   reviewUnitId: string | null;
   exerciseUnitProgress: {
@@ -2208,6 +2276,8 @@ async function readVersionedExerciseProgress(
   if (!hasSnapshot) return null;
 
   const detail = await state.repository.getVersionedSession(sessionId);
+  const persistedContext =
+    await state.courseFoundationRepository.getSessionContext(sessionId);
   const exerciseUnit = detail.snapshot.units.find(
     (unit) => unit.type === "exercise",
   );
@@ -2225,6 +2295,14 @@ async function readVersionedExerciseProgress(
     ? detail.unitProgress.find((progress) => progress.unitId === reviewUnit.id)
     : undefined;
   return {
+    lessonContext: {
+      courseId: persistedContext?.courseId ?? detail.snapshot.curriculumId,
+      revisionId:
+        persistedContext?.revisionId ?? detail.snapshot.curriculumVersionId,
+      courseTitle: detail.snapshot.curriculumTitle,
+      lessonOrder: detail.snapshot.day.order,
+      lessonTitle: detail.snapshot.day.title,
+    },
     exerciseUnitId: exerciseUnit.id,
     reviewUnitId: reviewUnit?.id ?? null,
     exerciseUnitProgress: {

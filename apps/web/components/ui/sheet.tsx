@@ -20,7 +20,7 @@ const SheetOverlay = React.forwardRef<
   <Dialog.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/45 data-[state=closed]:animate-[overlay-out_160ms_ease-out] data-[state=open]:animate-[overlay-in_160ms_ease-out]",
+      "fixed inset-0 z-50 bg-overlay data-[state=closed]:animate-[overlay-out_160ms_ease-out] data-[state=open]:animate-[overlay-in_160ms_ease-out]",
       className,
     )}
     {...props}
@@ -42,11 +42,11 @@ const SheetContent = React.forwardRef<
       <Dialog.Content
         ref={ref}
         className={cn(
-          "fixed inset-y-0 z-50 flex w-full max-w-md flex-col bg-background shadow-xl outline-none",
+          "fixed inset-y-0 z-50 flex w-full max-w-md flex-col overscroll-contain bg-surface-raised shadow-focus outline-none",
           side === "right" &&
-            "right-0 border-l border-border data-[state=closed]:animate-[sheet-out-right_160ms_ease-out] data-[state=open]:animate-[sheet-in-right_180ms_ease-out]",
+            "right-0 border-l border-border/50 data-[state=closed]:animate-[sheet-out-right_160ms_ease-out] data-[state=open]:animate-[sheet-in-right_180ms_ease-out]",
           side === "left" &&
-            "left-0 border-r border-border data-[state=closed]:animate-[sheet-out-left_160ms_ease-out] data-[state=open]:animate-[sheet-in-left_180ms_ease-out]",
+            "left-0 border-r border-border/50 data-[state=closed]:animate-[sheet-out-left_160ms_ease-out] data-[state=open]:animate-[sheet-in-left_180ms_ease-out]",
           className,
         )}
         {...props}
@@ -55,7 +55,7 @@ const SheetContent = React.forwardRef<
         <Dialog.Close
           data-slot="sheet-close"
           aria-label={t("ui.close")}
-          className="absolute right-4 top-4 grid size-9 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute top-4 right-4 grid size-11 place-items-center rounded-full text-muted-foreground outline-none transition-colors duration-150 hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-raised md:size-10 motion-reduce:transition-none"
         >
           <XIcon aria-hidden className="size-4" />
         </Dialog.Close>
@@ -72,7 +72,7 @@ function SheetHeader({
   return (
     <div
       className={cn(
-        "flex flex-col gap-1 border-b border-border px-5 pb-4 pt-5 text-left",
+        "flex flex-col gap-2 pt-6 pe-16 pb-4 ps-6 text-left",
         className,
       )}
       {...props}
@@ -87,7 +87,7 @@ function SheetFooter({
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 border-t border-border p-4 sm:flex-row sm:justify-end",
+        "mt-auto flex flex-col-reverse gap-2 bg-surface-soft/60 p-4 sm:flex-row sm:justify-end sm:p-6",
         className,
       )}
       {...props}
@@ -113,7 +113,7 @@ const SheetDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <Dialog.Description
     ref={ref}
-    className={cn("text-sm text-muted-foreground", className)}
+    className={cn("text-sm leading-6 text-muted-foreground", className)}
     {...props}
   />
 ));

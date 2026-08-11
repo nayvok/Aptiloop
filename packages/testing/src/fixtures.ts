@@ -3,7 +3,7 @@ import type {
   AgentSession,
   ProviderStatus,
   ReviewResult,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 type MessageDeltaEvent = Extract<
   AgentEvent,

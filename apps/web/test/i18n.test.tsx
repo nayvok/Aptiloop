@@ -1,10 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { catalogs, LocaleProvider, type MessageKey, useI18n } from "@/lib/i18n";
+import {
+  catalogs,
+  LocaleProvider,
+  type MessageKey,
+  type UiLocale,
+  useI18n,
+} from "@/lib/i18n";
 const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
 
 vi.mock("@/lib/api", () => ({ api: apiMock }));
@@ -21,6 +33,9 @@ function LocaleProbe() {
       <p>{t("missing.key" as MessageKey)}</p>
       <button type="button" onClick={() => setLocale("ru-RU")}>
         switch
+      </button>
+      <button type="button" onClick={() => setLocale("invalid" as UiLocale)}>
+        invalid
       </button>
     </div>
   );
@@ -40,6 +55,7 @@ function renderLocaleProbe() {
 }
 
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
   document.documentElement.lang = "";
 });
@@ -54,6 +70,36 @@ describe("UI locale contract", () => {
         expect(catalogs[locale][key as MessageKey].trim()).not.toBe("");
       }
     }
+  });
+
+  it("uses observation terminology for interview reports in both locales", () => {
+    const englishInterviewCopy = [
+      catalogs["en-US"]["review.viewDescription.interviews"],
+      catalogs["en-US"]["interview.setup.description"],
+      catalogs["en-US"]["interview.report.summary"],
+      catalogs["en-US"]["interview.report.evidence"],
+    ].join(" ");
+    const russianInterviewCopy = [
+      catalogs["ru-RU"]["review.viewDescription.interviews"],
+      catalogs["ru-RU"]["interview.setup.description"],
+      catalogs["ru-RU"]["interview.session.description"],
+      catalogs["ru-RU"]["interview.chat.readyDescription"],
+      catalogs["ru-RU"]["interview.report.summary"],
+      catalogs["ru-RU"]["interview.report.evidence"],
+    ].join(" ");
+
+    expect(englishInterviewCopy).toMatch(/answer observations/iu);
+    expect(englishInterviewCopy).not.toMatch(/skill evidence/iu);
+    expect(russianInterviewCopy).toMatch(/наблюдени/u);
+    expect(russianInterviewCopy).not.toMatch(
+      /подтверждени[а-яё]* навыка|\b(?:transcript|review)\b/iu,
+    );
+    expect(catalogs["en-US"]["interview.report.limits"]).toMatch(
+      /Technical correctness was not checked/u,
+    );
+    expect(catalogs["ru-RU"]["interview.report.limits"]).toMatch(
+      /Техническая корректность не проверялась/u,
+    );
   });
 
   it("switches locale, updates html lang, interpolates, formats, and exposes missing keys", async () => {
@@ -76,6 +122,17 @@ describe("UI locale contract", () => {
     await waitFor(() => expect(document.documentElement.lang).toBe("ru-RU"));
   });
 
+  it("ignores malformed runtime locale values", async () => {
+    apiMock.mockResolvedValue({ uiLocale: "en-US" });
+    renderLocaleProbe();
+
+    expect(await screen.findByText("Home")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "invalid" }));
+
+    expect(screen.getByText("Home")).toBeInTheDocument();
+    await waitFor(() => expect(document.documentElement.lang).toBe("en-US"));
+  });
+
   it("keeps hardcoded Russian out of production TypeScript outside the locale catalog", async () => {
     const roots = [
       path.resolve(process.cwd(), "app"),
@@ -96,7 +153,7 @@ describe("UI locale contract", () => {
     }
 
     expect(offenders).toEqual([]);
-  });
+  }, 15_000);
 });
 
 async function productionTypeScriptFiles(root: string): Promise<string[]> {

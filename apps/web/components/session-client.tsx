@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -14,12 +14,13 @@ import {
   PaperPlaneTiltIcon,
   StopIcon,
 } from "@phosphor-icons/react";
+import { toast } from "sonner";
 import { z } from "zod";
 
 import { ActivityFrame } from "@/components/activity-frame";
+import { usePageRouteContext } from "@/components/page-route-context";
 import { api, streamAgent } from "@/lib/api";
 import {
-  activityBorderClass,
   activityColorClass,
   activitySurfaceClass,
   depthMessageKey,
@@ -28,13 +29,32 @@ import {
   unitTypeMessageKeys,
 } from "@/lib/unit-labels";
 import { useI18n } from "@/lib/i18n";
-import { DayPlanSheet } from "@/components/day-plan";
+import { DayPlanRail, DayPlanSheet } from "@/components/day-plan";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { EmptyState, QueryError } from "@/components/query-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+import type { RouteContext } from "@/lib/route-context";
 import { groupDayIntoBlocks, type LearningBlock } from "@/lib/learning-blocks";
+import {
+  codeReadingActivityDraftSchema,
+  quizActivityDraftSchema,
+  recallActivityDraftSchema,
+  studyActivityDraftSchema,
+  teacherDialogueActivityDraftSchema,
+  useLessonActivityDraft,
+  type LessonActivityDraftIdentity,
+} from "@/lib/lesson-activity-drafts";
 import { formatDuration, formatMinutesShort } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
@@ -89,28 +109,49 @@ const questionSchema = z
   })
   .passthrough();
 
-const completionCriterionSchema = z
-  .object({
-    type: z.enum([
-      "acknowledgement",
-      "checklist",
-      "attempts",
-      "dialogue",
-      "score",
-      "fields",
-      "exercise",
-      "custom",
-    ]),
-    requiredItemIds: z.array(idSchema).optional(),
-    minimum: z.number().optional(),
-    minimumTurns: z.number().optional(),
-    requiresRevision: z.boolean().optional(),
-    required: z.array(z.string()).optional(),
-    passingTestsRequired: z.boolean().optional(),
-    acceptedReviewRequired: z.boolean().optional(),
-    key: z.string().optional(),
-  })
-  .passthrough();
+const completionCriterionSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("acknowledgement") }).strict(),
+  z
+    .object({
+      type: z.literal("checklist"),
+      requiredItemIds: z.array(idSchema).min(1),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("attempts"),
+      minimum: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("dialogue"),
+      minimumTurns: z.number().int().positive(),
+      requiresRevision: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("score"),
+      minimum: z.number().min(0).max(1),
+      minimumAttempts: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("fields"),
+      required: z.array(z.string().trim().min(1)).min(1),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("exercise"),
+      passingTestsRequired: z.boolean(),
+      acceptedReviewRequired: z.boolean(),
+    })
+    .strict(),
+  z.object({ type: z.literal("custom"), key: idSchema }).strict(),
+]);
 
 const unitPayloadSchema = z.discriminatedUnion("type", [
   z
@@ -334,6 +375,16 @@ const learnerSessionSchema = z
     id: idSchema,
     status: z.enum(["active", "completed"]),
     currentStep: z.string(),
+    courseContext: z
+      .object({
+        courseId: idSchema,
+        revisionId: idSchema,
+        lessonId: idSchema,
+        sessionSnapshotId: idSchema,
+        snapshotHash: z.string().min(1),
+      })
+      .strict()
+      .optional(),
     snapshot: z
       .object({
         schemaVersion: z.number().int().positive(),
@@ -475,6 +526,25 @@ type LearnerUnit = z.infer<typeof learnerUnitSchema>;
 type UnitProgress = z.infer<typeof unitProgressSchema>;
 type ProgressPayload = z.infer<typeof progressPayloadSchema>;
 
+function lessonActivityDraftIdentity(
+  session: LearnerSession,
+  unit: LearnerUnit,
+): LessonActivityDraftIdentity {
+  return {
+    learningSessionId: session.id,
+    currentStep: session.currentStep,
+    revisionId:
+      session.courseContext?.revisionId ?? session.snapshot.curriculumVersionId,
+    snapshotId:
+      session.courseContext?.sessionSnapshotId ?? session.snapshot.contentHash,
+    snapshotHash:
+      session.courseContext?.snapshotHash ?? session.snapshot.contentHash,
+    activityId: unit.id,
+    activityStableId: unit.stableId,
+    activityType: unit.type,
+  };
+}
+
 function rejectProtectedFields(value: unknown, path = "response"): void {
   if (Array.isArray(value)) {
     value.forEach((item, index) =>
@@ -510,7 +580,7 @@ function errorMessage(error: unknown): string {
 }
 
 export function SessionClient() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const params = useSearchParams();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -518,7 +588,6 @@ export function SessionClient() {
   const queryKey = requestedSessionId
     ? (["learning-session-v2", requestedSessionId] as const)
     : (["learning-session-current"] as const);
-  const [mutationError, setMutationError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const query = useQuery({
@@ -536,6 +605,30 @@ export function SessionClient() {
   });
 
   const session = query.data?.session ?? null;
+  const pageRouteContext = useMemo<RouteContext | null>(() => {
+    if (!session) return null;
+    const courseId =
+      session.courseContext?.courseId ?? session.snapshot.curriculumId;
+    const revisionId =
+      session.courseContext?.revisionId ?? session.snapshot.curriculumVersionId;
+    return {
+      sectionHref: "/courses",
+      breadcrumbs: [
+        { href: "/courses", label: "nav.courses" },
+        {
+          href: `/courses/${encodeURIComponent(courseId)}/revisions/${encodeURIComponent(revisionId)}`,
+          text: session.snapshot.curriculumTitle,
+        },
+        {
+          text: t("session.lessonTitle", {
+            order: session.snapshot.day.order,
+            title: session.snapshot.day.title,
+          }),
+        },
+      ],
+    };
+  }, [session, t]);
+  usePageRouteContext(pageRouteContext);
 
   async function acceptSession(next: LearnerSession): Promise<void> {
     queryClient.setQueryData(queryKey, { session: next });
@@ -563,14 +656,13 @@ export function SessionClient() {
     request: () => Promise<T>,
     getSession: (result: T) => LearnerSession,
   ): Promise<T | null> {
-    setMutationError(null);
     setPendingAction(action);
     try {
       const result = await request();
       await acceptSession(getSession(result));
       return result;
     } catch (error) {
-      setMutationError(errorMessage(error));
+      toast.error(errorMessage(error));
       return null;
     } finally {
       setPendingAction(null);
@@ -650,26 +742,29 @@ export function SessionClient() {
     session.unitProgress.map((item) => [item.unitId, item]),
   );
   const focusedUnit =
-    session.snapshot.units.find(
-      (unit) => progressByUnit.get(unit.id)?.status === "in_progress",
-    ) ??
-    session.snapshot.units.find(
-      (unit) => progressByUnit.get(unit.id)?.status === "ready",
-    ) ??
-    [...session.snapshot.units]
-      .reverse()
-      .find((unit) => progressByUnit.get(unit.id)?.status === "completed") ??
-    session.snapshot.units[0];
+    session.currentStep === "complete"
+      ? session.status === "completed"
+        ? [...session.snapshot.units].reverse().find((unit) => {
+            const status = progressByUnit.get(unit.id)?.status;
+            return status === "completed" || status === "skipped";
+          })
+        : undefined
+      : session.snapshot.units.find(
+          (unit) =>
+            unit.id === session.currentStep ||
+            unit.stableId === session.currentStep,
+        );
   if (!focusedUnit) {
-    return <QueryError message={t("session.error.noActivities")} />;
+    return <QueryError message={t("session.error.noProgress")} />;
   }
   const focusedProgress = progressByUnit.get(focusedUnit.id);
   if (!focusedProgress) {
     return <QueryError message={t("session.error.noProgress")} />;
   }
-  const completed = session.unitProgress.filter(
-    (item) => item.status === "completed",
-  ).length;
+  const completed = session.snapshot.units.filter((unit) => {
+    const status = progressByUnit.get(unit.id)?.status;
+    return status === "completed" || status === "skipped";
+  }).length;
 
   const blocks = groupDayIntoBlocks(
     session.snapshot.units.map((unit) => ({
@@ -680,121 +775,243 @@ export function SessionClient() {
     })),
     (unit) => progressByUnit.get(unit.id)?.status ?? "locked",
   );
+  const visibleBlocks = blocks.filter((block) => block.totalCount > 0);
+  const focusedBlockIndex = visibleBlocks.findIndex((block) =>
+    block.units.some((unit) => unit.id === focusedUnit.id),
+  );
   const activeBlock =
-    blocks.find(
-      (block) => block.status !== "completed" && block.totalCount > 0,
-    ) ?? null;
-  const activeBlockIndex = activeBlock ? blocks.indexOf(activeBlock) : -1;
+    session.status === "active" && focusedBlockIndex >= 0
+      ? (visibleBlocks[focusedBlockIndex] ?? null)
+      : null;
+  const activeBlockIndex = activeBlock ? focusedBlockIndex : -1;
+  const activeActivityIndex = activeBlock
+    ? activeBlock.units.findIndex((unit) => unit.id === focusedUnit.id) + 1
+    : null;
   const previousBlockCompleted =
     activeBlockIndex > 0 &&
-    blocks[activeBlockIndex - 1]!.status === "completed";
+    visibleBlocks[activeBlockIndex - 1]!.status === "completed";
   const showBlockTransition =
     Boolean(activeBlock) &&
     previousBlockCompleted &&
-    activeBlock!.currentStepIndex === 1 &&
-    focusedProgress.status === "ready" &&
-    activeBlock!.currentUnit?.id === focusedUnit.id;
+    activeActivityIndex === 1 &&
+    focusedProgress.status === "ready";
 
   return (
     <div
       data-slot="guided-session"
-      className="flex min-w-0 flex-col gap-4 md:gap-6"
+      className="flex w-full min-w-0 flex-col [&_[data-slot=badge]]:h-auto [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:break-words [&_[data-slot=badge]]:py-1 [&_[data-slot=button]]:h-auto [&_[data-slot=button]]:max-w-full [&_[data-slot=button]]:whitespace-normal"
     >
       <SessionProgressHeader
         session={session}
         completed={completed}
         activeBlock={activeBlock}
         activeBlockIndex={activeBlockIndex}
+        activeActivityIndex={activeActivityIndex}
+        phaseTotal={visibleBlocks.length}
         onContinueLater={() => router.push("/")}
       />
 
-      {mutationError ? (
-        <div
-          role="alert"
-          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-        >
-          <span>{mutationError}</span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setMutationError(null)}
-          >
-            {t("session.close")}
-          </Button>
-        </div>
-      ) : null}
-
-      {showBlockTransition && activeBlock ? (
-        <BlockTransition
-          block={activeBlock}
-          blockNumber={activeBlockIndex + 1}
-          previousBlocks={blocks.slice(0, activeBlockIndex)}
-          starting={pendingAction === `patch:${focusedUnit.id}`}
-          onContinue={() =>
-            void patchUnit(focusedUnit, focusedProgress, "in_progress")
-          }
-          onLater={() => router.push("/")}
-        />
-      ) : focusedProgress.status === "ready" ? (
-        <section
-          data-slot="unit-ready"
-          className="mx-auto flex w-full max-w-xl flex-col items-start gap-4 rounded-xl border border-border bg-card p-6"
-        >
-          <div className="flex flex-col gap-1">
-            <Badge variant="outline">
-              {t(unitTypeMessageKeys[focusedUnit.type])}
-            </Badge>
-            <h2 className="mt-2 text-xl font-semibold">{focusedUnit.title}</h2>
-            <p className="mt-1 max-w-[60ch] text-sm leading-6 text-muted-foreground">
-              {t("session.ready.description")}
-            </p>
-          </div>
-          <Button
-            disabled={pendingAction !== null}
-            onClick={() =>
-              void patchUnit(focusedUnit, focusedProgress, "in_progress")
-            }
-          >
-            {pendingAction === `patch:${focusedUnit.id}`
-              ? t("session.starting")
-              : t("session.startActivity")}
-            <ArrowRightIcon aria-hidden />
-          </Button>
-        </section>
-      ) : focusedProgress.status === "locked" ? (
-        <p className="text-sm text-muted-foreground">{t("session.locked")}</p>
-      ) : (
-        <UnitShell unit={focusedUnit} progress={focusedProgress}>
-          <UnitBody
-            session={session}
-            unit={focusedUnit}
-            progress={focusedProgress}
-            pending={pendingAction !== null}
-            patchUnit={patchUnit}
-            runAction={runAction}
-            acceptSession={acceptSession}
-            onExercise={() =>
-              router.push(
-                `/exercise?sessionId=${encodeURIComponent(session.id)}`,
-              )
-            }
-            onInterview={() => {
-              const payload = focusedProgress.payload;
-              const interviewId =
-                payload.type === "interview"
-                  ? payload.interviewSessionId
-                  : null;
-              if (interviewId) {
-                router.push(`/interview?id=${encodeURIComponent(interviewId)}`);
-              } else {
-                router.push(
-                  `/interview?sessionId=${encodeURIComponent(session.id)}`,
-                );
+      <div
+        data-slot="lesson-workspace"
+        className="mx-auto grid w-full max-w-[77rem] min-w-0 items-start gap-8 pt-4 sm:pt-5 xl:grid-cols-[minmax(0,48rem)_minmax(24rem,26rem)]"
+      >
+        <div data-slot="lesson-focus" className="w-full min-w-0">
+          {showBlockTransition && activeBlock ? (
+            <BlockTransition
+              block={activeBlock}
+              blockNumber={activeBlockIndex + 1}
+              blockTotal={visibleBlocks.length}
+              previousBlocks={visibleBlocks.slice(0, activeBlockIndex)}
+              starting={pendingAction === `patch:${focusedUnit.id}`}
+              onContinue={() =>
+                void patchUnit(focusedUnit, focusedProgress, "in_progress")
               }
-            }}
-          />
-        </UnitShell>
-      )}
+              onLater={() => router.push("/")}
+            />
+          ) : focusedProgress.status === "ready" ? (
+            <section
+              data-slot="unit-ready"
+              aria-labelledby="unit-ready-title"
+              className="flex w-full flex-col gap-5"
+            >
+              <div className="flex flex-col gap-4">
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                  <Badge
+                    variant="outline"
+                    className={activityColorClass(focusedUnit.type)}
+                  >
+                    {t(unitTypeMessageKeys[focusedUnit.type])}
+                  </Badge>
+                  <span className="inline-flex items-center gap-1.5">
+                    <ClockIcon aria-hidden className="size-4" />
+                    {formatDuration(focusedUnit.estimatedMinutes, locale)}
+                  </span>
+                </div>
+                <div className="flex min-w-0 max-w-[68ch] flex-col gap-2">
+                  <h2
+                    id="unit-ready-title"
+                    className="break-words text-pretty text-xl font-semibold leading-7 tracking-[-0.02em] [overflow-wrap:anywhere] sm:text-[1.375rem] sm:leading-[1.875rem]"
+                  >
+                    {focusedUnit.title}
+                  </h2>
+                  <p className="break-words text-[0.9375rem] leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                    {t("session.ready.description")}
+                  </p>
+                </div>
+              </div>
+              <ReadyLearningBrief session={session} unit={focusedUnit} />
+              <div className="flex flex-col items-start gap-3 border-t border-border/60 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                <Badge variant="secondary">
+                  {t(unitStatusMessageKeys[focusedProgress.status])}
+                </Badge>
+                <Button
+                  className="w-full sm:w-auto"
+                  disabled={pendingAction !== null}
+                  onClick={() =>
+                    void patchUnit(focusedUnit, focusedProgress, "in_progress")
+                  }
+                >
+                  {pendingAction === `patch:${focusedUnit.id}`
+                    ? t("session.starting")
+                    : t("session.startActivity")}
+                  <ArrowRightIcon aria-hidden />
+                </Button>
+              </div>
+            </section>
+          ) : focusedProgress.status === "locked" ? (
+            <p className="text-sm text-muted-foreground">
+              {t("session.locked")}
+            </p>
+          ) : (
+            <UnitShell unit={focusedUnit} progress={focusedProgress}>
+              <UnitBody
+                key={focusedUnit.id}
+                session={session}
+                unit={focusedUnit}
+                progress={focusedProgress}
+                pending={pendingAction !== null}
+                patchUnit={patchUnit}
+                runAction={runAction}
+                acceptSession={acceptSession}
+                onExercise={() =>
+                  router.push(
+                    `/exercise?sessionId=${encodeURIComponent(session.id)}`,
+                  )
+                }
+                onInterview={() => {
+                  const payload = focusedProgress.payload;
+                  const interviewId =
+                    payload.type === "interview"
+                      ? payload.interviewSessionId
+                      : null;
+                  if (interviewId) {
+                    router.push(
+                      `/interview?id=${encodeURIComponent(interviewId)}`,
+                    );
+                  } else {
+                    router.push(
+                      `/interview?sessionId=${encodeURIComponent(session.id)}`,
+                    );
+                  }
+                }}
+              />
+            </UnitShell>
+          )}
+        </div>
+        <DayPlanRail session={session} />
+      </div>
+    </div>
+  );
+}
+
+function ReadyLearningBrief({
+  session,
+  unit,
+}: {
+  session: LearnerSession;
+  unit: LearnerUnit;
+}) {
+  const { locale, t } = useI18n();
+  const outcomes = unit.objectives.length
+    ? unit.objectives
+    : session.snapshot.day.expectedOutcomes;
+  const studyBody =
+    unit.payload.type === "study" && unit.payload.body
+      ? unit.payload.body
+      : null;
+  const completionCriteria = unit.completionCriteria.map((criterion) => {
+    switch (criterion.type) {
+      case "acknowledgement":
+        return t("session.criteria.acknowledgement");
+      case "checklist":
+        return t("session.criteria.checklist", {
+          count: criterion.requiredItemIds.length,
+        });
+      case "attempts":
+        return t("session.criteria.attempts", { count: criterion.minimum });
+      case "dialogue":
+        return t(
+          criterion.requiresRevision
+            ? "session.criteria.dialogueWithRevision"
+            : "session.criteria.dialogue",
+          { count: criterion.minimumTurns },
+        );
+      case "score":
+        return t("session.criteria.score", {
+          score: new Intl.NumberFormat(locale, {
+            style: "percent",
+            maximumFractionDigits: 0,
+          }).format(criterion.minimum),
+          attempts: criterion.minimumAttempts,
+        });
+      case "fields":
+        return t("session.criteria.fields", {
+          fields: criterion.required.join(", "),
+        });
+      case "exercise":
+        return t(
+          criterion.passingTestsRequired && criterion.acceptedReviewRequired
+            ? "session.criteria.exerciseTestsAndReview"
+            : criterion.passingTestsRequired
+              ? "session.criteria.exerciseTests"
+              : criterion.acceptedReviewRequired
+                ? "session.criteria.exerciseReview"
+                : "session.criteria.exercise",
+        );
+      case "custom":
+        return t("session.criteria.custom", { key: criterion.key });
+    }
+  });
+
+  return (
+    <div
+      data-slot="unit-learning-brief"
+      className="flex min-w-0 flex-col gap-5"
+    >
+      <section className="flex min-w-0 flex-col gap-1.5 border-y border-border/60 py-4">
+        <h3 className="text-sm font-semibold">
+          {t("session.learningBrief.title")}
+        </h3>
+        <p className="max-w-[68ch] whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+          {studyBody ?? unit.description}
+        </p>
+      </section>
+      <div className="grid min-w-0 gap-5 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3">
+        <InfoList title={t("dayPlan.outcomes")} items={outcomes} />
+        <InfoList
+          title={t("dayPlan.topics")}
+          items={session.snapshot.day.topics}
+        />
+        <InfoList
+          title={t("session.learningBrief.completion")}
+          items={completionCriteria}
+        />
+      </div>
+      <Sources
+        unit={unit}
+        curriculumVersionId={session.snapshot.curriculumVersionId}
+        flat
+      />
     </div>
   );
 }
@@ -804,76 +1021,115 @@ function SessionProgressHeader({
   completed,
   activeBlock,
   activeBlockIndex,
+  activeActivityIndex,
+  phaseTotal,
   onContinueLater,
 }: {
   session: LearnerSession;
   completed: number;
   activeBlock: LearningBlock | null;
   activeBlockIndex: number;
+  activeActivityIndex: number | null;
+  phaseTotal: number;
   onContinueLater: () => void;
 }) {
   const { locale, t } = useI18n();
   const { day } = session.snapshot;
   const total = session.snapshot.units.length;
-  const overall = total ? Math.round((completed / total) * 100) : 0;
+  const lessonLabel = t("session.lessonTitle", {
+    order: day.order,
+    title: day.title,
+  });
   return (
     <header
       data-slot="session-progress-header"
-      className="sticky top-0 z-30 -mx-4 border-b border-border bg-background/95 px-4 py-3 backdrop-blur md:-mx-6 md:px-6"
+      className="sticky top-[4.5rem] z-10 w-full border-b border-border/70 bg-background/95 py-3 backdrop-blur-sm md:top-[5.75rem]"
     >
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            {t("session.lessonTitle", { order: day.order, title: day.title })}
-          </p>
-          <p className="truncate text-sm font-semibold">
-            {activeBlock ? (
-              <>
-                {t("session.phaseProgress", {
-                  phase: activeBlockIndex + 1,
-                  phaseTotal: 3,
-                  name: t(activeBlock.label),
-                  activity:
-                    activeBlock.currentStepIndex ?? activeBlock.totalCount,
-                  activityTotal: activeBlock.totalCount,
-                })}
-              </>
-            ) : (
-              t("session.lessonComplete")
-            )}
-          </p>
-        </div>
-        {activeBlock ? (
-          <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-            <ClockIcon aria-hidden className="size-4" />
-            {t("session.phaseRemaining", {
-              duration: formatDuration(activeBlock.remainingMinutes, locale),
-            })}
-          </span>
-        ) : null}
-        <DayPlanSheet
-          session={session}
-          trigger={
-            <Button type="button" variant="outline" size="sm">
-              <ListIcon aria-hidden className="size-4" />
-              {t("session.plan")}
-            </Button>
-          }
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onContinueLater}
+      <div
+        data-slot="session-header-grid"
+        className="mx-auto w-full max-w-[77rem] min-w-0"
+      >
+        <div
+          data-slot="session-orientation"
+          className="mx-auto w-full max-w-[48rem] min-w-0 xl:mx-0"
         >
-          {t("session.continueLater")}
-        </Button>
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[0.6875rem] font-medium leading-4 text-muted-foreground">
+                <p
+                  data-slot="phase-activity-line"
+                  className="min-w-0 break-words [overflow-wrap:anywhere]"
+                >
+                  {activeBlock
+                    ? t("session.phaseProgress", {
+                        phase: activeBlockIndex + 1,
+                        phaseTotal,
+                        name: t(activeBlock.label),
+                        activity: activeActivityIndex ?? activeBlock.totalCount,
+                        activityTotal: activeBlock.totalCount,
+                      })
+                    : t("session.lessonComplete")}
+                </p>
+                {activeBlock ? (
+                  <span className="inline-flex min-w-0 items-center gap-1">
+                    <ClockIcon aria-hidden className="size-3.5 shrink-0" />
+                    <span className="break-words [overflow-wrap:anywhere]">
+                      {t("session.phaseRemaining", {
+                        duration: formatDuration(
+                          activeBlock.remainingMinutes,
+                          locale,
+                        ),
+                      })}
+                    </span>
+                  </span>
+                ) : null}
+              </div>
+              <h1 className="break-words text-pretty text-lg font-semibold leading-6 tracking-[-0.015em] [overflow-wrap:anywhere]">
+                {lessonLabel}
+              </h1>
+            </div>
+            <div
+              data-slot="session-utilities"
+              className="flex min-w-0 flex-wrap items-center gap-1 text-muted-foreground"
+            >
+              <DayPlanSheet
+                session={session}
+                trigger={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="xl:hidden"
+                  >
+                    <ListIcon aria-hidden className="size-4" />
+                    {t("session.plan")}
+                  </Button>
+                }
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onContinueLater}
+              >
+                {t("session.continueLater")}
+              </Button>
+            </div>
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-3 text-[0.6875rem] font-medium leading-4 text-muted-foreground">
+            <span>{t("session.progress")}</span>
+            <span className="tabular-nums">
+              {completed} / {total}
+            </span>
+          </div>
+          <Progress
+            aria-label={t("session.progress")}
+            value={completed}
+            max={total}
+            className="mt-1.5 h-1"
+          />
+        </div>
       </div>
-      <Progress
-        aria-label={t("session.progress")}
-        value={overall}
-        className="mt-2 h-1.5"
-      />
     </header>
   );
 }
@@ -881,6 +1137,7 @@ function SessionProgressHeader({
 function BlockTransition({
   block,
   blockNumber,
+  blockTotal,
   previousBlocks,
   starting,
   onContinue,
@@ -888,6 +1145,7 @@ function BlockTransition({
 }: {
   block: LearningBlock;
   blockNumber: number;
+  blockTotal: number;
   previousBlocks: LearningBlock[];
   starting: boolean;
   onContinue: () => void;
@@ -901,43 +1159,45 @@ function BlockTransition({
     <section
       data-slot="block-transition"
       aria-labelledby="block-transition-title"
-      className="mx-auto flex w-full max-w-xl flex-col gap-5 rounded-xl border border-border bg-card p-6 md:p-8"
+      className="flex w-full flex-col gap-5"
     >
-      <div className="text-center">
-        <p className="text-sm text-muted-foreground">
+      <div className="flex max-w-[68ch] flex-col gap-1.5">
+        <p className="text-sm font-medium text-muted-foreground">
           {t("session.transition.complete", {
             phase: blockNumber - 1,
-            total: 3,
+            total: blockTotal,
           })}
         </p>
-        <h2 id="block-transition-title" className="mt-1 text-xl font-semibold">
+        <h2
+          id="block-transition-title"
+          className="text-pretty text-2xl font-semibold leading-8 tracking-[-0.02em]"
+        >
           {t("session.transition.title", { name: t(block.label) })}
         </h2>
       </div>
       {covered.length ? (
-        <div className="flex flex-col gap-1.5 text-sm leading-6">
-          <p className="font-medium">{t("session.transition.covered")}</p>
-          <ul className="flex flex-col gap-1 text-muted-foreground">
+        <div className="flex max-w-[68ch] flex-col gap-2">
+          <p className="text-sm font-medium">
+            {t("session.transition.covered")}
+          </p>
+          <ul className="flex flex-col gap-2 text-sm leading-6 text-muted-foreground">
             {covered.map((title) => (
               <li key={title} className="flex items-start gap-2">
                 <CheckIcon
                   aria-hidden
-                  className="relative top-1 size-3 shrink-0 text-success"
+                  className="relative top-1 size-4 shrink-0 text-success"
                 />
-                {title}
+                <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                  {title}
+                </span>
               </li>
             ))}
           </ul>
         </div>
       ) : null}
-      <div
-        className={cn(
-          "flex flex-col gap-1 rounded-lg border p-4",
-          activityBorderClass(block.units[0]?.type ?? "study"),
-        )}
-      >
-        <p className="text-sm font-medium">{t("session.transition.next")}</p>
-        <p className="text-sm text-muted-foreground">
+      <div className="flex flex-col gap-1.5 border-y border-border/60 py-4 sm:py-5">
+        <p className="text-sm font-semibold">{t("session.transition.next")}</p>
+        <p className="text-sm leading-6 text-muted-foreground">
           {t("session.transition.meta", {
             name: t(block.label),
             count: block.totalCount,
@@ -945,16 +1205,24 @@ function BlockTransition({
           })}
         </p>
       </div>
-      <div className="flex flex-col justify-center gap-2 sm:flex-row">
-        <Button disabled={starting} onClick={onContinue}>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button
+          className="w-full sm:w-auto"
+          disabled={starting}
+          onClick={onContinue}
+        >
           {starting ? t("session.starting") : t("session.transition.continue")}
           <ArrowRightIcon aria-hidden />
         </Button>
-        <Button variant="outline" onClick={onLater}>
+        <Button
+          className="w-full sm:w-auto"
+          variant="outline"
+          onClick={onLater}
+        >
           {t("session.transition.back")}
         </Button>
       </div>
-      <p className="text-center text-xs text-muted-foreground">
+      <p className="text-xs leading-5 text-muted-foreground">
         {t("session.transition.saved")}
       </p>
     </section>
@@ -977,11 +1245,14 @@ function UnitShell({
       activityType={unit.type}
       title={unit.title}
       description={unit.description}
+      className="bg-transparent shadow-none"
       slots={{
         context: (
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{t(unitTypeMessageKeys[unit.type])}</Badge>
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            <Badge variant="outline" className={activityColorClass(unit.type)}>
+              {t(unitTypeMessageKeys[unit.type])}
+            </Badge>
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <ClockIcon aria-hidden />
               {formatMinutesShort(unit.estimatedMinutes, locale)}
             </span>
@@ -1084,29 +1355,31 @@ function Checklist({
         {t("session.checklist.help")}
         {requiredCount > 0 ? t("session.checklist.requiredHelp") : ""}
       </p>
-      {items.map((item) => (
-        <label
-          key={item.id}
-          className="flex min-h-11 items-start gap-2 rounded-md border border-border p-3 text-sm"
-        >
-          <input
-            type="checkbox"
-            checked={checked.includes(item.id)}
-            disabled={disabled}
-            onChange={() => onToggle(item.id)}
-            className="size-4 accent-primary"
-          />
-          <span>
-            {item.label}
-            {item.required ? (
-              <span className="text-muted-foreground">
-                {" "}
-                · {t("session.checklist.required")}
-              </span>
-            ) : null}
-          </span>
-        </label>
-      ))}
+      <div className="flex flex-col divide-y divide-border/60 border-y border-border/60 px-1">
+        {items.map((item) => (
+          <label
+            key={item.id}
+            className="flex min-h-11 items-start gap-3 py-3 text-sm leading-6 outline-none focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background"
+          >
+            <input
+              type="checkbox"
+              checked={checked.includes(item.id)}
+              disabled={disabled}
+              onChange={() => onToggle(item.id)}
+              className="mt-1 size-4 shrink-0 accent-primary"
+            />
+            <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+              {item.label}
+              {item.required ? (
+                <span className="text-muted-foreground">
+                  {" "}
+                  · {t("session.checklist.required")}
+                </span>
+              ) : null}
+            </span>
+          </label>
+        ))}
+      </div>
       <p className="pt-1 text-xs text-muted-foreground">
         {t("session.checklist.count", {
           checked: checked.length,
@@ -1121,31 +1394,35 @@ function BriefingSection({
   title,
   items,
   empty,
+  className,
 }: {
   title: string;
   items: readonly string[];
   empty: string;
+  className?: string;
 }) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+    <section className={cn("flex min-w-0 flex-col gap-2", className)}>
       <h3 className="text-sm font-medium">{title}</h3>
       {items.length ? (
         <ul className="flex flex-col gap-1.5 text-sm leading-6 text-muted-foreground">
           {items.map((item) => (
-            <li key={item} className="flex gap-2">
+            <li key={item} className="flex min-w-0 gap-2">
               <CircleIcon
                 aria-hidden
                 weight="fill"
                 className="size-1.5 shrink-0 self-center text-primary"
               />
-              {item}
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                {item}
+              </span>
             </li>
           ))}
         </ul>
       ) : (
         <p className="text-sm leading-6 text-muted-foreground">{empty}</p>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -1185,20 +1462,25 @@ function BriefingUnitImpl({
 
   return (
     <div data-slot="briefing" className="flex flex-col gap-6">
-      <div className="grid gap-4 md:grid-cols-2">
+      <div
+        data-slot="briefing-overview"
+        className="grid border-y border-border/60 md:grid-cols-2"
+      >
         <BriefingSection
           title={t("session.briefing.topics")}
           items={day.topics}
           empty={t("session.briefing.topicsEmpty")}
+          className="py-5 md:pr-8"
         />
         <BriefingSection
           title={t("session.briefing.outcomes")}
           items={day.expectedOutcomes}
           empty={t("session.briefing.outcomesEmpty")}
+          className="border-t border-border/60 py-5 md:border-l md:border-t-0 md:pl-8"
         />
-        <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+        <section className="flex min-w-0 flex-col gap-2 border-t border-border/60 py-5 md:pr-8">
           <h3 className="text-sm font-medium">{t("session.briefing.level")}</h3>
-          <p className="text-lg font-semibold">
+          <p className="break-words text-lg font-semibold [overflow-wrap:anywhere]">
             {depthMessageKey(day.depthLevel)
               ? t(depthMessageKey(day.depthLevel)!)
               : day.depthLevel}
@@ -1206,34 +1488,43 @@ function BriefingUnitImpl({
           <p className="text-sm leading-6 text-muted-foreground">
             {t("session.briefing.levelDescription")}
           </p>
-        </div>
+        </section>
         <BriefingSection
           title={t("session.briefing.scope")}
           items={outOfScope}
           empty={t("session.briefing.scopeEmpty")}
+          className="border-t border-border/60 py-5 md:border-l md:pl-8"
         />
       </div>
 
-      <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
-        <h3 className="text-sm font-medium">{t("session.briefing.plan")}</h3>
-        <ol className="flex flex-col gap-1.5 text-sm">
+      <section
+        data-slot="briefing-plan"
+        className="flex flex-col gap-3 border-b border-border/60 pb-5"
+      >
+        <h3 className="text-base font-semibold">
+          {t("session.briefing.plan")}
+        </h3>
+        <ol className="flex flex-col divide-y divide-border/60 text-sm">
           {blocks
             .filter((block) => block.totalCount > 0)
             .map((block, index) => (
-              <li key={block.id} className="flex items-center gap-2">
+              <li
+                key={block.id}
+                className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 py-3"
+              >
                 <span
                   className={cn(
-                    "grid size-6 shrink-0 place-items-center rounded-md text-xs font-semibold",
+                    "row-span-2 grid size-7 shrink-0 place-items-center self-center rounded-lg text-xs font-semibold",
                     activitySurfaceClass(block.units[0]?.type ?? "study"),
                     activityColorClass(block.units[0]?.type ?? "study"),
                   )}
                 >
                   {index + 1}
                 </span>
-                <span className="min-w-0 flex-1 truncate">
+                <span className="min-w-0 break-words font-medium">
                   {t(block.label)}
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
+                <span className="text-xs leading-5 text-muted-foreground">
                   {t("session.activitiesCount", {
                     count: block.totalCount,
                     duration: formatMinutesShort(
@@ -1245,26 +1536,38 @@ function BriefingUnitImpl({
               </li>
             ))}
         </ol>
-      </div>
+      </section>
 
-      <Sources unit={unit} />
+      <Sources
+        unit={unit}
+        curriculumVersionId={session.snapshot.curriculumVersionId}
+        flat
+      />
 
       {complete ? (
         <CompletedNote />
       ) : (
-        <div className="flex flex-col items-start gap-3 rounded-lg bg-muted/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          data-slot="briefing-actions"
+          className="flex flex-col items-start gap-4 border-t border-border/60 pt-5 sm:flex-row sm:items-center sm:justify-between"
+        >
           <p className="max-w-[55ch] text-sm leading-6 text-muted-foreground">
             {t("session.briefing.skipDescription")}
           </p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
             <Button
+              className="w-full sm:w-auto"
               type="button"
               variant="outline"
               onClick={() => router.push("/interview")}
             >
               {t("session.briefing.diagnostic")}
             </Button>
-            <Button disabled={pending} onClick={finish}>
+            <Button
+              className="w-full sm:w-auto"
+              disabled={pending}
+              onClick={finish}
+            >
               {pending
                 ? t("session.briefing.opening")
                 : t("session.briefing.startStudy")}
@@ -1281,14 +1584,40 @@ function BriefingUnit(props: UnitBodyProps) {
   return <BriefingUnitImpl {...props} />;
 }
 
-function StudyUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
+function StudyUnit({
+  session,
+  unit,
+  progress,
+  pending,
+  patchUnit,
+}: UnitBodyProps) {
   const { t } = useI18n();
   const payload =
     progress.payload.type === "study"
       ? progress.payload
       : { type: "study" as const, checkedItemIds: [], notes: "" };
-  const [checked, setChecked] = useState(payload.checkedItemIds);
-  const [notes, setNotes] = useState(payload.notes);
+  const draftSchema = useMemo(() => {
+    const checklistIds = new Set(unit.checklist.map((item) => item.id));
+    return studyActivityDraftSchema.superRefine((draft, context) => {
+      if (draft.checkedItemIds.some((id) => !checklistIds.has(id))) {
+        context.addIssue({
+          code: "custom",
+          message: "Unknown checklist item in activity draft",
+        });
+      }
+    });
+  }, [unit.checklist]);
+  const draft = useLessonActivityDraft(
+    lessonActivityDraftIdentity(session, unit),
+    draftSchema,
+    {
+      type: "study" as const,
+      checkedItemIds: payload.checkedItemIds,
+      notes: payload.notes,
+    },
+  );
+  const checked = draft.value.checkedItemIds;
+  const notes = draft.value.notes;
   const required = unit.checklist
     .filter((item) => item.required)
     .map((item) => item.id);
@@ -1298,57 +1627,69 @@ function StudyUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
     checkedItemIds: checked,
     notes,
   };
+  async function save(status: "in_progress" | "completed") {
+    const updated = await patchUnit(unit, progress, status, nextPayload);
+    if (updated) draft.clear(nextPayload);
+  }
   return (
     <div className="flex flex-col gap-6">
       {unit.payload.type === "study" && unit.payload.body ? (
-        <p className="max-w-[75ch] whitespace-pre-wrap text-sm leading-6">
+        <p className="max-w-[68ch] whitespace-pre-wrap break-words text-[0.9375rem] leading-6 [overflow-wrap:anywhere]">
           {unit.payload.body}
         </p>
       ) : null}
-      <Sources unit={unit} />
+      <Sources
+        unit={unit}
+        curriculumVersionId={session.snapshot.curriculumVersionId}
+      />
       <Checklist
         items={unit.checklist}
         checked={checked}
         disabled={complete || pending}
         onToggle={(id) =>
-          setChecked((current) =>
-            current.includes(id)
-              ? current.filter((item) => item !== id)
-              : [...current, id],
-          )
+          draft.setValue((current) => ({
+            ...current,
+            checkedItemIds: current.checkedItemIds.includes(id)
+              ? current.checkedItemIds.filter((item) => item !== id)
+              : [...current.checkedItemIds, id],
+          }))
         }
       />
-      <label
-        className="flex flex-col gap-2 text-sm font-medium"
-        htmlFor={`notes-${unit.id}`}
-      >
-        {t("session.study.notes")}
-        <textarea
+      <Field className="border-y border-border/60 py-5">
+        <FieldLabel htmlFor={`notes-${unit.id}`}>
+          {t("session.study.notes")}
+        </FieldLabel>
+        <Textarea
           id={`notes-${unit.id}`}
+          name={`notes-${unit.id}`}
+          autoComplete="off"
           rows={5}
           value={notes}
           disabled={complete || pending}
-          onChange={(event) => setNotes(event.target.value)}
+          onChange={(event) =>
+            draft.setValue((current) => ({
+              ...current,
+              notes: event.target.value,
+            }))
+          }
           placeholder={t("session.study.placeholder")}
-          className="min-h-28 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-70"
+          className="min-h-28 bg-background"
         />
-      </label>
+      </Field>
       {!complete ? (
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex flex-col gap-2 border-t border-border/60 pt-5 sm:flex-row sm:justify-end">
           <Button
+            className="w-full sm:w-auto"
             variant="outline"
             disabled={pending}
-            onClick={() =>
-              void patchUnit(unit, progress, "in_progress", nextPayload)
-            }
+            onClick={() => void save("in_progress")}
           >
             {t("session.study.save")}
           </Button>
           <Button
+            className="w-full sm:w-auto"
             disabled={pending || !required.every((id) => checked.includes(id))}
-            onClick={() =>
-              void patchUnit(unit, progress, "completed", nextPayload)
-            }
+            onClick={() => void save("completed")}
           >
             {t("session.study.complete")}
             <CheckIcon aria-hidden />
@@ -1395,12 +1736,25 @@ function RecallUnit({
       firstAttemptId: payload.firstAttemptId,
     });
   }
-  const [answers, setAnswers] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      unit.questions.map((question) => [
-        question.id,
-        persistedAnswers.get(question.id)?.draft ?? "",
-      ]),
+  const draftSchema = useMemo(() => {
+    const questionIds = new Set(unit.questions.map((question) => question.id));
+    return recallActivityDraftSchema.superRefine((draft, context) => {
+      if (Object.keys(draft.answers).some((id) => !questionIds.has(id))) {
+        context.addIssue({
+          code: "custom",
+          message: "Unknown recall question in activity draft",
+        });
+      }
+    });
+  }, [unit.questions]);
+  const draft = useLessonActivityDraft(
+    lessonActivityDraftIdentity(session, unit),
+    draftSchema,
+    { type: "recall" as const, answers: {} },
+  );
+  const unsentAnswers = Object.fromEntries(
+    Object.entries(draft.value.answers).filter(
+      ([questionId]) => !persistedAnswers.has(questionId),
     ),
   );
   const allAnswered =
@@ -1414,9 +1768,9 @@ function RecallUnit({
     }),
   };
   async function submit(questionId: string) {
-    const answer = answers[questionId]?.trim() ?? "";
+    const answer = unsentAnswers[questionId]?.trim() ?? "";
     if (!answer) return;
-    await runAction(
+    const result = await runAction(
       `recall:${unit.id}:${questionId}`,
       async () => {
         const raw = await api<unknown>(
@@ -1435,47 +1789,70 @@ function RecallUnit({
       },
       (response) => response.session,
     );
+    if (result) {
+      const remainingAnswers = { ...unsentAnswers };
+      delete remainingAnswers[questionId];
+      const nextDraft = { type: "recall" as const, answers: remainingAnswers };
+      if (
+        Object.values(remainingAnswers).some((value) => value.trim().length > 0)
+      ) {
+        draft.setValue(nextDraft);
+      } else {
+        draft.clear(nextDraft);
+      }
+    }
   }
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col divide-y divide-border/60">
         {unit.questions.map((question, index) => (
-          <div
+          <Field
             key={question.id}
-            className="flex flex-col gap-3 rounded-lg border border-border/70 p-4"
+            className="flex flex-col gap-3 py-5 first:pt-0 last:pb-0"
           >
-            <label
-              className="flex flex-col gap-2 text-sm font-medium"
+            <FieldLabel
+              className="w-full min-w-0"
               htmlFor={`recall-${question.id}`}
             >
-              <span className="leading-6">
+              <span className="min-w-0 break-words text-base font-semibold leading-6 [overflow-wrap:anywhere]">
                 {index + 1}. {question.prompt}
               </span>
-              <textarea
-                id={`recall-${question.id}`}
-                rows={5}
-                value={answers[question.id] ?? ""}
-                disabled={
-                  persistedAnswers.has(question.id) ||
-                  progress.status === "completed" ||
-                  pending
-                }
-                onChange={(event) =>
-                  setAnswers((current) => ({
-                    ...current,
+            </FieldLabel>
+            <Textarea
+              id={`recall-${question.id}`}
+              name={`recall-${question.id}`}
+              autoComplete="off"
+              rows={5}
+              value={
+                persistedAnswers.get(question.id)?.draft ??
+                unsentAnswers[question.id] ??
+                ""
+              }
+              disabled={
+                persistedAnswers.has(question.id) ||
+                progress.status === "completed" ||
+                pending
+              }
+              onChange={(event) =>
+                draft.setValue({
+                  type: "recall",
+                  answers: {
+                    ...unsentAnswers,
                     [question.id]: event.target.value,
-                  }))
-                }
-                aria-describedby={`recall-help-${unit.id}`}
-                className="min-h-32 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-70"
-              />
-            </label>
+                  },
+                })
+              }
+              aria-describedby={`recall-help-${unit.id}`}
+              className="min-h-32 bg-background"
+            />
             {!persistedAnswers.has(question.id) &&
             progress.status !== "completed" ? (
-              <div className="flex justify-end">
+              <div className="flex justify-stretch sm:justify-end">
                 <Button
+                  className="w-full sm:w-auto"
                   disabled={
-                    pending || (answers[question.id]?.trim().length ?? 0) < 20
+                    pending ||
+                    (unsentAnswers[question.id]?.trim().length ?? 0) < 20
                   }
                   onClick={() => void submit(question.id)}
                 >
@@ -1484,20 +1861,21 @@ function RecallUnit({
                 </Button>
               </div>
             ) : null}
-          </div>
+          </Field>
         ))}
       </div>
       <p
         id={`recall-help-${unit.id}`}
-        className="text-xs text-muted-foreground"
+        className="border-y border-border/60 py-3 text-xs leading-5 text-muted-foreground"
       >
         {t("session.recall.firstAttempt")}
       </p>
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : allAnswered ? (
-        <div className="flex justify-end">
+        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
           <Button
+            className="w-full sm:w-auto"
             disabled={pending}
             onClick={() =>
               void patchUnit(unit, progress, "completed", completionPayload)
@@ -1540,7 +1918,12 @@ function TeacherDialogueUnit({
           turnCount: 0,
           revisionAttemptIds: [],
         };
-  const [revision, setRevision] = useState("");
+  const draft = useLessonActivityDraft(
+    lessonActivityDraftIdentity(session, unit),
+    teacherDialogueActivityDraftSchema,
+    { type: "teacher-dialogue" as const, revision: "" },
+  );
+  const revision = draft.value.revision;
   const [localMessages, setLocalMessages] = useState<Array<{
     id: string;
     role: "user" | "assistant";
@@ -1708,8 +2091,9 @@ function TeacherDialogueUnit({
         "in_progress",
         nextPayload,
       );
-      if (updated) await acceptSession(updated);
-      setRevision("");
+      if (!updated) return;
+      await acceptSession(updated);
+      draft.clear({ type: "teacher-dialogue", revision: "" });
       setStreamStatus(t("session.tutor.received"));
       await queryClient.invalidateQueries({
         queryKey: ["agent-history", "teacher", session.id],
@@ -1738,9 +2122,11 @@ function TeacherDialogueUnit({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1 rounded-md border border-border bg-background p-3 text-sm leading-6">
-        <p className="font-medium">{t("session.tutor.task")}</p>
-        <p className="text-muted-foreground">{opening}</p>
+      <div className="flex min-w-0 flex-col gap-1.5 border-y border-border/60 py-4 text-sm leading-6 sm:py-5">
+        <p className="font-semibold">{t("session.tutor.task")}</p>
+        <p className="max-w-[68ch] break-words text-muted-foreground [overflow-wrap:anywhere]">
+          {opening}
+        </p>
       </div>
       {history.isPending && !localMessages ? (
         <Skeleton className="h-28" />
@@ -1753,20 +2139,27 @@ function TeacherDialogueUnit({
         <ol
           data-slot="teacher-transcript"
           aria-label={t("session.tutor.history")}
-          className="flex max-h-96 flex-col gap-2 overflow-y-auto"
+          className="flex max-h-96 min-w-0 flex-col gap-2 overflow-y-auto border-y border-border/60 py-3 sm:py-4"
         >
           {messages.length ? (
             messages.map((message) => (
               <li
                 key={message.id}
-                className={`flex max-w-[90%] flex-col gap-1 rounded-md p-3 text-sm leading-6 ${message.role === "user" ? "self-end bg-primary text-primary-foreground" : "bg-muted"}`}
+                className={cn(
+                  "flex min-w-0 max-w-[92%] flex-col gap-1 rounded-control px-3 py-2.5 text-sm leading-6",
+                  message.role === "user"
+                    ? "self-end bg-accent text-foreground"
+                    : "border border-border/60 bg-background text-foreground",
+                )}
               >
                 <span className="block text-xs font-medium">
                   {message.role === "user"
                     ? t("session.tutor.you")
                     : t("session.tutor.name")}
                 </span>
-                {message.content || "…"}
+                <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                  {message.content || "…"}
+                </span>
               </li>
             ))
           ) : (
@@ -1779,9 +2172,11 @@ function TeacherDialogueUnit({
       {providerError ? (
         <div
           role="alert"
-          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 p-3 text-sm text-destructive"
+          className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-y border-destructive/30 bg-destructive/5 py-4 text-sm text-destructive"
         >
-          <span>{providerError}</span>
+          <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+            {providerError}
+          </span>
           <Button
             size="sm"
             variant="outline"
@@ -1799,31 +2194,38 @@ function TeacherDialogueUnit({
       ) : (
         <>
           {!canComplete ? (
-            <label
-              className="flex flex-col gap-2 text-sm font-medium"
-              htmlFor={`teacher-revision-${unit.id}`}
-            >
-              {answeringFollowUp
-                ? t("session.tutor.followUpLabel")
-                : t("session.tutor.revisionLabel")}
-              <textarea
+            <Field className="border-y border-border/60 py-5">
+              <FieldLabel htmlFor={`teacher-revision-${unit.id}`}>
+                {answeringFollowUp
+                  ? t("session.tutor.followUpLabel")
+                  : t("session.tutor.revisionLabel")}
+              </FieldLabel>
+              <Textarea
                 id={`teacher-revision-${unit.id}`}
+                name={`teacher-revision-${unit.id}`}
+                autoComplete="off"
                 rows={5}
                 value={revision}
                 disabled={streaming || pending}
-                onChange={(event) => setRevision(event.target.value)}
+                onChange={(event) =>
+                  draft.setValue({
+                    type: "teacher-dialogue",
+                    revision: event.target.value,
+                  })
+                }
                 placeholder={
                   answeringFollowUp
                     ? t("session.tutor.followUpPlaceholder")
                     : t("session.tutor.revisionPlaceholder")
                 }
-                className="min-h-28 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="min-h-28 bg-background"
               />
-            </label>
+            </Field>
           ) : null}
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-col gap-2 border-t border-border/60 pt-5 sm:flex-row sm:justify-end">
             {streaming ? (
               <Button
+                className="w-full sm:w-auto"
                 variant="outline"
                 onClick={() => abortRef.current?.abort()}
               >
@@ -1832,6 +2234,7 @@ function TeacherDialogueUnit({
               </Button>
             ) : canComplete ? (
               <Button
+                className="w-full sm:w-auto"
                 disabled={pending}
                 onClick={() =>
                   void patchUnit(unit, progress, "completed", payload)
@@ -1842,6 +2245,7 @@ function TeacherDialogueUnit({
               </Button>
             ) : (
               <Button
+                className="w-full sm:w-auto"
                 disabled={pending || revision.trim().length < 20}
                 onClick={() => void sendRevision()}
               >
@@ -1876,8 +2280,43 @@ function QuizUnit({
           correctQuestionIds: [],
           score: null,
         };
-  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [retrying, setRetrying] = useState(false);
+  const draftSchema = useMemo(() => {
+    const optionsByQuestion = new Map(
+      unit.questions.map((question) => [
+        question.id,
+        new Set(question.options.map((option) => option.id)),
+      ]),
+    );
+    return quizActivityDraftSchema.superRefine((draft, context) => {
+      if (
+        payload.score !== null &&
+        !retrying &&
+        Object.keys(draft.answers).length > 0
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Submitted quiz answers cannot be restored as a draft",
+        });
+        return;
+      }
+      for (const [questionId, optionId] of Object.entries(draft.answers)) {
+        if (!optionsByQuestion.get(questionId)?.has(optionId)) {
+          context.addIssue({
+            code: "custom",
+            message: "Unknown quiz answer in activity draft",
+          });
+          return;
+        }
+      }
+    });
+  }, [payload.score, retrying, unit.questions]);
+  const draft = useLessonActivityDraft(
+    lessonActivityDraftIdentity(session, unit),
+    draftSchema,
+    { type: "quiz" as const, answers: {} },
+  );
+  const answers = draft.value.answers;
   const persistedCorrectQuestionIds = payload.correctQuestionIds;
   const [results, setResults] = useState<Array<{
     questionId: string;
@@ -1921,6 +2360,7 @@ function QuizUnit({
       (response) => response.session,
     );
     if (result) {
+      draft.clear({ type: "quiz", answers: {} });
       setResults(result.attempt.results);
       setRetrying(false);
     }
@@ -1933,7 +2373,7 @@ function QuizUnit({
       {invalidQuestions.length ? (
         <p
           role="alert"
-          className="rounded-md border border-destructive/35 bg-destructive/10 p-4 text-sm text-destructive"
+          className="border-y border-destructive/30 bg-destructive/5 py-4 text-sm text-destructive"
         >
           {t("session.quiz.invalid")}
         </p>
@@ -1941,51 +2381,68 @@ function QuizUnit({
       {unit.questions.map((question, index) => {
         const result = results?.find((item) => item.questionId === question.id);
         return (
-          <fieldset
+          <FieldSet
             key={question.id}
-            className="flex flex-col gap-2 rounded-md border border-border p-4"
+            className="gap-3 border-b border-border/60 pb-5 last:border-b-0 last:pb-0"
           >
-            <legend className="px-1 text-sm font-medium">
+            <FieldLegend className="mb-0 min-w-0 break-words text-base leading-6 [overflow-wrap:anywhere]">
               {index + 1}. {question.prompt}
-            </legend>
-            {question.options.map((option) => (
-              <label
-                key={option.id}
-                className="flex min-h-11 items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
-              >
-                <input
-                  type="radio"
-                  name={`quiz-${question.id}`}
-                  value={option.id}
-                  checked={answers[question.id] === option.id}
-                  disabled={
-                    !answering || progress.status === "completed" || pending
-                  }
-                  onChange={() =>
-                    setAnswers((current) => ({
-                      ...current,
-                      [question.id]: option.id,
-                    }))
-                  }
-                  className="size-4 accent-primary"
-                />
-                {option.label}
-              </label>
-            ))}
+            </FieldLegend>
+            <RadioGroup
+              name={`quiz-${question.id}`}
+              value={answers[question.id] ?? ""}
+              disabled={
+                !answering || progress.status === "completed" || pending
+              }
+              onValueChange={(value) =>
+                draft.setValue((current) => ({
+                  ...current,
+                  answers: {
+                    ...current.answers,
+                    [question.id]: value,
+                  },
+                }))
+              }
+              className="gap-0 divide-y divide-border/60 border-y border-border/60"
+            >
+              {question.options.map((option) => (
+                <FieldLabel
+                  key={option.id}
+                  htmlFor={`quiz-${question.id}-${option.id}`}
+                  className="min-h-11 w-full min-w-0 cursor-pointer items-center gap-3 px-3 py-2 text-sm transition-colors hover:bg-accent has-data-[state=checked]:bg-accent motion-reduce:transition-none"
+                >
+                  <RadioGroupItem
+                    id={`quiz-${question.id}-${option.id}`}
+                    value={option.id}
+                  />
+                  <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                    {option.label}
+                  </span>
+                </FieldLabel>
+              ))}
+            </RadioGroup>
             {result ? (
               <p
-                className={`text-sm font-medium ${result.correct ? "text-success" : "text-destructive"}`}
+                className={cn(
+                  "border-y px-3 py-2 text-sm font-medium",
+                  result.correct
+                    ? "border-success/25 bg-success/10 text-success-foreground"
+                    : "border-warning/35 bg-warning/20 text-warning-foreground",
+                )}
               >
                 {result.correct
                   ? t("session.quiz.correct")
                   : t("session.quiz.retryNeeded")}
               </p>
             ) : null}
-          </fieldset>
+          </FieldSet>
         );
       })}
       {payload.score !== null ? (
-        <p role="status" className="text-sm font-medium">
+        <p
+          role="status"
+          className="border-y border-border/60 py-3 text-sm font-medium"
+        >
           {t("session.quiz.score", {
             score: Math.round(payload.score * 100),
             minimum: Math.round(minimumScore * 100),
@@ -1995,8 +2452,9 @@ function QuizUnit({
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : passed ? (
-        <div className="flex justify-end">
+        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
           <Button
+            className="w-full sm:w-auto"
             disabled={pending}
             onClick={() => void patchUnit(unit, progress, "completed", payload)}
           >
@@ -2005,16 +2463,17 @@ function QuizUnit({
           </Button>
         </div>
       ) : scored && !retrying ? (
-        <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="max-w-[60ch] text-sm leading-6 text-muted-foreground">
+        <div className="flex flex-col items-start gap-4 border-y border-warning/35 bg-warning/20 py-4 text-warning-foreground sm:flex-row sm:items-center sm:justify-between sm:py-5">
+          <p className="max-w-[60ch] text-sm leading-6">
             {t("session.quiz.retryDescription")}
           </p>
           <Button
+            className="w-full sm:w-auto"
             type="button"
             variant="outline"
             disabled={pending || invalidQuestions.length > 0}
             onClick={() => {
-              setAnswers({});
+              draft.clear({ type: "quiz", answers: {} });
               setResults(null);
               setRetrying(true);
             }}
@@ -2023,8 +2482,9 @@ function QuizUnit({
           </Button>
         </div>
       ) : (
-        <div className="flex justify-end">
+        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
           <Button
+            className="w-full sm:w-auto"
             disabled={pending || !allAnswered || invalidQuestions.length > 0}
             onClick={() => void submit()}
           >
@@ -2056,12 +2516,34 @@ function CodeReadingUnit({
           explanation: "",
           verbalFix: "",
         };
-  const [fields, setFields] = useState(payload);
   const saved = Boolean(
     payload.prediction && payload.explanation && payload.verbalFix,
   );
+  const draftSchema = useMemo(
+    () =>
+      codeReadingActivityDraftSchema.superRefine((_draft, context) => {
+        if (saved) {
+          context.addIssue({
+            code: "custom",
+            message: "Submitted code-reading fields cannot be restored",
+          });
+        }
+      }),
+    [saved],
+  );
+  const draft = useLessonActivityDraft(
+    lessonActivityDraftIdentity(session, unit),
+    draftSchema,
+    {
+      type: "code-reading" as const,
+      prediction: payload.prediction,
+      explanation: payload.explanation,
+      verbalFix: payload.verbalFix,
+    },
+  );
+  const fields = draft.value;
   async function submit() {
-    await runAction(
+    const result = await runAction(
       `code-reading:${unit.id}`,
       async () => {
         const raw = await api<unknown>(
@@ -2081,53 +2563,58 @@ function CodeReadingUnit({
       },
       (response) => response.session,
     );
+    if (result) draft.clear(fields);
   }
   const disabled = saved || progress.status === "completed" || pending;
   return (
     <div className="flex flex-col gap-6">
       {unit.payload.type === "code-reading" ? (
-        <pre className="overflow-x-auto rounded-md border border-border bg-muted p-4 text-sm leading-6">
+        <pre className="max-w-full overflow-x-auto border-y border-border/60 bg-surface-soft/60 p-4 font-mono text-sm leading-6">
           <code>{unit.payload.snippet}</code>
         </pre>
       ) : null}
       {unit.questions.map((question) => (
-        <p key={question.id} className="text-sm font-medium leading-6">
+        <p
+          key={question.id}
+          className="break-words text-sm font-medium leading-6 [overflow-wrap:anywhere]"
+        >
           {question.prompt}
         </p>
       ))}
-      {(
-        [
-          ["prediction", t("session.code.prediction")],
-          ["explanation", t("session.code.explanation")],
-          ["verbalFix", t("session.code.verbalFix")],
-        ] as const
-      ).map(([field, label]) => (
-        <label
-          key={field}
-          className="flex flex-col gap-2 text-sm font-medium"
-          htmlFor={`${field}-${unit.id}`}
-        >
-          {label}
-          <textarea
-            id={`${field}-${unit.id}`}
-            rows={4}
-            value={fields[field]}
-            disabled={disabled}
-            onChange={(event) =>
-              setFields((current) => ({
-                ...current,
-                [field]: event.target.value,
-              }))
-            }
-            className="min-h-24 resize-y rounded-md border border-input bg-background p-3 font-normal leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-70"
-          />
-        </label>
-      ))}
+      <FieldGroup className="gap-0 divide-y divide-border/60 border-y border-border/60">
+        {(
+          [
+            ["prediction", t("session.code.prediction")],
+            ["explanation", t("session.code.explanation")],
+            ["verbalFix", t("session.code.verbalFix")],
+          ] as const
+        ).map(([field, label]) => (
+          <Field key={field} className="py-4">
+            <FieldLabel htmlFor={`${field}-${unit.id}`}>{label}</FieldLabel>
+            <Textarea
+              id={`${field}-${unit.id}`}
+              name={`${field}-${unit.id}`}
+              autoComplete="off"
+              rows={4}
+              value={fields[field]}
+              disabled={disabled}
+              onChange={(event) =>
+                draft.setValue((current) => ({
+                  ...current,
+                  [field]: event.target.value,
+                }))
+              }
+              className="min-h-24 bg-background"
+            />
+          </Field>
+        ))}
+      </FieldGroup>
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : saved ? (
-        <div className="flex justify-end">
+        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
           <Button
+            className="w-full sm:w-auto"
             disabled={pending}
             onClick={() => void patchUnit(unit, progress, "completed", payload)}
           >
@@ -2136,8 +2623,9 @@ function CodeReadingUnit({
           </Button>
         </div>
       ) : (
-        <div className="flex justify-end">
+        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
           <Button
+            className="w-full sm:w-auto"
             disabled={
               pending ||
               !fields.prediction.trim() ||
@@ -2162,28 +2650,32 @@ function ExerciseHandoffUnit({ unit, progress, onExercise }: UnitBodyProps) {
       : unit.completionCriteria.map((criterion) => criterion.type);
   return (
     <div className="flex flex-col gap-6">
-      <InfoList
-        title={
-          unit.type === "review"
-            ? t("session.practice.reviewCriteria")
-            : t("session.practice.acceptance")
-        }
-        items={criteria}
-      />
-      {unit.payload.type === "exercise" && unit.payload.constraints.length ? (
+      <div className="grid gap-6 border-y border-border/60 py-5 md:grid-cols-2 md:divide-x md:divide-border/60">
         <InfoList
-          title={t("session.practice.constraints")}
-          items={unit.payload.constraints}
+          title={
+            unit.type === "review"
+              ? t("session.practice.reviewCriteria")
+              : t("session.practice.acceptance")
+          }
+          items={criteria}
         />
-      ) : null}
+        {unit.payload.type === "exercise" && unit.payload.constraints.length ? (
+          <div className="md:pl-6">
+            <InfoList
+              title={t("session.practice.constraints")}
+              items={unit.payload.constraints}
+            />
+          </div>
+        ) : null}
+      </div>
       <p className="text-sm leading-6 text-muted-foreground">
         {t("session.practice.description")}
       </p>
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : (
-        <div className="flex justify-end">
-          <Button onClick={onExercise}>
+        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+          <Button className="w-full sm:w-auto" onClick={onExercise}>
             {unit.type === "review"
               ? t("session.practice.openReview")
               : t("session.practice.open")}
@@ -2217,16 +2709,21 @@ function InterviewUnit({
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : hasReport ? (
-        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col items-start gap-4 border-y border-border/60 py-5">
           <p className="max-w-[60ch] text-sm leading-6 text-muted-foreground">
             {t("session.interview.reportReady")}
           </p>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={onInterview}>
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button
+              className="w-full sm:w-auto"
+              variant="outline"
+              onClick={onInterview}
+            >
               {t("session.interview.openReport")}
               <ArrowRightIcon aria-hidden />
             </Button>
             <Button
+              className="w-full sm:w-auto"
               disabled={pending}
               onClick={() =>
                 void patchUnit(unit, progress, "completed", {
@@ -2242,8 +2739,8 @@ function InterviewUnit({
           </div>
         </div>
       ) : (
-        <div className="flex justify-end">
-          <Button onClick={onInterview}>
+        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+          <Button className="w-full sm:w-auto" onClick={onInterview}>
             {t("session.interview.open")}
             <ArrowRightIcon aria-hidden />
           </Button>
@@ -2316,11 +2813,19 @@ function SummaryUnit({
         />
       ) : null}
       {result ? (
-        <div data-slot="day-summary" className="flex flex-col gap-5">
-          <div className="rounded-md border border-border bg-muted p-4">
-            <p className="text-sm leading-6">{result.summary.narrative}</p>
+        <div
+          data-slot="day-summary"
+          className="flex flex-col divide-y divide-border/60 border-y border-border/60"
+        >
+          <div data-slot="summary-narrative" className="py-5">
+            <p className="max-w-[68ch] break-words text-[0.9375rem] leading-6 [overflow-wrap:anywhere]">
+              {result.summary.narrative}
+            </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <dl
+            data-slot="summary-metrics"
+            className="grid divide-y divide-border/60 sm:grid-cols-3 sm:divide-x sm:divide-y-0"
+          >
             <SummaryMetric
               label={t("session.summary.quiz")}
               value={`${Math.round(result.summary.metrics.quizScore * 100)}%`}
@@ -2333,8 +2838,11 @@ function SummaryUnit({
               label={t("session.summary.hints")}
               value={`${result.summary.metrics.maxHintLevel} / 5`}
             />
-          </div>
-          <div className="grid gap-4 lg:grid-cols-2">
+          </dl>
+          <section
+            data-slot="summary-insights"
+            className="grid gap-8 py-5 lg:grid-cols-2"
+          >
             <InfoList
               title={t("session.summary.strengths")}
               items={
@@ -2351,25 +2859,32 @@ function SummaryUnit({
                   : [t("session.summary.noGaps")]
               }
             />
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {t("session.summary.counts", {
-              mistakes: result.summary.mistakeCandidates.length,
-              cards: result.summary.flashcardCandidates.length,
-            })}
-          </p>
-          {progress.status === "completed" ? (
-            <CompletedNote />
-          ) : (
-            <div className="flex justify-end">
-              <Button disabled={pending} onClick={() => void completeSummary()}>
+          </section>
+          <footer
+            data-slot="summary-actions"
+            className="flex flex-col gap-5 py-5"
+          >
+            <p className="text-sm text-muted-foreground">
+              {t("session.summary.counts", {
+                mistakes: result.summary.mistakeCandidates.length,
+                cards: result.summary.flashcardCandidates.length,
+              })}
+            </p>
+            {progress.status === "completed" ? (
+              <CompletedNote />
+            ) : (
+              <Button
+                className="w-full self-start sm:w-auto sm:self-end"
+                disabled={pending}
+                onClick={() => void completeSummary()}
+              >
                 {pending
                   ? t("session.summary.completing")
                   : t("session.summary.complete")}
                 <CheckIcon aria-hidden />
               </Button>
-            </div>
-          )}
+            )}
+          </footer>
         </div>
       ) : persisted.isError ? (
         <div className="flex flex-col items-start gap-3" role="alert">
@@ -2389,15 +2904,22 @@ function SummaryUnit({
           <Skeleton className="h-16" />
         </div>
       ) : (
-        <div className="flex flex-col items-start gap-2">
-          <Button disabled={pending} onClick={() => void createSummary()}>
+        <div
+          data-slot="summary-generate"
+          className="flex flex-col items-start gap-4 border-y border-border/60 py-5 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p className="max-w-[65ch] text-xs leading-5 text-muted-foreground">
+            {t("session.summary.description")}
+          </p>
+          <Button
+            className="w-full shrink-0 sm:w-auto"
+            disabled={pending}
+            onClick={() => void createSummary()}
+          >
             {pending
               ? t("session.summary.generating")
               : t("session.summary.generate")}
           </Button>
-          <p className="text-xs text-muted-foreground">
-            {t("session.summary.description")}
-          </p>
         </div>
       )}
     </div>
@@ -2406,9 +2928,9 @@ function SummaryUnit({
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-border p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
+    <div className="p-4 sm:p-5">
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="mt-1 text-xl font-semibold tabular-nums">{value}</dd>
     </div>
   );
 }
@@ -2421,7 +2943,7 @@ function CheckpointUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
       : { type: "checkpoint" as const, acknowledged: false };
   return (
     <div className="flex flex-col gap-6">
-      <p className="text-sm leading-6">
+      <p className="break-words text-sm leading-6 [overflow-wrap:anywhere]">
         {unit.payload.type === "checkpoint"
           ? unit.payload.label
           : unit.description}
@@ -2429,8 +2951,9 @@ function CheckpointUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : (
-        <div className="flex justify-end">
+        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
           <Button
+            className="w-full sm:w-auto"
             disabled={pending}
             onClick={() =>
               void patchUnit(unit, progress, "completed", {
@@ -2464,19 +2987,35 @@ function SpacedReviewUnit({ unit, progress }: UnitBodyProps) {
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : (
-        <Button disabled>{t("session.spaced.start")}</Button>
+        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+          <Button asChild className="w-full sm:w-auto" variant="outline">
+            <Link href="/review">{t("nav.review")}</Link>
+          </Button>
+        </div>
       )}
     </div>
   );
 }
 
-function Sources({ unit }: { unit: LearnerUnit }) {
+function Sources({
+  unit,
+  curriculumVersionId,
+  flat = false,
+}: {
+  unit: LearnerUnit;
+  curriculumVersionId: string;
+  flat?: boolean;
+}) {
   const { locale, t } = useI18n();
   if (!unit.sources.length) {
     return (
       <div
         data-slot="unit-sources"
-        className="flex flex-col gap-3 rounded-lg border border-dashed border-border p-4"
+        className={cn(
+          "flex flex-col gap-3",
+          "border-y border-border/60 py-5",
+          flat ? null : "px-0",
+        )}
       >
         <div className="flex flex-col gap-1">
           <h3 className="text-sm font-medium">{t("session.sources.title")}</h3>
@@ -2489,7 +3028,9 @@ function Sources({ unit }: { unit: LearnerUnit }) {
         </p>
         <div>
           <Button asChild variant="outline" size="sm">
-            <Link href="/settings/curriculum">
+            <Link
+              href={`/courses/studio?version=${encodeURIComponent(curriculumVersionId)}`}
+            >
               {t("session.sources.openEditor")}
             </Link>
           </Button>
@@ -2499,17 +3040,25 @@ function Sources({ unit }: { unit: LearnerUnit }) {
   }
   return (
     <div data-slot="unit-sources" className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">{t("session.sources.title")}</h3>
-      <ul className="grid gap-3 md:grid-cols-2">
+      <h3 className="text-base font-semibold">{t("session.sources.title")}</h3>
+      <ul
+        className={cn(
+          "flex flex-col divide-y divide-border/60",
+          "border-y border-border/60",
+          flat ? null : "px-0",
+        )}
+      >
         {unit.sources.map((source) => (
           <li
             key={source.id}
             data-slot="source-card"
-            className="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
+            className="flex min-w-0 flex-col gap-3 py-4 sm:py-5"
           >
-            <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:justify-between">
               <div className="min-w-0">
-                <p className="font-medium leading-5">{source.title}</p>
+                <p className="break-words font-medium leading-5 [overflow-wrap:anywhere]">
+                  {source.title}
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {sourceKindMessageKey(source.kind)
                     ? t(sourceKindMessageKey(source.kind)!)
@@ -2517,7 +3066,10 @@ function Sources({ unit }: { unit: LearnerUnit }) {
                   · {formatMinutesShort(source.estimatedMinutes, locale)}
                 </p>
               </div>
-              <Badge variant={source.required ? "default" : "outline"}>
+              <Badge
+                variant={source.required ? "default" : "outline"}
+                className="h-auto max-w-full shrink-0 whitespace-normal break-words py-1 text-left"
+              >
                 {source.required
                   ? t("session.sources.primary")
                   : t("session.sources.additional")}
@@ -2525,16 +3077,16 @@ function Sources({ unit }: { unit: LearnerUnit }) {
             </div>
             {source.learningGoal ? (
               <div className="flex flex-col gap-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <p className="text-xs font-medium text-muted-foreground">
                   {t("session.sources.focus")}
                 </p>
-                <p className="text-sm leading-6 text-muted-foreground">
+                <p className="break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
                   {source.learningGoal}
                 </p>
               </div>
             ) : null}
             {source.description ? (
-              <p className="text-sm leading-6 text-muted-foreground">
+              <p className="break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
                 {source.description}
               </p>
             ) : null}
@@ -2566,16 +3118,18 @@ function InfoList({
   if (!items.length) return null;
   return (
     <div data-slot="unit-info-list" className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">{title}</h3>
-      <ul className="flex flex-col gap-2 text-sm leading-6">
+      <h3 className="text-base font-semibold">{title}</h3>
+      <ul className="flex flex-col gap-2 text-sm leading-6 text-muted-foreground">
         {items.map((item) => (
-          <li key={item} className="flex gap-2">
+          <li key={item} className="flex min-w-0 gap-2">
             <CircleIcon
               aria-hidden
               weight="fill"
               className="size-1.5 shrink-0 self-center text-primary"
             />
-            <span>{item}</span>
+            <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+              {item}
+            </span>
           </li>
         ))}
       </ul>
@@ -2586,7 +3140,10 @@ function InfoList({
 function CompletedNote() {
   const { t } = useI18n();
   return (
-    <p className="inline-flex items-center gap-2 text-sm font-medium text-success">
+    <p
+      role="status"
+      className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-control bg-success/10 px-3 py-2 text-sm font-medium text-success-foreground"
+    >
       <CheckIcon aria-hidden />
       {t("session.completed")}
     </p>

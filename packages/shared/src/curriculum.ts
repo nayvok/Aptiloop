@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { IdSchema, IsoDateTimeSchema } from "./dto.js";
+import { AiDisclosureSchema } from "./provider-hub.js";
 
 const TextSchema = z.string().trim().min(1).max(50_000);
 const ShortTextSchema = z.string().trim().min(1).max(500);
@@ -844,6 +845,43 @@ export const CourseDesignerWorkflowSchema = z
   .strict();
 export type CourseDesignerWorkflow = z.infer<
   typeof CourseDesignerWorkflowSchema
+>;
+
+export const CourseDesignerPendingDisclosureSchema = z
+  .object({
+    operationId: IdSchema,
+    workflowId: IdSchema,
+    versionId: IdSchema,
+    disclosure: AiDisclosureSchema,
+  })
+  .strict()
+  .superRefine((pending, context) => {
+    const entities = pending.disclosure.scope.entityIds;
+    const matches =
+      pending.disclosure.scope.role === "course-designer" &&
+      pending.disclosure.status === "pending" &&
+      entities["course-revision"] === pending.versionId &&
+      entities["course-designer-workflow"] === pending.workflowId &&
+      entities["course-designer-authoring-operation"] === pending.operationId;
+    if (!matches) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Pending disclosure scope does not match its Course Designer identity",
+      });
+    }
+  });
+export type CourseDesignerPendingDisclosure = z.infer<
+  typeof CourseDesignerPendingDisclosureSchema
+>;
+
+export const CourseDesignerPendingDisclosureResponseSchema = z
+  .object({
+    pendingDisclosure: CourseDesignerPendingDisclosureSchema.nullable(),
+  })
+  .strict();
+export type CourseDesignerPendingDisclosureResponse = z.infer<
+  typeof CourseDesignerPendingDisclosureResponseSchema
 >;
 
 export const CourseDraftProposalDiffSchema = z

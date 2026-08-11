@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ReviewResultSchema } from "@dlh/shared";
+import { ReviewResultSchema } from "@aptiloop/shared";
 
 import { MockAgentProvider } from "../src/mock-agent-provider.js";
 

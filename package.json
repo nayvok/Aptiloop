@@ -1,5 +1,5 @@
 {
-  "name": "dev-learning-harness",
+  "name": "aptiloop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -30,11 +30,11 @@
     "test:e2e-lock": "node --test scripts/e2e-environment.test.mjs scripts/e2e-next-env-lock.test.mjs",
     "test:ci-policy": "node --test scripts/github-actions-policy.test.mjs",
     "test:e2e": "node scripts/test-e2e.mjs",
-    "db:generate": "npm run db:generate --workspace=@dlh/database",
+    "db:generate": "npm run db:generate --workspace=@aptiloop/database",
     "db:backup": "tsx scripts/create-approved-backup.ts",
     "db:inventory": "tsx scripts/private-data-inventory.ts",
-    "db:migrate": "npm run db:migrate --workspace=@dlh/database --",
-    "db:seed": "npm run db:seed --workspace=@dlh/database",
+    "db:migrate": "npm run db:migrate --workspace=@aptiloop/database --",
+    "db:seed": "npm run db:seed --workspace=@aptiloop/database",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:fast && npm run build"
   },
   "devDependencies": {

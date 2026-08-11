@@ -14,7 +14,7 @@ import {
 const cleanup: Array<() => void> = [];
 
 function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), "dlh-database-"));
+  const directory = mkdtempSync(join(tmpdir(), "aptiloop-database-"));
   const connection = openDatabase(join(directory, "test.sqlite"));
   migrateDatabase(connection);
   cleanup.push(() => {

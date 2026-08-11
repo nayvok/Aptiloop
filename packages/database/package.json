@@ -1,5 +1,5 @@
 {
-  "name": "@dlh/database",
+  "name": "@aptiloop/database",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -19,10 +19,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@dlh/course-authoring-kit": "0.1.0",
-    "@dlh/curriculum": "0.1.0",
-    "@dlh/learning-core": "0.1.0",
-    "@dlh/shared": "0.1.0",
+    "@aptiloop/course-authoring-kit": "0.1.0",
+    "@aptiloop/curriculum": "0.1.0",
+    "@aptiloop/learning-core": "0.1.0",
+    "@aptiloop/shared": "0.1.0",
     "drizzle-orm": "1.0.0-rc.4"
   },
   "devDependencies": {

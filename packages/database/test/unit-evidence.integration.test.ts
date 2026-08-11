@@ -24,7 +24,7 @@ function createTempDatabase(): {
   path: string;
   close: () => void;
 } {
-  const directory = mkdtempSync(join(tmpdir(), "dlh-unit-evidence-"));
+  const directory = mkdtempSync(join(tmpdir(), "aptiloop-unit-evidence-"));
   const path = join(directory, "test.sqlite");
   const connection = openDatabase(path);
   let open = true;

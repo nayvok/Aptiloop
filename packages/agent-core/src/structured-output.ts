@@ -1,6 +1,6 @@
 import { type ZodType, type ZodError } from "zod";
 
-import { ReviewResultSchema, type ReviewResult } from "@dlh/shared";
+import { ReviewResultSchema, type ReviewResult } from "@aptiloop/shared";
 
 export interface RepairRequest {
   readonly raw: string;

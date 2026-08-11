@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { validateActivityGraph } from "@dlh/learning-core";
+import { validateActivityGraph } from "@aptiloop/learning-core";
 import {
   ActivityCompletionCriterionSchema,
   ActivityPayloadSchema,
@@ -12,7 +12,7 @@ import {
   SourceLocatorSchema,
   StableCourseIdSchema,
   UnitTypeSchema,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import { z } from "zod";
 
 import {

@@ -21,7 +21,7 @@ import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-code
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { opencodeProvider } from "@earendil-works/pi-ai/providers/opencode";
 import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
-import type { CreateAgentSessionInput } from "@dlh/shared";
+import type { CreateAgentSessionInput } from "@aptiloop/shared";
 
 import { PiAgentProvider } from "./pi-agent-provider.js";
 import type { toAptiloopAiRole } from "./roles.js";

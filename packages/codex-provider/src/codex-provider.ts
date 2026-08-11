@@ -1,4 +1,4 @@
-import { AgentProviderError, type AgentProvider } from "@dlh/agent-core";
+import { AgentProviderError, type AgentProvider } from "@aptiloop/agent-core";
 import type {
   AgentEvent,
   AgentModel,
@@ -8,7 +8,7 @@ import type {
   JsonValue,
   ProviderStatus,
   StreamAgentMessageInput,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 import {
   CodexAppServerTransport,

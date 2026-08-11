@@ -5,7 +5,7 @@ import {
   type AptiloopAiRole,
   type AptiloopToolName,
   type ToolPolicy,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import type { z } from "zod";
 
 import { ProviderHubError } from "./provider-hub.js";

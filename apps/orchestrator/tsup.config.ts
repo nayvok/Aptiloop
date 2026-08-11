@@ -14,5 +14,5 @@ export default defineConfig({
   removeNodeProtocol: false,
   sourcemap: true,
   outDir: "dist",
-  noExternal: [/^@dlh\//u],
+  noExternal: [/^@aptiloop\//u],
 });

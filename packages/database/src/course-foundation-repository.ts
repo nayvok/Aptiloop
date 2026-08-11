@@ -9,7 +9,7 @@ import {
   type CourseRevision,
   type EvidenceFact,
   type LearnerActivityDefinition,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 import type { DatabaseConnection } from "./database.js";
 

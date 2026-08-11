@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
 import z from "zod";
-import { createLearningKernelRepository } from "@dlh/database";
-import { learningKernelSha256 } from "@dlh/learning-core";
+import { createLearningKernelRepository } from "@aptiloop/database";
+import { learningKernelSha256 } from "@aptiloop/learning-core";
 
 const runtimes: Array<ReturnType<typeof createApp>> = [];
 const roots: string[] = [];
@@ -22,7 +22,7 @@ afterEach(async () => {
 function createRuntime(databasePath?: string) {
   const root = databasePath
     ? path.dirname(databasePath)
-    : mkdtempSync(path.join(tmpdir(), "dlh-summary-v2-"));
+    : mkdtempSync(path.join(tmpdir(), "aptiloop-summary-v2-"));
   if (!databasePath) roots.push(root);
   const resolvedDatabasePath = databasePath ?? path.join(root, "test.sqlite");
   const runtime = createApp({
@@ -44,7 +44,7 @@ function request(
     ...init,
     headers: {
       Host: "127.0.0.1:8787",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
       ...init?.headers,

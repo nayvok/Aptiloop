@@ -6,7 +6,7 @@ import {
   finalizeCoursePack,
   validateCoursePackBytes,
   type CoursePackV1,
-} from "@dlh/course-authoring-kit";
+} from "@aptiloop/course-authoring-kit";
 
 import {
   coursePackSourceBytesHash,
@@ -120,6 +120,16 @@ describe("CoursePackRepository", () => {
       report: validation.report,
     });
     expect(byteReplay).toMatchObject({ installed: false, idempotent: true });
+    expect(() =>
+      repository.install({
+        operationId: "open-installed-pack-as-draft",
+        action: "open-as-draft",
+        sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
+        pack: validation.pack,
+        canonicalJson: validation.canonicalJson,
+        report: validation.report,
+      }),
+    ).toThrow(/different lifecycle action/u);
     expect(
       database.sqlite
         .prepare("SELECT count(*) AS count FROM course_pack_lifecycle_events")
@@ -151,6 +161,16 @@ describe("CoursePackRepository", () => {
     changed.course.title = "Conflicting identity";
     const finalized = finalizeCoursePack(changed);
     const conflict = validated(finalized);
+    expect(() =>
+      repository.install({
+        operationId: "install-original",
+        action: "install",
+        sourceBytesHash: coursePackSourceBytesHash(conflict.sourceBytes),
+        pack: conflict.validation.pack,
+        canonicalJson: conflict.validation.canonicalJson,
+        report: conflict.validation.report,
+      }),
+    ).toThrow(/different content/u);
     expect(() =>
       repository.install({
         operationId: "install-conflict",
@@ -204,12 +224,278 @@ describe("CoursePackRepository", () => {
     ).toBeUndefined();
   });
 
-  it("quarantines diagnostics only and explicitly uninstalls without deletion", () => {
+  it("keeps the imported manifest immutable and opens a distinct personal draft", () => {
     const database = connection();
     let id = 0;
     const repository = new CoursePackRepository(database, {
       now: () => Date.UTC(2026, 7, 10),
-      id: () => `record-${++id}`,
+      id: () => `draft-event-${++id}`,
+    });
+    const pack = createDevelopmentCoursePackFixture();
+    const { sourceBytes, validation } = validated(pack);
+    const input = {
+      action: "open-as-draft" as const,
+      sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
+      pack: validation.pack,
+      canonicalJson: validation.canonicalJson,
+      report: validation.report,
+    };
+
+    const opened = repository.install({
+      ...input,
+      operationId: "open-development-pack",
+    });
+    expect(opened).toMatchObject({
+      courseId: pack.course.courseKey,
+      action: "open-as-draft",
+      revisionStatus: "draft",
+      installed: true,
+      idempotent: false,
+    });
+    expect(opened.revisionId).not.toBe(pack.revision.revisionKey);
+    expect(repository.exportCanonicalJson(pack.revision.revisionKey)).toBe(
+      validation.canonicalJson,
+    );
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT status, content_hash, branch_kind, parent_version_id,
+                  based_on_content_hash, adaptation_branch_id
+           FROM curriculum_versions WHERE id IN (?, ?)
+           ORDER BY id = ? DESC`,
+        )
+        .all(
+          pack.revision.revisionKey,
+          opened.revisionId,
+          pack.revision.revisionKey,
+        ),
+    ).toEqual([
+      {
+        status: "archived",
+        content_hash: pack.revision.contentHash,
+        branch_kind: pack.revision.branchKind,
+        parent_version_id: pack.revision.parentRevisionKey,
+        based_on_content_hash: pack.revision.basedOnContentHash,
+        adaptation_branch_id: null,
+      },
+      {
+        status: "draft",
+        content_hash: null,
+        branch_kind: "personal",
+        parent_version_id: pack.revision.revisionKey,
+        based_on_content_hash: pack.revision.contentHash,
+        adaptation_branch_id: expect.any(String),
+      },
+    ]);
+    expect(repository.list()).toEqual([
+      expect.objectContaining({
+        revisionId: pack.revision.revisionKey,
+        revisionStatus: "archived",
+        lifecycleAction: "open-as-draft",
+      }),
+    ]);
+
+    expect(
+      repository.install({
+        ...input,
+        operationId: "open-development-pack",
+      }),
+    ).toEqual({ ...opened, installed: false, idempotent: true });
+    expect(
+      repository.install({
+        ...input,
+        operationId: "open-development-pack-again",
+      }),
+    ).toEqual({ ...opened, installed: false, idempotent: true });
+    expect(() =>
+      repository.install({
+        ...input,
+        operationId: "install-after-open",
+        action: "install",
+      }),
+    ).toThrow(/different lifecycle action/u);
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT count(*) AS count FROM curriculum_versions
+           WHERE curriculum_id = ?`,
+        )
+        .get(pack.course.courseKey),
+    ).toEqual({ count: 2 });
+    expect(
+      database.sqlite
+        .prepare("SELECT count(*) AS count FROM course_pack_lifecycle_events")
+        .get(),
+    ).toEqual({ count: 1 });
+    expect(database.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual(
+      [],
+    );
+  });
+
+  it("rejects a later Pack that would change the existing Course primary locale", () => {
+    const database = connection();
+    let id = 0;
+    const repository = new CoursePackRepository(database, {
+      now: () => Date.UTC(2026, 7, 10),
+      id: () => `locale-event-${++id}`,
+    });
+    const original = createDevelopmentCoursePackFixture();
+    const first = validated(original);
+    repository.install({
+      operationId: "install-locale-base",
+      action: "install",
+      sourceBytesHash: coursePackSourceBytesHash(first.sourceBytes),
+      pack: first.validation.pack,
+      canonicalJson: first.validation.canonicalJson,
+      report: first.validation.report,
+    });
+    const before = database.sqlite
+      .prepare(
+        `SELECT primary_locale, active_revision_id, updated_at
+         FROM courses WHERE id = ?`,
+      )
+      .get(original.course.courseKey);
+
+    const changed = structuredClone(original);
+    changed.course.primaryLocale = "ru-RU";
+    changed.course.availableLocales = ["ru-RU"];
+    changed.revision.revisionKey = "development-kernel-basics/v2";
+    changed.revision.revisionNumber = 2;
+    changed.revision.parentRevisionKey = original.revision.revisionKey;
+    for (const snapshot of changed.knowledge.sourceSnapshots) {
+      snapshot.locale = "ru-RU";
+    }
+    for (const capsule of changed.knowledge.capsules) {
+      capsule.primaryLocale = "ru-RU";
+    }
+    const second = finalizedAndValidated(changed);
+    expect(() =>
+      repository.install({
+        operationId: "install-conflicting-locale",
+        action: "install",
+        sourceBytesHash: coursePackSourceBytesHash(second.sourceBytes),
+        pack: second.validation.pack,
+        canonicalJson: second.validation.canonicalJson,
+        report: second.validation.report,
+      }),
+    ).toThrow(/primary locale conflicts/u);
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT primary_locale, active_revision_id, updated_at
+           FROM courses WHERE id = ?`,
+        )
+        .get(original.course.courseKey),
+    ).toEqual(before);
+    expect(repository.exportCanonicalJson(original.revision.revisionKey)).toBe(
+      first.validation.canonicalJson,
+    );
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT id, content_hash FROM course_revisions
+           WHERE course_id = ? ORDER BY revision_number`,
+        )
+        .all(original.course.courseKey),
+    ).toEqual([
+      {
+        id: original.revision.revisionKey,
+        content_hash: original.revision.contentHash,
+      },
+    ]);
+  });
+
+  it("rebases only an empty adaptation branch and preserves occupied branches", () => {
+    const database = connection();
+    let id = 0;
+    const repository = new CoursePackRepository(database, {
+      now: () => Date.UTC(2026, 7, 10),
+      id: () => `branch-event-${++id}`,
+    });
+    const firstPack = createDevelopmentCoursePackFixture();
+    const first = validated(firstPack);
+    repository.install({
+      operationId: "install-branch-base",
+      action: "install",
+      sourceBytesHash: coursePackSourceBytesHash(first.sourceBytes),
+      pack: first.validation.pack,
+      canonicalJson: first.validation.canonicalJson,
+      report: first.validation.report,
+    });
+
+    const secondPack = structuredClone(firstPack);
+    secondPack.revision.revisionKey = "development-kernel-basics/v2";
+    secondPack.revision.revisionNumber = 2;
+    secondPack.revision.parentRevisionKey = firstPack.revision.revisionKey;
+    const second = finalizedAndValidated(secondPack);
+    const opened = repository.install({
+      operationId: "open-second-pack",
+      action: "open-as-draft",
+      sourceBytesHash: coursePackSourceBytesHash(second.sourceBytes),
+      pack: second.validation.pack,
+      canonicalJson: second.validation.canonicalJson,
+      report: second.validation.report,
+    });
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT base_revision_id, status FROM adaptation_branches
+           WHERE course_id = ? ORDER BY created_at, id`,
+        )
+        .all(firstPack.course.courseKey),
+    ).toEqual([
+      { base_revision_id: firstPack.revision.revisionKey, status: "archived" },
+      { base_revision_id: secondPack.revision.revisionKey, status: "active" },
+    ]);
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT parent_version_id, based_on_content_hash, revision
+           FROM curriculum_versions WHERE id = ?`,
+        )
+        .get(opened.revisionId),
+    ).toEqual({
+      parent_version_id: secondPack.revision.revisionKey,
+      based_on_content_hash: second.validation.pack.revision.contentHash,
+      revision: 3,
+    });
+
+    const thirdPack = structuredClone(secondPack);
+    thirdPack.revision.revisionKey = "development-kernel-basics/v3";
+    thirdPack.revision.revisionNumber = 3;
+    thirdPack.revision.parentRevisionKey = secondPack.revision.revisionKey;
+    const third = finalizedAndValidated(thirdPack);
+    expect(() =>
+      repository.install({
+        operationId: "open-third-pack",
+        action: "open-as-draft",
+        sourceBytesHash: coursePackSourceBytesHash(third.sourceBytes),
+        pack: third.validation.pack,
+        canonicalJson: third.validation.canonicalJson,
+        report: third.validation.report,
+      }),
+    ).toThrow(/must be integrated/u);
+    expect(repository.read(thirdPack.revision.revisionKey)).toBeNull();
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT status FROM adaptation_branches
+           WHERE course_id = ? AND base_revision_id = ?`,
+        )
+        .get(firstPack.course.courseKey, secondPack.revision.revisionKey),
+    ).toEqual({ status: "active" });
+    expect(database.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual(
+      [],
+    );
+  });
+
+  it("quarantines diagnostics only and explicitly uninstalls without deletion", () => {
+    const database = connection();
+    const ids = ["quarantine-record", "z-install-event", "a-uninstall-event"];
+    let id = 0;
+    const repository = new CoursePackRepository(database, {
+      now: () => Date.UTC(2026, 7, 10),
+      id: () => ids[id++]!,
     });
     const invalidBytes = encoder.encode('{"format":1,"format":2}');
     const invalid = validateCoursePackBytes(invalidBytes);
@@ -265,6 +551,16 @@ describe("CoursePackRepository", () => {
       revisionStatus: "archived",
       lifecycleAction: "uninstall",
     });
+    expect(() =>
+      repository.install({
+        operationId: "reinstall-after-uninstall",
+        action: "install",
+        sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
+        pack: validation.pack,
+        canonicalJson: validation.canonicalJson,
+        report: validation.report,
+      }),
+    ).toThrow(/different lifecycle action/u);
     expect(repository.exportCanonicalJson(pack.revision.revisionKey)).toBe(
       canonicalCoursePackJson(pack),
     );

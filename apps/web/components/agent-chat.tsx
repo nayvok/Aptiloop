@@ -1,11 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PaperPlaneTiltIcon, StopIcon } from "@phosphor-icons/react";
+import {
+  ArrowClockwiseIcon,
+  CaretDownIcon,
+  PaperPlaneTiltIcon,
+  StopIcon,
+} from "@phosphor-icons/react";
 
 import { api, streamAgent } from "@/lib/api";
+import { CHAT_ROLES, isChatRole, type ChatRole } from "@/lib/chat-role";
 import { useI18n } from "@/lib/i18n";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,9 +24,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupText,
+  InputGroupTextarea,
+} from "@/components/ui/input-group";
+import { Markdown } from "@/components/ui/markdown";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Marker, MarkerContent } from "@/components/ui/marker";
 import {
   Message,
@@ -33,24 +53,40 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 
-const roles = [
-  "teacher",
-  "reviewer",
-  "interviewer",
-  "curator",
-  "codex-expert",
-] as const;
-type Role = (typeof roles)[number];
+const roleLabelKeys = {
+  teacher: "chat.role.teacher",
+  reviewer: "chat.role.reviewer",
+  interviewer: "chat.role.interviewer",
+  curator: "chat.role.curator",
+  "codex-expert": "chat.role.codexExpert",
+} as const;
 type Connection = {
   connectionId: string;
   adapterId: string;
   displayName: string;
+  enabled: boolean;
   state: string;
   observedCapabilities: {
     models: Array<{ modelId: string; available: boolean }>;
+    connection: {
+      authenticated: boolean;
+      streaming: boolean;
+      cancellation: boolean;
+    };
   } | null;
 };
+type StreamLiveState =
+  "idle" | "generating" | "completed" | "failed" | "cancelled";
 type RoleProfile = {
   role: "course-designer" | "tutor" | "evaluator" | "reviewer";
   mode: "no-ai" | "connection";
@@ -74,12 +110,21 @@ type Disclosure = {
   expiresAt: string;
 };
 
-export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
-  const { t } = useI18n();
+const markdownContentClassName =
+  "min-w-0 max-w-full [overflow-wrap:anywhere] [&:has(table)]:overflow-x-auto [&_pre]:max-w-full [&_table]:min-w-max";
+
+export function AgentChat({
+  role,
+  onRoleChange,
+}: {
+  role: ChatRole;
+  onRoleChange: (role: ChatRole) => void;
+}) {
+  const { locale, t } = useI18n();
   const agentFailureMessage = t("chat.error.response");
   const agentCancellationMessage = t("chat.status.cancelled");
   const queryClient = useQueryClient();
-  const [role, setRole] = useState<Role>(initialRole);
+  const selectedRoleLabel = t(roleLabelKeys[role]);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<
     Array<{
@@ -91,12 +136,18 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
   >([]);
   const [tools, setTools] = useState<string[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [streamLiveState, setStreamLiveState] =
+    useState<StreamLiveState>("idle");
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [retryMessage, setRetryMessage] = useState<string | null>(null);
+  const [abortable, setAbortable] = useState(false);
   const [pendingDisclosure, setPendingDisclosure] = useState<{
     message: string;
     disclosure: Disclosure;
   } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const approvingDisclosureRef = useRef(false);
+  const pendingMessageIdsRef = useRef(new Set<string>());
   const history = useQuery({
     queryKey: ["agent-history", role],
     queryFn: () =>
@@ -109,25 +160,94 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
       }>(`/agent/history?role=${encodeURIComponent(role)}`),
   });
   const settings = useQuery({
-    queryKey: ["settings"],
+    queryKey: ["settings", "agent-chat"],
     queryFn: () => api<AgentSettings>("/settings"),
   });
+  const aptiloopRole =
+    role === "reviewer"
+      ? "reviewer"
+      : role === "teacher" || role === "codex-expert"
+        ? "tutor"
+        : "evaluator";
+  const roleProfile = settings.data?.ai.roleProfiles.find(
+    (profile) => profile.role === aptiloopRole,
+  );
+  const connection = settings.data?.ai.connections.find(
+    (candidate) => candidate.connectionId === roleProfile?.connectionId,
+  );
+  const assignedModel = roleProfile?.modelId;
+  const hasCompleteAssignment =
+    roleProfile?.mode === "connection" &&
+    Boolean(roleProfile.connectionId) &&
+    Boolean(assignedModel);
+  const connectionReady =
+    hasCompleteAssignment &&
+    connection?.enabled === true &&
+    connection.state === "connected" &&
+    connection.observedCapabilities?.connection.authenticated === true &&
+    connection.observedCapabilities.connection.streaming === true;
+  const modelAvailable =
+    assignedModel !== null &&
+    assignedModel !== undefined &&
+    connection?.observedCapabilities?.models.some(
+      (model) => model.modelId === assignedModel && model.available,
+    ) === true;
+  const assignedModelAvailable = connectionReady && modelAvailable;
+  const composerReady =
+    settings.isSuccess && hasCompleteAssignment && assignedModelAvailable;
+  const composerNeedsConfiguration = settings.isSuccess && !composerReady;
+  const recoverySection =
+    hasCompleteAssignment && !connectionReady ? "connections" : "ai";
+  const selection = settings.isLoading
+    ? { provider: t("provider.checking"), model: null }
+    : roleProfile?.mode === "connection"
+      ? {
+          provider: connection?.displayName ?? t("provider.unavailable"),
+          model: roleProfile.modelId ?? t("provider.noModel"),
+        }
+      : {
+          provider: t("provider.off"),
+          model: null,
+        };
+  const composerContext = [
+    selectedRoleLabel,
+    selection.provider,
+    selection.model,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   useEffect(() => {
-    if (!history.data || streaming) return;
-    setMessages(
-      history.data.messages.map((message) => ({
-        ...message,
-        label: message.role === "user" ? t("chat.label.you") : role,
-      })),
-    );
-  }, [history.data, role, streaming, t]);
+    if (!history.data) return;
+    // Query notifications can lag the local stream lifecycle. Keep an
+    // optimistic turn mounted until the history cache contains its IDs.
+    const historyMessages = history.data.messages.map((message) => ({
+      ...message,
+      label: message.role === "user" ? t("chat.label.you") : selectedRoleLabel,
+    }));
+    const historyIds = new Set(historyMessages.map((message) => message.id));
+    for (const id of historyIds) {
+      pendingMessageIdsRef.current.delete(id);
+    }
+    const pendingMessageIds = new Set(pendingMessageIdsRef.current);
+    setMessages((current) => [
+      ...historyMessages,
+      ...current.filter(
+        (message) =>
+          pendingMessageIds.has(message.id) && !historyIds.has(message.id),
+      ),
+    ]);
+  }, [history.data, selectedRoleLabel, t]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   async function send() {
     const message = input.trim();
-    if (!message || streaming) return;
+    if (!message || streaming || !composerReady) return;
     setStreaming(true);
+    setStreamLiveState("generating");
     setStreamError(null);
+    setRetryMessage(null);
     try {
       const preparation = await api<
         { required: false } | { required: true; disclosure: Disclosure }
@@ -137,15 +257,18 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
       });
       if (preparation.required) {
         setPendingDisclosure({ message, disclosure: preparation.disclosure });
+        setStreamLiveState("idle");
         return;
       }
       await runStream(message);
     } catch (error) {
+      setStreamLiveState("failed");
       setStreamError(
         error instanceof Error
           ? t("chat.error.prepare", { error: error.message })
           : agentFailureMessage,
       );
+      setRetryMessage(message);
     } finally {
       setStreaming(false);
     }
@@ -156,7 +279,9 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
     if (!pending) return;
     setPendingDisclosure(null);
     setStreaming(true);
+    setStreamLiveState("generating");
     setStreamError(null);
+    setRetryMessage(null);
     try {
       await api(`/ai/disclosures/${pending.disclosure.operationId}/approve`, {
         method: "POST",
@@ -164,11 +289,13 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
       });
       await runStream(pending.message, pending.disclosure.operationId);
     } catch (error) {
+      setStreamLiveState("failed");
       setStreamError(
         error instanceof Error
           ? t("chat.error.send", { error: error.message })
           : agentFailureMessage,
       );
+      setRetryMessage(pending.message);
     } finally {
       setStreaming(false);
     }
@@ -177,6 +304,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
   async function cancelDisclosure() {
     const pending = pendingDisclosure;
     setPendingDisclosure(null);
+    setStreamLiveState("idle");
     if (!pending) return;
     await api(`/ai/disclosures/${pending.disclosure.operationId}/cancel`, {
       method: "POST",
@@ -185,6 +313,7 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
   }
 
   async function runStream(message: string, disclosureOperationId?: string) {
+    setStreamLiveState("generating");
     const previousMessages = messages.map(
       ({ id, role: messageRole, content }) => ({
         id,
@@ -194,9 +323,12 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
     );
     const userId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
+    pendingMessageIdsRef.current.add(userId);
+    pendingMessageIdsRef.current.add(assistantId);
     let assistantContent = "";
     let terminalReason: "completed" | "failed" | "cancelled" | null = null;
     let streamReportedError = false;
+    let transportFailed = false;
     setMessages((current) => [
       ...current,
       {
@@ -205,11 +337,17 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
         label: t("chat.label.you"),
         content: message,
       },
-      { id: assistantId, role: "assistant", label: role, content: "" },
+      {
+        id: assistantId,
+        role: "assistant",
+        label: selectedRoleLabel,
+        content: "",
+      },
     ]);
     setInput("");
     const controller = new AbortController();
     abortRef.current = controller;
+    setAbortable(true);
     try {
       stream: for await (const event of streamAgent(
         {
@@ -240,6 +378,12 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
               ),
             );
             break;
+          case "tool.summary":
+            setTools((current) => [
+              ...current,
+              `${event.name} · ${event.status}`,
+            ]);
+            break;
           case "error":
             streamReportedError = true;
             assistantContent = agentFailureMessage;
@@ -257,14 +401,20 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
         }
       }
 
-      if (terminalReason === "cancelled") {
-        assistantContent = agentCancellationMessage;
-      } else if (
+      const failed =
         terminalReason === "failed" ||
         terminalReason === null ||
-        streamReportedError
-      ) {
+        streamReportedError;
+      if (terminalReason === "cancelled") {
+        assistantContent = agentCancellationMessage;
+        setStreamLiveState("cancelled");
+      } else if (failed) {
         assistantContent = agentFailureMessage;
+        setStreamLiveState("failed");
+        setRetryMessage(message);
+        setInput((current) => current || message);
+      } else {
+        setStreamLiveState("completed");
       }
       if (terminalReason !== "completed" || streamReportedError) {
         setMessages((current) =>
@@ -276,18 +426,27 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
         );
       }
     } catch (error) {
+      transportFailed = !controller.signal.aborted;
+      setStreamLiveState(controller.signal.aborted ? "cancelled" : "failed");
+      if (transportFailed) pendingMessageIdsRef.current.delete(assistantId);
       assistantContent = controller.signal.aborted
         ? agentCancellationMessage
         : error instanceof Error
           ? t("chat.error.responseDetail", { error: error.message })
           : agentFailureMessage;
-      if (!controller.signal.aborted) setStreamError(assistantContent);
+      if (!controller.signal.aborted) {
+        setStreamError(assistantContent);
+        setRetryMessage(message);
+        setInput((current) => current || message);
+      }
       setMessages((current) =>
-        current.map((entry) =>
-          entry.id === assistantId
-            ? { ...entry, content: assistantContent }
-            : entry,
-        ),
+        transportFailed
+          ? current.filter((entry) => entry.id !== assistantId)
+          : current.map((entry) =>
+              entry.id === assistantId
+                ? { ...entry, content: assistantContent }
+                : entry,
+            ),
       );
     } finally {
       const finalContent =
@@ -301,7 +460,15 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
         messages: [
           ...previousMessages,
           { id: userId, role: "user", content: message },
-          { id: assistantId, role: "assistant", content: finalContent },
+          ...(transportFailed
+            ? []
+            : [
+                {
+                  id: assistantId,
+                  role: "assistant" as const,
+                  content: finalContent,
+                },
+              ]),
         ],
       });
       if (!assistantContent) {
@@ -313,108 +480,149 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
           ),
         );
       }
+      setAbortable(false);
       abortRef.current = null;
     }
   }
 
-  const aptiloopRole =
-    role === "reviewer"
-      ? "reviewer"
-      : role === "teacher" || role === "codex-expert"
-        ? "tutor"
-        : "evaluator";
-  const roleProfile = settings.data?.ai.roleProfiles.find(
-    (profile) => profile.role === aptiloopRole,
-  );
-  const connection = settings.data?.ai.connections.find(
-    (candidate) => candidate.connectionId === roleProfile?.connectionId,
-  );
-  const selection =
-    roleProfile?.mode === "connection"
-      ? {
-          provider: connection?.displayName ?? "Unavailable",
-          model: roleProfile.modelId ?? "No model",
-        }
-      : { provider: "AI Off", model: "Manual path" };
+  const retrying = retryMessage !== null && input.trim() === retryMessage;
 
   return (
     <section
       data-slot="agent-chat"
-      className="flex min-h-[650px] flex-col overflow-hidden rounded-xl border border-border bg-card"
+      aria-busy={streaming}
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-y border-border bg-background"
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-3">
+      <div className="flex min-w-0 flex-col gap-3 border-b border-border py-3 md:flex-row md:items-center md:justify-between">
+        <div className="md:hidden">
+          <label className="sr-only" htmlFor="agent-role-select">
+            {t("chat.a11y.roleSelector")}
+          </label>
+          <Select
+            value={role}
+            disabled={streaming}
+            onValueChange={(value) => {
+              if (isChatRole(value)) onRoleChange(value);
+            }}
+          >
+            <SelectTrigger id="agent-role-select" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectGroup>
+                {CHAT_ROLES.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    {t(roleLabelKeys[item])}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
         <div
-          className="flex flex-wrap gap-1"
+          role="group"
+          className="hidden min-w-0 flex-wrap gap-1 md:flex"
           aria-label={t("chat.a11y.roleSelector")}
         >
-          {roles.map((item) => (
+          {CHAT_ROLES.map((item) => (
             <Button
               key={item}
               aria-pressed={role === item}
               variant={role === item ? "secondary" : "ghost"}
               size="sm"
               disabled={streaming}
-              onClick={() => {
-                setMessages([]);
-                setTools([]);
-                setRole(item);
-              }}
+              onClick={() => onRoleChange(item)}
             >
-              {item}
+              {t(roleLabelKeys[item])}
             </Button>
           ))}
         </div>
-        <Badge
-          variant={roleProfile?.mode === "connection" ? "success" : "outline"}
+        <p
+          className="min-w-0 text-sm leading-5 text-muted-foreground md:max-w-[24rem] md:text-right"
+          aria-label={t("chat.composer.context", {
+            context: composerContext,
+          })}
+          title={composerContext}
         >
-          {selection.provider} · {selection.model}
-        </Badge>
+          <span className="font-medium text-foreground">
+            {selection.provider}
+          </span>
+          {selection.model ? (
+            <span className="[overflow-wrap:anywhere]">
+              {" "}
+              · {selection.model}
+            </span>
+          ) : null}
+        </p>
       </div>
       {history.isError || settings.isError || streamError ? (
-        <div
-          role="alert"
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        <Alert
+          id="agent-chat-error"
+          variant="destructive"
+          className="rounded-none border-x-0 border-t-0"
         >
-          <span>
-            {streamError ??
-              (history.error instanceof Error
-                ? t("chat.error.history", { error: history.error.message })
-                : settings.error instanceof Error
-                  ? t("chat.error.settings", { error: settings.error.message })
-                  : t("chat.error.dataUnavailable"))}
-          </span>
-          {!streamError ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                void history.refetch();
-                void settings.refetch();
-              }}
-            >
-              {t("chat.retry")}
-            </Button>
-          ) : null}
-        </div>
+          <AlertDescription className="flex w-full flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+            <span>
+              {streamError ??
+                (history.error instanceof Error
+                  ? t("chat.error.history", { error: history.error.message })
+                  : settings.error instanceof Error
+                    ? t("chat.error.settings", {
+                        error: settings.error.message,
+                      })
+                    : t("chat.error.dataUnavailable"))}
+            </span>
+            {!streamError ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  void history.refetch();
+                  void settings.refetch();
+                }}
+              >
+                <ArrowClockwiseIcon data-icon="inline-start" aria-hidden />
+                {t("chat.retry")}
+              </Button>
+            ) : null}
+          </AlertDescription>
+        </Alert>
       ) : null}
       <p className="sr-only" role="status" aria-live="polite">
-        {streaming
+        {streamLiveState === "generating"
           ? t("chat.status.generating")
-          : streamError
-            ? t("chat.status.failed")
-            : messages.length
-              ? t("chat.status.ready")
-              : ""}
+          : streamLiveState === "completed"
+            ? t("chat.status.ready")
+            : streamLiveState === "failed"
+              ? t("chat.status.failed")
+              : streamLiveState === "cancelled"
+                ? t("chat.status.cancelled")
+                : ""}
       </p>
       <MessageScrollerProvider>
-        <MessageScroller className="flex-1">
-          <MessageScrollerViewport className="p-4 md:p-6">
-            <MessageScrollerContent className="gap-4">
-              {messages.length === 0 ? (
-                <div className="m-auto max-w-md text-center">
-                  <p className="font-medium">{t("chat.empty.title")}</p>
-                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
+        <MessageScroller className="min-h-0 flex-1 border-b border-border">
+          <MessageScrollerViewport
+            role="region"
+            aria-label={t("chat.a11y.transcript")}
+            className="py-6 pr-2"
+          >
+            <MessageScrollerContent className="mx-0 max-w-none">
+              {history.isLoading && messages.length === 0 ? (
+                <div
+                  role="status"
+                  className="m-auto inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground"
+                >
+                  <Spinner />
+                  {t("chat.status.loading")}
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="my-auto w-full max-w-xl py-12 text-left">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    {selectedRoleLabel}
+                  </p>
+                  <p className="mt-2 font-medium">{t("chat.empty.title")}</p>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
                     {t("chat.empty.description")}
                   </p>
                 </div>
@@ -424,21 +632,40 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
                     key={message.id}
                     scrollAnchor={index === messages.length - 1}
                   >
-                    <Message align={message.role === "user" ? "end" : "start"}>
+                    <Message
+                      align={message.role === "user" ? "end" : "start"}
+                      aria-label={message.label}
+                    >
                       <MessageContent>
                         <MessageHeader>{message.label}</MessageHeader>
                         <Bubble
                           align={message.role === "user" ? "end" : "start"}
                           variant={
-                            message.role === "user" ? "default" : "muted"
+                            message.role === "user" ? "secondary" : "ghost"
                           }
                         >
                           <BubbleContent>
-                            {message.content || (
+                            {message.content ? (
+                              message.role === "assistant" ? (
+                                <Markdown
+                                  className={`${markdownContentClassName} max-w-[72ch]`}
+                                >
+                                  {message.content}
+                                </Markdown>
+                              ) : (
+                                <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                                  {message.content}
+                                </p>
+                              )
+                            ) : (
                               <span
-                                aria-label={t("chat.a11y.typing")}
-                                className="inline-block h-4 w-1 animate-pulse bg-primary"
-                              />
+                                role="status"
+                                aria-live="polite"
+                                className="inline-flex min-h-6 items-center gap-2 text-muted-foreground"
+                              >
+                                <Spinner />
+                                {t("chat.status.generating")}
+                              </span>
                             )}
                           </BubbleContent>
                         </Bubble>
@@ -449,19 +676,35 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
               )}
               {tools.length ? (
                 <MessageScrollerItem>
-                  <details className="rounded-lg border border-border p-3 text-xs text-muted-foreground">
-                    <summary className="cursor-pointer font-medium text-foreground">
-                      Tool events · {tools.length}
-                    </summary>
-                    <Marker variant="separator" className="my-3">
-                      <MarkerContent>read-only activity</MarkerContent>
-                    </Marker>
-                    <ul className="flex flex-col gap-1 font-mono">
-                      {tools.map((tool, index) => (
-                        <li key={`${tool}-${index}`}>{tool}</li>
-                      ))}
-                    </ul>
-                  </details>
+                  <Collapsible className="group/tools border-y border-border text-xs text-muted-foreground">
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-auto w-full justify-between rounded-none px-0 py-3 text-left"
+                      >
+                        <span className="min-w-0 whitespace-normal">
+                          {t("chat.tools.title", { count: tools.length })}
+                        </span>
+                        <CaretDownIcon
+                          aria-hidden
+                          className="transition-transform group-data-[state=open]/tools:rotate-180 motion-reduce:transition-none"
+                        />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pb-4">
+                      <Marker variant="separator" className="mb-3">
+                        <MarkerContent>
+                          {t("chat.tools.boundary")}
+                        </MarkerContent>
+                      </Marker>
+                      <ul className="flex min-w-0 flex-col gap-1 overflow-x-auto font-mono [overflow-wrap:anywhere]">
+                        {tools.map((tool, index) => (
+                          <li key={`${tool}-${index}`}>{tool}</li>
+                        ))}
+                      </ul>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </MessageScrollerItem>
               ) : null}
             </MessageScrollerContent>
@@ -469,50 +712,127 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
           <MessageScrollerButton />
         </MessageScroller>
       </MessageScrollerProvider>
-      <div className="border-t border-border p-3 md:p-4">
+      <form
+        className="shrink-0 py-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send();
+        }}
+      >
         <label className="sr-only" htmlFor="agent-message">
           {t("chat.composer.label")}
         </label>
-        <div className="flex items-end gap-2 rounded-lg border border-input bg-background p-2 focus-within:ring-2 focus-within:ring-ring">
-          <textarea
+        <InputGroup>
+          <InputGroupTextarea
             id="agent-message"
-            rows={2}
+            rows={3}
+            disabled={!composerReady || streaming}
             value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send();
+            aria-describedby={streamError ? "agent-chat-error" : undefined}
+            onChange={(event) => {
+              const value = event.target.value;
+              setInput(value);
+              if (retryMessage && value.trim() !== retryMessage) {
+                setRetryMessage(null);
               }
             }}
-            placeholder={t("chat.composer.placeholder")}
-            className="max-h-40 min-h-10 flex-1 resize-none bg-transparent px-2 py-1 text-sm leading-6 outline-none placeholder:text-muted-foreground"
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing &&
+                !streaming &&
+                composerReady
+              ) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+            placeholder={
+              settings.isLoading
+                ? t("provider.checking")
+                : composerNeedsConfiguration
+                  ? t("chat.composer.unavailablePlaceholder")
+                  : t("chat.composer.placeholder")
+            }
           />
-          {streaming ? (
-            <Button
-              size="icon"
-              variant="outline"
-              aria-label={t("chat.composer.stop")}
-              onClick={() => abortRef.current?.abort()}
+          <InputGroupAddon
+            align="block-end"
+            className="flex-wrap justify-between gap-2 border-t border-border/60 pt-3"
+          >
+            <InputGroupText
+              className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]"
+              aria-label={t("chat.composer.context", {
+                context: composerContext,
+              })}
+              title={composerContext}
             >
-              <StopIcon aria-hidden />
-            </Button>
-          ) : (
-            <Button
-              size="icon"
-              aria-label={t("chat.composer.send")}
-              disabled={!input.trim()}
-              onClick={() => void send()}
-            >
-              <PaperPlaneTiltIcon aria-hidden />
-            </Button>
-          )}
-        </div>
-      </div>
+              <span>{composerContext}</span>
+            </InputGroupText>
+            {streaming ? (
+              abortable ? (
+                <InputGroupButton
+                  size="sm"
+                  variant="outline"
+                  aria-label={t("chat.composer.stop")}
+                  onClick={() => abortRef.current?.abort()}
+                >
+                  <StopIcon data-icon="inline-start" aria-hidden />
+                  {t("chat.composer.stop")}
+                </InputGroupButton>
+              ) : (
+                <span
+                  role="status"
+                  className="inline-flex min-h-11 shrink-0 items-center gap-2 text-xs text-muted-foreground sm:min-h-9"
+                >
+                  <Spinner />
+                  {t("chat.status.generating")}
+                </span>
+              )
+            ) : settings.isLoading ? (
+              <span
+                role="status"
+                className="inline-flex min-h-11 shrink-0 items-center gap-2 text-xs text-muted-foreground sm:min-h-9"
+              >
+                <Spinner />
+                {t("provider.checking")}
+              </span>
+            ) : composerNeedsConfiguration ? (
+              <InputGroupButton asChild size="sm" variant="default">
+                <Link href={`/settings?section=${recoverySection}`}>
+                  {t("chat.composer.configureAi")}
+                </Link>
+              </InputGroupButton>
+            ) : (
+              <InputGroupButton
+                type="submit"
+                size="sm"
+                variant="default"
+                aria-label={
+                  retrying ? t("chat.retry") : t("chat.composer.send")
+                }
+                disabled={!composerReady || !input.trim()}
+              >
+                {retrying ? (
+                  <ArrowClockwiseIcon data-icon="inline-start" aria-hidden />
+                ) : (
+                  <PaperPlaneTiltIcon data-icon="inline-start" aria-hidden />
+                )}
+                {retrying ? t("chat.retry") : t("chat.composer.send")}
+              </InputGroupButton>
+            )}
+          </InputGroupAddon>
+        </InputGroup>
+      </form>
       <AlertDialog
         open={pendingDisclosure !== null}
         onOpenChange={(open) => {
-          if (!open) setPendingDisclosure(null);
+          if (open) return;
+          if (approvingDisclosureRef.current) {
+            approvingDisclosureRef.current = false;
+            return;
+          }
+          void cancelDisclosure();
         }}
       >
         <AlertDialogContent>
@@ -523,39 +843,48 @@ export function AgentChat({ initialRole = "teacher" }: { initialRole?: Role }) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           {pendingDisclosure ? (
-            <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 text-sm">
+            <dl className="grid gap-3 rounded-panel border border-border bg-muted/20 p-4 text-sm">
               <div>
                 <dt className="font-medium">
                   {t("chat.disclosure.destination")}
                 </dt>
-                <dd className="text-muted-foreground">
+                <dd className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
                   {pendingDisclosure.disclosure.scope.destination}
                 </dd>
               </div>
               <div>
                 <dt className="font-medium">{t("chat.disclosure.data")}</dt>
-                <dd className="text-muted-foreground">
-                  {pendingDisclosure.disclosure.scope.payloadCategories.join(
-                    ", ",
-                  )}{" "}
-                  · {pendingDisclosure.disclosure.scope.byteCount} bytes
+                <dd className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
+                  {t("chat.disclosure.payload", {
+                    categories:
+                      pendingDisclosure.disclosure.scope.payloadCategories.join(
+                        ", ",
+                      ),
+                    bytes:
+                      pendingDisclosure.disclosure.scope.byteCount.toLocaleString(
+                        locale,
+                      ),
+                  })}
                 </dd>
               </div>
               <div>
                 <dt className="font-medium">
                   {t("chat.disclosure.exclusions")}
                 </dt>
-                <dd className="text-muted-foreground">
+                <dd className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
                   {pendingDisclosure.disclosure.scope.exclusions.join(", ")}
                 </dd>
               </div>
             </dl>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => void cancelDisclosure()}>
-              {t("chat.disclosure.cancel")}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={() => void approveDisclosure()}>
+            <AlertDialogCancel>{t("chat.disclosure.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                approvingDisclosureRef.current = true;
+                void approveDisclosure();
+              }}
+            >
               {t("chat.disclosure.approve")}
             </AlertDialogAction>
           </AlertDialogFooter>

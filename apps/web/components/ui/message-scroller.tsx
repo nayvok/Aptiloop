@@ -43,7 +43,7 @@ function MessageScrollerViewport({
     <MessageScrollerPrimitive.Viewport
       data-slot="message-scroller-viewport"
       className={cn(
-        "size-full min-h-0 min-w-0 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]",
+        "size-full min-h-0 min-w-0 overflow-y-auto overscroll-contain scroll-py-6 [scrollbar-gutter:stable]",
         className,
       )}
       {...props}
@@ -58,7 +58,10 @@ function MessageScrollerContent({
   return (
     <MessageScrollerPrimitive.Content
       data-slot="message-scroller-content"
-      className={cn("flex h-max min-h-full flex-col gap-8", className)}
+      className={cn(
+        "mx-auto flex h-max min-h-full w-full max-w-4xl flex-col gap-5",
+        className,
+      )}
       {...props}
     />
   );
@@ -73,7 +76,7 @@ function MessageScrollerItem({
     <MessageScrollerPrimitive.Item
       data-slot="message-scroller-item"
       scrollAnchor={scrollAnchor}
-      className={cn("min-w-0 shrink-0", className)}
+      className={cn("w-full min-w-0 shrink-0", className)}
       {...props}
     />
   );
@@ -96,7 +99,7 @@ function MessageScrollerButton({
       data-direction={direction}
       direction={direction}
       className={cn(
-        "absolute inset-s-1/2 -translate-x-1/2 border border-border bg-background text-foreground transition-[opacity,scale] duration-200 data-[active=false]:pointer-events-none data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[direction=end]:bottom-4 data-[direction=start]:top-4 data-[direction=start]:[&_svg]:rotate-180 motion-reduce:transition-none rtl:translate-x-1/2",
+        "absolute inset-s-1/2 -translate-x-1/2 bg-surface-raised text-foreground shadow-sm transition-[opacity,scale] duration-200 focus-visible:ring-inset focus-visible:ring-offset-0 data-[active=false]:pointer-events-none data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[direction=end]:bottom-3 data-[direction=start]:top-3 data-[direction=start]:[&_svg]:rotate-180 motion-reduce:transition-none rtl:translate-x-1/2",
         className,
       )}
       render={render ?? <Button variant={variant} size={size} />}

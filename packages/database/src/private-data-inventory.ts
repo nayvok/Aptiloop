@@ -24,7 +24,7 @@ import {
 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { SessionSnapshotSchema } from "@dlh/shared";
+import { SessionSnapshotSchema } from "@aptiloop/shared";
 
 const currentSessionSnapshotSchemaVersion = 2;
 const strictSessionSnapshotSchema = SessionSnapshotSchema.strict();

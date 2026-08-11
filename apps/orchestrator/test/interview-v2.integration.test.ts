@@ -2,21 +2,21 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { MockAgentProvider, type AgentProvider } from "@dlh/agent-core";
+import { MockAgentProvider, type AgentProvider } from "@aptiloop/agent-core";
 import {
   canonicalJson,
   hashCanonicalJson,
   migrateDatabase,
   openDatabase,
   type DatabaseConnection,
-} from "@dlh/database";
+} from "@aptiloop/database";
 import type {
   AgentEvent,
   AgentSession,
   CreateAgentSessionInput,
   ProviderId,
   SessionSnapshot,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
 import { ZodError } from "zod";
@@ -37,8 +37,11 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-function createState(provider: AgentProvider = new MockAgentProvider()) {
-  const root = mkdtempSync(path.join(tmpdir(), "dlh-interview-v2-"));
+function createState(
+  provider: AgentProvider = new MockAgentProvider(),
+  now?: () => Date,
+) {
+  const root = mkdtempSync(path.join(tmpdir(), "aptiloop-interview-v2-"));
   roots.push(root);
   const connection = openDatabase(path.join(root, "test.sqlite"));
   connections.push(connection);
@@ -55,6 +58,7 @@ function createState(provider: AgentProvider = new MockAgentProvider()) {
       connection,
       providers,
       developmentMode: process.env.NODE_ENV !== "production",
+      ...(now ? { now } : {}),
     }),
     interviewReservations: {
       start: false,
@@ -75,6 +79,32 @@ function createTestApp(state: InterviewV2State) {
   });
   registerInterviewV2Routes(app, state);
   return app;
+}
+
+async function configureExternalInterviewer(
+  state: InterviewV2State,
+  providers: Record<ProviderId, AgentProvider>,
+  provider: AgentProvider,
+) {
+  providers.pi = provider;
+  const settings = await state.providerRuntime.settings();
+  await state.providerRuntime.saveRoleProfiles(
+    settings.roleProfiles.map((profile) =>
+      profile.role === "evaluator"
+        ? {
+            role: profile.role,
+            mode: "connection" as const,
+            connectionId: "conn:pi:openai",
+            modelId: "pi-exact",
+          }
+        : {
+            role: profile.role,
+            mode: profile.mode,
+            connectionId: profile.connectionId,
+            modelId: profile.modelId,
+          },
+    ),
+  );
 }
 
 const request = (app: Hono, url: string, body?: unknown) => {
@@ -718,6 +748,16 @@ describe("restart-safe interview v2", () => {
       .run(now, now);
     state.connection.sqlite
       .prepare(
+        `INSERT INTO learning_sessions
+         (id, day_id, status, current_step, idempotency_key, started_at,
+          completed_at, updated_at, curriculum_day_v2_id)
+         VALUES ('session-interview-other', 'interview-test-day', 'completed',
+                 'complete', 'session-interview-other-operation', ?, ?,
+                 ?, 'interview-day-v2')`,
+      )
+      .run(now, now, now);
+    state.connection.sqlite
+      .prepare(
         `INSERT INTO session_snapshots
          (id, session_id, schema_version, curriculum_id, curriculum_version_id,
           curriculum_day_id, content_hash, snapshot_json, created_at)
@@ -756,7 +796,53 @@ describe("restart-safe interview v2", () => {
       learningSessionId: "session-interview-1",
     });
     expect(started.status).toBe(201);
-    const { id } = (await started.json()) as { id: string };
+    const startedBody = (await started.json()) as {
+      id: string;
+      learningSessionId: string | null;
+    };
+    const { id } = startedBody;
+    expect(startedBody.learningSessionId).toBe("session-interview-1");
+
+    const scopedCurrent = await request(
+      app,
+      "/api/interviews/v2/current?learningSessionId=session-interview-1",
+    );
+    expect(scopedCurrent.status).toBe(200);
+    expect(await scopedCurrent.json()).toMatchObject({
+      learningSessionId: "session-interview-1",
+      interview: {
+        id,
+        learningSessionId: "session-interview-1",
+      },
+    });
+
+    const otherSessionCurrent = await request(
+      app,
+      "/api/interviews/v2/current?learningSessionId=session-interview-other",
+    );
+    expect(otherSessionCurrent.status).toBe(200);
+    expect(await otherSessionCurrent.json()).toEqual({
+      learningSessionId: "session-interview-other",
+      interview: null,
+    });
+
+    const unknownSessionCurrent = await request(
+      app,
+      "/api/interviews/v2/current?learningSessionId=session-interview-missing",
+    );
+    expect(unknownSessionCurrent.status).toBe(404);
+    expect(await unknownSessionCurrent.json()).toEqual({
+      error: "Learning session not found.",
+    });
+
+    const mismatchedReport = await request(
+      app,
+      `/api/interviews/v2/${id}?learningSessionId=session-interview-other`,
+    );
+    expect(mismatchedReport.status).toBe(404);
+    expect(await mismatchedReport.json()).toEqual({
+      error: "Interview not found.",
+    });
     for (const [index, operationId] of [
       "linked-answer-0001",
       "linked-answer-0002",
@@ -821,11 +907,13 @@ describe("restart-safe interview v2", () => {
     expect(started.status).toBe(201);
     const startedBody = (await started.json()) as {
       id: string;
+      learningSessionId: string | null;
       status: string;
       transcript: Array<{ role: string; content: string }>;
       progress: { readyToFinish: boolean };
     };
     expect(startedBody.status).toBe("in_progress");
+    expect(startedBody.learningSessionId).toBeNull();
     expect(startedBody.transcript).toHaveLength(1);
     expect(startedBody.transcript[0]?.role).toBe("assistant");
     expect(startedBody.progress.readyToFinish).toBe(false);
@@ -836,7 +924,7 @@ describe("restart-safe interview v2", () => {
       {
         operationId: "answer-operation-0001",
         answer:
-          "A closure keeps access to its lexical environment after the outer function returns, which supports private state.",
+          "A closure keeps access to its lexical environment after the outer function returns, which supports private state without exposing it through a public object property.",
       },
     );
     expect(answeredFirst.status).toBe(200);
@@ -860,7 +948,7 @@ describe("restart-safe interview v2", () => {
       {
         operationId: "answer-operation-0002",
         answer:
-          "Microtasks drain after the current stack and before the next macrotask, so a resolved Promise runs before a timer.",
+          "Microtasks drain after the current stack and before the next macrotask, so a resolved Promise runs before a timer within the same event loop turn.",
       },
     );
     expect(answeredAgain.status).toBe(200);
@@ -883,6 +971,7 @@ describe("restart-safe interview v2", () => {
         status: string;
         metrics: Record<string, number>;
         evidence: unknown[];
+        growthAreas: string[];
       };
     };
     expect(finishedBody.report).toMatchObject({
@@ -894,6 +983,12 @@ describe("restart-safe interview v2", () => {
       },
     });
     expect(finishedBody.report.evidence).toHaveLength(2);
+    expect(finishedBody.report.growthAreas).toContain(
+      "Подтвердить техническую корректность ответов отдельной проверкой.",
+    );
+    expect(finishedBody.report.growthAreas.join(" ")).not.toMatch(
+      /\breview\b/iu,
+    );
     expect(protectedKeys(finishedBody)).toEqual([]);
 
     state.connection.close();
@@ -937,7 +1032,10 @@ describe("restart-safe interview v2", () => {
     expect(protectedKeys(restoredBody)).toEqual([]);
 
     const current = await request(restartedApp, "/api/interviews/v2/current");
-    expect(await current.json()).toEqual({ interview: null });
+    expect(await current.json()).toEqual({
+      learningSessionId: null,
+      interview: null,
+    });
   });
 
   it("keeps prior answers when the provider fails, then retries idempotently", async () => {
@@ -1043,7 +1141,10 @@ describe("restart-safe interview v2", () => {
           .get(),
       ).toEqual({ count: 0 });
       const current = await request(app, "/api/interviews/v2/current");
-      expect(await current.json()).toEqual({ interview: null });
+      expect(await current.json()).toEqual({
+        learningSessionId: null,
+        interview: null,
+      });
     } finally {
       if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = previousNodeEnv;
@@ -1082,7 +1183,10 @@ describe("restart-safe interview v2", () => {
         .get(),
     ).toEqual({ count: 0 });
     const current = await request(app, "/api/interviews/v2/current");
-    expect(await current.json()).toEqual({ interview: null });
+    expect(await current.json()).toEqual({
+      learningSessionId: null,
+      interview: null,
+    });
 
     mock.failStream = false;
     const retried = await request(app, "/api/interviews/v2", setup);
@@ -1098,26 +1202,8 @@ describe("restart-safe interview v2", () => {
   it("requires and consumes exact disclosure for an external interviewer", async () => {
     const mock = new TrackingInterviewer("mock", "mock-deterministic");
     const pi = new TrackingInterviewer("pi", "pi-exact");
-    const { state, providers } = createState(mock);
-    providers.pi = pi;
-    const settings = await state.providerRuntime.settings();
-    await state.providerRuntime.saveRoleProfiles(
-      settings.roleProfiles.map((profile) =>
-        profile.role === "evaluator"
-          ? {
-              role: profile.role,
-              mode: "connection" as const,
-              connectionId: "conn:pi:openai",
-              modelId: "pi-exact",
-            }
-          : {
-              role: profile.role,
-              mode: profile.mode,
-              connectionId: profile.connectionId,
-              modelId: profile.modelId,
-            },
-      ),
-    );
+    const { state, providers, root } = createState(mock);
+    await configureExternalInterviewer(state, providers, pi);
     const app = createTestApp(state);
     const setup = {
       operationId: "external-interviewer-policy",
@@ -1129,19 +1215,291 @@ describe("restart-safe interview v2", () => {
     const preview = await request(app, "/api/interviews/v2", setup);
     expect(preview.status).toBe(202);
     const previewBody = (await preview.json()) as {
-      disclosure: { operationId: string; status: string };
+      continuation: {
+        kind: string;
+        learningSessionId: string | null;
+        interviewId: string;
+        operationId: string;
+      };
+      disclosure: {
+        operationId: string;
+        status: string;
+        scope: Record<string, unknown>;
+      };
     };
     expect(previewBody.disclosure.status).toBe("pending");
+    expect(previewBody.continuation).toMatchObject({
+      kind: "start",
+      learningSessionId: null,
+      operationId: setup.operationId,
+    });
+    expect(previewBody.disclosure.scope).toEqual({
+      destination: "OpenAI via Pi: Generate one bounded interview question",
+      payloadCategories: ["course-content"],
+      byteCount: expect.any(Number),
+      exclusions: expect.any(Array),
+    });
+    expect(JSON.stringify(previewBody)).not.toContain("payloadSha256");
+    expect(JSON.stringify(previewBody)).not.toContain("modelId");
     expect(pi.createInputs).toHaveLength(0);
 
-    state.providerRuntime.approveDisclosure(previewBody.disclosure.operationId);
-    const approved = await request(app, "/api/interviews/v2", {
+    const repeated = await request(app, "/api/interviews/v2", setup);
+    expect(repeated.status).toBe(202);
+    expect(await repeated.json()).toMatchObject({
+      disclosure: { operationId: previewBody.disclosure.operationId },
+    });
+    expect(
+      state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM ai_disclosure_operations")
+        .get(),
+    ).toEqual({ count: 1 });
+
+    state.connection.close();
+    connections.splice(connections.indexOf(state.connection), 1);
+    const restartedConnection = openDatabase(path.join(root, "test.sqlite"), {
+      fileMustExist: true,
+    });
+    connections.push(restartedConnection);
+    const restartedProviders: Record<ProviderId, AgentProvider> = {
+      mock,
+      codex: mock,
+      opencode: mock,
+      pi,
+    };
+    const restartedState: InterviewV2State = {
+      connection: restartedConnection,
+      providerRuntime: new ProviderRuntime({
+        connection: restartedConnection,
+        providers: restartedProviders,
+        developmentMode: true,
+      }),
+      interviewReservations: { start: false, interviewIds: new Set() },
+    };
+    const restartedApp = createTestApp(restartedState);
+    const recoveryPath = `/api/interviews/v2/${previewBody.continuation.interviewId}/disclosures/pending?kind=start&operationId=${setup.operationId}`;
+    const recovered = await request(restartedApp, recoveryPath);
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toEqual(previewBody);
+
+    const wrongOperation = await request(
+      restartedApp,
+      `/api/interviews/v2/${previewBody.continuation.interviewId}/disclosures/pending?kind=start&operationId=wrong-operation`,
+    );
+    expect(wrongOperation.status).toBe(404);
+    const wrongInterview = await request(
+      restartedApp,
+      `/api/interviews/v2/interview-wrong/disclosures/pending?kind=start&operationId=${setup.operationId}`,
+    );
+    expect(wrongInterview.status).toBe(404);
+    const unexpectedQuestion = await request(
+      restartedApp,
+      `${recoveryPath}&questionId=question-wrong`,
+    );
+    expect(unexpectedQuestion.status).toBe(400);
+    const duplicateOperation = await request(
+      restartedApp,
+      `${recoveryPath}&operationId=${setup.operationId}`,
+    );
+    expect(duplicateOperation.status).toBe(400);
+    const unknownQuery = await request(
+      restartedApp,
+      `${recoveryPath}&unexpected=1`,
+    );
+    expect(unknownQuery.status).toBe(400);
+
+    restartedState.providerRuntime.approveDisclosure(
+      previewBody.disclosure.operationId,
+    );
+    const approved = await request(restartedApp, "/api/interviews/v2", {
       ...setup,
       disclosureOperationId: previewBody.disclosure.operationId,
     });
-    expect(approved.status).toBe(201);
+    expect(approved.status).toBe(200);
     expect(pi.createInputs).toHaveLength(1);
     expect(mock.createInputs).toHaveLength(0);
+    expect((await request(restartedApp, recoveryPath)).status).toBe(404);
+  });
+
+  it("recovers only the exact pending answer disclosure scope", async () => {
+    const mock = new TrackingInterviewer("mock", "mock-deterministic");
+    const pi = new TrackingInterviewer("pi", "pi-exact");
+    const { state, providers } = createState(mock);
+    await configureExternalInterviewer(state, providers, pi);
+    const app = createTestApp(state);
+    const setup = {
+      operationId: "external-answer-setup",
+      topics: ["closures"],
+      difficulty: "foundation" as const,
+      questionCount: 2,
+    };
+    const startPreview = await request(app, "/api/interviews/v2", setup);
+    const startPending = (await startPreview.json()) as {
+      continuation: { interviewId: string };
+      disclosure: { operationId: string };
+    };
+    state.providerRuntime.approveDisclosure(
+      startPending.disclosure.operationId,
+    );
+    const started = await request(app, "/api/interviews/v2", {
+      ...setup,
+      disclosureOperationId: startPending.disclosure.operationId,
+    });
+    const startedBody = (await started.json()) as {
+      id: string;
+      transcript: Array<{ id: string; role: string }>;
+    };
+    const questionId = startedBody.transcript[0]?.id;
+    expect(questionId).toBeTruthy();
+    if (!questionId) throw new Error("Missing opening question fixture");
+
+    const answer = {
+      operationId: "external-answer-operation",
+      answer:
+        "A closure retains the lexical bindings that were visible where the function was declared.",
+    };
+    const answerPreview = await request(
+      app,
+      `/api/interviews/v2/${startedBody.id}/answers`,
+      answer,
+    );
+    expect(answerPreview.status).toBe(202);
+    const answerPending = (await answerPreview.json()) as {
+      continuation: {
+        kind: string;
+        learningSessionId: string | null;
+        interviewId: string;
+        questionId: string;
+        operationId: string;
+      };
+      disclosure: { operationId: string; status: string };
+    };
+    expect(answerPending.continuation).toEqual({
+      kind: "answer",
+      learningSessionId: null,
+      interviewId: startedBody.id,
+      questionId,
+      operationId: answer.operationId,
+    });
+
+    const repeated = await request(
+      app,
+      `/api/interviews/v2/${startedBody.id}/answers`,
+      answer,
+    );
+    expect(repeated.status).toBe(202);
+    expect(await repeated.json()).toMatchObject({
+      disclosure: { operationId: answerPending.disclosure.operationId },
+    });
+    expect(
+      state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM ai_disclosure_operations")
+        .get(),
+    ).toEqual({ count: 2 });
+
+    const recoveryPath = `/api/interviews/v2/${startedBody.id}/disclosures/pending?kind=answer&operationId=${answer.operationId}&questionId=${questionId}`;
+    const recovered = await request(app, recoveryPath);
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toEqual(answerPending);
+
+    const wrongQuestion = await request(
+      app,
+      `/api/interviews/v2/${startedBody.id}/disclosures/pending?kind=answer&operationId=${answer.operationId}&questionId=question-wrong`,
+    );
+    expect(wrongQuestion.status).toBe(404);
+    const wrongOperation = await request(
+      app,
+      `/api/interviews/v2/${startedBody.id}/disclosures/pending?kind=answer&operationId=answer-operation-wrong&questionId=${questionId}`,
+    );
+    expect(wrongOperation.status).toBe(404);
+    const wrongInterview = await request(
+      app,
+      `/api/interviews/v2/interview-wrong/disclosures/pending?kind=answer&operationId=${answer.operationId}&questionId=${questionId}`,
+    );
+    expect(wrongInterview.status).toBe(404);
+
+    const now = Date.now();
+    state.connection.sqlite
+      .prepare(
+        `INSERT INTO curriculum_days
+         (id, slug, week_number, day_number, title, summary,
+          estimated_minutes, goals_json, sources_json, created_at, updated_at)
+         VALUES ('known-other-day', 'known-other-day', 99, 99,
+                 'Known other day', 'Known other day', 1, '[]', '[]', ?, ?)`,
+      )
+      .run(now, now);
+    state.connection.sqlite
+      .prepare(
+        `INSERT INTO learning_sessions
+         (id, day_id, status, current_step, idempotency_key, started_at,
+          completed_at, updated_at)
+         VALUES ('known-other-session', ?, 'completed', 'complete',
+                 'known-other-session-operation', ?, ?, ?)`,
+      )
+      .run("known-other-day", now, now, now);
+    const wrongSession = await request(
+      app,
+      `${recoveryPath}&learningSessionId=known-other-session`,
+    );
+    expect(wrongSession.status).toBe(404);
+
+    state.providerRuntime.approveDisclosure(
+      answerPending.disclosure.operationId,
+    );
+    const answered = await request(
+      app,
+      `/api/interviews/v2/${startedBody.id}/answers`,
+      {
+        ...answer,
+        disclosureOperationId: answerPending.disclosure.operationId,
+      },
+    );
+    expect(answered.status).toBe(200);
+    expect((await request(app, recoveryPath)).status).toBe(404);
+  });
+
+  it("does not recover an expired staged start disclosure", async () => {
+    let now = new Date("2026-08-11T00:00:00.000Z");
+    const mock = new TrackingInterviewer("mock", "mock-deterministic");
+    const pi = new TrackingInterviewer("pi", "pi-exact");
+    const { state, providers } = createState(mock, () => now);
+    await configureExternalInterviewer(state, providers, pi);
+    const app = createTestApp(state);
+    const setup = {
+      operationId: "expiring-start-operation",
+      topics: ["closures"],
+      difficulty: "foundation" as const,
+      questionCount: 1,
+    };
+    const preview = await request(app, "/api/interviews/v2", setup);
+    const pending = (await preview.json()) as {
+      continuation: { interviewId: string };
+      disclosure: { operationId: string };
+    };
+    now = new Date("2026-08-11T00:06:00.000Z");
+    const recovered = await request(
+      app,
+      `/api/interviews/v2/${pending.continuation.interviewId}/disclosures/pending?kind=start&operationId=${setup.operationId}`,
+    );
+    expect(recovered.status).toBe(404);
+
+    state.providerRuntime.cancelDisclosure(pending.disclosure.operationId);
+    const abandoned = await request(
+      app,
+      `/api/interviews/v2/${pending.continuation.interviewId}/abandon`,
+      { operationId: setup.operationId },
+    );
+    expect(abandoned.status).toBe(200);
+    expect(await abandoned.json()).toEqual({
+      abandoned: {
+        interviewId: pending.continuation.interviewId,
+        operationId: setup.operationId,
+      },
+    });
+    const restarted = await request(app, "/api/interviews/v2", {
+      ...setup,
+      operationId: "replacement-start-operation",
+    });
+    expect(restarted.status).toBe(202);
   });
 
   it("rejects an unavailable exact interviewer model before saving", async () => {

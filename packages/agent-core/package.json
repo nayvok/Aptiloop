@@ -1,5 +1,5 @@
 {
-  "name": "@dlh/agent-core",
+  "name": "@aptiloop/agent-core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@dlh/shared": "0.1.0",
+    "@aptiloop/shared": "0.1.0",
     "@earendil-works/pi-agent-core": "0.84.1",
     "@earendil-works/pi-ai": "0.84.1",
     "zod": "4.4.3"

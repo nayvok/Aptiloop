@@ -3,7 +3,7 @@ import {
   type AgentEvent,
   type AgentErrorCode,
   type JsonValue,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 

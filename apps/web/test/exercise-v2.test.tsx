@@ -22,13 +22,19 @@ function renderWithQuery(children: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const tree = (content: ReactNode) => (
     <QueryClientProvider client={client}>
       <LocaleProvider initialLocale="ru-RU" syncSettings={false}>
-        {children}
+        {content}
       </LocaleProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree(children));
+  return {
+    client,
+    rerenderWithQuery: (content: ReactNode) => view.rerender(tree(content)),
+    ...view,
+  };
 }
 
 function finding() {
@@ -45,6 +51,7 @@ function exerciseState(options?: {
   testStatus?: "passed" | "failed";
   workspaceCurrent?: boolean;
   review?: "passed" | "changes_requested" | null;
+  reviewEvidence?: boolean;
 }) {
   const diff = options?.diff ?? "+ current learner change";
   const testStatus = options?.testStatus ?? "passed";
@@ -107,11 +114,31 @@ function exerciseState(options?: {
               review === "passed" ? "Решение принято" : "Нужно исправление",
             findings: review === "passed" ? [] : [finding()],
             strengths: ["Понятные имена"],
-            evidenceBundle: null,
+            evidenceBundle: options?.reviewEvidence
+              ? {
+                  id: "bundle-v1",
+                  sha256: `sha256:${"a".repeat(64)}`,
+                  workspaceSnapshotHash: `sha256:${"b".repeat(64)}`,
+                }
+              : null,
           }
         : null,
     },
   };
+}
+
+async function toggleEvidenceDisclosure() {
+  const trigger = await screen.findByRole("button", {
+    name: /Diff от baseline/u,
+  });
+  fireEvent.click(trigger, { detail: 0 });
+  return trigger;
+}
+
+async function toggleReviewerDisclosure() {
+  const trigger = await screen.findByRole("button", { name: /Reviewer/u });
+  fireEvent.click(trigger, { detail: 0 });
+  return trigger;
 }
 
 beforeEach(() => {
@@ -174,19 +201,111 @@ describe("restart-safe v2 practice", () => {
     apiMock.mockResolvedValue(restored);
 
     const first = renderWithQuery(<ExerciseClient />);
+    await toggleEvidenceDisclosure();
     expect(
       await screen.findByText("+ current learner change"),
     ).toBeInTheDocument();
     expect(screen.getByText(/12 passed/u)).toBeInTheDocument();
+    await toggleReviewerDisclosure();
     expect(screen.getByText("Нужно исправление")).toBeInTheDocument();
     first.unmount();
 
     renderWithQuery(<ExerciseClient />);
+    await toggleEvidenceDisclosure();
     expect(
       await screen.findByText("+ current learner change"),
     ).toBeInTheDocument();
+    await toggleReviewerDisclosure();
     expect(screen.getByText("Нужно исправление")).toBeInTheDocument();
     expect(apiMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not carry local evidence across session query identities", async () => {
+    const sessionA = exerciseState({ diff: "+ server session A change" });
+    const sessionB = {
+      ...exerciseState({ diff: "+ server session B change" }),
+      sessionId: "session-b",
+      title: "Session B exercise",
+    };
+    apiMock.mockImplementation((requestPath: string) => {
+      if (requestPath === "/exercises/current?sessionId=session-v2") {
+        return Promise.resolve(sessionA);
+      }
+      if (requestPath === "/exercise-attempts/attempt-v2/diff") {
+        return Promise.resolve({
+          diff: "+ local session A change",
+          changed: true,
+          truncated: false,
+        });
+      }
+      if (requestPath === "/exercises/current?sessionId=session-b") {
+        return Promise.resolve(sessionB);
+      }
+      throw new Error(`Unexpected API path: ${requestPath}`);
+    });
+    const view = renderWithQuery(<ExerciseClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Обновить Git diff" }),
+    );
+    await toggleEvidenceDisclosure();
+    expect(await screen.findByText("+ local session A change")).toBeVisible();
+
+    view.client.setQueryData(["exercise", "session-b"], sessionB);
+    searchState.value = "sessionId=session-b";
+    view.rerenderWithQuery(<ExerciseClient />);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: sessionB.title,
+      }),
+    ).toBeVisible();
+    const evidenceTrigger = await screen.findByRole("button", {
+      name: /Diff от baseline/u,
+    });
+    if (evidenceTrigger.getAttribute("aria-expanded") !== "true") {
+      fireEvent.click(evidenceTrigger, { detail: 0 });
+    }
+    expect(await screen.findByText("+ server session B change")).toBeVisible();
+    expect(
+      screen.queryByText("+ local session A change"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps technical evidence and reviewer details collapsed until keyboard activation", async () => {
+    const restored = exerciseState({
+      review: "passed",
+      reviewEvidence: true,
+    });
+    apiMock.mockResolvedValue(restored);
+    renderWithQuery(<ExerciseClient />);
+
+    const evidenceTrigger = await screen.findByRole("button", {
+      name: /Diff от baseline/u,
+    });
+    expect(evidenceTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("exercise-diff")).not.toBeInTheDocument();
+    evidenceTrigger.focus();
+    expect(evidenceTrigger).toHaveFocus();
+    fireEvent.click(evidenceTrigger, { detail: 0 });
+    expect(evidenceTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByTestId("exercise-diff")).toHaveTextContent(
+      "+ current learner change",
+    );
+
+    const reviewerTrigger = screen.getByRole("button", { name: /Reviewer/u });
+    expect(reviewerTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Решение принято")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(`sha256:${"a".repeat(64)}`),
+    ).not.toBeInTheDocument();
+    reviewerTrigger.focus();
+    expect(reviewerTrigger).toHaveFocus();
+    fireEvent.click(reviewerTrigger, { detail: 0 });
+    expect(reviewerTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Решение принято")).toBeInTheDocument();
+    expect(screen.getByText(`sha256:${"a".repeat(64)}`)).toBeInTheDocument();
   });
 
   it("copies the server-owned workspace ID on demand", async () => {
@@ -220,6 +339,75 @@ describe("restart-safe v2 practice", () => {
       await screen.findByRole("button", { name: "Запросить проверку" }),
     ).toBeDisabled();
     expect(screen.getByText("Код изменён после теста")).toBeInTheDocument();
+  });
+
+  it("keeps one primary action while evidence advances through review and acceptance", async () => {
+    apiMock.mockResolvedValue(exerciseState());
+    const reviewStage = renderWithQuery(<ExerciseClient />);
+
+    const requestReview = await screen.findByRole("button", {
+      name: "Запросить проверку",
+    });
+    expect(requestReview).toHaveAttribute("aria-current", "step");
+    expect(requestReview).toHaveAttribute("data-variant", "default");
+    expect(
+      screen.getByRole("button", { name: "Обновить Git diff" }),
+    ).toHaveAttribute("data-variant", "ghost");
+    expect(
+      screen.getByRole("button", { name: "Запустить тесты" }),
+    ).toHaveAttribute("data-variant", "ghost");
+    expect(
+      reviewStage.container.querySelectorAll('button[data-variant="default"]'),
+    ).toHaveLength(1);
+
+    const focusSurface = reviewStage.container.querySelector(
+      '[data-slot="exercise-focus-surface"]',
+    );
+    expect(focusSurface).toContainElement(
+      reviewStage.container.querySelector('[data-slot="exercise-workspace"]'),
+    );
+    expect(focusSurface).toContainElement(
+      reviewStage.container.querySelector('[data-slot="exercise-evidence"]'),
+    );
+    expect(focusSurface).not.toContainElement(
+      reviewStage.container.querySelector('[data-slot="exercise-review"]'),
+    );
+    reviewStage.unmount();
+
+    apiMock.mockResolvedValue(exerciseState({ review: "changes_requested" }));
+    const correctionStage = renderWithQuery(<ExerciseClient />);
+    const rerunTests = await screen.findByRole("button", {
+      name: "Запустить тесты",
+    });
+    expect(rerunTests).toHaveAttribute("aria-current", "step");
+    expect(rerunTests).toHaveAttribute("data-variant", "default");
+    expect(
+      screen.getByRole("button", { name: "Запросить проверку" }),
+    ).toHaveAttribute("data-variant", "ghost");
+    expect(
+      correctionStage.container.querySelectorAll(
+        'button[data-variant="default"]',
+      ),
+    ).toHaveLength(1);
+    correctionStage.unmount();
+
+    apiMock.mockResolvedValue(exerciseState({ review: "passed" }));
+    const acceptanceStage = renderWithQuery(<ExerciseClient />);
+    const accept = await screen.findByRole("button", {
+      name: "Принять проверку и продолжить",
+    });
+    expect(accept).toHaveAttribute("aria-current", "step");
+    expect(accept).toHaveAttribute("data-variant", "default");
+    expect(
+      acceptanceStage.container.querySelector(
+        '[data-slot="exercise-action-sequence"]',
+      ),
+    ).toContainElement(accept);
+    expect(
+      acceptanceStage.container.querySelectorAll(
+        'button[data-variant="default"]',
+      ),
+    ).toHaveLength(1);
   });
 
   it("requires a new diff, passing test, and review after changes_requested", async () => {
@@ -275,6 +463,8 @@ describe("restart-safe v2 practice", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Запросить проверку" }),
     );
+    expect(await screen.findByText("Нужны изменения")).toBeInTheDocument();
+    await toggleReviewerDisclosure();
     expect(await screen.findByText("Исправьте empty case")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Принять проверку и продолжить" }),
@@ -284,10 +474,13 @@ describe("restart-safe v2 practice", () => {
     ).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Запустить тесты" }));
+    await toggleEvidenceDisclosure();
     expect(
       await screen.findByText("+ corrected learner change"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Запросить проверку" }));
+    expect(await screen.findByText("Принято")).toBeInTheDocument();
+    await toggleReviewerDisclosure();
     expect(await screen.findByText("Исправление принято")).toBeInTheDocument();
     expect(reviews).toBe(2);
     expect(

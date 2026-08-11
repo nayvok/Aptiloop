@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AptiloopToolNameSchema } from "@aptiloop/shared";
 
 export const BrowserAgentEventSchema = z.discriminatedUnion("type", [
   z
@@ -13,6 +14,14 @@ export const BrowserAgentEventSchema = z.discriminatedUnion("type", [
       type: z.literal("message.completed"),
       turnId: z.string().min(1),
       content: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("tool.summary"),
+      turnId: z.string().min(1),
+      name: AptiloopToolNameSchema,
+      status: z.enum(["started", "completed"]),
     })
     .strict(),
   z
@@ -53,6 +62,7 @@ export class ApiError extends Error {
       diagnosticId: string;
       recoveryAction: string | null;
     },
+    readonly code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -64,7 +74,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
       ...init?.headers,
     },
   });
@@ -72,12 +82,14 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       error?: string;
+      code?: string;
       failure?: ConstructorParameters<typeof ApiError>[2];
     } | null;
     throw new ApiError(
       body?.error ?? `Request failed (${response.status})`,
       response.status,
       body?.failure,
+      body?.code,
     );
   }
 
@@ -92,7 +104,7 @@ export async function* streamAgent(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
     },
     body: JSON.stringify(body),
     signal: signal ?? null,

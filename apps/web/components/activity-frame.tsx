@@ -37,42 +37,42 @@ export function ActivityFrame({
       data-activity-type={activityType}
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
-      className={cn(
-        "min-w-0 overflow-hidden rounded-lg border border-border bg-card",
-        className,
-      )}
+      className={cn("w-full max-w-[48rem] min-w-0", className)}
     >
       {slots.accessibility}
       <header
         data-slot="activity-context"
-        className="flex flex-col gap-4 border-b border-border p-4 md:flex-row md:items-start md:justify-between md:p-6"
+        className="flex min-w-0 flex-col gap-3 border-b border-border/60 pb-4 sm:flex-row sm:items-start sm:justify-between sm:pb-5"
       >
-        <div className="flex min-w-0 flex-col gap-2">
+        <div className="flex min-w-0 max-w-[72ch] flex-col gap-2">
           {slots.context}
           <h2
             id={titleId}
-            className="text-pretty text-xl font-semibold leading-7"
+            className="break-words text-pretty text-[1.375rem] font-semibold leading-[1.875rem] tracking-[-0.02em] [overflow-wrap:anywhere] sm:text-2xl sm:leading-8"
           >
             {title}
           </h2>
           <p
             id={descriptionId}
-            className="max-w-[70ch] text-sm leading-6 text-muted-foreground"
+            className="max-w-[68ch] break-words text-[0.9375rem] leading-6 text-muted-foreground [overflow-wrap:anywhere]"
           >
             {description}
           </p>
         </div>
-        <div data-slot="activity-status" className="shrink-0">
+        <div
+          data-slot="activity-status"
+          className="max-w-full shrink-0 self-start [&_[data-slot=badge]]:h-auto [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:break-words [&_[data-slot=badge]]:py-1 [&_[data-slot=badge]]:text-left"
+        >
           {slots.status}
         </div>
       </header>
-      <div data-slot="activity-content" className="min-w-0 p-4 md:p-6">
+      <div data-slot="activity-content" className="min-w-0 pb-1 pt-5">
         {children}
       </div>
       {slots.runtime ? (
         <div
           data-slot="activity-runtime"
-          className="min-w-0 border-t border-border p-4 md:p-6"
+          className="mb-5 min-w-0 border-y border-border/60 bg-surface-soft/60 py-4 sm:py-5"
         >
           {slots.runtime}
         </div>
@@ -80,7 +80,7 @@ export function ActivityFrame({
       {slots.evidence ? (
         <div
           data-slot="activity-evidence"
-          className="min-w-0 border-t border-border p-4 md:p-6"
+          className="mb-5 min-w-0 border-t border-border/60 pt-5 sm:pt-6"
         >
           {slots.evidence}
         </div>
@@ -88,7 +88,7 @@ export function ActivityFrame({
       {slots.actions ? (
         <footer
           data-slot="activity-actions"
-          className="border-t border-border p-4 md:p-6"
+          className="mb-5 min-w-0 border-t border-border/60 pt-5 sm:pt-6"
         >
           {slots.actions}
         </footer>

@@ -1,4 +1,4 @@
-import type { AgentRole, AptiloopAiRole } from "@dlh/shared";
+import type { AgentRole, AptiloopAiRole } from "@aptiloop/shared";
 
 export function toAptiloopAiRole(role: AgentRole): AptiloopAiRole {
   switch (role) {

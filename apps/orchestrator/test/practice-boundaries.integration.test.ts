@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import type { AgentProvider } from "@dlh/agent-core";
+import type { AgentProvider } from "@aptiloop/agent-core";
 
 import {
   ReviewResultSchema,
@@ -18,7 +18,7 @@ import {
   type AgentSession,
   type CreateAgentSessionInput,
   type ReviewResult,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp, type AppOptions } from "../src/app.js";
@@ -171,7 +171,7 @@ const reviewerCommitBoundaryCases: Array<[string, ReviewerEventScript]> = [
 
 function runtime(providers?: AppOptions["providers"]) {
   const databaseRoot = mkdtempSync(
-    path.join(process.env.TEMP ?? projectRoot, "dlh-practice-db-"),
+    path.join(process.env.TEMP ?? projectRoot, "aptiloop-practice-db-"),
   );
   const attemptsParent = path.join(projectRoot, ".data");
   mkdirSync(attemptsParent, { recursive: true });
@@ -199,7 +199,7 @@ const request = (
     ...init,
     headers: {
       Host: "127.0.0.1:8787",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
       ...init?.headers,
@@ -395,7 +395,7 @@ describe("practice execution and reviewer boundaries", () => {
     const current = runtime();
     const { attemptId } = await createAttempt(current);
     const outsideRoot = mkdtempSync(
-      path.join(process.env.TEMP ?? projectRoot, "dlh-attempt-escape-"),
+      path.join(process.env.TEMP ?? projectRoot, "aptiloop-attempt-escape-"),
     );
     cleanupRoots.push(outsideRoot);
     current.state.connection.sqlite

@@ -1,10 +1,10 @@
-import { type AgentProvider } from "@dlh/agent-core";
+import { type AgentProvider } from "@aptiloop/agent-core";
 import {
   CurriculumAuthoringRepository,
   migrateDatabase,
   openDatabase,
   type DatabaseConnection,
-} from "@dlh/database";
+} from "@aptiloop/database";
 import type {
   AgentEvent,
   AgentModel,
@@ -13,7 +13,7 @@ import type {
   ProviderId,
   ProviderStatus,
   StreamAgentMessageInput,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -189,6 +189,7 @@ async function createRuntime(proposal: unknown = completeProposal) {
       id: "course-designer-test",
       slug: "course-designer-test",
       title: "Course Designer Test",
+      primaryLocale: "en-US",
     },
     title: "Draft revision",
   });
@@ -243,6 +244,124 @@ async function startWorkflow(app: Hono, base: string): Promise<string> {
 }
 
 describe("Course Designer", () => {
+  it("restores only the exact pending disclosure for its draft workflow", async () => {
+    const { app, connection, providerRuntime, repository, version } =
+      await createRuntime();
+    connection.sqlite
+      .prepare(
+        "UPDATE provider_hub_connections SET external = 1 WHERE connection_id = 'conn:mock'",
+      )
+      .run();
+    const base = `/api/curriculum-editor/versions/${version.id}/designer`;
+    const workflowId = await startWorkflow(app, base);
+    const disclosurePath = `${base}/workflows/${encodeURIComponent(workflowId)}/disclosures`;
+
+    const prepared = await post(app, disclosurePath, {
+      operationId: "proposal:resume",
+    });
+    expect(prepared.status).toBe(200);
+    const preparedBody = (await prepared.json()) as {
+      required: boolean;
+      disclosure: {
+        operationId: string;
+        scope: { entityIds: Record<string, string> };
+      };
+    };
+    expect(preparedBody).toMatchObject({
+      required: true,
+      disclosure: {
+        scope: {
+          entityIds: {
+            "course-revision": version.id,
+            "course-designer-workflow": workflowId,
+            "course-designer-authoring-operation": "proposal:resume",
+          },
+        },
+      },
+    });
+
+    const restored = await get(app, disclosurePath);
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toMatchObject({
+      pendingDisclosure: {
+        operationId: "proposal:resume",
+        workflowId,
+        versionId: version.id,
+        disclosure: {
+          operationId: preparedBody.disclosure.operationId,
+          status: "pending",
+        },
+      },
+    });
+
+    const duplicatePreparation = await post(app, disclosurePath, {
+      operationId: "proposal:duplicate",
+    });
+    expect(duplicatePreparation.status).toBe(200);
+    expect(
+      (
+        (await duplicatePreparation.json()) as {
+          disclosure: { operationId: string };
+        }
+      ).disclosure.operationId,
+    ).toBe(preparedBody.disclosure.operationId);
+    expect(
+      connection.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM ai_disclosure_operations WHERE role = 'course-designer'",
+        )
+        .get(),
+    ).toEqual({ count: 1 });
+
+    const otherVersion = await repository.cloneRevision(version.id);
+    const otherBase = `/api/curriculum-editor/versions/${otherVersion.id}/designer`;
+    const otherWorkflowId = await startWorkflow(app, otherBase);
+    const otherDisclosure = await get(
+      app,
+      `${otherBase}/workflows/${encodeURIComponent(otherWorkflowId)}/disclosures`,
+    );
+    expect(otherDisclosure.status).toBe(200);
+    expect(await otherDisclosure.json()).toEqual({ pendingDisclosure: null });
+
+    const crossVersion = await get(
+      app,
+      `${otherBase}/workflows/${encodeURIComponent(workflowId)}/disclosures`,
+    );
+    expect(crossVersion.status).toBe(404);
+    expect(await crossVersion.json()).toMatchObject({
+      code: "workflow_not_found",
+    });
+    const unknown = await get(
+      app,
+      `${base}/workflows/${encodeURIComponent("course-designer:unknown")}/disclosures`,
+    );
+    expect(unknown.status).toBe(404);
+
+    providerRuntime.cancelDisclosure(preparedBody.disclosure.operationId);
+    const cancelled = await get(app, disclosurePath);
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toEqual({ pendingDisclosure: null });
+
+    const stalePreparation = await post(app, disclosurePath, {
+      operationId: "proposal:stale",
+    });
+    const staleOperationId = (
+      (await stalePreparation.json()) as {
+        disclosure: { operationId: string };
+      }
+    ).disclosure.operationId;
+    connection.sqlite
+      .prepare(
+        `INSERT INTO ai_disclosure_events
+           (operation_id, sequence, status, occurred_at)
+         VALUES (?, 1, 'expired', ?)`,
+      )
+      .run(staleOperationId, new Date().toISOString());
+    const stale = await get(app, disclosurePath);
+    expect(stale.status).toBe(200);
+    expect(await stale.json()).toEqual({ pendingDisclosure: null });
+  });
+
   it("runs the finite review workflow and publishes only through the manual gate", async () => {
     const { app, connection, mock, version } = await createRuntime();
     const base = `/api/curriculum-editor/versions/${version.id}/designer`;

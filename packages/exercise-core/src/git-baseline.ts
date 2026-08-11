@@ -15,6 +15,7 @@ import { createSanitizedChildEnvironment } from "./child-environment.js";
 import { AllowedProcessRunner } from "./process-runner.js";
 import { resolveWorkspacePath } from "./workspace-path.js";
 
+// Retained for existing attempt repositories; renaming would orphan their baseline evidence.
 const BASELINE_MARKER = "dev-learning-harness-baseline.json";
 const DEFAULT_DIFF_CAP = 1_000_000;
 const GIT_OUTPUT_CAP = 1_100_000;
@@ -46,12 +47,15 @@ export function fingerprintExerciseDiff(
   diff: Pick<ExerciseDiff, "baselineCommit" | "patch" | "truncated">,
 ): string | null {
   if (diff.truncated) return null;
-  return createHash("sha256")
-    .update("dlh-exercise-diff-v1\0", "utf8")
-    .update(diff.baselineCommit, "utf8")
-    .update("\0", "utf8")
-    .update(diff.patch, "utf8")
-    .digest("hex");
+  return (
+    createHash("sha256")
+      // Stable persisted fingerprint domain separator; changing it invalidates prior evidence.
+      .update("dlh-exercise-diff-v1\0", "utf8")
+      .update(diff.baselineCommit, "utf8")
+      .update("\0", "utf8")
+      .update(diff.patch, "utf8")
+      .digest("hex")
+  );
 }
 
 export interface ExerciseGitOperationOptions {
@@ -115,9 +119,9 @@ export async function ensureExerciseBaseline(
     root,
     [
       "-c",
-      "user.name=Dev Learning Harness",
+      "user.name=Aptiloop",
       "-c",
-      "user.email=harness@localhost.invalid",
+      "user.email=aptiloop@localhost.invalid",
       "commit",
       "--quiet",
       "--allow-empty",

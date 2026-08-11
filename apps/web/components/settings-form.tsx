@@ -1,25 +1,42 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { CaretDownIcon, CheckIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { ApiError, api } from "@/lib/api";
-import { type MessageKey, type UiLocale, useI18n } from "@/lib/i18n";
+import {
+  type MessageKey,
+  type UiLocale,
+  useI18n,
+  isUiLocale,
+} from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Field,
   FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
-  FieldTitle,
 } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  PopoverContent,
+  PopoverRoot,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { QueryError } from "@/components/query-state";
 import {
   ProviderConnectionManager,
@@ -35,6 +52,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const settingsMutationSchema = z
   .object({
@@ -44,12 +62,16 @@ const settingsMutationSchema = z
   .strict();
 type SettingsMutation = z.infer<typeof settingsMutationSchema>;
 type AiRole = "course-designer" | "tutor" | "evaluator" | "reviewer";
+type SettingsSection = "interface" | "ai" | "connections" | "advanced";
+type ProviderCapability =
+  "streaming" | "models" | "tools" | "structured-output" | "cancellation";
+type RoleOverrides = Partial<Record<AiRole, string>>;
 type RoleProfile = {
   role: AiRole;
   mode: "no-ai" | "connection";
   connectionId: string | null;
   modelId: string | null;
-  requiredCapabilities: string[];
+  requiredCapabilities: ProviderCapability[];
   toolPolicyId: string;
   budgets: {
     maxInputBytes: number;
@@ -59,10 +81,35 @@ type RoleProfile = {
     deadlineMs: number;
   };
 };
-type Connection = ProviderConnectionSummary & {
+type ObservedCapabilityProfile = {
+  providerType: string;
+  adapterVersion: string;
+  observedAt: string;
+  models: Array<{
+    modelId: string;
+    available: boolean;
+    contextTokens: number | null;
+    outputTokens: number | null;
+    typedToolCalls: "none" | "best-effort" | "schema-constrained";
+    parallelToolCalls: boolean;
+    attachments: Array<"text" | "image">;
+  }>;
+  connection: {
+    authenticated: boolean;
+    streaming: boolean;
+    cancellation: boolean;
+  };
+};
+type Connection = Omit<
+  ProviderConnectionSummary,
+  "providerType" | "lastCheckedAt" | "observedCapabilities"
+> & {
   adapterId: string;
   providerType: string;
+  credentialRef: string | null;
+  endpointProfileId: string | null;
   lastCheckedAt: string | null;
+  observedCapabilities: ObservedCapabilityProfile | null;
 };
 type SettingsQuery = Omit<SettingsMutation, "uiLocale"> & {
   uiLocale: UiLocale | null;
@@ -98,49 +145,471 @@ const roleMeta: ReadonlyArray<{
     help: "role.reviewer.help",
   },
 ];
+const settingsSections: ReadonlyArray<{
+  value: SettingsSection;
+  label: MessageKey;
+}> = [
+  { value: "interface", label: "settings.section.interface" },
+  { value: "ai", label: "settings.section.ai" },
+  { value: "connections", label: "settings.section.connections" },
+  { value: "advanced", label: "settings.section.local" },
+];
+type AssignmentReadiness = {
+  state:
+    | "off"
+    | "ready"
+    | "authentication"
+    | "degraded"
+    | "unknown"
+    | "unavailable"
+    | "unsupported";
+  capability?: ProviderCapability;
+};
+type ModelOption = {
+  value: string;
+  label: string;
+  disabled?: boolean;
+  disabledReason?: string;
+};
 
-const sectionClass =
-  "min-w-0 rounded-xl border border-border bg-card p-5 sm:p-6";
+const readinessStateKeys: Readonly<
+  Record<AssignmentReadiness["state"], MessageKey>
+> = {
+  off: "authoring.connected.state.off",
+  ready: "authoring.connected.state.ready",
+  authentication: "settings.status.authentication",
+  degraded: "settings.status.degraded",
+  unknown: "authoring.connected.state.unknown",
+  unavailable: "authoring.connected.state.unavailable",
+  unsupported: "authoring.connected.state.unsupported",
+};
+
+function isSettingsSection(value: string | null): value is SettingsSection {
+  return settingsSections.some((section) => section.value === value);
+}
+
+function assignmentReadiness(
+  profile: RoleProfile,
+  connections: Connection[],
+): AssignmentReadiness {
+  if (profile.mode === "no-ai") return { state: "off" };
+  if (!profile.connectionId || !profile.modelId) {
+    return { state: "unavailable" };
+  }
+
+  const connection = connections.find(
+    (candidate) => candidate.connectionId === profile.connectionId,
+  );
+  if (!connection?.enabled) return { state: "unavailable" };
+  if (connection.state === "authentication-required") {
+    return { state: "authentication" };
+  }
+  if (connection.state === "degraded") return { state: "degraded" };
+  if (connection.state !== "connected") return { state: "unavailable" };
+
+  const observed = connection.observedCapabilities;
+  if (!observed) return { state: "unknown" };
+  if (!observed.connection.authenticated) {
+    return { state: "authentication" };
+  }
+  const model = observed.models.find(
+    (candidate) => candidate.modelId === profile.modelId,
+  );
+  if (!model?.available) return { state: "unavailable" };
+
+  let unavailableCapability: ProviderCapability | undefined;
+  let unknownCapability: ProviderCapability | undefined;
+  for (const capability of profile.requiredCapabilities) {
+    let supported: boolean | null;
+    switch (capability) {
+      case "models":
+        supported = true;
+        break;
+      case "streaming":
+        supported = observed.connection.streaming;
+        break;
+      case "cancellation":
+        supported = observed.connection.cancellation;
+        break;
+      case "tools":
+        supported = model.typedToolCalls !== "none";
+        break;
+      case "structured-output":
+        supported = null;
+        break;
+      default:
+        supported = null;
+    }
+    if (supported === false) unavailableCapability ??= capability;
+    if (supported === null) unknownCapability ??= capability;
+  }
+
+  if (unavailableCapability) {
+    return { state: "unsupported", capability: unavailableCapability };
+  }
+  if (unknownCapability) {
+    return { state: "unknown", capability: unknownCapability };
+  }
+  return { state: "ready" };
+}
+
+function aggregateReadiness(
+  profiles: RoleProfile[],
+  connections: Connection[],
+): AssignmentReadiness {
+  const readiness = profiles.map((profile) =>
+    assignmentReadiness(profile, connections),
+  );
+  for (const state of [
+    "authentication",
+    "degraded",
+    "unavailable",
+    "unsupported",
+    "unknown",
+  ] as const) {
+    const match = readiness.find((candidate) => candidate.state === state);
+    if (match) return match;
+  }
+  return (
+    readiness.find((candidate) => candidate.state === "ready") ?? {
+      state: "off",
+    }
+  );
+}
+
+function readinessBadgeVariant(
+  state: AssignmentReadiness["state"],
+): "success" | "warning" | "error" | "secondary" {
+  if (state === "ready") return "success";
+  if (state === "unknown" || state === "degraded") return "warning";
+  if (
+    state === "authentication" ||
+    state === "unavailable" ||
+    state === "unsupported"
+  ) {
+    return "error";
+  }
+  return "secondary";
+}
+
+function modelDisabledReason(
+  connection: Connection,
+  modelAvailable: boolean,
+): MessageKey | null {
+  if (!connection.enabled) return "settings.status.off";
+  if (connection.state === "authentication-required") {
+    return "settings.status.authentication";
+  }
+  if (connection.state === "degraded") return "settings.status.degraded";
+  if (connection.state !== "connected") return "settings.status.unavailable";
+  if (!connection.observedCapabilities) {
+    return "authoring.connected.state.unknown";
+  }
+  if (!connection.observedCapabilities.connection.authenticated) {
+    return "settings.status.authentication";
+  }
+  if (!modelAvailable) return "settings.status.unavailable";
+  return null;
+}
+
+const sectionClass = "min-w-0 scroll-mt-24";
+const sectionSurfaceClass =
+  "mt-5 min-w-0 overflow-hidden rounded-lg border border-border bg-background";
+
+function exactSelectionValue(connectionId: string, modelId: string): string {
+  return `${encodeURIComponent(connectionId)}|${encodeURIComponent(modelId)}`;
+}
 
 function selectionValue(profile: RoleProfile): string {
   return profile.mode === "connection" &&
     profile.connectionId &&
     profile.modelId
-    ? `${profile.connectionId}\u0000${profile.modelId}`
+    ? exactSelectionValue(profile.connectionId, profile.modelId)
     : "off";
+}
+
+function withSelection(profile: RoleProfile, value: string): RoleProfile {
+  if (value === "off") {
+    return {
+      ...profile,
+      mode: "no-ai",
+      connectionId: null,
+      modelId: null,
+    };
+  }
+  const encoded = value.split("|");
+  if (encoded.length !== 2 || !encoded[0] || !encoded[1]) return profile;
+  let connectionId: string;
+  let modelId: string;
+  try {
+    connectionId = decodeURIComponent(encoded[0]);
+    modelId = decodeURIComponent(encoded[1]);
+  } catch {
+    return profile;
+  }
+  return {
+    ...profile,
+    mode: "connection",
+    connectionId,
+    modelId,
+  };
+}
+
+function uniformSelection(profiles: RoleProfile[]): string | null {
+  const first = profiles[0];
+  if (!first) return "off";
+  const value = selectionValue(first);
+  return profiles.every((profile) => selectionValue(profile) === value)
+    ? value
+    : null;
+}
+
+function nextEnabledIndex(
+  options: ModelOption[],
+  currentIndex: number,
+  direction: 1 | -1,
+): number {
+  if (!options.length) return -1;
+  const origin = currentIndex < 0 ? (direction === 1 ? -1 : 0) : currentIndex;
+  for (let offset = 1; offset <= options.length; offset += 1) {
+    const index =
+      (origin + direction * offset + options.length) % options.length;
+    if (!options[index]?.disabled) return index;
+  }
+  return -1;
+}
+
+function ModelCombobox({
+  id,
+  value,
+  selectedLabel,
+  options,
+  searchLabel,
+  noMatchesLabel,
+  onValueChange,
+}: {
+  id: string;
+  value: string;
+  selectedLabel: string;
+  options: ModelOption[];
+  searchLabel: string;
+  noMatchesLabel: string;
+  onValueChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const listboxId = `${id}-listbox`;
+  const normalizedQuery = normalizeTechnicalModelSearch(query);
+  const filteredOptions = useMemo(
+    () =>
+      normalizedQuery
+        ? options.filter((option) =>
+            normalizeTechnicalModelSearch(
+              `${option.label} ${option.disabledReason ?? ""}`,
+            ).includes(normalizedQuery),
+          )
+        : options,
+    [normalizedQuery, options],
+  );
+
+  useEffect(() => {
+    setActiveIndex(filteredOptions.findIndex((option) => !option.disabled));
+  }, [filteredOptions]);
+
+  useEffect(() => {
+    if (!open || activeIndex < 0) return;
+    document
+      .getElementById(`${id}-option-${activeIndex}`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, id, open]);
+
+  const chooseOption = (option: ModelOption | undefined) => {
+    if (!option || option.disabled) return;
+    onValueChange(option.value);
+    setOpen(false);
+  };
+
+  return (
+    <PopoverRoot
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        setQuery("");
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          id={id}
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-controls={listboxId}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          className="h-auto min-h-10 w-full justify-between gap-3 px-3 py-2 text-left font-normal"
+        >
+          <span className="min-w-0 truncate">{selectedLabel}</span>
+          <CaretDownIcon
+            className="shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-0"
+      >
+        <div className="border-b border-border/60 p-2">
+          <Input
+            value={query}
+            aria-label={searchLabel}
+            aria-controls={listboxId}
+            aria-activedescendant={
+              activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined
+            }
+            placeholder={searchLabel}
+            autoComplete="off"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                setActiveIndex((current) =>
+                  nextEnabledIndex(
+                    filteredOptions,
+                    current,
+                    event.key === "ArrowDown" ? 1 : -1,
+                  ),
+                );
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                setActiveIndex(
+                  filteredOptions.findIndex((option) => !option.disabled),
+                );
+              } else if (event.key === "End") {
+                event.preventDefault();
+                setActiveIndex(nextEnabledIndex(filteredOptions, 0, -1));
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                chooseOption(filteredOptions[activeIndex]);
+              } else if (event.key === "Escape") {
+                setOpen(false);
+              }
+            }}
+          />
+        </div>
+        <div
+          id={listboxId}
+          role="listbox"
+          aria-label={searchLabel}
+          data-slot="model-options"
+          className="max-h-72 overflow-y-auto overscroll-contain p-1"
+        >
+          {filteredOptions.length ? (
+            filteredOptions.map((option, index) => {
+              const selected = option.value === value;
+              return (
+                <button
+                  key={option.value}
+                  id={`${id}-option-${index}`}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  aria-disabled={option.disabled || undefined}
+                  disabled={option.disabled}
+                  tabIndex={-1}
+                  className={`flex w-full min-w-0 items-start gap-2 rounded-control px-2 py-2 text-left text-sm outline-none transition-colors motion-reduce:transition-none ${
+                    activeIndex === index
+                      ? "bg-accent text-accent-foreground"
+                      : "hover:bg-accent hover:text-accent-foreground"
+                  } disabled:cursor-not-allowed disabled:opacity-55`}
+                  onMouseMove={() => {
+                    if (!option.disabled) setActiveIndex(index);
+                  }}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseOption(option)}
+                >
+                  <CheckIcon
+                    className={`mt-0.5 shrink-0 ${selected ? "opacity-100" : "opacity-0"}`}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">
+                    <span className="block">{option.label}</span>
+                    {option.disabledReason ? (
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        {option.disabledReason}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })
+          ) : (
+            <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+              {noMatchesLabel}
+            </p>
+          )}
+        </div>
+      </PopoverContent>
+    </PopoverRoot>
+  );
+}
+
+export function normalizeTechnicalModelSearch(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 export function SettingsForm() {
   const queryClient = useQueryClient();
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { setTheme } = useTheme();
   const { locale, setLocale, t } = useI18n();
+  const requestedSection = searchParams.get("section");
+  const activeSection = isSettingsSection(requestedSection)
+    ? requestedSection
+    : "interface";
   const [roleProfiles, setRoleProfiles] = useState<RoleProfile[]>([]);
+  const [defaultAiSelection, setDefaultAiSelection] = useState("off");
+  const [roleOverrides, setRoleOverrides] = useState<RoleOverrides>({});
   const query = useQuery({
-    queryKey: ["settings"],
+    queryKey: ["settings", "page"],
     queryFn: () => api<SettingsQuery>("/settings"),
   });
   useEffect(() => {
-    if (query.data) setRoleProfiles(query.data.ai.roleProfiles);
+    if (!query.data) return;
+    const nextProfiles = query.data.ai.roleProfiles;
+    const uniformDefault = uniformSelection(nextProfiles);
+    const nextDefault = uniformDefault ?? "mixed";
+    const nextOverrides: RoleOverrides = {};
+    for (const profile of nextProfiles) {
+      const value = selectionValue(profile);
+      if (uniformDefault === null || value !== nextDefault) {
+        nextOverrides[profile.role] = value;
+      }
+    }
+    setRoleProfiles(nextProfiles);
+    setDefaultAiSelection(nextDefault);
+    setRoleOverrides(nextOverrides);
   }, [query.data]);
 
   const saveSettings = useMutation({
-    mutationFn: async (values: SettingsMutation) => {
-      await Promise.all([
-        api<{ saved: true }>("/settings", {
-          method: "PUT",
-          body: JSON.stringify({ theme: values.theme }),
-        }),
-        api<{ saved: true; uiLocale: UiLocale }>("/settings/locale", {
-          method: "PUT",
-          body: JSON.stringify({ uiLocale: values.uiLocale }),
-        }),
-      ]);
-      return { saved: true as const };
-    },
+    mutationFn: (values: SettingsMutation) =>
+      api<{ saved: true; uiLocale: UiLocale }>("/settings", {
+        method: "PUT",
+        body: JSON.stringify(values),
+      }),
     onSuccess: (_result, submitted) => {
+      setTheme(submitted.theme);
       setLocale(submitted.uiLocale);
-      queryClient.setQueryData<SettingsQuery>(["settings"], (current) =>
-        current ? { ...current, ...submitted } : current,
+      queryClient.setQueryData<SettingsQuery>(
+        ["settings", "page"],
+        (current) => (current ? { ...current, ...submitted } : current),
+      );
+      queryClient.setQueryData<{ uiLocale: UiLocale | null }>(
+        ["settings"],
+        (current) => ({ ...current, uiLocale: submitted.uiLocale }),
       );
     },
   });
@@ -161,30 +630,76 @@ export function SettingsForm() {
       }),
     onSuccess: (result) => {
       setRoleProfiles(result.roleProfiles);
+      queryClient.setQueryData<SettingsQuery>(
+        ["settings", "page"],
+        (current) =>
+          current
+            ? {
+                ...current,
+                ai: { ...current.ai, roleProfiles: result.roleProfiles },
+              }
+            : current,
+      );
       queryClient.setQueryData<SettingsQuery>(["settings"], (current) =>
-        current
+        current?.ai
           ? {
               ...current,
               ai: { ...current.ai, roleProfiles: result.roleProfiles },
             }
           : current,
       );
+      void Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["settings"],
+          exact: true,
+          refetchType: "none",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["settings", "page"],
+          exact: true,
+          refetchType: "none",
+        }),
+      ]);
     },
   });
   const form = useForm<SettingsMutation>({
     resolver: zodResolver(settingsMutationSchema),
-    values: {
-      theme: query.data?.theme ?? "system",
-      uiLocale: query.data?.uiLocale ?? locale,
+    defaultValues: {
+      theme: "system",
+      uiLocale: locale,
     },
     mode: "onChange",
   });
+  useEffect(() => {
+    if (!query.data) return;
+    form.reset(
+      {
+        theme: query.data.theme,
+        uiLocale: query.data.uiLocale ?? locale,
+      },
+      { keepDirtyValues: true },
+    );
+  }, [form, locale, query.data]);
 
   if (query.isLoading) {
     return (
-      <div role="status" aria-label={t("query.loadingSettings")}>
-        <Skeleton aria-hidden className="h-96" />
+      <div
+        role="status"
+        aria-label={t("query.loadingSettings")}
+        className="grid gap-0"
+      >
         <span className="sr-only">{t("query.loadingSettings")}</span>
+        {["h-44", "h-56", "h-48"].map((height) => (
+          <section
+            key={height}
+            aria-hidden
+            className="grid gap-4 border-t border-border/70 py-8 first:border-t-0 first:pt-0"
+          >
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-4 w-72 max-w-full" />
+            <Skeleton className={`${height} w-full`} />
+          </section>
+        ))}
       </div>
     );
   }
@@ -197,244 +712,554 @@ export function SettingsForm() {
     );
   }
 
-  const themeRegistration = form.register("theme");
-  const localeRegistration = form.register("uiLocale");
-  const connectionOptions = query.data.ai.connections.flatMap((connection) =>
-    (connection.observedCapabilities?.models ?? [])
-      .filter((model) => model.available)
-      .map((model) => ({ connection, modelId: model.modelId })),
+  const themeValue = form.watch("theme");
+  const localeValue = form.watch("uiLocale");
+  const defaultIsMixed = defaultAiSelection === "mixed";
+  const connectionOptions: ModelOption[] = query.data.ai.connections.flatMap(
+    (connection) =>
+      (connection.observedCapabilities?.models ?? []).map((model) => {
+        const reasonKey = modelDisabledReason(connection, model.available);
+        return {
+          value: exactSelectionValue(connection.connectionId, model.modelId),
+          label: `${connection.displayName} · ${model.modelId}`,
+          disabled: reasonKey !== null,
+          ...(reasonKey ? { disabledReason: t(reasonKey) } : {}),
+        };
+      }),
   );
+  const modelOptions: ModelOption[] = [
+    { value: "off", label: t("settings.aiOff") },
+    ...connectionOptions,
+  ];
+  const defaultModelOptions: ModelOption[] = defaultIsMixed
+    ? [
+        {
+          value: "mixed",
+          label: t("settings.aiMixedConfiguration"),
+          disabled: true,
+        },
+        ...modelOptions,
+      ]
+    : modelOptions;
+  const editedRoleProfiles = roleProfiles.map((profile) =>
+    withSelection(
+      profile,
+      roleOverrides[profile.role] ??
+        (defaultIsMixed ? selectionValue(profile) : defaultAiSelection),
+    ),
+  );
+  const defaultProfile =
+    !defaultIsMixed && roleProfiles[0]
+      ? withSelection(roleProfiles[0], defaultAiSelection)
+      : undefined;
+  const defaultConnection =
+    defaultProfile?.mode === "connection"
+      ? query.data.ai.connections.find(
+          (connection) =>
+            connection.connectionId === defaultProfile.connectionId,
+        )
+      : undefined;
+  const defaultReadiness = defaultIsMixed
+    ? undefined
+    : aggregateReadiness(editedRoleProfiles, query.data.ai.connections);
+  const navigateToSection = (value: string) => {
+    if (!isSettingsSection(value) || value === activeSection) return;
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("section", value);
+    router.push(`${pathname}?${next.toString()}`, { scroll: false });
+  };
 
   return (
     <form
       data-slot="settings-form"
-      className="grid gap-6"
+      className="flex min-w-0 flex-col"
       onSubmit={form.handleSubmit((submitted) =>
-        saveSettings.mutate(submitted),
+        saveSettings.mutate(submitted, {
+          onSuccess: () => form.reset(submitted),
+        }),
       )}
     >
-      <section
-        aria-labelledby="settings-interface-title"
-        className={sectionClass}
+      <Tabs
+        value={activeSection}
+        onValueChange={navigateToSection}
+        orientation="vertical"
+        className="min-w-0 flex-col gap-6 xl:grid xl:grid-cols-[13rem_minmax(0,1fr)] xl:items-start xl:gap-8"
       >
-        <div className="mb-5">
-          <h3 id="settings-interface-title" className="font-semibold">
-            {t("settings.section.interface")}
-          </h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {t("settings.section.interfaceDescription")}
-          </p>
+        <div data-slot="settings-mobile-section-control" className="xl:hidden">
+          <Field>
+            <FieldLabel htmlFor="settings-mobile-section" className="sr-only">
+              {t("nav.settings")}
+            </FieldLabel>
+            <Select value={activeSection} onValueChange={navigateToSection}>
+              <SelectTrigger id="settings-mobile-section" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {settingsSections.map((section) => (
+                    <SelectItem key={section.value} value={section.value}>
+                      {t(section.label)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
         </div>
-        <FieldGroup>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel htmlFor="theme">{t("settings.theme")}</FieldLabel>
-              <FieldDescription>{t("settings.theme.help")}</FieldDescription>
-            </FieldContent>
-            <select
-              id="theme"
-              {...themeRegistration}
-              onChange={(event) => {
-                themeRegistration.onChange(event);
-                setTheme(event.target.value);
-              }}
-              className="h-11 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <option value="system">{t("shell.theme.system")}</option>
-              <option value="light">{t("shell.theme.light")}</option>
-              <option value="dark">{t("shell.theme.dark")}</option>
-            </select>
-          </Field>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldLabel htmlFor="ui-locale">
-                {t("settings.locale")}
-              </FieldLabel>
-              <FieldDescription>{t("settings.locale.help")}</FieldDescription>
-            </FieldContent>
-            <select
-              id="ui-locale"
-              {...localeRegistration}
-              onChange={(event) => {
-                localeRegistration.onChange(event);
-                setLocale(event.target.value as UiLocale);
-              }}
-              className="h-11 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <option value="en-US">{t("locale.option.english")}</option>
-              <option value="ru-RU">{t("locale.option.russian")}</option>
-            </select>
-          </Field>
-          <Field orientation="responsive">
-            <FieldContent>
-              <FieldTitle>{t("settings.section.local")}</FieldTitle>
-              <FieldDescription>
-                {t("settings.section.localDescription")}
-              </FieldDescription>
-            </FieldContent>
-            <dl className="grid min-w-0 gap-2 text-sm">
-              <div className="min-w-0 rounded-lg border border-border bg-muted/20 p-3">
-                <dt className="text-xs text-muted-foreground">
-                  {t("settings.workspace")}
-                </dt>
-                <dd
-                  className="mt-1 truncate font-mono"
-                  title={query.data.workspaceRoot}
-                >
-                  {query.data.workspaceRoot}
-                </dd>
-              </div>
-              <div className="min-w-0 rounded-lg border border-border bg-muted/20 p-3">
-                <dt className="text-xs text-muted-foreground">
-                  {t("settings.editor")}
-                </dt>
-                <dd
-                  className="mt-1 truncate font-mono"
-                  title={query.data.zedExecutable}
-                >
-                  {query.data.zedExecutable}
-                </dd>
-              </div>
-            </dl>
-          </Field>
-        </FieldGroup>
-      </section>
 
-      <section aria-labelledby="settings-ai-title" className={sectionClass}>
-        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 id="settings-ai-title" className="font-semibold">
-              {t("settings.section.ai")}
-            </h3>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {t("settings.section.aiDescription")}
-            </p>
-          </div>
-          <Badge variant="outline">{t("settings.serverPolicy")}</Badge>
+        <div data-slot="settings-local-navigation" className="hidden xl:block">
+          <TabsList
+            aria-label={t("nav.settings")}
+            variant="line"
+            className="h-auto w-full flex-col items-stretch gap-1 rounded-lg border border-border bg-background p-2"
+          >
+            {settingsSections.map((section) => (
+              <TabsTrigger
+                key={section.value}
+                value={section.value}
+                className="min-h-11 flex-none justify-start rounded-lg px-3 py-2.5 text-left after:-right-2"
+              >
+                {t(section.label)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
         </div>
-        <FieldGroup>
-          {roleMeta.map((meta) => {
-            const profile = roleProfiles.find(
-              (candidate) => candidate.role === meta.role,
-            );
-            if (!profile) return null;
-            return (
-              <Field key={meta.role} orientation="responsive">
-                <FieldContent>
-                  <FieldLabel htmlFor={`role-${meta.role}`}>
-                    {t(meta.label)}
-                  </FieldLabel>
-                  <FieldDescription>{t(meta.help)}</FieldDescription>
-                </FieldContent>
-                <Select
-                  value={selectionValue(profile)}
-                  onValueChange={(value) => {
-                    setRoleProfiles((current) =>
-                      current.map((candidate) => {
-                        if (candidate.role !== meta.role) return candidate;
-                        if (value === "off") {
-                          return {
-                            ...candidate,
-                            mode: "no-ai",
-                            connectionId: null,
-                            modelId: null,
-                          };
-                        }
-                        const [connectionId, modelId] = value.split("\u0000");
-                        return {
-                          ...candidate,
-                          mode: "connection",
-                          connectionId: connectionId ?? null,
-                          modelId: modelId ?? null,
-                        };
-                      }),
-                    );
-                  }}
+
+        <div data-slot="settings-selected-pane" className="min-w-0">
+          <TabsContent value="interface">
+            <section
+              aria-labelledby="settings-interface-title"
+              className={sectionClass}
+            >
+              <div className="mb-6">
+                <h2
+                  id="settings-interface-title"
+                  className="text-lg font-semibold tracking-[-0.015em]"
                 >
-                  <SelectTrigger
-                    id={`role-${meta.role}`}
-                    className="w-full max-w-sm"
+                  {t("settings.section.interface")}
+                </h2>
+                <p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
+                  {t("settings.section.interfaceDescription")}
+                </p>
+              </div>
+
+              <FieldGroup
+                className={`${sectionSurfaceClass} gap-0 divide-y divide-border/60`}
+              >
+                <Field orientation="responsive" className="px-5 py-5 sm:px-6">
+                  <FieldContent>
+                    <FieldLabel htmlFor="theme">
+                      {t("settings.theme")}
+                    </FieldLabel>
+                    <FieldDescription>
+                      {t("settings.theme.help")}
+                    </FieldDescription>
+                  </FieldContent>
+                  <Select
+                    value={themeValue}
+                    onValueChange={(value) => {
+                      const nextTheme = value as SettingsMutation["theme"];
+                      form.setValue("theme", nextTheme, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectItem value="off">{t("settings.aiOff")}</SelectItem>
-                      {connectionOptions.map(({ connection, modelId }) => (
-                        <SelectItem
-                          key={`${connection.connectionId}:${modelId}`}
-                          value={`${connection.connectionId}\u0000${modelId}`}
-                        >
-                          {connection.displayName} · {modelId}
+                    <SelectTrigger id="theme" className="w-full sm:max-w-72">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="system">
+                          {t("shell.theme.system")}
                         </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-            );
-          })}
-        </FieldGroup>
-        <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
-          <span
-            role="status"
-            aria-live="polite"
-            className="text-xs text-muted-foreground"
-          >
-            {saveAi.isSuccess
-              ? t("settings.aiSaved")
-              : saveAi.isError
-                ? saveAi.error instanceof ApiError
-                  ? saveAi.error.message
-                  : t("settings.aiSaveError")
-                : t("settings.externalDisclosure")}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={saveAi.isPending}
-            onClick={() => saveAi.mutate(roleProfiles)}
-          >
-            {t(saveAi.isPending ? "settings.saving" : "settings.saveAi")}
-          </Button>
-        </div>
-      </section>
+                        <SelectItem value="light">
+                          {t("shell.theme.light")}
+                        </SelectItem>
+                        <SelectItem value="dark">
+                          {t("shell.theme.dark")}
+                        </SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field orientation="responsive" className="px-5 py-5 sm:px-6">
+                  <FieldContent>
+                    <FieldLabel htmlFor="ui-locale">
+                      {t("settings.locale")}
+                    </FieldLabel>
+                    <FieldDescription>
+                      {t("settings.locale.help")}
+                    </FieldDescription>
+                  </FieldContent>
+                  <Select
+                    value={localeValue}
+                    onValueChange={(value) => {
+                      if (!isUiLocale(value)) return;
+                      form.setValue("uiLocale", value, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
+                  >
+                    <SelectTrigger
+                      id="ui-locale"
+                      className="w-full sm:max-w-72"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="en-US">
+                          {t("locale.option.english")}
+                        </SelectItem>
+                        <SelectItem value="ru-RU">
+                          {t("locale.option.russian")}
+                        </SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <div className="flex min-w-0 flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-6">
+                  <span
+                    role="status"
+                    aria-live="polite"
+                    className="min-w-0 text-sm text-muted-foreground sm:mr-auto"
+                  >
+                    {saveSettings.isSuccess
+                      ? t("settings.saved")
+                      : saveSettings.isError
+                        ? saveSettings.error instanceof ApiError
+                          ? saveSettings.error.message
+                          : t("settings.saveError")
+                        : t("settings.localOnly")}
+                  </span>
+                  <Button
+                    className="w-full shrink-0 sm:w-auto"
+                    type="submit"
+                    disabled={saveSettings.isPending}
+                  >
+                    {t(
+                      saveSettings.isPending
+                        ? "settings.saving"
+                        : "settings.save",
+                    )}
+                  </Button>
+                </div>
+              </FieldGroup>
+            </section>
+          </TabsContent>
 
-      <section
-        aria-labelledby="settings-connections-title"
-        className={sectionClass}
-      >
-        <ProviderConnectionManager
-          connections={query.data.ai.connections}
-          management={query.data.ai.management}
-        />
-        <div className="mt-5 flex justify-end">
-          <Button asChild variant="outline">
-            <Link href="/settings/developer-tools">
-              {t("settings.developerDiagnostics")}
-            </Link>
-          </Button>
-        </div>
-      </section>
+          <TabsContent value="ai">
+            <section
+              aria-labelledby="settings-ai-title"
+              className={sectionClass}
+            >
+              <div className="mb-2">
+                <div>
+                  <h2
+                    id="settings-ai-title"
+                    className="text-lg font-semibold tracking-[-0.015em]"
+                  >
+                    {t("settings.section.ai")}
+                  </h2>
+                  <p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
+                    {t("settings.section.aiDescription")}
+                  </p>
+                </div>
+              </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        <span
-          role="status"
-          aria-live="polite"
-          className="text-xs text-muted-foreground"
-        >
-          {saveSettings.isSuccess
-            ? t("settings.saved")
-            : saveSettings.isError
-              ? saveSettings.error instanceof ApiError
-                ? saveSettings.error.message
-                : t("settings.saveError")
-              : t("settings.localOnly")}
-        </span>
-        <Button type="submit" disabled={saveSettings.isPending}>
-          {t(saveSettings.isPending ? "settings.saving" : "settings.save")}
-        </Button>
-      </div>
+              <div className={sectionSurfaceClass}>
+                <FieldGroup className="gap-0">
+                  <Field orientation="responsive" className="px-5 py-5 sm:px-6">
+                    <FieldContent>
+                      <FieldLabel htmlFor="default-ai-profile">
+                        {t("settings.defaultModel")}
+                      </FieldLabel>
+                      <FieldDescription>
+                        {t("settings.section.aiDescription")}
+                      </FieldDescription>
+                    </FieldContent>
+                    <div className="flex w-full min-w-0 flex-col gap-2 sm:max-w-md">
+                      <ModelCombobox
+                        id="default-ai-profile"
+                        value={defaultAiSelection}
+                        selectedLabel={
+                          defaultIsMixed
+                            ? t("settings.aiMixedConfiguration")
+                            : defaultProfile?.mode === "connection"
+                              ? `${defaultConnection?.displayName ?? defaultProfile.connectionId} · ${defaultProfile.modelId}`
+                              : t("settings.aiOff")
+                        }
+                        options={defaultModelOptions}
+                        searchLabel={t("settings.model.search")}
+                        noMatchesLabel={t("settings.model.noMatches")}
+                        onValueChange={(value) => {
+                          setDefaultAiSelection(value);
+                          setRoleOverrides({});
+                        }}
+                      />
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <Badge
+                          data-assignment-readiness={
+                            defaultIsMixed ? "mixed" : defaultReadiness?.state
+                          }
+                          variant={
+                            defaultIsMixed
+                              ? "warning"
+                              : readinessBadgeVariant(
+                                  defaultReadiness?.state ?? "off",
+                                )
+                          }
+                        >
+                          {defaultIsMixed
+                            ? t("settings.aiMixedConfiguration")
+                            : t(
+                                readinessStateKeys[
+                                  defaultReadiness?.state ?? "off"
+                                ],
+                              )}
+                        </Badge>
+                        {defaultProfile?.mode === "connection" &&
+                        defaultProfile.modelId ? (
+                          <code
+                            title={`${defaultConnection?.displayName ?? defaultProfile.connectionId} · ${defaultProfile.modelId}`}
+                            className="block min-w-0 max-w-full truncate text-xs text-muted-foreground"
+                          >
+                            {defaultConnection?.displayName ??
+                              defaultProfile.connectionId}{" "}
+                            · {defaultProfile.modelId}
+                          </code>
+                        ) : null}
+                      </div>
+                    </div>
+                  </Field>
+                </FieldGroup>
+
+                <Collapsible>
+                  <div className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">
+                        {t("settings.roleOverrides")}
+                      </p>
+                      <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                        {t("settings.roleOverridesDescription")}
+                      </p>
+                    </div>
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="w-full shrink-0 sm:w-auto"
+                      >
+                        {t("settings.customizeRoles")}
+                      </Button>
+                    </CollapsibleTrigger>
+                  </div>
+                  <CollapsibleContent>
+                    <FieldGroup className="gap-0 divide-y divide-border/60 border-t border-border/60">
+                      {roleMeta.map((meta) => {
+                        const profile = editedRoleProfiles.find(
+                          (candidate) => candidate.role === meta.role,
+                        );
+                        if (!profile) return null;
+                        const assignedConnection =
+                          profile.mode === "connection"
+                            ? query.data.ai.connections.find(
+                                (connection) =>
+                                  connection.connectionId ===
+                                  profile.connectionId,
+                              )
+                            : undefined;
+                        const readiness = assignmentReadiness(
+                          profile,
+                          query.data.ai.connections,
+                        );
+                        return (
+                          <Field
+                            key={meta.role}
+                            orientation="responsive"
+                            className="px-5 py-5 sm:px-6"
+                          >
+                            <FieldContent>
+                              <FieldLabel htmlFor={`role-${meta.role}`}>
+                                {t(meta.label)}
+                              </FieldLabel>
+                              <FieldDescription>
+                                {t(meta.help)}
+                              </FieldDescription>
+                            </FieldContent>
+                            <div className="flex w-full min-w-0 flex-col gap-2 sm:max-w-md">
+                              <ModelCombobox
+                                id={`role-${meta.role}`}
+                                value={selectionValue(profile)}
+                                selectedLabel={
+                                  profile.mode === "connection"
+                                    ? `${assignedConnection?.displayName ?? profile.connectionId} · ${profile.modelId}`
+                                    : t("settings.aiOff")
+                                }
+                                options={modelOptions}
+                                searchLabel={t("settings.model.search")}
+                                noMatchesLabel={t("settings.model.noMatches")}
+                                onValueChange={(value) =>
+                                  setRoleOverrides((current) => {
+                                    const next = { ...current };
+                                    if (value === defaultAiSelection) {
+                                      delete next[meta.role];
+                                    } else {
+                                      next[meta.role] = value;
+                                    }
+                                    return next;
+                                  })
+                                }
+                              />
+                              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                <Badge
+                                  data-assignment-readiness={readiness.state}
+                                  title={
+                                    readiness.state === "unsupported" &&
+                                    readiness.capability
+                                      ? t(
+                                          "authoring.connected.stateDescription.unsupported",
+                                          { capability: readiness.capability },
+                                        )
+                                      : undefined
+                                  }
+                                  variant={readinessBadgeVariant(
+                                    readiness.state,
+                                  )}
+                                >
+                                  {t(readinessStateKeys[readiness.state])}
+                                </Badge>
+                                {profile.mode === "connection" &&
+                                profile.modelId ? (
+                                  <code
+                                    title={`${assignedConnection?.displayName ?? profile.connectionId} · ${profile.modelId}`}
+                                    className="block min-w-0 max-w-full truncate text-xs text-muted-foreground"
+                                  >
+                                    {assignedConnection?.displayName ??
+                                      profile.connectionId}{" "}
+                                    · {profile.modelId}
+                                  </code>
+                                ) : null}
+                              </div>
+                            </div>
+                          </Field>
+                        );
+                      })}
+                    </FieldGroup>
+                  </CollapsibleContent>
+                </Collapsible>
+
+                <div className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-6">
+                  <span
+                    role="status"
+                    aria-live="polite"
+                    className="text-sm text-muted-foreground sm:mr-auto"
+                  >
+                    {saveAi.isSuccess
+                      ? t("settings.aiSaved")
+                      : saveAi.isError
+                        ? saveAi.error instanceof ApiError
+                          ? saveAi.error.message
+                          : t("settings.aiSaveError")
+                        : t("settings.externalDisclosure")}
+                  </span>
+                  <Button
+                    className="w-full sm:w-auto"
+                    type="button"
+                    variant="secondary"
+                    disabled={saveAi.isPending}
+                    onClick={() => saveAi.mutate(editedRoleProfiles)}
+                  >
+                    {t(
+                      saveAi.isPending ? "settings.saving" : "settings.saveAi",
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </section>
+          </TabsContent>
+
+          <TabsContent value="connections">
+            <section
+              aria-labelledby="settings-connections-title"
+              className={sectionClass}
+            >
+              <ProviderConnectionManager
+                connections={query.data.ai.connections}
+                management={query.data.ai.management}
+              />
+            </section>
+          </TabsContent>
+
+          <TabsContent value="advanced">
+            <section
+              aria-labelledby="settings-local-title"
+              className={sectionClass}
+            >
+              <Collapsible>
+                <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <h2
+                      id="settings-local-title"
+                      className="text-lg font-semibold tracking-[-0.015em]"
+                    >
+                      {t("settings.section.local")}
+                    </h2>
+                    <p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
+                      {t("settings.section.localDescription")}
+                    </p>
+                  </div>
+                  <CollapsibleTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full shrink-0 sm:w-auto"
+                    >
+                      {t("courses.library.details")}
+                    </Button>
+                  </CollapsibleTrigger>
+                </div>
+                <CollapsibleContent>
+                  <div className={sectionSurfaceClass}>
+                    <dl className="min-w-0 divide-y divide-border/60">
+                      <div className="grid min-w-0 gap-1 px-5 py-4 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] sm:items-baseline sm:gap-6 sm:px-6">
+                        <dt className="text-sm font-medium">
+                          {t("settings.workspace")}
+                        </dt>
+                        <dd className="min-w-0 font-mono text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere] sm:text-right">
+                          {query.data.workspaceRoot}
+                        </dd>
+                      </div>
+                      <div className="grid min-w-0 gap-1 px-5 py-4 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] sm:items-baseline sm:gap-6 sm:px-6">
+                        <dt className="text-sm font-medium">
+                          {t("settings.editor")}
+                        </dt>
+                        <dd className="min-w-0 font-mono text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere] sm:text-right">
+                          {query.data.zedExecutable}
+                        </dd>
+                      </div>
+                    </dl>
+                    <div className="flex min-w-0 justify-start border-t border-border/60 px-5 py-4 sm:justify-end sm:px-6">
+                      <Button
+                        asChild
+                        variant="ghost"
+                        className="w-full sm:w-auto"
+                      >
+                        <Link href="/settings/developer-tools">
+                          {t("settings.developerDiagnostics")}
+                        </Link>
+                      </Button>
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </section>
+          </TabsContent>
+        </div>
+      </Tabs>
     </form>
   );
 }

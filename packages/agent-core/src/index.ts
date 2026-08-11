@@ -1,4 +1,4 @@
-export * from "@dlh/shared";
+export * from "@aptiloop/shared";
 export * from "./event-normalizer.js";
 export * from "./mock-agent-provider.js";
 export * from "./provider.js";

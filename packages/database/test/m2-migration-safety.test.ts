@@ -13,7 +13,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
-import type { SessionSnapshot } from "@dlh/shared";
+import type { SessionSnapshot } from "@aptiloop/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {

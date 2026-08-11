@@ -3,7 +3,7 @@ import {
   learningKernelSha256,
   type LearningKernelCommand,
   type LearningKernelEvidenceBody,
-} from "@dlh/learning-core";
+} from "@aptiloop/learning-core";
 
 import type { DatabaseConnection } from "./database.js";
 import { createLearningKernelRepository } from "./learning-kernel-repository.js";

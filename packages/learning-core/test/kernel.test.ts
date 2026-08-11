@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canonicalLearningKernelJson,
+  isLearningKernelReviewDue,
   learningKernelSha256,
   LearningKernelConflictError,
   LearningKernelValidationError,
@@ -238,6 +239,13 @@ describe("Learning Kernel", () => {
       state: "pending",
       completionEvidenceId: null,
     });
+    if (!mistakeReview) throw new Error("Expected a scheduled mistake review");
+    expect(
+      isLearningKernelReviewDue(mistakeReview, "2026-08-13T09:00:00.999Z"),
+    ).toBe(false);
+    expect(
+      isLearningKernelReviewDue(mistakeReview, "2026-08-13T09:00:01.000Z"),
+    ).toBe(true);
 
     const attemptThree = reduce(
       errorTwo.facts,

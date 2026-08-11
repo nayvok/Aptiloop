@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 
-import type { CurriculumVersionGraph } from "@dlh/database";
+import type { CurriculumVersionGraph } from "@aptiloop/database";
 
 export function authoringDraftHash(graph: CurriculumVersionGraph): string {
   return `sha256:${createHash("sha256")
     .update(
       JSON.stringify({
+        primaryLocale: graph.primaryLocale,
         version: {
           id: graph.version.id,
           curriculumId: graph.version.curriculumId,

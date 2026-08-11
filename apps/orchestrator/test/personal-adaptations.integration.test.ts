@@ -3,7 +3,7 @@ import {
   migrateDatabase,
   openDatabase,
   type DatabaseConnection,
-} from "@dlh/database";
+} from "@aptiloop/database";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -58,6 +58,7 @@ async function createPublishedCourse(connection: DatabaseConnection) {
       slug: "adaptation-test",
       title: "Adaptation test",
       description: "Personal branch integration fixture",
+      primaryLocale: "en-US",
     },
     title: "Upstream revision 1",
   });

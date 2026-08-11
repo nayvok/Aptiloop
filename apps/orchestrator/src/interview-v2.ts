@@ -1,8 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { ProviderHubError, type ResolvedProviderTurn } from "@dlh/agent-core";
-import type { DatabaseConnection } from "@dlh/database";
-import { getLatestPrompt } from "@dlh/prompt-library";
+import {
+  ProviderHubError,
+  type ResolvedProviderTurn,
+} from "@aptiloop/agent-core";
+import type { DatabaseConnection } from "@aptiloop/database";
+import { getLatestPrompt } from "@aptiloop/prompt-library";
+import {
+  InterviewDisclosureContinuationSchema,
+  InterviewPendingDisclosureSchema,
+  type AiDisclosure,
+  type InterviewDisclosureContinuation,
+  type InterviewPendingDisclosure,
+} from "@aptiloop/shared";
 import type { Hono } from "hono";
 import { assertCourseScopedSessionSideEffectAllowed } from "./learning-session-policy.js";
 import {
@@ -12,8 +22,37 @@ import {
 import { z } from "zod";
 
 const OperationIdSchema = z.string().trim().min(8).max(200);
+const LearningSessionIdSchema = z.string().trim().min(1);
 const TopicSchema = z.string().trim().min(1).max(120);
 const DifficultySchema = z.enum(["foundation", "interview-ready", "deep-dive"]);
+const InterviewReadQuerySchema = z
+  .object({ learningSessionId: LearningSessionIdSchema.optional() })
+  .strict();
+const InterviewPendingDisclosureQuerySchema = z
+  .object({
+    kind: z.tuple([z.enum(["start", "answer"])]),
+    operationId: z.tuple([OperationIdSchema]),
+    questionId: z.tuple([z.string().trim().min(1).max(200)]).optional(),
+    learningSessionId: z.tuple([LearningSessionIdSchema]).optional(),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    const kind = query.kind[0];
+    if (kind === "start" && query.questionId) {
+      context.addIssue({
+        code: "custom",
+        path: ["questionId"],
+        message: "Start disclosure recovery does not accept a question ID",
+      });
+    }
+    if (kind === "answer" && !query.questionId) {
+      context.addIssue({
+        code: "custom",
+        path: ["questionId"],
+        message: "Answer disclosure recovery requires a question ID",
+      });
+    }
+  });
 
 export const InterviewSetupRequestSchema = z
   .object({
@@ -21,7 +60,7 @@ export const InterviewSetupRequestSchema = z
     topics: z.array(TopicSchema).min(1).max(12),
     difficulty: DifficultySchema,
     questionCount: z.number().int().min(1).max(12),
-    learningSessionId: z.string().trim().min(1).optional(),
+    learningSessionId: LearningSessionIdSchema.optional(),
     disclosureOperationId: OperationIdSchema.optional(),
   })
   .strict();
@@ -37,13 +76,14 @@ export const InterviewAnswerRequestSchema = z
 export const InterviewFinishRequestSchema = z
   .object({ operationId: OperationIdSchema })
   .strict();
+export const InterviewAbandonRequestSchema = InterviewFinishRequestSchema;
 
 const StoredSetupSchema = z.object({
   operationId: OperationIdSchema,
   topics: z.array(TopicSchema).min(1).max(12),
   difficulty: DifficultySchema,
   questionCount: z.number().int().min(1).max(12),
-  learningSessionId: z.string().trim().min(1).optional(),
+  learningSessionId: LearningSessionIdSchema.optional(),
   conversationId: z.string().min(1),
 });
 
@@ -150,6 +190,18 @@ export function registerInterviewV2Routes(
               state,
               stored,
             );
+            if (!body.disclosureOperationId) {
+              const pending = await prepareInterviewDisclosure(state, {
+                continuation: startDisclosureContinuation(
+                  existingByOperation,
+                  stored,
+                ),
+                payload: buildQuestionPrompt(stored, [], 1),
+                payloadCategories: ["course-content"],
+                destinationPurpose: "Generate one bounded interview question",
+              });
+              if (pending) return context.json(pending, 202);
+            }
             await ensureOpeningQuestion(
               state,
               selection,
@@ -159,11 +211,6 @@ export function registerInterviewV2Routes(
               body.disclosureOperationId,
             );
           } catch (error) {
-            cleanupFailedInterviewSetup(
-              state,
-              existingByOperation.id,
-              stored.setup.conversationId,
-            );
             return providerFailureResponse(context, error);
           }
         }
@@ -204,19 +251,6 @@ export function registerInterviewV2Routes(
         schemaVersion: 1,
         setup: { ...body, conversationId },
       });
-      if (selection.connection.external && !body.disclosureOperationId) {
-        const preparation = await state.providerRuntime.prepareDisclosure({
-          role: "interviewer",
-          payload: buildQuestionPrompt(stored, [], 1),
-          payloadCategories: ["course-content"],
-          entityIds: { interview: interviewId },
-          exclusions: ["protected-evaluation", "credentials", "local-paths"],
-          destinationPurpose: "Generate one bounded interview question",
-        });
-        if (preparation.required) {
-          return context.json({ kind: "disclosure", ...preparation }, 202);
-        }
-      }
 
       state.connection.sqlite.exec("BEGIN IMMEDIATE");
       try {
@@ -249,10 +283,20 @@ export function registerInterviewV2Routes(
       }
 
       try {
+        const interview = readInterviewRow(state, interviewId);
+        if (!body.disclosureOperationId) {
+          const pending = await prepareInterviewDisclosure(state, {
+            continuation: startDisclosureContinuation(interview, stored),
+            payload: buildQuestionPrompt(stored, [], 1),
+            payloadCategories: ["course-content"],
+            destinationPurpose: "Generate one bounded interview question",
+          });
+          if (pending) return context.json(pending, 202);
+        }
         await ensureOpeningQuestion(
           state,
           selection,
-          readInterviewRow(state, interviewId),
+          interview,
           stored,
           context.req.raw.signal,
           body.disclosureOperationId,
@@ -268,14 +312,181 @@ export function registerInterviewV2Routes(
   });
 
   app.get("/api/interviews/v2/current", (context) => {
-    const current = findCurrentInterview(state);
+    const query = InterviewReadQuerySchema.parse({
+      learningSessionId: context.req.query("learningSessionId"),
+    });
+    const requestedLearningSessionId = query.learningSessionId
+      ? readKnownLearningSessionId(state, query.learningSessionId)
+      : null;
+    if (query.learningSessionId && !requestedLearningSessionId) {
+      return context.json({ error: "Learning session not found." }, 404);
+    }
+    const current = findCurrentInterview(
+      state,
+      requestedLearningSessionId ?? undefined,
+    );
     return context.json({
+      learningSessionId:
+        requestedLearningSessionId ??
+        (current?.learningSessionId
+          ? LearningSessionIdSchema.parse(current.learningSessionId)
+          : null),
       interview: current ? readPublicInterview(state, current.id) : null,
     });
   });
 
+  app.get("/api/interviews/v2/:id/disclosures/pending", async (context) => {
+    const query = InterviewPendingDisclosureQuerySchema.parse(
+      context.req.queries(),
+    );
+    const learningSessionId = query.learningSessionId?.[0] ?? null;
+    if (
+      learningSessionId &&
+      !readKnownLearningSessionId(state, learningSessionId)
+    ) {
+      return pendingDisclosureNotFound(context);
+    }
+
+    let interview: InterviewRow;
+    try {
+      interview = readInterviewRow(state, context.req.param("id"));
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith("Unknown interview:")
+      ) {
+        return pendingDisclosureNotFound(context);
+      }
+      throw error;
+    }
+    if (interview.learningSessionId !== learningSessionId) {
+      return pendingDisclosureNotFound(context);
+    }
+
+    const stored = parseStoredState(interview);
+    if ((stored.setup.learningSessionId ?? null) !== learningSessionId) {
+      return pendingDisclosureNotFound(context);
+    }
+    const kind = query.kind[0];
+    const operationId = query.operationId[0];
+    let continuation: InterviewDisclosureContinuation;
+    let payload: string;
+    if (kind === "start") {
+      if (
+        interview.status !== "setup" ||
+        stored.setup.operationId !== operationId ||
+        readTranscript(state, stored.setup.conversationId).length !== 0
+      ) {
+        return pendingDisclosureNotFound(context);
+      }
+      continuation = startDisclosureContinuation(interview, stored);
+      payload = buildQuestionPrompt(stored, [], 1);
+    } else {
+      const questionId = query.questionId?.[0];
+      if (!questionId || interview.status !== "in_progress") {
+        return pendingDisclosureNotFound(context);
+      }
+      const transcript = readTranscript(state, stored.setup.conversationId);
+      const answer = findMessageByKey(
+        state,
+        messageKey(interview.id, "answer", operationId),
+      );
+      const answerIndex = answer
+        ? transcript.findIndex((message) => message.id === answer.id)
+        : -1;
+      const answeredQuestion =
+        answerIndex > 0 ? transcript[answerIndex - 1] : undefined;
+      if (
+        !answer ||
+        answer.role !== "user" ||
+        answeredQuestion?.role !== "assistant" ||
+        answeredQuestion.id !== questionId ||
+        findMessageByKey(
+          state,
+          messageKey(interview.id, "follow-up", operationId),
+        ) ||
+        countRole(transcript, "assistant") !== countRole(transcript, "user") ||
+        countRole(transcript, "user") >= stored.setup.questionCount
+      ) {
+        return pendingDisclosureNotFound(context);
+      }
+      continuation = InterviewDisclosureContinuationSchema.parse({
+        kind: "answer",
+        learningSessionId,
+        interviewId: interview.id,
+        questionId,
+        operationId,
+      });
+      payload = buildQuestionPrompt(
+        stored,
+        transcript,
+        countRole(transcript, "user") + 1,
+      );
+    }
+
+    const disclosure = await state.providerRuntime.findPendingDisclosure({
+      role: "interviewer",
+      payload,
+      entityIds: interviewDisclosureEntityIds(continuation),
+    });
+    return disclosure
+      ? context.json(toInterviewPendingDisclosure(continuation, disclosure))
+      : pendingDisclosureNotFound(context);
+  });
+
   app.get("/api/interviews/v2/:id", (context) => {
-    return context.json(readPublicInterview(state, context.req.param("id")));
+    const query = InterviewReadQuerySchema.parse({
+      learningSessionId: context.req.query("learningSessionId"),
+    });
+    const interview = readPublicInterview(state, context.req.param("id"));
+    if (
+      query.learningSessionId &&
+      interview.learningSessionId !== query.learningSessionId
+    ) {
+      return context.json({ error: "Interview not found." }, 404);
+    }
+    return context.json(interview);
+  });
+
+  app.post("/api/interviews/v2/:id/abandon", async (context) => {
+    const body = InterviewAbandonRequestSchema.parse(await context.req.json());
+    const interviewId = context.req.param("id");
+    if (state.interviewReservations.interviewIds.has(interviewId)) {
+      return context.json({ error: interviewOperationConflictMessage }, 409);
+    }
+    state.interviewReservations.interviewIds.add(interviewId);
+    try {
+      const interview = readInterviewRow(state, interviewId);
+      const stored = parseStoredState(interview);
+      if (
+        interview.status !== "setup" ||
+        stored.setup.operationId !== body.operationId ||
+        readTranscript(state, stored.setup.conversationId).length !== 0
+      ) {
+        return context.json({ error: "Interview cannot be abandoned." }, 409);
+      }
+      state.connection.sqlite.exec("BEGIN IMMEDIATE");
+      try {
+        state.connection.sqlite
+          .prepare("DELETE FROM interview_sessions WHERE id = ?")
+          .run(interview.id);
+        state.connection.sqlite
+          .prepare("DELETE FROM agent_conversations WHERE id = ?")
+          .run(stored.setup.conversationId);
+        state.connection.sqlite.exec("COMMIT");
+      } catch (error) {
+        state.connection.sqlite.exec("ROLLBACK");
+        throw error;
+      }
+      return context.json({
+        abandoned: {
+          interviewId: interview.id,
+          operationId: stored.setup.operationId,
+        },
+      });
+    } finally {
+      state.interviewReservations.interviewIds.delete(interviewId);
+    }
   });
 
   app.post("/api/interviews/v2/:id/answers", async (context) => {
@@ -294,6 +505,13 @@ export function registerInterviewV2Routes(
         );
       }
       const stored = parseStoredState(interview);
+      if (
+        (stored.setup.learningSessionId ?? null) !== interview.learningSessionId
+      ) {
+        throw new Error(
+          `Interview learning-session association is invalid: ${interview.id}`,
+        );
+      }
       if (interview.status !== "in_progress") {
         return context.json(
           { error: "Interview is not accepting answers." },
@@ -324,6 +542,20 @@ export function registerInterviewV2Routes(
           409,
         );
       }
+      const existingAnswerIndex = existingAnswer
+        ? transcriptBefore.findIndex(
+            (message) => message.id === existingAnswer.id,
+          )
+        : -1;
+      const answeredQuestion = existingAnswer
+        ? transcriptBefore[existingAnswerIndex - 1]
+        : transcriptBefore.findLast((message) => message.role === "assistant");
+      if (!answeredQuestion || answeredQuestion.role !== "assistant") {
+        return context.json(
+          { error: "There is no pending interview question." },
+          409,
+        );
+      }
 
       if (!existingAnswer) {
         addMessage(state, {
@@ -348,22 +580,21 @@ export function registerInterviewV2Routes(
       ) {
         try {
           const selection = await readStoredInterviewerSelection(state, stored);
-          if (selection.connection.external && !body.disclosureOperationId) {
-            const preparation = await state.providerRuntime.prepareDisclosure({
-              role: "interviewer",
+          if (!body.disclosureOperationId) {
+            const continuation = InterviewDisclosureContinuationSchema.parse({
+              kind: "answer",
+              learningSessionId: interview.learningSessionId,
+              interviewId: interview.id,
+              questionId: answeredQuestion.id,
+              operationId: body.operationId,
+            });
+            const pending = await prepareInterviewDisclosure(state, {
+              continuation,
               payload: buildQuestionPrompt(stored, transcript, answered + 1),
               payloadCategories: ["course-content", "learner-message"],
-              entityIds: { interview: interview.id },
-              exclusions: [
-                "protected-evaluation",
-                "credentials",
-                "local-paths",
-              ],
               destinationPurpose: "Generate one bounded follow-up question",
             });
-            if (preparation.required) {
-              return context.json({ kind: "disclosure", ...preparation }, 202);
-            }
+            if (pending) return context.json(pending, 202);
           }
           const question = await requestQuestion(
             state,
@@ -506,6 +737,125 @@ function upsertInterviewUnitProgress(
       learningSessionId,
       unit.unitId,
     );
+}
+
+function startDisclosureContinuation(
+  interview: InterviewRow,
+  stored: StoredState,
+): InterviewDisclosureContinuation {
+  const learningSessionId = interview.learningSessionId
+    ? LearningSessionIdSchema.parse(interview.learningSessionId)
+    : null;
+  if ((stored.setup.learningSessionId ?? null) !== learningSessionId) {
+    throw new Error(
+      `Interview learning-session association is invalid: ${interview.id}`,
+    );
+  }
+  return InterviewDisclosureContinuationSchema.parse({
+    kind: "start",
+    learningSessionId,
+    interviewId: interview.id,
+    operationId: stored.setup.operationId,
+  });
+}
+
+function interviewDisclosureEntityIds(
+  continuation: InterviewDisclosureContinuation,
+): Record<string, string> {
+  return {
+    "interview-action": continuation.kind,
+    interview: disclosureEntityId("interview", continuation.interviewId),
+    "interview-operation": disclosureEntityId(
+      "operation",
+      continuation.operationId,
+    ),
+    "interview-scope": continuation.learningSessionId
+      ? "learning-session"
+      : "standalone",
+    ...(continuation.learningSessionId
+      ? {
+          "learning-session": disclosureEntityId(
+            "learning-session",
+            continuation.learningSessionId,
+          ),
+        }
+      : {}),
+    ...(continuation.kind === "answer"
+      ? {
+          "interview-question": disclosureEntityId(
+            "question",
+            continuation.questionId,
+          ),
+        }
+      : {}),
+  };
+}
+
+function disclosureEntityId(prefix: string, value: string): string {
+  return `${prefix}:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+async function prepareInterviewDisclosure(
+  state: InterviewV2State,
+  input: {
+    continuation: InterviewDisclosureContinuation;
+    payload: string;
+    payloadCategories: AiDisclosure["scope"]["payloadCategories"];
+    destinationPurpose: string;
+  },
+): Promise<InterviewPendingDisclosure | null> {
+  const entityIds = interviewDisclosureEntityIds(input.continuation);
+  const existing = await state.providerRuntime.findPendingDisclosure({
+    role: "interviewer",
+    payload: input.payload,
+    entityIds,
+  });
+  if (existing) {
+    return toInterviewPendingDisclosure(input.continuation, existing);
+  }
+  const preparation = await state.providerRuntime.prepareDisclosure({
+    role: "interviewer",
+    payload: input.payload,
+    payloadCategories: input.payloadCategories,
+    entityIds,
+    exclusions: ["protected-evaluation", "credentials", "local-paths"],
+    destinationPurpose: input.destinationPurpose,
+  });
+  return preparation.required
+    ? toInterviewPendingDisclosure(input.continuation, preparation.disclosure)
+    : null;
+}
+
+function toInterviewPendingDisclosure(
+  continuation: InterviewDisclosureContinuation,
+  disclosure: AiDisclosure,
+): InterviewPendingDisclosure {
+  return InterviewPendingDisclosureSchema.parse({
+    kind: "disclosure",
+    required: true,
+    continuation,
+    disclosure: {
+      operationId: disclosure.operationId,
+      status: disclosure.status,
+      createdAt: disclosure.createdAt,
+      expiresAt: disclosure.expiresAt,
+      scope: {
+        destination: disclosure.scope.destination,
+        payloadCategories: disclosure.scope.payloadCategories,
+        byteCount: disclosure.scope.byteCount,
+        exclusions: disclosure.scope.exclusions,
+      },
+    },
+  });
+}
+
+function pendingDisclosureNotFound(
+  context: Parameters<Parameters<Hono["onError"]>[0]>[1],
+) {
+  return context.json(
+    { error: "Pending interview disclosure not found." },
+    404,
+  );
 }
 
 function buildQuestionPrompt(
@@ -763,7 +1113,7 @@ function deriveReport(
         ? [
             "Раскрывать причинно-следственную цепочку и приводить минимальный пример.",
           ]
-        : ["Подтвердить техническую корректность ответов отдельным review."],
+        : ["Подтвердить техническую корректность ответов отдельной проверкой."],
     evidence,
   });
 }
@@ -771,11 +1121,20 @@ function deriveReport(
 function readPublicInterview(state: InterviewV2State, id: string) {
   const row = readInterviewRow(state, id);
   const stored = parseStoredState(row);
+  const learningSessionId =
+    row.learningSessionId === null
+      ? null
+      : LearningSessionIdSchema.parse(row.learningSessionId);
+  if ((stored.setup.learningSessionId ?? null) !== learningSessionId) {
+    throw new Error(`Interview learning-session association is invalid: ${id}`);
+  }
   const transcript = readTranscript(state, stored.setup.conversationId);
   const questionsAsked = countRole(transcript, "assistant");
   const questionsAnswered = countRole(transcript, "user");
   return {
     id: row.id,
+    learningSessionId,
+    resumeOperationId: row.status === "setup" ? stored.setup.operationId : null,
     status: InterviewStatusSchema.parse(row.status),
     setup: {
       topics: stored.setup.topics,
@@ -816,17 +1175,43 @@ function readInterviewRow(state: InterviewV2State, id: string): InterviewRow {
   return row;
 }
 
-function findCurrentInterview(state: InterviewV2State): InterviewRow | null {
-  return (state.connection.sqlite
-    .prepare(
-      `SELECT id, learning_session_id AS learningSessionId, status,
-              result_json AS resultJson, started_at AS startedAt,
-              completed_at AS completedAt
-       FROM interview_sessions
-       WHERE status IN ('setup', 'in_progress')
-       ORDER BY started_at DESC LIMIT 1`,
-    )
-    .get() ?? null) as InterviewRow | null;
+function findCurrentInterview(
+  state: InterviewV2State,
+  learningSessionId?: string,
+): InterviewRow | null {
+  const row = learningSessionId
+    ? state.connection.sqlite
+        .prepare(
+          `SELECT id, learning_session_id AS learningSessionId, status,
+                  result_json AS resultJson, started_at AS startedAt,
+                  completed_at AS completedAt
+           FROM interview_sessions
+           WHERE status IN ('setup', 'in_progress')
+             AND learning_session_id = ?
+           ORDER BY started_at DESC LIMIT 1`,
+        )
+        .get(learningSessionId)
+    : state.connection.sqlite
+        .prepare(
+          `SELECT id, learning_session_id AS learningSessionId, status,
+                  result_json AS resultJson, started_at AS startedAt,
+                  completed_at AS completedAt
+           FROM interview_sessions
+           WHERE status IN ('setup', 'in_progress')
+           ORDER BY started_at DESC LIMIT 1`,
+        )
+        .get();
+  return (row ?? null) as InterviewRow | null;
+}
+
+function readKnownLearningSessionId(
+  state: InterviewV2State,
+  learningSessionId: string,
+): string | null {
+  const row = state.connection.sqlite
+    .prepare("SELECT id FROM learning_sessions WHERE id = ?")
+    .get(learningSessionId) as { id: string } | undefined;
+  return row ? LearningSessionIdSchema.parse(row.id) : null;
 }
 
 function findInterviewByOperation(

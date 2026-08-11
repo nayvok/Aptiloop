@@ -98,7 +98,9 @@ describe("resolveWorkspacePath", () => {
 });
 
 async function temporaryDirectory(): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), "dlh-workspace-path-"));
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "aptiloop-workspace-path-"),
+  );
   temporaryDirectories.push(directory);
   return directory;
 }

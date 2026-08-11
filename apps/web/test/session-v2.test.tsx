@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -11,26 +12,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SessionClient } from "@/components/session-client";
 import { LocaleProvider } from "@/lib/i18n";
+import { lessonActivityDraftStorageKey } from "@/lib/lesson-activity-drafts";
 
-const { apiMock, pushMock, searchState, streamAgentMock } = vi.hoisted(() => ({
-  apiMock: vi.fn(),
-  pushMock: vi.fn(),
-  searchState: { value: "id=session-v2" },
-  streamAgentMock: vi.fn(async function* (): AsyncGenerator<
-    Record<string, unknown>
-  > {
-    yield {
-      type: "message.delta",
-      turnId: "turn-1",
-      content: "Уточняющий вопрос Teacher",
-    };
-    yield {
-      type: "session.completed",
-      turnId: "turn-1",
-      reason: "completed",
-    };
-  }),
-}));
+const { apiMock, pushMock, searchState, streamAgentMock, toastErrorMock } =
+  vi.hoisted(() => ({
+    apiMock: vi.fn(),
+    pushMock: vi.fn(),
+    searchState: { value: "id=session-v2" },
+    streamAgentMock: vi.fn(async function* (): AsyncGenerator<
+      Record<string, unknown>
+    > {
+      yield {
+        type: "message.delta",
+        turnId: "turn-1",
+        content: "Уточняющий вопрос Teacher",
+      };
+      yield {
+        type: "session.completed",
+        turnId: "turn-1",
+        reason: "completed",
+      };
+    }),
+    toastErrorMock: vi.fn(),
+  }));
 
 vi.mock("@/lib/api", () => ({
   api: apiMock,
@@ -40,6 +44,10 @@ vi.mock("@/lib/api", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
   useSearchParams: () => new URLSearchParams(searchState.value),
+}));
+
+vi.mock("sonner", () => ({
+  toast: { error: toastErrorMock },
 }));
 
 const now = "2026-08-01T00:00:00.000Z";
@@ -376,6 +384,21 @@ function makeSession(
 
 type SessionFixture = ReturnType<typeof makeSession>;
 
+function activityDraftKey(session: SessionFixture) {
+  const unit = session.snapshot.units[0];
+  if (!unit) throw new Error("Draft fixture is incomplete");
+  return lessonActivityDraftStorageKey({
+    learningSessionId: session.id,
+    currentStep: session.currentStep,
+    revisionId: session.snapshot.curriculumVersionId,
+    snapshotId: session.snapshot.contentHash,
+    snapshotHash: session.snapshot.contentHash,
+    activityId: unit.id,
+    activityStableId: unit.stableId,
+    activityType: unit.type,
+  });
+}
+
 function replaceProgress(
   session: SessionFixture,
   status: UnitStatus,
@@ -451,8 +474,13 @@ function makeMultiSession(
   const first = entries[0];
   if (!first) throw new Error("Multi-session fixture needs at least one unit");
   const base = makeSession(first.type, first.status);
+  const current =
+    entries.find((entry) => entry.status === "in_progress") ??
+    entries.find((entry) => entry.status === "ready");
   return {
     ...base,
+    status: current ? "active" : "completed",
+    currentStep: current ? `day-1-${current.type}` : "complete",
     snapshot: {
       ...base.snapshot,
       units: entries.map((entry) => makeUnit(entry.type)),
@@ -514,6 +542,8 @@ beforeEach(() => {
   apiMock.mockReset();
   pushMock.mockReset();
   streamAgentMock.mockClear();
+  toastErrorMock.mockReset();
+  window.localStorage.clear();
   searchState.value = "id=session-v2";
   let id = 0;
   Object.defineProperty(globalThis, "crypto", {
@@ -528,43 +558,554 @@ afterEach(() => {
 });
 
 describe("guided versioned session", () => {
-  it("keeps the active unit in focus and shows the day plan only in the drawer", async () => {
+  it("keeps the active unit in focus with a responsive lesson plan", async () => {
     apiMock.mockResolvedValue({ session: makeSession("briefing") });
     renderWithQuery(<SessionClient />);
 
-    const trigger = await screen.findByRole("button", { name: /План урока/u });
+    const trigger = await screen.findByRole("button", { name: /Шаги урока/u });
     expect(trigger).toBeVisible();
-    // План не вытесняет активную работу: drawer закрыт, unit в фокусе.
+    expect(trigger).toHaveClass("xl:hidden");
+    // The plan stays beside the work on wide screens and moves into a sheet below xl.
     expect(document.querySelector('[data-slot="day-plan-sheet"]')).toBeNull();
-    expect(screen.getByText("Брифинг")).toBeInTheDocument();
-    expect(screen.queryByText("Цель")).not.toBeInTheDocument();
+    const focus = document.querySelector('[data-slot="lesson-focus"]');
+    const rail = document.querySelector('[data-slot="day-plan-rail"]');
+    expect(within(focus as HTMLElement).getByText("Брифинг")).toBeVisible();
+    expect(within(focus as HTMLElement).queryByText("Цель")).toBeNull();
+    expect(rail).toHaveClass(
+      "hidden",
+      "xl:block",
+      "sticky",
+      "overflow-y-auto",
+      "overscroll-contain",
+      "[scrollbar-gutter:stable]",
+    );
+    expect(rail).toHaveAccessibleName("Шаги урока");
+    expect(rail).toHaveTextContent("Урок 1 · Значения, типы и объекты");
 
     fireEvent.click(trigger);
     await screen.findByRole("dialog");
     const plan = document.querySelector('[data-slot="day-plan-sheet"]');
+    const summary = plan?.querySelector('[data-slot="day-plan-summary"]');
+    const stepper = plan?.querySelector('[data-slot="day-plan-stepper"]');
+    const activeBlock = plan?.querySelector(
+      '[data-slot="plan-block"][data-status="in_progress"]',
+    );
+    const activeStep = plan?.querySelector(
+      '[data-slot="plan-step"][data-status="in_progress"]',
+    );
     expect(plan).toHaveTextContent("Этапы обучения");
+    expect(summary).toHaveTextContent("0 / 1");
+    expect(stepper).toContainElement(activeBlock as HTMLElement);
+    expect(activeBlock).toHaveAttribute("aria-current", "step");
+    expect(activeStep).toHaveAttribute("aria-current", "step");
     expect(plan).toHaveTextContent("Построить точную причинную модель");
     expect(plan).toHaveTextContent("Темы");
     expect(plan).toHaveTextContent("Ожидаемые результаты");
     expect(plan).toHaveTextContent("Вне занятия");
     expect(plan).toHaveTextContent("Брифинг");
+    expect(
+      plan?.querySelector('[data-slot="day-plan-goal"]'),
+    ).not.toHaveAttribute("open");
+    expect(
+      plan?.querySelector('[data-slot="day-plan-topics"]'),
+    ).not.toHaveAttribute("open");
   });
 
-  it("shows the compact progress header with block, step, time and continue-later", async () => {
+  it("shows completed, active, and locked phases as one vertical plan", async () => {
+    const session = {
+      ...makeMultiSession([
+        { type: "briefing", status: "completed" },
+        { type: "study", status: "completed" },
+        { type: "quiz", status: "in_progress" },
+        { type: "exercise", status: "locked" },
+      ]),
+      status: "active" as const,
+      currentStep: "day-1-quiz",
+    };
+    apiMock.mockResolvedValue({ session });
+    renderWithQuery(<SessionClient />);
+
+    expect(
+      await screen.findByText("Этап 2 из 3 · Подтвердить · Активность 1 из 1"),
+    ).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: /Шаги урока/u }));
+    await screen.findByRole("dialog");
+
+    expect(
+      document.querySelector('[data-slot="plan-block"][data-block="study"]'),
+    ).toHaveAttribute("data-status", "completed");
+    expect(
+      document.querySelector('[data-slot="plan-block"][data-block="check"]'),
+    ).toHaveAttribute("aria-current", "step");
+    expect(
+      document.querySelector('[data-slot="plan-block"][data-block="practice"]'),
+    ).toHaveAttribute("data-status", "locked");
+    expect(
+      document.querySelector(
+        '[data-slot="plan-step"][data-status="in_progress"]',
+      ),
+    ).toHaveAttribute("aria-current", "step");
+    expect(
+      document.querySelector('[data-slot="plan-step"][data-status="locked"]'),
+    ).not.toHaveAttribute("aria-current");
+  });
+
+  it("counts skipped progress as terminal in both orientation and lesson plan", async () => {
+    const session = makeMultiSession([
+      { type: "briefing", status: "skipped" },
+      { type: "study", status: "ready" },
+    ]);
+    apiMock.mockResolvedValue({ session });
+    renderWithQuery(<SessionClient />);
+
+    expect(
+      await screen.findByRole("button", { name: /Шаги урока/u }),
+    ).toBeVisible();
+    const header = document.querySelector(
+      '[data-slot="session-progress-header"]',
+    );
+    expect(within(header as HTMLElement).getByText("1 / 2")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /Шаги урока/u }));
+    await screen.findByRole("dialog");
+    const summary = document.querySelector('[data-slot="day-plan-summary"]');
+    const skippedStep = document.querySelector(
+      '[data-slot="plan-step"][data-status="skipped"]',
+    );
+    expect(summary).toHaveTextContent("1 / 2");
+    expect(skippedStep).toHaveTextContent("Пропущено");
+    expect(skippedStep).not.toHaveAttribute("aria-current");
+  });
+
+  it("renders an open lesson orientation with one connected activity focus", async () => {
     apiMock.mockResolvedValue({ session: makeSession("briefing", "ready") });
     renderWithQuery(<SessionClient />);
 
     await screen.findByRole("button", { name: /Начать активность/u });
+    const guided = document.querySelector('[data-slot="guided-session"]');
+    expect(guided).toBeInTheDocument();
+    expect(guided).not.toHaveClass("mx-auto", "max-w-[56rem]");
     const header = document.querySelector(
       '[data-slot="session-progress-header"]',
     );
-    expect(header).toHaveTextContent("Урок 1 · Значения, типы и объекты");
-    expect(header).toHaveTextContent("Этап 1 из 3 · Понять");
-    expect(header).toHaveTextContent("Активность 1 из 1");
+    const orientation = document.querySelector(
+      '[data-slot="session-orientation"]',
+    );
+    expect(header).toHaveClass("sticky", "border-b");
+    expect(header).not.toHaveClass("rounded-focus", "bg-card", "shadow-sm");
+    expect(orientation).toHaveClass("mx-auto", "max-w-[48rem]");
+    expect(header).toHaveTextContent("Значения, типы и объекты");
+    expect(
+      within(header as HTMLElement).getByText(
+        "Этап 1 из 1 · Понять · Активность 1 из 1",
+      ),
+    ).toHaveAttribute("data-slot", "phase-activity-line");
     expect(header).toHaveTextContent("Осталось на этапе:");
+    expect(
+      within(header as HTMLElement).getAllByRole("progressbar"),
+    ).toHaveLength(1);
+    expect(
+      within(header as HTMLElement).getByRole("heading", { level: 1 }),
+    ).toHaveClass("text-lg");
+    expect(
+      within(header as HTMLElement).getByRole("heading", { level: 1 }),
+    ).toHaveAccessibleName("Урок 1 · Значения, типы и объекты");
+    expect(
+      within(header as HTMLElement).getByRole("button", {
+        name: "Шаги урока",
+      }),
+    ).toHaveAttribute("data-variant", "outline");
+    expect(
+      within(header as HTMLElement).getByRole("button", {
+        name: "Продолжить позже",
+      }),
+    ).toHaveAttribute("data-variant", "ghost");
+
+    const focus = document.querySelector('[data-slot="lesson-focus"]');
+    const ready = document.querySelector('[data-slot="unit-ready"]');
+    const learningBrief = document.querySelector(
+      '[data-slot="unit-learning-brief"]',
+    );
+    expect(focus).toContainElement(ready as HTMLElement);
+    expect(focus).toHaveClass("w-full", "min-w-0");
+    expect(
+      document.querySelector('[data-slot="lesson-workspace"]'),
+    ).toHaveClass(
+      "max-w-[77rem]",
+      "xl:grid-cols-[minmax(0,48rem)_minmax(24rem,26rem)]",
+    );
+    expect(ready).toHaveClass("w-full");
+    expect(ready).not.toHaveClass(
+      "rounded-focus",
+      "rounded-control",
+      "border",
+      "bg-card",
+    );
+    expect(ready).toContainElement(learningBrief as HTMLElement);
+    expect(learningBrief).toHaveTextContent("Описание briefing");
+    expect(learningBrief).toHaveTextContent("Объяснить механизм");
+    expect(learningBrief).toHaveTextContent("JavaScript");
+    expect(learningBrief).toHaveTextContent("Подтверждения завершения");
+    expect(learningBrief).toHaveTextContent("Отметить обязательные пункты: 1");
+    expect(learningBrief).toHaveTextContent(
+      "Для этой активности источник ещё не назначен.",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Продолжить позже" }));
     expect(pushMock).toHaveBeenCalledWith("/");
+  });
+
+  it("uses persisted currentStep instead of inferring focus from statuses", async () => {
+    const session = {
+      ...makeMultiSession([
+        { type: "briefing", status: "ready" },
+        { type: "study", status: "in_progress" },
+      ]),
+      currentStep: "day-1-briefing",
+    };
+    apiMock.mockResolvedValue({ session });
+    renderWithQuery(<SessionClient />);
+
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Юнит briefing" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { level: 2, name: "Юнит study" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Начать активность" }),
+    ).toBeEnabled();
+  });
+
+  it("resets renderer state when currentStep moves between same-type activities", async () => {
+    const firstUnit = makeUnit("study");
+    const secondUnit = {
+      ...makeUnit("study"),
+      id: "unit-study-2",
+      stableId: "day-1-study-2",
+      order: 2,
+      title: "Юнит study 2",
+      checklist: [
+        {
+          id: "study-2-required",
+          label: "Второй обязательный пункт",
+          required: true,
+        },
+      ],
+      completionCriteria: [
+        { type: "checklist" as const, requiredItemIds: ["study-2-required"] },
+      ],
+    };
+    const initial = makeSession("study");
+    initial.snapshot.units = [firstUnit, secondUnit];
+    initial.unitProgress = [
+      initial.unitProgress[0]!,
+      {
+        ...initial.unitProgress[0]!,
+        unitId: secondUnit.id,
+        status: "ready",
+        payload: progressPayload("study"),
+        startedAt: null,
+      },
+    ];
+    const next = {
+      ...initial,
+      currentStep: secondUnit.stableId,
+      unitProgress: [
+        {
+          ...initial.unitProgress[0]!,
+          status: "completed" as const,
+          payload: {
+            type: "study" as const,
+            checkedItemIds: ["study-required"],
+            notes: "Черновик первой активности",
+          },
+          completedAt: now,
+        },
+        {
+          ...initial.unitProgress[1]!,
+          status: "in_progress" as const,
+          startedAt: now,
+        },
+      ],
+    };
+    apiMock.mockResolvedValue({ session: initial });
+    const { client } = renderWithQuery(<SessionClient />);
+
+    fireEvent.click(await screen.findByLabelText(/^Обязательный пункт/u));
+    fireEvent.change(screen.getByLabelText("Заметки"), {
+      target: { value: "Черновик первой активности" },
+    });
+
+    act(() => {
+      client.setQueryData(["learning-session-v2", "session-v2"], {
+        session: next,
+      });
+    });
+
+    expect(
+      await screen.findByRole("heading", { level: 2, name: secondUnit.title }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Заметки")).toHaveValue("");
+    expect(
+      screen.getByLabelText(/^Второй обязательный пункт/u),
+    ).not.toBeChecked();
+  });
+
+  it("restores a bounded Study draft after remount", async () => {
+    const session = makeSession("study");
+    const storageKey = activityDraftKey(session);
+    apiMock.mockResolvedValue({ session });
+    const firstRender = renderWithQuery(<SessionClient />);
+
+    fireEvent.click(await screen.findByLabelText(/^Обязательный пункт/u));
+    fireEvent.change(screen.getByLabelText("Заметки"), {
+      target: { value: "Неподтверждённая заметка для продолжения" },
+    });
+    await vi.waitFor(() => {
+      expect(window.localStorage.getItem(storageKey)).toContain(
+        "Неподтверждённая заметка для продолжения",
+      );
+    });
+
+    firstRender.unmount();
+    renderWithQuery(<SessionClient />);
+
+    expect(await screen.findByLabelText("Заметки")).toHaveValue(
+      "Неподтверждённая заметка для продолжения",
+    );
+    expect(screen.getByLabelText(/^Обязательный пункт/u)).toBeChecked();
+  });
+
+  it("restores unsent Recall answers without storing server evidence", async () => {
+    const session = makeSession("recall");
+    const storageKey = activityDraftKey(session);
+    apiMock.mockResolvedValue({ session });
+    const firstRender = renderWithQuery(<SessionClient />);
+
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: /Чем binding отличается/u }),
+      {
+        target: { value: "Binding хранит связь, а значение является данными." },
+      },
+    );
+    await vi.waitFor(() => {
+      const stored = window.localStorage.getItem(storageKey);
+      expect(stored).toContain("Binding хранит связь");
+      expect(stored).not.toContain("firstAttemptId");
+      expect(stored).not.toContain("correctness");
+    });
+
+    firstRender.unmount();
+    renderWithQuery(<SessionClient />);
+
+    expect(
+      await screen.findByRole("textbox", { name: /Чем binding отличается/u }),
+    ).toHaveValue("Binding хранит связь, а значение является данными.");
+  });
+
+  it("restores only the unsent Teacher revision, not provider output", async () => {
+    const session = makeSession("teacher-dialogue");
+    const storageKey = activityDraftKey(session);
+    mockTeacherDialogueApi();
+    const firstRender = renderWithQuery(<SessionClient />);
+
+    fireEvent.change(await screen.findByLabelText("Уточнённое объяснение"), {
+      target: { value: "Черновик уточнения механизма без отправки Teacher." },
+    });
+    await vi.waitFor(() => {
+      const stored = window.localStorage.getItem(storageKey);
+      expect(stored).toContain("Черновик уточнения механизма");
+      expect(stored).not.toContain("messages");
+      expect(stored).not.toContain("assistant");
+    });
+
+    firstRender.unmount();
+    renderWithQuery(<SessionClient />);
+
+    expect(await screen.findByLabelText("Уточнённое объяснение")).toHaveValue(
+      "Черновик уточнения механизма без отправки Teacher.",
+    );
+  });
+
+  it("restores unsent Quiz selections without persisting an answer key", async () => {
+    const session = makeSession("quiz");
+    const storageKey = activityDraftKey(session);
+    apiMock.mockResolvedValue({ session });
+    const firstRender = renderWithQuery(<SessionClient />);
+
+    fireEvent.click(await screen.findByLabelText("string"));
+    fireEvent.click(screen.getByLabelText("Deep copy"));
+    await vi.waitFor(() => {
+      const stored = window.localStorage.getItem(storageKey);
+      expect(stored).toContain("q1-a");
+      expect(stored).toContain("q2-b");
+      expect(stored).not.toContain("correctOptionIds");
+      expect(stored).not.toContain("referenceAnswer");
+    });
+
+    firstRender.unmount();
+    renderWithQuery(<SessionClient />);
+
+    expect(await screen.findByLabelText("string")).toBeChecked();
+    expect(screen.getByLabelText("Deep copy")).toBeChecked();
+  });
+
+  it("restores all unsent Code reading fields", async () => {
+    const session = makeSession("code-reading");
+    apiMock.mockResolvedValue({ session });
+    const firstRender = renderWithQuery(<SessionClient />);
+
+    fireEvent.change(await screen.findByLabelText("Предсказание"), {
+      target: { value: "Изменится только внешняя ссылка" },
+    });
+    fireEvent.change(screen.getByLabelText("Объяснение механизма"), {
+      target: { value: "Spread создаёт поверхностную копию" },
+    });
+    fireEvent.change(screen.getByLabelText("Исправление словами"), {
+      target: { value: "Скопировать вложенное значение отдельно" },
+    });
+    await vi.waitFor(() => {
+      expect(window.localStorage.getItem(activityDraftKey(session))).toContain(
+        "Скопировать вложенное значение отдельно",
+      );
+    });
+
+    firstRender.unmount();
+    renderWithQuery(<SessionClient />);
+
+    expect(await screen.findByLabelText("Предсказание")).toHaveValue(
+      "Изменится только внешняя ссылка",
+    );
+    expect(screen.getByLabelText("Объяснение механизма")).toHaveValue(
+      "Spread создаёт поверхностную копию",
+    );
+    expect(screen.getByLabelText("Исправление словами")).toHaveValue(
+      "Скопировать вложенное значение отдельно",
+    );
+  });
+
+  it("isolates activity drafts by exact learning session", async () => {
+    const firstSession = makeSession("study");
+    apiMock.mockResolvedValue({ session: firstSession });
+    const firstRender = renderWithQuery(<SessionClient />);
+
+    fireEvent.change(await screen.findByLabelText("Заметки"), {
+      target: { value: "Только для первой сессии" },
+    });
+    await vi.waitFor(() => {
+      expect(
+        window.localStorage.getItem(activityDraftKey(firstSession)),
+      ).not.toBeNull();
+    });
+    firstRender.unmount();
+
+    const secondSession = { ...makeSession("study"), id: "session-other" };
+    searchState.value = "id=session-other";
+    apiMock.mockResolvedValue({ session: secondSession });
+    renderWithQuery(<SessionClient />);
+
+    expect(await screen.findByLabelText("Заметки")).toHaveValue("");
+    expect(activityDraftKey(secondSession)).not.toBe(
+      activityDraftKey(firstSession),
+    );
+  });
+
+  it("fails closed and removes malformed activity draft storage", async () => {
+    const session = makeSession("study");
+    const storageKey = activityDraftKey(session);
+    window.localStorage.setItem(storageKey, "{malformed");
+    apiMock.mockResolvedValue({ session });
+
+    renderWithQuery(<SessionClient />);
+
+    expect(await screen.findByLabelText("Заметки")).toHaveValue("");
+    await vi.waitFor(() => {
+      expect(window.localStorage.getItem(storageKey)).toBeNull();
+    });
+  });
+
+  it("clears a Study draft only after the server accepts it", async () => {
+    const session = makeSession("study");
+    const saved = replaceProgress(session, "in_progress", {
+      type: "study",
+      checkedItemIds: [],
+      notes: "Принятая сервером заметка",
+    });
+    const storageKey = activityDraftKey(session);
+    apiMock
+      .mockResolvedValueOnce({ session })
+      .mockRejectedValueOnce(new Error("Temporary write failure"))
+      .mockResolvedValueOnce({ session: saved });
+    renderWithQuery(<SessionClient />);
+
+    fireEvent.change(await screen.findByLabelText("Заметки"), {
+      target: { value: "Принятая сервером заметка" },
+    });
+    await vi.waitFor(() => {
+      expect(window.localStorage.getItem(storageKey)).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить заметки" }));
+    await vi.waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith("Temporary write failure");
+    });
+    expect(window.localStorage.getItem(storageKey)).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить заметки" }));
+    await vi.waitFor(() => {
+      expect(window.localStorage.getItem(storageKey)).toBeNull();
+    });
+    expect(screen.getByLabelText("Заметки")).toHaveValue(
+      "Принятая сервером заметка",
+    );
+  });
+
+  it("fails closed when currentStep does not identify a snapshot activity", async () => {
+    apiMock.mockResolvedValue({
+      session: {
+        ...makeSession("study", "in_progress"),
+        currentStep: "missing-stable-step",
+      },
+    });
+    renderWithQuery(<SessionClient />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Прогресс текущей активности отсутствует.",
+    );
+    expect(
+      screen.queryByRole("heading", { level: 2, name: "Юнит study" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("routes pending spaced review to Review instead of showing a disabled action", async () => {
+    apiMock.mockResolvedValue({ session: makeSession("spaced-review") });
+    renderWithQuery(<SessionClient />);
+
+    const reviewLink = await screen.findByRole("link", { name: "Повторение" });
+    expect(reviewLink).toHaveAttribute("href", "/review");
+    expect(
+      screen.queryByRole("button", { name: "Начать серверное повторение" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reports a transient activity mutation failure with a toast", async () => {
+    apiMock
+      .mockResolvedValueOnce({ session: makeSession("briefing", "ready") })
+      .mockRejectedValueOnce(new Error("Activity start unavailable"));
+    renderWithQuery(<SessionClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Начать активность" }),
+    );
+
+    await vi.waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith("Activity start unavailable");
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Начать активность" }),
+    ).toBeEnabled();
   });
 
   it("opens a new interview from its unit with a return session id", async () => {
@@ -657,6 +1198,23 @@ describe("guided versioned session", () => {
     expect(screen.getByText("Глубина")).toBeInTheDocument();
     expect(screen.getByText("Не рассматриваем")).toBeInTheDocument();
     expect(screen.getByText("План")).toBeInTheDocument();
+    const activity = document.querySelector('[data-slot="activity-frame"]');
+    const briefing = document.querySelector('[data-slot="briefing"]');
+    const overview = document.querySelector('[data-slot="briefing-overview"]');
+    const plan = document.querySelector('[data-slot="briefing-plan"]');
+    const sources = document.querySelector('[data-slot="unit-sources"]');
+    const actions = document.querySelector('[data-slot="briefing-actions"]');
+    expect(
+      document.querySelectorAll('[data-slot="activity-frame"]'),
+    ).toHaveLength(1);
+    expect(activity).toContainElement(briefing as HTMLElement);
+    expect(overview).toHaveClass("border-y");
+    expect(plan).toHaveClass("border-b");
+    expect(sources).toHaveClass("border-y");
+    expect(actions).toHaveClass("border-t");
+    for (const section of [overview, plan, sources, actions]) {
+      expect(section).not.toHaveClass("bg-surface-soft", "rounded-panel");
+    }
     expect(
       screen.queryByLabelText("Подтверждаю: цели и границы дня понятны"),
     ).not.toBeInTheDocument();
@@ -692,10 +1250,13 @@ describe("guided versioned session", () => {
     apiMock.mockResolvedValue({ session });
     renderWithQuery(<SessionClient />);
 
-    expect(await screen.findByText("Этап 1 из 3 завершён")).toBeVisible();
+    expect(await screen.findByText("Этап 1 из 2 завершён")).toBeVisible();
     expect(screen.getByText("Далее: Подтвердить")).toBeVisible();
     expect(screen.getByText("Вы разобрали:")).toBeVisible();
-    expect(screen.getByText("Юнит study")).toBeVisible();
+    const transition = document.querySelector('[data-slot="block-transition"]');
+    expect(
+      within(transition as HTMLElement).getByText("Юнит study"),
+    ).toBeVisible();
     expect(screen.getByText(/Подтвердить · Активностей: 1/u)).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Продолжить сейчас" }),
@@ -778,7 +1339,7 @@ describe("guided versioned session", () => {
     expect(screen.getByText(/Используйте свой источник/u)).toBeVisible();
     expect(
       screen.getByRole("link", { name: "Открыть редактор курса" }),
-    ).toHaveAttribute("href", "/settings/curriculum");
+    ).toHaveAttribute("href", "/courses/studio?version=curriculum-version-2");
   });
 
   it("persists study notes with same-status PATCH and gates completion on required checklist", async () => {
@@ -916,6 +1477,79 @@ describe("guided versioned session", () => {
     expect(
       await screen.findByRole("button", { name: /Завершить воспроизведение/u }),
     ).toBeEnabled();
+  });
+
+  it("keeps the second Recall draft when the first answer changes server progress", async () => {
+    const session = makeSession("recall");
+    const firstDraft =
+      "Binding — это имя, связанное со значением, а не само значение.";
+    const secondDraft =
+      "Присваивание меняет связь имени, не мутируя прежнее значение.";
+    const firstSaved = replaceProgress(session, "in_progress", {
+      type: "recall",
+      answers: [
+        {
+          questionId: "recall-q1",
+          draft: firstDraft,
+          firstAttemptId: "recall-evidence-1",
+        },
+      ],
+      draft: firstDraft,
+      firstAttemptId: "recall-evidence-1",
+    });
+    firstSaved.unitProgress[0]!.updatedAt = "2026-08-01T00:01:00.000Z";
+    let currentSession = session;
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/learning/sessions/v2/session-v2") {
+        return Promise.resolve({ session: currentSession });
+      }
+      if (path.endsWith("/recall-attempts")) {
+        currentSession = firstSaved;
+        return Promise.resolve({
+          evidence: {
+            id: "recall-evidence-1",
+            isFirstAttempt: true,
+            questionId: "recall-q1",
+          },
+          session: firstSaved,
+        });
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+    const firstRender = renderWithQuery(<SessionClient />);
+
+    fireEvent.change(
+      await screen.findByLabelText(/Чем binding отличается от значения/u),
+      { target: { value: firstDraft } },
+    );
+    fireEvent.change(
+      screen.getByLabelText(/Почему присваивание не меняет исходный binding/u),
+      { target: { value: secondDraft } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить ответ 1" }));
+
+    await vi.waitFor(() => {
+      expect(
+        screen.getByLabelText(
+          /Почему присваивание не меняет исходный binding/u,
+        ),
+      ).toHaveValue(secondDraft);
+      expect(
+        window.localStorage.getItem(activityDraftKey(firstSaved)),
+      ).toContain(secondDraft);
+    });
+
+    firstRender.unmount();
+    renderWithQuery(<SessionClient />);
+
+    expect(
+      await screen.findByLabelText(
+        /Почему присваивание не меняет исходный binding/u,
+      ),
+    ).toHaveValue(secondDraft);
+    expect(
+      screen.getByLabelText(/Чем binding отличается от значения/u),
+    ).toBeDisabled();
   });
 
   it("restores question-scoped recall answers after reload and keeps unfinished recall open", async () => {
@@ -1404,9 +2038,18 @@ describe("guided versioned session", () => {
       .mockResolvedValueOnce({ session: completed });
     renderWithQuery(<SessionClient />);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Сформировать итог" }),
-    );
+    const generateButton = await screen.findByRole("button", {
+      name: "Сформировать итог",
+    });
+    const activity = document.querySelector('[data-slot="activity-frame"]');
+    const generate = document.querySelector('[data-slot="summary-generate"]');
+    expect(
+      document.querySelectorAll('[data-slot="activity-frame"]'),
+    ).toHaveLength(1);
+    expect(activity).toContainElement(generate as HTMLElement);
+    expect(generate).toHaveClass("border-y");
+    expect(generate).not.toHaveClass("bg-surface-soft", "rounded-xl");
+    fireEvent.click(generateButton);
     expect(
       await screen.findByText(
         "День завершён на основе сохранённых подтверждений навыка.",
@@ -1414,6 +2057,20 @@ describe("guided versioned session", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("50%")).toBeInTheDocument();
     expect(screen.getByText(/Добавлено исправлений: 1/u)).toBeInTheDocument();
+    const summary = document.querySelector('[data-slot="day-summary"]');
+    const narrative = document.querySelector('[data-slot="summary-narrative"]');
+    const metrics = document.querySelector('[data-slot="summary-metrics"]');
+    const insights = document.querySelector('[data-slot="summary-insights"]');
+    const actions = document.querySelector('[data-slot="summary-actions"]');
+    expect(summary).toHaveClass("divide-y", "border-y");
+    expect(metrics?.tagName).toBe("DL");
+    for (const section of [narrative, metrics, insights, actions]) {
+      expect(section).not.toHaveClass(
+        "bg-surface-soft",
+        "rounded-xl",
+        "rounded-panel",
+      );
+    }
     expect(apiMock).toHaveBeenNthCalledWith(
       2,
       "/learning/sessions/v2/session-v2/units/unit-summary/summary",
@@ -1486,5 +2143,6 @@ describe("guided versioned session", () => {
       "Session endpoint unavailable",
     );
     expect(screen.getByRole("button", { name: "Повторить" })).toBeEnabled();
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 });

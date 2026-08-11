@@ -7,8 +7,11 @@ import {
   toAptiloopAiRole,
   type AgentProvider,
   type ResolvedProviderTurn,
-} from "@dlh/agent-core";
-import { ProviderHubRepository, type DatabaseConnection } from "@dlh/database";
+} from "@aptiloop/agent-core";
+import {
+  ProviderHubRepository,
+  type DatabaseConnection,
+} from "@aptiloop/database";
 import {
   AgentEventSchema,
   AiDisclosureSchema,
@@ -25,7 +28,7 @@ import {
   type ProviderConnection,
   type RoleBudgets,
   type RoleProfile,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 const sha256 = (payload: string) =>
   `sha256:${createHash("sha256").update(payload, "utf8").digest("hex")}`;
@@ -84,6 +87,12 @@ export interface PrepareDisclosureInput {
   readonly entityIds?: Readonly<Record<string, string>>;
   readonly exclusions?: readonly string[];
   readonly destinationPurpose: string;
+}
+
+export interface FindPendingDisclosureInput {
+  readonly role: AgentRole;
+  readonly payload: string;
+  readonly entityIds: Readonly<Record<string, string>>;
 }
 
 export type DisclosurePreparation =
@@ -286,6 +295,41 @@ export class ProviderRuntime {
     });
     this.#repository.createDisclosure(disclosure);
     return { required: true, disclosure };
+  }
+
+  async findPendingDisclosure(
+    input: FindPendingDisclosureInput,
+  ): Promise<AiDisclosure | null> {
+    const inspected = await this.inspectRole(input.role);
+    if (!inspected.connection.external) return null;
+    const role = toAptiloopAiRole(input.role);
+    const now = this.#now();
+    const matches = this.#repository
+      .findPendingDisclosures({
+        role,
+        payloadSha256: sha256(input.payload),
+        connectionId: inspected.connection.connectionId,
+        providerType: inspected.connection.providerType,
+        modelId: inspected.modelId,
+        entityIds: input.entityIds,
+        now: now.toISOString(),
+      })
+      .filter(
+        (candidate) =>
+          candidate.status === "pending" &&
+          Date.parse(candidate.expiresAt) > now.getTime() &&
+          candidate.scope.connectionId === inspected.connection.connectionId &&
+          candidate.scope.providerType === inspected.connection.providerType &&
+          candidate.scope.modelId === inspected.modelId &&
+          sameEntityIds(candidate.scope.entityIds, input.entityIds),
+      );
+    if (matches.length > 1) {
+      throw new ProviderHubError(
+        "disclosure_mismatch",
+        "Multiple pending disclosures match the provider operation",
+      );
+    }
+    return matches[0] ?? null;
   }
 
   approveDisclosure(operationId: string): AiDisclosure {
@@ -722,4 +766,16 @@ export function providerFailurePayload(error: unknown) {
     error: providerError.message,
     failure: providerError.failure,
   };
+}
+
+function sameEntityIds(
+  left: Readonly<Record<string, string>>,
+  right: Readonly<Record<string, string>>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => left[key] === right[key])
+  );
 }

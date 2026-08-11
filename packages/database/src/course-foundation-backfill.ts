@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import {
   validateActivityGraph,
   type ActivityGraphIssue,
-} from "@dlh/learning-core";
+} from "@aptiloop/learning-core";
 import {
   ActivityDefinitionSchema,
   SessionSnapshotSchema,
   UnitTypeSchema,
   type SessionSnapshot,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 import type { DatabaseConnection } from "./database.js";
 

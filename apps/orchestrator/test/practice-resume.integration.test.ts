@@ -11,7 +11,7 @@ import {
   fingerprintExerciseDiff,
   getExerciseDiff,
   snapshotCompleteWorkspace,
-} from "@dlh/exercise-core";
+} from "@aptiloop/exercise-core";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -30,13 +30,15 @@ afterEach(async () => {
 function runtime(databasePath?: string, attemptsRoot?: string) {
   const databaseRoot = databasePath
     ? path.dirname(databasePath)
-    : mkdtempSync(path.join(process.env.TEMP ?? projectRoot, "dlh-resume-db-"));
+    : mkdtempSync(
+        path.join(process.env.TEMP ?? projectRoot, "aptiloop-resume-db-"),
+      );
   const resolvedDatabasePath =
     databasePath ?? path.join(databaseRoot, "test.sqlite");
   const resolvedAttemptsRoot =
     attemptsRoot ??
     mkdtempSync(
-      path.join(process.env.TEMP ?? projectRoot, "dlh-resume-attempt-"),
+      path.join(process.env.TEMP ?? projectRoot, "aptiloop-resume-attempt-"),
     );
   if (!databasePath) roots.push(databaseRoot);
   if (!attemptsRoot) roots.push(resolvedAttemptsRoot);
@@ -64,7 +66,7 @@ function request(
     ...init,
     headers: {
       Host: "127.0.0.1:8787",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
       ...init?.headers,

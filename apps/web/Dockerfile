@@ -22,7 +22,7 @@ ARG ORCHESTRATOR_BIND_MODE
 ENV ORCHESTRATOR_URL=${ORCHESTRATOR_URL}
 ENV ORCHESTRATOR_BIND_MODE=${ORCHESTRATOR_BIND_MODE}
 COPY . .
-RUN npm run build --workspace=@dlh/web
+RUN npm run build --workspace=@aptiloop/web
 
 FROM node:24.15.0-bookworm-slim AS runner
 ENV NODE_ENV=production

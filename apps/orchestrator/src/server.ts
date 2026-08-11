@@ -14,9 +14,7 @@ const server = serve(
     hostname,
   },
   (info) => {
-    console.log(
-      `Dev Learning Harness orchestrator: http://${hostname}:${info.port}`,
-    );
+    console.log(`Aptiloop orchestrator: http://${hostname}:${info.port}`);
   },
 );
 

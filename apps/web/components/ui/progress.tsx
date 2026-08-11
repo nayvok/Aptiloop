@@ -19,14 +19,14 @@ export function Progress({
       value={safeValue}
       max={safeMax}
       className={cn(
-        "relative h-1.5 w-full overflow-hidden rounded-full bg-secondary",
+        "relative h-2 w-full overflow-hidden rounded-full bg-muted",
         className,
       )}
       {...props}
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className="h-full bg-primary transition-transform duration-200 motion-reduce:transition-none"
+        className="h-full bg-primary transition-transform duration-150 motion-reduce:transition-none"
         style={{ transform: `translateX(-${100 - percentage}%)` }}
       />
     </ProgressPrimitive.Root>

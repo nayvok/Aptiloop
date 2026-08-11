@@ -10,12 +10,20 @@ import {
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { authoringBriefDescription } from "@/app/courses/new/authoring-brief";
 import { CurriculumEditorClient } from "@/components/curriculum-editor-client";
 import { LocaleProvider } from "@/lib/i18n";
 
-const { apiMock, fetchMock } = vi.hoisted(() => ({
+const { apiMock, fetchMock, pushMock, replaceMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
   fetchMock: vi.fn(),
+  pushMock: vi.fn(),
+  replaceMock: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: pushMock, replace: replaceMock }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 const now = 1_722_000_000_000;
@@ -46,7 +54,11 @@ function version(
 }
 
 function listItem(value: ReturnType<typeof version>) {
-  return { ...value, curriculumSlug: "javascript-foundation" };
+  return {
+    ...value,
+    curriculumSlug: "javascript-foundation",
+    primaryLocale: "ru-RU",
+  };
 }
 
 function week(id: string, versionId: string, title = "Неделя 1") {
@@ -134,8 +146,11 @@ function renderEditor(children: ReactNode = <CurriculumEditorClient />) {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   apiMock.mockReset();
   fetchMock.mockReset();
+  pushMock.mockReset();
+  replaceMock.mockReset();
   fetchMock.mockImplementation(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input).replace(/^\/api/u, "");
@@ -167,20 +182,15 @@ afterEach(() => {
 });
 
 describe("CurriculumEditorClient", () => {
-  it("creates a draft graph, reorders units, and publishes only after explicit acknowledgement", async () => {
-    const versions: ReturnType<typeof listItem>[] = [];
+  it("edits a draft graph, reorders units, and publishes only after explicit acknowledgement", async () => {
+    const draft = version("draft-1", 1, "draft");
+    const versions: ReturnType<typeof listItem>[] = [listItem(draft)];
     const graphs = new Map<
       string,
       { version: ReturnType<typeof version>; weeks: ReturnType<typeof week>[] }
-    >();
+    >([[draft.id, { version: draft, weeks: [] }]]);
     apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === "/curriculum-editor/versions" && !init) return { versions };
-      if (path === "/curriculum-editor/versions" && init?.method === "POST") {
-        const created = version("draft-1", 1, "draft");
-        versions.push(listItem(created));
-        graphs.set(created.id, { version: created, weeks: [] });
-        return { version: created };
-      }
       const graphMatch = path.match(
         /^\/curriculum-editor\/versions\/([^/]+)$/u,
       );
@@ -246,6 +256,20 @@ describe("CurriculumEditorClient", () => {
             added: 4,
             changed: 0,
             removed: 0,
+            changes: [
+              { operation: "added", entityType: "week", stableId: "week-1" },
+              { operation: "added", entityType: "day", stableId: "day-1" },
+              {
+                operation: "added",
+                entityType: "unit",
+                stableId: "unit-first",
+              },
+              {
+                operation: "added",
+                entityType: "unit",
+                stableId: "unit-second",
+              },
+            ],
             ready: true,
           },
         };
@@ -300,23 +324,9 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
-    expect(await screen.findByText("Ревизий пока нет.")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Создать новую редакцию"));
-    fireEvent.change(screen.getByLabelText("ID программы"), {
-      target: { value: "curriculum-js" },
-    });
-    fireEvent.change(screen.getByLabelText("Slug"), {
-      target: { value: "javascript-foundation" },
-    });
-    fireEvent.change(screen.getByLabelText("Название программы"), {
-      target: { value: "JavaScript" },
-    });
-    fireEvent.change(screen.getByLabelText("Название ревизии"), {
-      target: { value: "JavaScript foundation" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Создать черновик" }));
-
+    const view = renderEditor(
+      <CurriculumEditorClient initialVersionId={draft.id} />,
+    );
     expect(
       await screen.findByText("В черновике пока нет недель"),
     ).toBeInTheDocument();
@@ -376,7 +386,10 @@ describe("CurriculumEditorClient", () => {
       ).toEqual(["Второй юнит", "Первый юнит"]),
     );
 
-    const publish = screen.getByRole("button", {
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Выпуск" }), {
+      button: 0,
+    });
+    let publish = screen.getByRole("button", {
       name: "Опубликовать неизменяемую ревизию",
     });
     expect(publish).toBeDisabled();
@@ -387,6 +400,11 @@ describe("CurriculumEditorClient", () => {
     });
     await waitFor(() => expect(previewAction).toBeEnabled());
     fireEvent.click(previewAction);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /^JavaScript foundation$/u,
+      }),
+    );
     expect(await screen.findByText(/Дней: 1/u)).toBeInTheDocument();
     const reviewAction = screen.getByRole("button", {
       name: "Проверить изменения",
@@ -396,6 +414,37 @@ describe("CurriculumEditorClient", () => {
     expect(
       await screen.findByText("Добавлено: 4 · Изменено: 0 · Удалено: 0"),
     ).toBeInTheDocument();
+    expect(screen.getByText("unit-first")).toBeInTheDocument();
+    expect(screen.getByText("unit-second")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          window.localStorage.getItem(
+            `aptiloop:studio-release:${draft.id}:${draft.updatedAt}`,
+          ) ?? "{}",
+        ),
+      ).toEqual(
+        expect.objectContaining({
+          validation: expect.objectContaining({ valid: true }),
+          preview: expect.objectContaining({ draftHash: expect.any(String) }),
+          review: expect.objectContaining({ ready: true }),
+        }),
+      ),
+    );
+
+    view.unmount();
+    renderEditor(
+      <CurriculumEditorClient
+        initialVersionId={draft.id}
+        initialWorkspace="release"
+      />,
+    );
+    expect(
+      await screen.findByText("Добавлено: 4 · Изменено: 0 · Удалено: 0"),
+    ).toBeInTheDocument();
+    publish = screen.getByRole("button", {
+      name: "Опубликовать неизменяемую ревизию",
+    });
     fireEvent.click(
       screen.getByLabelText(
         "Я понимаю, что опубликованную ревизию нельзя редактировать.",
@@ -408,6 +457,293 @@ describe("CurriculumEditorClient", () => {
     expect(apiMock).toHaveBeenCalledWith(
       expect.stringContaining("/publish"),
       expect.objectContaining({ method: "POST" }),
+    );
+  }, 15_000);
+
+  it("selects the requested revision and prioritizes its requested Studio mode", async () => {
+    const first = version("draft-first", 1, "draft");
+    const target = {
+      ...version("draft-target", 2, "draft", first.id),
+      description: authoringBriefDescription({
+        topicGoal: "Асинхронный JavaScript",
+        targetOutcome: "Самостоятельно собрать конкурентный сценарий",
+        currentLevel: "Знаком с Promise",
+        primaryLocale: "ru-RU",
+        pacing: "30 минут в день",
+        tools: "Node.js 24",
+        accessibility: "Краткие текстовые блоки",
+        constraints: "Без фреймворков",
+      }),
+    };
+    const targetGraph = {
+      version: target,
+      weeks: [] as ReturnType<typeof week>[],
+    };
+    const draftHash = `sha256:${"a".repeat(64)}`;
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init)
+        return { versions: [listItem(first), listItem(target)] };
+      if (path === "/curriculum-editor/versions/draft-target" && !init)
+        return { curriculum: structuredClone(targetGraph) };
+      if (path.endsWith("/designer/workflows") && !init)
+        return { workflows: [] };
+      if (path.endsWith("/designer/proposals") && !init)
+        return { proposals: [] };
+      if (
+        path === "/curriculum-editor/courses/curriculum-js/adaptation" &&
+        !init
+      )
+        return {
+          branch: null,
+          revisions: [
+            {
+              ...target,
+              branchKind: "upstream",
+              basedOnContentHash: null,
+              adaptationBranchId: null,
+            },
+          ],
+          comparison: {
+            status: "current",
+            baseRevisionId: target.id,
+            upstreamRevisionId: target.id,
+            personalVersionId: null,
+            baseDraftHash: draftHash,
+            upstreamDraftHash: draftHash,
+            personalDraftHash: null,
+            conflicts: [],
+          },
+        };
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    const view = renderEditor(
+      <CurriculumEditorClient
+        initialVersionId="draft-target"
+        initialMode="designer"
+      />,
+    );
+    expect(await screen.findByLabelText("Учебная цель")).toHaveValue(
+      "Асинхронный JavaScript",
+    );
+    expect(screen.getByLabelText("Целевой результат")).toHaveValue(
+      "Самостоятельно собрать конкурентный сценарий",
+    );
+    fireEvent.change(screen.getByLabelText("Целевой результат"), {
+      target: { value: "UNSAVED-AUDIT" },
+    });
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          window.localStorage.getItem(
+            "aptiloop:studio-designer:draft-target",
+          ) ?? "{}",
+        ),
+      ).toEqual(expect.objectContaining({ targetOutcome: "UNSAVED-AUDIT" })),
+    );
+    expect(screen.getByLabelText("Текущий уровень")).toHaveValue(
+      "Знаком с Promise",
+    );
+    const studioHeader = view.container.querySelector(
+      '[data-slot="course-studio-header"]',
+    );
+    expect(studioHeader).toHaveTextContent("Асинхронный JavaScript");
+    expect(studioHeader).not.toHaveTextContent("Aptiloop authoring brief v2");
+    expect(
+      screen.queryByRole("button", { name: "Клонировать в черновик" }),
+    ).not.toBeInTheDocument();
+
+    expect(apiMock).toHaveBeenCalledWith(
+      "/curriculum-editor/versions/draft-target",
+      undefined,
+    );
+    expect(apiMock).not.toHaveBeenCalledWith(
+      "/curriculum-editor/versions/draft-first",
+      undefined,
+    );
+    expect(screen.getByRole("tab", { name: "Designer" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      view.container.querySelector(
+        '[data-slot="studio-workspace-tabs-scroll"]',
+      ),
+    ).toHaveClass(
+      "overflow-x-auto",
+      "overflow-y-hidden",
+      "overscroll-x-contain",
+    );
+    expect(
+      view.container.querySelector('[data-slot="course-designer"]'),
+    ).not.toBeNull();
+    expect(
+      view.container.querySelector('[data-slot="manual-course-editor"]'),
+    ).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Ограничения · Одобренные источники/u,
+      }),
+    );
+    expect(screen.getByLabelText("Ограничения")).toHaveValue(
+      "Основная локаль курса: ru-RU\nТемп и доступное время: 30 минут в день\nПотребности доступности: Краткие текстовые блоки\nБез фреймворков",
+    );
+    expect(screen.getByLabelText("Требования к среде выполнения")).toHaveValue(
+      "Node.js 24",
+    );
+
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Программа" }), {
+      button: 0,
+    });
+    expect(replaceMock).toHaveBeenCalledWith(
+      "/courses/studio?version=draft-target&tab=program",
+      { scroll: false },
+    );
+    expect(
+      await screen.findByText("В черновике пока нет недель"),
+    ).toBeInTheDocument();
+    expect(
+      view.container.querySelector('[data-slot="manual-course-editor"]'),
+    ).not.toBeNull();
+    expect(
+      view.container.querySelector('[data-slot="course-designer"]'),
+    ).toBeNull();
+
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Designer" }), {
+      button: 0,
+    });
+    expect(await screen.findByLabelText("Целевой результат")).toHaveValue(
+      "UNSAVED-AUDIT",
+    );
+
+    view.unmount();
+    renderEditor(
+      <CurriculumEditorClient
+        initialVersionId="draft-target"
+        initialMode="designer"
+      />,
+    );
+    expect(await screen.findByLabelText("Целевой результат")).toHaveValue(
+      "UNSAVED-AUDIT",
+    );
+  });
+
+  it("keeps a cloned draft scoped while the explicit Studio list refreshes", async () => {
+    const unrelated = version("published-unrelated", 1, "published");
+    const source = version("published-source", 2, "published", unrelated.id);
+    const draft = version("draft-source", 3, "draft", source.id);
+    const sourceGraph = { version: source, weeks: [] };
+    const draftGraph = { version: draft, weeks: [] };
+    let versionListReads = 0;
+    let resolveRefresh:
+      | ((value: { versions: ReturnType<typeof listItem>[] }) => void)
+      | undefined;
+
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) {
+        versionListReads += 1;
+        if (versionListReads === 1) {
+          return { versions: [listItem(unrelated), listItem(source)] };
+        }
+        return await new Promise<{ versions: ReturnType<typeof listItem>[] }>(
+          (resolve) => {
+            resolveRefresh = resolve;
+          },
+        );
+      }
+      if (path === `/curriculum-editor/versions/${source.id}` && !init) {
+        return { curriculum: sourceGraph };
+      }
+      if (path === `/curriculum-editor/versions/${source.id}/clone`) {
+        return { version: draft };
+      }
+      if (path === `/curriculum-editor/versions/${draft.id}` && !init) {
+        return { curriculum: draftGraph };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor(<CurriculumEditorClient initialVersionId={source.id} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Клонировать в черновик" }),
+    );
+    await waitFor(() => expect(resolveRefresh).toBeDefined());
+
+    expect(apiMock).not.toHaveBeenCalledWith(
+      `/curriculum-editor/versions/${unrelated.id}`,
+      undefined,
+    );
+    resolveRefresh!({
+      versions: [listItem(draft), listItem(unrelated), listItem(source)],
+    });
+
+    await waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith(
+        `/curriculum-editor/versions/${draft.id}`,
+        undefined,
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: "Граф выбранной ревизии" }),
+      ).toHaveTextContent("Черновик"),
+    );
+  });
+
+  it("requires an explicit revision instead of opening the first Course", async () => {
+    const available = version("draft-available", 1, "draft");
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) {
+        return { versions: [listItem(available)] };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor();
+
+    expect(await screen.findByText("Выберите ревизию")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Studio не откроет другой курс автоматически/u),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Курсы" })).toHaveAttribute(
+      "href",
+      "/courses",
+    );
+    expect(screen.getByRole("link", { name: "Создать курс" })).toHaveAttribute(
+      "href",
+      "/courses/new",
+    );
+    expect(apiMock).not.toHaveBeenCalledWith(
+      `/curriculum-editor/versions/${available.id}`,
+      undefined,
+    );
+  });
+
+  it("fails closed when an explicit Studio revision no longer exists", async () => {
+    const available = version("draft-available", 1, "draft");
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) {
+        return { versions: [listItem(available)] };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor(<CurriculumEditorClient initialVersionId="draft-missing" />);
+
+    expect(
+      await screen.findByText("Ревизия курса не найдена"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Другой курс не был открыт вместо неё/u),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Курсы" })).toHaveAttribute(
+      "href",
+      "/courses",
+    );
+    expect(apiMock).not.toHaveBeenCalledWith(
+      "/curriculum-editor/versions/draft-available",
+      undefined,
     );
   });
 
@@ -446,11 +782,25 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
+    renderEditor(
+      <CurriculumEditorClient initialVersionId={sourceVersion.id} />,
+    );
     expect(await screen.findByText("Оригинальная неделя")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Клонировать в черновик" }),
     );
+    await waitFor(() => {
+      const clone = apiMock.mock.calls.find(
+        ([path, init]) =>
+          String(path).endsWith("/clone") && init?.method === "POST",
+      );
+      expect(clone).toBeDefined();
+      const body = JSON.parse(String(clone?.[1]?.body)) as Record<
+        string,
+        unknown
+      >;
+      expect(body.title).toBe(sourceVersion.title);
+    });
     fireEvent.click(await screen.findByRole("button", { name: "Изменить" }));
     const form = screen.getByRole("form", {
       name: "Редактировать неделю Оригинальная неделя",
@@ -520,7 +870,7 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
+    renderEditor(<CurriculumEditorClient initialVersionId={draftVersion.id} />);
     expect(await screen.findByText("Наследуемый юнит")).toBeInTheDocument();
     const unitCard = screen.getByText("Наследуемый юнит").closest("article")!;
     fireEvent.click(within(unitCard).getByRole("button", { name: "Изменить" }));
@@ -581,7 +931,7 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
+    renderEditor(<CurriculumEditorClient initialVersionId={published.id} />);
     const clone = await screen.findByRole("button", {
       name: "Клонировать в черновик",
     });
@@ -614,7 +964,7 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
+    renderEditor(<CurriculumEditorClient initialVersionId={published.id} />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Клонировать в черновик" }),
     );
@@ -643,7 +993,10 @@ describe("CurriculumEditorClient", () => {
           curriculum: structuredClone(graphs.get("draft-add-week")!),
         };
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      if (path === "/curriculum-editor/versions" && init?.method === "POST") {
+      if (
+        path === `/curriculum-editor/versions/${published.id}/clone` &&
+        init?.method === "POST"
+      ) {
         const draft = version("draft-add-week", 2, "draft", published.id);
         versions.unshift(listItem(draft));
         graphs.set(draft.id, { version: draft, weeks: [] });
@@ -667,7 +1020,11 @@ describe("CurriculumEditorClient", () => {
       );
       if (dayMatch && init?.method === "POST") {
         const draft = graphs.get("draft-add-week")!;
-        const created = day("day-add-week", "draft-add-week", "week-add-week");
+        const created = day(
+          `day-add-week-${draft.weeks[0]!.days.length + 1}`,
+          "draft-add-week",
+          "week-add-week",
+        );
         created.title = String(body.title);
         created.goal = String(body.goal);
         Object.assign(created, {
@@ -680,7 +1037,7 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
+    renderEditor(<CurriculumEditorClient initialVersionId={published.id} />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Добавить следующую неделю" }),
     );
@@ -707,17 +1064,17 @@ describe("CurriculumEditorClient", () => {
     await waitFor(() => {
       const create = apiMock.mock.calls.find(
         ([path, init]) =>
-          path === "/curriculum-editor/versions" && init?.method === "POST",
+          path === `/curriculum-editor/versions/${published.id}/clone` &&
+          init?.method === "POST",
       );
       expect(create).toBeDefined();
       const body = JSON.parse(String(create?.[1]?.body)) as Record<
         string,
         unknown
       >;
-      expect(body.curriculum).toMatchObject({
-        id: "curriculum-js",
-        slug: "javascript-foundation",
-      });
+      expect(body.title).toBe(published.title);
+      expect(body.description).toBe(published.description);
+      expect(body).not.toHaveProperty("curriculum");
     });
     await waitFor(() =>
       expect(graphs.get("draft-add-week")!.weeks[0]!.days).toHaveLength(2),
@@ -792,7 +1149,7 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
+    renderEditor(<CurriculumEditorClient initialVersionId={draft.id} />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Добавить следующую неделю" }),
     );
@@ -868,7 +1225,11 @@ describe("CurriculumEditorClient", () => {
         destination:
           "OpenAI via Pi: optional Course draft authoring assistance",
         payloadCategories: ["course-content", "learner-message"],
-        entityIds: { "course-revision": draft.id },
+        entityIds: {
+          "course-revision": draft.id,
+          "course-designer-workflow": workflow.id,
+          "course-designer-authoring-operation": "operation-designer",
+        },
         exclusions: ["credentials", "environment variables"],
         byteCount: 1_024,
         payloadSha256: draftHash,
@@ -939,6 +1300,23 @@ describe("CurriculumEditorClient", () => {
     };
     let generated = false;
     let created = false;
+    let pendingAuthoringOperationId: string | null = null;
+    let disclosurePreparations = 0;
+    const pendingDisclosure = () => ({
+      operationId: pendingAuthoringOperationId,
+      workflowId: workflow.id,
+      versionId: draft.id,
+      disclosure: {
+        ...disclosure,
+        scope: {
+          ...disclosure.scope,
+          entityIds: {
+            ...disclosure.scope.entityIds,
+            "course-designer-authoring-operation": pendingAuthoringOperationId,
+          },
+        },
+      },
+    });
     apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === "/curriculum-editor/versions" && !init) {
         return { versions: [listItem(draft)] };
@@ -971,12 +1349,29 @@ describe("CurriculumEditorClient", () => {
         return { workflow: structuredClone(workflow) };
       }
       if (path.endsWith("/disclosures") && init?.method === "POST") {
-        return { required: true, disclosure };
+        disclosurePreparations += 1;
+        pendingAuthoringOperationId = (
+          JSON.parse(String(init.body)) as { operationId: string }
+        ).operationId;
+        return {
+          required: true,
+          disclosure: pendingDisclosure().disclosure,
+        };
+      }
+      if (path.endsWith("/disclosures") && !init) {
+        return {
+          pendingDisclosure:
+            pendingAuthoringOperationId &&
+            workflow.state === "CURRICULUM_PROPOSAL"
+              ? pendingDisclosure()
+              : null,
+        };
       }
       if (
         path === "/ai/disclosures/disclosure%3Adesigner-test/approve" &&
         init?.method === "POST"
       ) {
+        pendingAuthoringOperationId = null;
         return {
           disclosure: {
             ...disclosure,
@@ -1018,7 +1413,12 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
+    const rendered = renderEditor(
+      <CurriculumEditorClient
+        initialVersionId={draft.id}
+        initialMode="designer"
+      />,
+    );
     fireEvent.change(await screen.findByLabelText("Учебная цель"), {
       target: { value: "Создать вводный модуль" },
     });
@@ -1028,6 +1428,11 @@ describe("CurriculumEditorClient", () => {
     fireEvent.change(screen.getByLabelText("Текущий уровень"), {
       target: { value: "Начальный" },
     });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Ограничения · Одобренные источники/u,
+      }),
+    );
     fireEvent.change(screen.getByLabelText("Ограничения"), {
       target: { value: "Одна сессия" },
     });
@@ -1046,15 +1451,30 @@ describe("CurriculumEditorClient", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Пропустить диагностику" }),
     );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Сгенерировать предложение",
-      }),
-    );
+    const generateButton = await screen.findByRole("button", {
+      name: "Сгенерировать предложение",
+    });
+    await waitFor(() => expect(generateButton).toBeEnabled());
+    fireEvent.click(generateButton);
 
     expect(
       await screen.findByText("Передача внешнему провайдеру"),
     ).toBeInTheDocument();
+    expect(generated).toBe(false);
+    expect(disclosurePreparations).toBe(1);
+
+    rendered.unmount();
+    renderEditor(
+      <CurriculumEditorClient
+        initialVersionId={draft.id}
+        initialMode="designer"
+      />,
+    );
+    expect(
+      await screen.findByText("Передача внешнему провайдеру"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Отмена" })).toBeInTheDocument();
+    expect(disclosurePreparations).toBe(1);
     expect(generated).toBe(false);
     fireEvent.click(
       screen.getByRole("button", { name: "Разрешить и сгенерировать" }),
@@ -1063,6 +1483,9 @@ describe("CurriculumEditorClient", () => {
     expect(
       await screen.findByText("Добавить вводную неделю"),
     ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Предложено изменений: 1" }),
+    );
     expect(screen.getByText(/openai · gpt-5\.2/u)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Отклонить" }),
@@ -1160,12 +1583,18 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
+    renderEditor(<CurriculumEditorClient initialVersionId={upstream.id} />);
+    fireEvent.mouseDown(
+      await screen.findByRole("tab", { name: "История и адаптация" }),
+      { button: 0 },
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "Создать личную адаптацию" }),
     );
 
-    expect(await screen.findByText("Моя адаптация")).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText("Моя адаптация")).length,
+    ).toBeGreaterThan(0);
     expect(created).toBe(true);
     expect(
       apiMock.mock.calls.some(
@@ -1267,7 +1696,11 @@ describe("CurriculumEditorClient", () => {
       throw new Error(`Unexpected API call ${path}`);
     });
 
-    renderEditor();
+    renderEditor(<CurriculumEditorClient initialVersionId={upstream.id} />);
+    fireEvent.mouseDown(
+      await screen.findByRole("tab", { name: "История и адаптация" }),
+      { button: 0 },
+    );
     expect(await screen.findByText("unit:unit-core")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Использовать исходную версию" }),

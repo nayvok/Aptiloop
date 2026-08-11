@@ -5,7 +5,7 @@ import {
   type LearningKernelFactBody,
   type LearningKernelFactProvenance,
   type LearningKernelScope,
-} from "@dlh/learning-core";
+} from "@aptiloop/learning-core";
 
 import {
   createCurriculumAuthoringRepository,

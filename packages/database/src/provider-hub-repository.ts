@@ -12,7 +12,7 @@ import {
   type ProviderTurnProvenance,
   type RoleProfile,
   type ToolPolicy,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 import type { DatabaseConnection } from "./database.js";
 
@@ -277,6 +277,55 @@ export class ProviderHubRepository {
       )
       .get(operationId) as DisclosureRow | undefined;
     return row ? this.#toDisclosure(row) : null;
+  }
+
+  findPendingDisclosures(input: {
+    role: AiDisclosure["scope"]["role"];
+    payloadSha256: AiDisclosure["scope"]["payloadSha256"];
+    connectionId: string;
+    providerType: string;
+    modelId: string;
+    entityIds: Readonly<Record<string, string>>;
+    now: string;
+  }): AiDisclosure[] {
+    const rows = this.#connection.sqlite
+      .prepare(
+        `SELECT operation.operation_id AS operationId
+         FROM ai_disclosure_operations operation
+         JOIN ai_disclosure_events event
+           ON event.operation_id = operation.operation_id
+         WHERE operation.role = ?
+           AND operation.payload_sha256 = ?
+           AND operation.connection_id = ?
+           AND operation.provider_type = ?
+           AND operation.model_id = ?
+           AND operation.entity_ids_json = ?
+           AND operation.expires_at > ?
+           AND event.sequence = (
+             SELECT MAX(latest.sequence)
+             FROM ai_disclosure_events latest
+             WHERE latest.operation_id = operation.operation_id
+           )
+           AND event.status = 'pending'
+         ORDER BY operation.created_at ASC, operation.operation_id ASC
+         LIMIT 2`,
+      )
+      .all(
+        input.role,
+        input.payloadSha256,
+        input.connectionId,
+        input.providerType,
+        input.modelId,
+        JSON.stringify(input.entityIds),
+        input.now,
+      ) as unknown as Array<{ operationId: string }>;
+    return rows.map(({ operationId }) => {
+      const disclosure = this.getDisclosure(operationId);
+      if (!disclosure) {
+        throw new Error(`Unknown disclosure operation: ${operationId}`);
+      }
+      return disclosure;
+    });
   }
 
   approveDisclosure(operationId: string, occurredAt: string): AiDisclosure {

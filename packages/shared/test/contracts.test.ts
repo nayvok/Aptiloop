@@ -6,7 +6,14 @@ import {
   CurriculumSourceSchema,
   CurriculumDaySchema,
   CurriculumVersionSchema,
+  CourseEntityIdSchema,
+  CourseOperationIdSchema,
+  CourseDesignerPendingDisclosureResponseSchema,
   DepthLevelSchema,
+  LearningKnowledgeNodeIdSchema,
+  LearningMistakesResponseSchema,
+  LearningPathNextActionSchema,
+  LearningReviewsResponseSchema,
   SessionSnapshotSchema,
   UnitQuestionSchema,
   UnitProgressSchema,
@@ -14,6 +21,165 @@ import {
 } from "../src/index.js";
 
 describe("shared contracts", () => {
+  it("accepts bounded semantic knowledge-node IDs without weakening entity IDs", () => {
+    const longSemanticId = `semantic ${"x".repeat(120)}`;
+    expect(LearningKnowledgeNodeIdSchema.parse("primitive values")).toBe(
+      "primitive values",
+    );
+    expect(LearningKnowledgeNodeIdSchema.parse(longSemanticId)).toBe(
+      longSemanticId,
+    );
+    expect(
+      LearningKnowledgeNodeIdSchema.safeParse(` ${longSemanticId}`).success,
+    ).toBe(false);
+    expect(LearningKnowledgeNodeIdSchema.safeParse("   ").success).toBe(false);
+    expect(
+      LearningKnowledgeNodeIdSchema.safeParse("x".repeat(501)).success,
+    ).toBe(false);
+    expect(CourseEntityIdSchema.safeParse("primitive values").success).toBe(
+      false,
+    );
+    expect(CourseOperationIdSchema.safeParse("primitive values").success).toBe(
+      false,
+    );
+  });
+
+  it("binds a pending Course Designer disclosure to one exact workflow operation", () => {
+    const pendingDisclosure = {
+      operationId: "proposal:resume",
+      workflowId: "course-designer:workflow-1",
+      versionId: "revision-1",
+      disclosure: {
+        operationId: "disclosure:operation-1",
+        scope: {
+          role: "course-designer",
+          connectionId: "connection-1",
+          providerType: "openai",
+          modelId: "model-1",
+          destination: "Provider: optional Course draft authoring assistance",
+          payloadCategories: ["course-content", "learner-message"],
+          entityIds: {
+            "course-revision": "revision-1",
+            "course-designer-workflow": "course-designer:workflow-1",
+            "course-designer-authoring-operation": "proposal:resume",
+          },
+          exclusions: ["credentials"],
+          byteCount: 128,
+          payloadSha256: `sha256:${"a".repeat(64)}`,
+        },
+        status: "pending",
+        createdAt: "2026-08-11T00:00:00.000Z",
+        approvedAt: null,
+        consumedAt: null,
+        expiresAt: "2026-08-11T00:05:00.000Z",
+      },
+    } as const;
+    expect(
+      CourseDesignerPendingDisclosureResponseSchema.parse({
+        pendingDisclosure,
+      }),
+    ).toEqual({ pendingDisclosure });
+    expect(
+      CourseDesignerPendingDisclosureResponseSchema.safeParse({
+        pendingDisclosure: { ...pendingDisclosure, versionId: "revision-2" },
+      }).success,
+    ).toBe(false);
+    expect(
+      CourseDesignerPendingDisclosureResponseSchema.safeParse({
+        pendingDisclosure: {
+          ...pendingDisclosure,
+          disclosure: { ...pendingDisclosure.disclosure, status: "approved" },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates explicit Course path start and resume actions", () => {
+    expect(
+      LearningPathNextActionSchema.parse({
+        type: "start",
+        lessonId: "lesson-1",
+      }),
+    ).toEqual({ type: "start", lessonId: "lesson-1" });
+    expect(
+      LearningPathNextActionSchema.parse({
+        type: "resume",
+        lessonId: "lesson-1",
+        sessionId: "session-1",
+        currentStep: "lesson-1-activity-2",
+      }),
+    ).toMatchObject({
+      type: "resume",
+      sessionId: "session-1",
+      currentStep: "lesson-1-activity-2",
+    });
+    expect(
+      LearningPathNextActionSchema.safeParse({
+        type: "resume",
+        lessonId: "lesson-1",
+        sessionId: "session-1",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("binds Review due state to the server clock and withholds session actions", () => {
+    const response = {
+      asOf: "2026-08-11T12:00:00.000Z",
+      reviews: [
+        {
+          id: "review-1",
+          topic: "Closures",
+          knowledgeNodeId: "primitive values",
+          dimension: "understanding",
+          activityKind: "recall",
+          reasonCode: "mistake",
+          dueAt: "2026-08-11T12:00:00.000Z",
+          state: "pending",
+          isDue: true,
+          sessionId: "session-1",
+          activityId: "activity-1",
+          nextActionHref: null,
+        },
+      ],
+    } as const;
+    expect(LearningReviewsResponseSchema.parse(response)).toEqual(response);
+    expect(
+      LearningReviewsResponseSchema.safeParse({
+        ...response,
+        reviews: [{ ...response.reviews[0], isDue: false }],
+      }).success,
+    ).toBe(false);
+    expect(
+      LearningReviewsResponseSchema.safeParse({
+        ...response,
+        reviews: [
+          {
+            ...response.reviews[0],
+            nextActionHref: "/session?id=session-1",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a future Correction classified as due", () => {
+    expect(
+      LearningMistakesResponseSchema.safeParse({
+        asOf: "2026-08-11T12:00:00.000Z",
+        mistakes: [
+          {
+            id: "mistake-1",
+            topic: "Closures",
+            errorFamily: "scope-error",
+            occurrenceCount: 1,
+            reviewAt: "2026-08-12T12:00:00.000Z",
+            isDue: true,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it("uses the documented depth levels and permits an explicit missing source", () => {
     expect(DepthLevelSchema.options).toEqual([
       "foundation",

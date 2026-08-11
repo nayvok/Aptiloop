@@ -8,6 +8,8 @@ import { cookies } from "next/headers";
 import type { UiLocale } from "@/lib/i18n";
 
 import { AppShell } from "@/components/app-shell";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { LocaleProvider } from "@/lib/i18n";
 import { QueryProvider } from "@/components/query-provider";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -31,7 +33,10 @@ export default async function RootLayout({
         <ThemeProvider>
           <QueryProvider>
             <LocaleProvider initialLocale={initialLocale}>
-              <AppShell>{children}</AppShell>
+              <TooltipProvider delayDuration={250}>
+                <AppShell>{children}</AppShell>
+                <Toaster position="top-right" closeButton />
+              </TooltipProvider>
             </LocaleProvider>
           </QueryProvider>
         </ThemeProvider>

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowSquareOutIcon,
+  CaretDownIcon,
   CheckCircleIcon,
   ClipboardTextIcon,
   CodeIcon,
@@ -18,7 +19,9 @@ import { z } from "zod";
 
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import type { RouteContext } from "@/lib/route-context";
 import { formatMinutesShort } from "@/lib/time";
+import { usePageRouteContext } from "@/components/page-route-context";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,8 +34,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryError } from "@/components/query-state";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const protectedKeys = new Set([
@@ -136,6 +145,17 @@ const reviewProgressSchema = z
 const exerciseSchema = z
   .object({
     sessionId: idSchema,
+    lessonContext: z
+      .object({
+        courseId: idSchema,
+        revisionId: idSchema,
+        courseTitle: z.string().trim().min(1),
+        lessonOrder: z.number().int().positive(),
+        lessonTitle: z.string().trim().min(1),
+      })
+      .strict()
+      .nullable()
+      .default(null),
     exerciseUnitId: idSchema.nullable(),
     reviewUnitId: idSchema.nullable(),
     exerciseUnitProgress: exerciseProgressSchema.nullable(),
@@ -214,6 +234,16 @@ const openResponseSchema = z
 type Diff = z.infer<typeof diffSchema>;
 type TestRun = z.infer<typeof testRunSchema>;
 type Review = z.infer<typeof reviewSchema>;
+type Exercise = z.infer<typeof exerciseSchema>;
+type OwnedValue<T> = { ownerKey: string; value: T };
+
+function exerciseOwnerKey(exercise: Exercise): string {
+  return [
+    exercise.sessionId,
+    exercise.id,
+    exercise.attempt?.id ?? "no-attempt",
+  ].join("\u0000");
+}
 
 function assertNoProtectedFields(value: unknown, errorMessage: string): void {
   if (Array.isArray(value)) {
@@ -261,13 +291,14 @@ export function ExerciseClient() {
   const queryClient = useQueryClient();
   const { locale, t } = useI18n();
   const protectedFieldError = t("practice.error.protectedField");
-  const [localDiff, setLocalDiff] = useState<Diff | null>(null);
-  const [localTest, setLocalTest] = useState<TestRun | null>(null);
-  const [localReview, setLocalReview] = useState<Review | null>(null);
+  const [localDiff, setLocalDiff] = useState<OwnedValue<Diff> | null>(null);
+  const [localTest, setLocalTest] = useState<OwnedValue<TestRun> | null>(null);
+  const [localReview, setLocalReview] =
+    useState<OwnedValue<Review | null> | null>(null);
   const [zedFallback, setZedFallback] = useState<string | null>(null);
   const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
   const [pendingReviewDisclosure, setPendingReviewDisclosure] =
-    useState<PendingReviewDisclosure | null>(null);
+    useState<OwnedValue<PendingReviewDisclosure> | null>(null);
 
   const query = useQuery({
     queryKey: ["exercise", requestedSessionId ?? "current"],
@@ -283,6 +314,39 @@ export function ExerciseClient() {
       return parseSafe(exerciseSchema, value, protectedFieldError);
     },
   });
+  const resolvedOwnerKey = query.data ? exerciseOwnerKey(query.data) : null;
+  const currentOwnerKeyRef = useRef<string | null>(resolvedOwnerKey);
+  currentOwnerKeyRef.current = resolvedOwnerKey;
+
+  useEffect(() => {
+    setLocalDiff((current) =>
+      current?.ownerKey === resolvedOwnerKey ? current : null,
+    );
+    setLocalTest((current) =>
+      current?.ownerKey === resolvedOwnerKey ? current : null,
+    );
+    setLocalReview((current) =>
+      current?.ownerKey === resolvedOwnerKey ? current : null,
+    );
+    setPendingReviewDisclosure((current) =>
+      current?.ownerKey === resolvedOwnerKey ? current : null,
+    );
+    setZedFallback(null);
+    setWorkspaceNotice(null);
+  }, [resolvedOwnerKey]);
+
+  const getAttemptContext = () => {
+    const exercise = query.data;
+    const attemptId = exercise?.attempt?.id;
+    if (!exercise || !attemptId) {
+      throw new Error(t("practice.error.attemptRequired"));
+    }
+    return {
+      attemptId,
+      exercise,
+      ownerKey: exerciseOwnerKey(exercise),
+    };
+  };
 
   const invalidatePractice = async () => {
     await Promise.all([
@@ -310,6 +374,7 @@ export function ExerciseClient() {
     mutationFn: async () => {
       const exercise = query.data;
       if (!exercise) throw new Error(t("practice.error.exerciseNotLoaded"));
+      const ownerKey = exerciseOwnerKey(exercise);
       if (
         exercise.exerciseUnitId &&
         exercise.exerciseUnitProgress?.status === "ready"
@@ -322,50 +387,65 @@ export function ExerciseClient() {
         method: "POST",
         body: JSON.stringify({ sessionId: exercise.sessionId }),
       });
-      return parseSafe(attemptResponseSchema, value, protectedFieldError);
+      return {
+        attempt: parseSafe(attemptResponseSchema, value, protectedFieldError),
+        ownerKey,
+      };
     },
-    onSuccess: async () => {
-      setLocalDiff(null);
-      setLocalTest(null);
-      setLocalReview(null);
+    onSuccess: async ({ ownerKey }) => {
+      if (currentOwnerKeyRef.current === ownerKey) {
+        setLocalDiff(null);
+        setLocalTest(null);
+        setLocalReview(null);
+        setPendingReviewDisclosure(null);
+      }
       await invalidatePractice();
     },
   });
 
-  const getAttemptId = () => {
-    const attemptId = query.data?.attempt?.id;
-    if (!attemptId) throw new Error(t("practice.error.attemptRequired"));
-    return attemptId;
-  };
-
   const loadDiff = useMutation({
     mutationFn: async () => {
+      const { attemptId, ownerKey } = getAttemptContext();
       const value = await api<unknown>(
-        `/exercise-attempts/${encodeURIComponent(getAttemptId())}/diff`,
+        `/exercise-attempts/${encodeURIComponent(attemptId)}/diff`,
       );
       const parsed = parseSafe(diffResponseSchema, value, protectedFieldError);
       return {
-        patch: parsed.diff,
-        changed: parsed.changed,
-        truncated: parsed.truncated,
-      } satisfies Diff;
+        diff: {
+          patch: parsed.diff,
+          changed: parsed.changed,
+          truncated: parsed.truncated,
+        } satisfies Diff,
+        ownerKey,
+      };
     },
-    onSuccess: (nextDiff) => {
+    onSuccess: ({ diff: nextDiff, ownerKey }) => {
+      if (currentOwnerKeyRef.current !== ownerKey) return;
+      const ownedDiff =
+        localDiff?.ownerKey === ownerKey ? localDiff.value : null;
       const previousPatch =
-        localDiff?.patch ?? query.data?.attempt?.diff.patch ?? "";
+        ownedDiff?.patch ?? query.data?.attempt?.diff.patch ?? "";
       if (previousPatch !== nextDiff.patch) {
-        setLocalTest((current) =>
-          current ? { ...current, workspaceCurrent: false } : current,
+        const ownedTest =
+          localTest?.ownerKey === ownerKey ? localTest.value : null;
+        const currentTest = ownedTest ?? query.data?.attempt?.latestTestRun;
+        setLocalTest(
+          currentTest
+            ? {
+                ownerKey,
+                value: { ...currentTest, workspaceCurrent: false },
+              }
+            : null,
         );
-        setLocalReview(null);
+        setLocalReview({ ownerKey, value: null });
       }
-      setLocalDiff(nextDiff);
+      setLocalDiff({ ownerKey, value: nextDiff });
     },
   });
 
   const runTests = useMutation({
     mutationFn: async () => {
-      const attemptId = getAttemptId();
+      const { attemptId, ownerKey } = getAttemptContext();
       const testValue = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/checks`,
         {
@@ -390,6 +470,7 @@ export function ExerciseClient() {
         protectedFieldError,
       );
       return {
+        ownerKey,
         test: { ...test, workspaceCurrent: true } satisfies TestRun,
         diff: {
           patch: parsedDiff.diff,
@@ -398,10 +479,12 @@ export function ExerciseClient() {
         } satisfies Diff,
       };
     },
-    onSuccess: async ({ test, diff }) => {
-      setLocalDiff(diff);
-      setLocalTest(test);
-      setLocalReview(null);
+    onSuccess: async ({ diff, ownerKey, test }) => {
+      if (currentOwnerKeyRef.current === ownerKey) {
+        setLocalDiff({ ownerKey, value: diff });
+        setLocalTest({ ownerKey, value: test });
+        setLocalReview({ ownerKey, value: null });
+      }
       await invalidatePractice();
     },
   });
@@ -411,7 +494,7 @@ export function ExerciseClient() {
       reviewOperationId: string;
       disclosureOperationId: string;
     }) => {
-      const attemptId = getAttemptId();
+      const { attemptId, ownerKey } = getAttemptContext();
       const currentDiffValue = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/diff`,
       );
@@ -421,7 +504,9 @@ export function ExerciseClient() {
         protectedFieldError,
       );
       const visiblePatch =
-        localDiff?.patch ?? query.data?.attempt?.diff.patch ?? "";
+        (localDiff?.ownerKey === ownerKey ? localDiff.value.patch : null) ??
+        query.data?.attempt?.diff.patch ??
+        "";
       if (currentDiff.diff !== visiblePatch) {
         throw new Error(t("practice.error.diffChanged"));
       }
@@ -442,6 +527,7 @@ export function ExerciseClient() {
       if (disclosure.success) {
         return {
           kind: "disclosure" as const,
+          ownerKey,
           reviewOperationId,
           disclosure: disclosure.data.disclosure,
         };
@@ -453,6 +539,7 @@ export function ExerciseClient() {
       );
       return {
         kind: "review" as const,
+        ownerKey,
         review: reviewSchema.parse({
           id: parsed.id,
           status: parsed.status,
@@ -465,30 +552,42 @@ export function ExerciseClient() {
     },
     onSuccess: async (result) => {
       if (result.kind === "disclosure") {
-        setPendingReviewDisclosure({
-          reviewOperationId: result.reviewOperationId,
-          disclosure: result.disclosure,
-        });
+        if (currentOwnerKeyRef.current === result.ownerKey) {
+          setPendingReviewDisclosure({
+            ownerKey: result.ownerKey,
+            value: {
+              reviewOperationId: result.reviewOperationId,
+              disclosure: result.disclosure,
+            },
+          });
+        }
         return;
       }
-      setLocalReview(result.review);
+      if (currentOwnerKeyRef.current === result.ownerKey) {
+        setLocalReview({ ownerKey: result.ownerKey, value: result.review });
+      }
       await invalidatePractice();
     },
   });
 
   const openZed = useMutation({
     mutationFn: async () => {
+      const { attemptId, ownerKey } = getAttemptContext();
       const value = await api<unknown>(
-        `/exercise-attempts/${encodeURIComponent(getAttemptId())}/open`,
+        `/exercise-attempts/${encodeURIComponent(attemptId)}/open`,
         { method: "POST" },
       );
-      return parseSafe(openResponseSchema, value, protectedFieldError);
+      return {
+        ownerKey,
+        result: parseSafe(openResponseSchema, value, protectedFieldError),
+      };
     },
-    onSuccess: (data) => {
+    onSuccess: ({ ownerKey, result }) => {
+      if (currentOwnerKeyRef.current !== ownerKey) return;
       setZedFallback(
-        data.opened
+        result.opened
           ? null
-          : (data.message ?? t("practice.error.zedUnavailable")),
+          : (result.message ?? t("practice.error.zedUnavailable")),
       );
     },
   });
@@ -499,8 +598,20 @@ export function ExerciseClient() {
       const attemptId = exercise?.attempt?.id;
       const exerciseUnitId = exercise?.exerciseUnitId;
       const reviewUnitId = exercise?.reviewUnitId;
-      const review = localReview ?? exercise?.attempt?.latestReview;
-      const test = localTest ?? exercise?.attempt?.latestTestRun;
+      const ownerKey = exercise ? exerciseOwnerKey(exercise) : null;
+      const ownedReview =
+        ownerKey && localReview?.ownerKey === ownerKey
+          ? localReview.value
+          : undefined;
+      const ownedTest =
+        ownerKey && localTest?.ownerKey === ownerKey
+          ? localTest.value
+          : undefined;
+      const review =
+        ownedReview !== undefined
+          ? ownedReview
+          : exercise?.attempt?.latestReview;
+      const test = ownedTest ?? exercise?.attempt?.latestTestRun;
       if (
         !exercise ||
         !attemptId ||
@@ -558,6 +669,33 @@ export function ExerciseClient() {
     },
   });
 
+  const lessonContext = query.data?.lessonContext ?? null;
+  const pageRouteContext = useMemo<RouteContext | null>(
+    () =>
+      lessonContext
+        ? {
+            sectionHref: "/courses",
+            breadcrumbs: [
+              { href: "/courses", label: "nav.courses" },
+              {
+                href: `/courses/${encodeURIComponent(lessonContext.courseId)}/revisions/${encodeURIComponent(lessonContext.revisionId)}`,
+                text: lessonContext.courseTitle,
+              },
+              {
+                href: `/session?id=${encodeURIComponent(query.data?.sessionId ?? "")}`,
+                text: t("session.lessonTitle", {
+                  order: lessonContext.lessonOrder,
+                  title: lessonContext.lessonTitle,
+                }),
+              },
+              { label: "unit.type.exercise" },
+            ],
+          }
+        : null,
+    [lessonContext, query.data?.sessionId, t],
+  );
+  usePageRouteContext(pageRouteContext);
+
   if (query.isLoading) {
     return (
       <div
@@ -600,6 +738,7 @@ export function ExerciseClient() {
           description={t("practice.locked.emptyDescription")}
           action={
             <Button
+              className="h-auto max-w-full whitespace-normal break-words py-2 text-center"
               type="button"
               onClick={() =>
                 router.push(
@@ -615,10 +754,24 @@ export function ExerciseClient() {
       </div>
     );
   }
+  const ownerKey = exerciseOwnerKey(exercise);
   const attemptId = exercise.attempt?.id;
-  const diff = localDiff ?? exercise.attempt?.diff ?? null;
-  const latestTest = localTest ?? exercise.attempt?.latestTestRun ?? null;
-  const review = localReview ?? exercise.attempt?.latestReview ?? null;
+  const ownedDiff =
+    localDiff?.ownerKey === ownerKey ? localDiff.value : undefined;
+  const ownedTest =
+    localTest?.ownerKey === ownerKey ? localTest.value : undefined;
+  const ownedReview =
+    localReview?.ownerKey === ownerKey ? localReview.value : undefined;
+  const activePendingReviewDisclosure =
+    pendingReviewDisclosure?.ownerKey === ownerKey
+      ? pendingReviewDisclosure.value
+      : null;
+  const diff = ownedDiff ?? exercise.attempt?.diff ?? null;
+  const latestTest = ownedTest ?? exercise.attempt?.latestTestRun ?? null;
+  const review =
+    ownedReview !== undefined
+      ? ownedReview
+      : (exercise.attempt?.latestReview ?? null);
   const reviewAllowed = Boolean(
     attemptId &&
     diff?.changed &&
@@ -626,6 +779,37 @@ export function ExerciseClient() {
     latestTest.workspaceCurrent &&
     !review,
   );
+  const testsCurrent = Boolean(
+    latestTest?.status === "passed" && latestTest.workspaceCurrent,
+  );
+  const latestTestStatusLabel = t(
+    latestTest
+      ? latestTest.status === "passed" && latestTest.workspaceCurrent
+        ? "practice.testRun.status.passed"
+        : latestTest.status === "failed"
+          ? "practice.testRun.status.failed"
+          : "practice.testRun.status.stale"
+      : "practice.testRun.empty",
+  );
+  const reviewStatusLabel = t(
+    review?.status === "passed"
+      ? "practice.reviewer.status.accepted"
+      : review
+        ? "practice.reviewer.status.changesRequested"
+        : "practice.reviewer.status.notRun",
+  );
+  const currentPracticeAction:
+    "attempt" | "diff" | "tests" | "review" | "acceptance" = !attemptId
+    ? "attempt"
+    : review?.status === "passed"
+      ? "acceptance"
+      : review?.status === "changes_requested"
+        ? "tests"
+        : !diff?.changed
+          ? "diff"
+          : !testsCurrent
+            ? "tests"
+            : "review";
   const nextAction = t(
     !attemptId
       ? "practice.nextAction.createAttempt"
@@ -661,7 +845,7 @@ export function ExerciseClient() {
     }
   }
   async function approveReviewDisclosure() {
-    const pending = pendingReviewDisclosure;
+    const pending = activePendingReviewDisclosure;
     if (!pending) return;
     try {
       await api(`/ai/disclosures/${pending.disclosure.operationId}/approve`, {
@@ -683,7 +867,7 @@ export function ExerciseClient() {
   }
 
   async function cancelReviewDisclosure() {
-    const pending = pendingReviewDisclosure;
+    const pending = activePendingReviewDisclosure;
     if (!pending) return;
     setPendingReviewDisclosure(null);
     await api(`/ai/disclosures/${pending.disclosure.operationId}`, {
@@ -693,14 +877,22 @@ export function ExerciseClient() {
   }
 
   return (
-    <div data-slot="exercise-client" className="flex flex-col gap-6">
+    <div data-slot="exercise-client" className="flex min-w-0 flex-col gap-8">
       <PageHeader
         title={exercise.title}
         description={exercise.prompt}
         actions={
           <>
-            <Badge variant="outline">{exercise.difficulty}</Badge>
-            <Badge variant="outline">
+            <Badge
+              variant="outline"
+              className="max-w-full min-w-0 whitespace-normal break-words text-left [overflow-wrap:anywhere]"
+            >
+              {exercise.difficulty}
+            </Badge>
+            <Badge
+              variant="outline"
+              className="max-w-full min-w-0 whitespace-normal break-words text-left [overflow-wrap:anywhere]"
+            >
               {t("practice.duration", {
                 duration: formatMinutesShort(exercise.estimatedMinutes, locale),
               })}
@@ -712,27 +904,46 @@ export function ExerciseClient() {
       {error instanceof Error ? (
         <div
           role="alert"
-          className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-foreground"
+          className="flex min-w-0 items-start gap-3 rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-foreground"
         >
           <WarningCircleIcon
             aria-hidden
             className="mt-0.5 size-5 shrink-0 text-destructive"
           />
-          <span>{error.message}</span>
+          <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+            {error.message}
+          </span>
         </div>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section
+        data-slot="exercise-next-action"
+        aria-labelledby="exercise-next-action-title"
+        aria-live="polite"
+        className="grid gap-2 border-y border-border/70 py-5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-baseline sm:gap-6"
+      >
+        <h2
+          id="exercise-next-action-title"
+          className="text-sm font-medium text-muted-foreground"
+        >
+          {t("practice.nextAction.label")}
+        </h2>
+        <p className="min-w-0 max-w-[68ch] break-words text-pretty text-xl font-semibold leading-7 tracking-[-0.02em] [overflow-wrap:anywhere]">
+          {nextAction}
+        </p>
+      </section>
+
+      <div className="grid min-w-0 gap-8 2xl:grid-cols-[minmax(0,1fr)_20rem]">
         <section
-          className="flex min-w-0 flex-col gap-6"
+          className="flex min-w-0 flex-col gap-8"
           aria-label={t("practice.work.label")}
         >
           <div
             data-slot="exercise-criteria"
-            className="grid gap-6 rounded-xl border border-border bg-card p-6 md:grid-cols-2"
+            className="grid border-y border-border/70 md:grid-cols-2 md:divide-x md:divide-border/70"
           >
-            <div className="flex flex-col gap-4">
-              <h2 className="font-semibold">
+            <section className="flex flex-col gap-4 py-5 md:pr-8">
+              <h2 className="text-lg font-semibold">
                 {t("practice.completionCriteria")}
               </h2>
               <ul className="flex flex-col gap-2">
@@ -745,13 +956,15 @@ export function ExerciseClient() {
                       aria-hidden
                       className="mt-1 size-4 shrink-0 text-success"
                     />
-                    {criterion}
+                    <span className="min-w-0 break-words">{criterion}</span>
                   </li>
                 ))}
               </ul>
-            </div>
-            <div className="flex flex-col gap-4">
-              <h2 className="font-semibold">{t("practice.constraints")}</h2>
+            </section>
+            <section className="flex flex-col gap-4 border-t border-border/70 py-5 md:border-t-0 md:pl-8">
+              <h2 className="text-lg font-semibold">
+                {t("practice.constraints")}
+              </h2>
               <ul className="flex flex-col gap-2">
                 {exercise.constraints.map((constraint) => (
                   <li
@@ -762,349 +975,514 @@ export function ExerciseClient() {
                       aria-hidden
                       className="mt-2 size-1.5 shrink-0 rounded-full bg-primary"
                     />
-                    {constraint}
+                    <span className="min-w-0 break-words">{constraint}</span>
                   </li>
                 ))}
               </ul>
-            </div>
+            </section>
           </div>
 
           <div
-            data-slot="exercise-workspace"
-            className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6"
+            data-slot="exercise-focus-surface"
+            className="overflow-hidden rounded-lg border border-border/80 bg-card"
           >
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="min-w-0">
-                <h2 className="font-semibold">
-                  {t("practice.workspace.title")}
-                </h2>
-                <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-                  {exercise.workspace
-                    ? t("practice.workspace.identity", {
-                        id: exercise.workspace.id,
-                        generation: exercise.workspace.generation,
-                      })
-                    : t("practice.workspace.pending")}
-                </p>
-              </div>
-              {attemptId ? (
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={copyWorkspaceId}>
-                    <CopyIcon aria-hidden />
-                    {t("practice.workspace.copyId")}
-                  </Button>
+            <div
+              data-slot="exercise-workspace"
+              className="flex flex-col gap-4 p-5 sm:p-6"
+            >
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <h2 className="font-semibold">
+                    {t("practice.workspace.title")}
+                  </h2>
+                  <p className="mt-1 break-all font-mono text-xs leading-5 text-muted-foreground">
+                    {exercise.workspace
+                      ? t("practice.workspace.identity", {
+                          id: exercise.workspace.id,
+                          generation: exercise.workspace.generation,
+                        })
+                      : t("practice.workspace.pending")}
+                  </p>
+                </div>
+                {attemptId ? (
+                  <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+                    <Button
+                      className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                      variant="outline"
+                      onClick={copyWorkspaceId}
+                    >
+                      <CopyIcon data-icon="inline-start" aria-hidden />
+                      {t("practice.workspace.copyId")}
+                    </Button>
+                    <Button
+                      className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                      variant="outline"
+                      onClick={() => openZed.mutate()}
+                      disabled={openZed.isPending}
+                    >
+                      <ArrowSquareOutIcon
+                        data-icon="inline-start"
+                        aria-hidden
+                      />
+                      {t(
+                        openZed.isPending
+                          ? "practice.workspace.opening"
+                          : "practice.workspace.open",
+                      )}
+                    </Button>
+                  </div>
+                ) : (
                   <Button
-                    variant="outline"
-                    onClick={() => openZed.mutate()}
-                    disabled={openZed.isPending}
+                    className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                    aria-current={
+                      currentPracticeAction === "attempt" ? "step" : undefined
+                    }
+                    onClick={() => attempt.mutate()}
+                    disabled={attempt.isPending}
                   >
-                    <ArrowSquareOutIcon aria-hidden />
+                    <CodeIcon data-icon="inline-start" aria-hidden />
                     {t(
-                      openZed.isPending
-                        ? "practice.workspace.opening"
-                        : "practice.workspace.open",
+                      attempt.isPending
+                        ? "practice.workspace.creating"
+                        : "practice.workspace.create",
                     )}
                   </Button>
-                </div>
-              ) : (
-                <Button
-                  onClick={() => attempt.mutate()}
-                  disabled={attempt.isPending}
+                )}
+              </div>
+              {zedFallback ? (
+                <p
+                  role="status"
+                  className="min-w-0 break-words text-sm text-warning-foreground [overflow-wrap:anywhere]"
                 >
-                  <CodeIcon aria-hidden />
+                  {zedFallback}
+                </p>
+              ) : null}
+              {workspaceNotice ? (
+                <p
+                  role="status"
+                  className="min-w-0 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]"
+                >
+                  {workspaceNotice}
+                </p>
+              ) : null}
+            </div>
+
+            <Separator />
+
+            <div data-slot="exercise-evidence" className="min-w-0">
+              <div
+                data-slot="exercise-action-sequence"
+                className="flex flex-col gap-2 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:p-5"
+              >
+                <Button
+                  data-slot="exercise-action-diff"
+                  className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                  size="sm"
+                  variant={
+                    currentPracticeAction === "diff"
+                      ? "default"
+                      : diff?.changed
+                        ? "ghost"
+                        : "outline"
+                  }
+                  aria-current={
+                    currentPracticeAction === "diff" ? "step" : undefined
+                  }
+                  disabled={!attemptId || loadDiff.isPending}
+                  onClick={() => loadDiff.mutate()}
+                >
+                  <ClipboardTextIcon data-icon="inline-start" aria-hidden />
                   {t(
-                    attempt.isPending
-                      ? "practice.workspace.creating"
-                      : "practice.workspace.create",
+                    loadDiff.isPending
+                      ? "practice.diff.refreshing"
+                      : "practice.diff.refresh",
                   )}
                 </Button>
-              )}
-            </div>
-            {zedFallback ? (
-              <p role="status" className="text-sm text-warning-foreground">
-                {zedFallback}
-              </p>
-            ) : null}
-            {workspaceNotice ? (
-              <p role="status" className="text-sm text-muted-foreground">
-                {workspaceNotice}
-              </p>
-            ) : null}
-          </div>
-
-          <div
-            data-slot="exercise-evidence"
-            className="overflow-hidden rounded-xl border border-border bg-card"
-          >
-            <div className="border-b border-border bg-muted/35 px-4 py-3 text-sm">
-              <span className="font-medium">
-                {t("practice.nextAction.label")}{" "}
-              </span>
-              <span className="text-muted-foreground">{nextAction}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!attemptId || loadDiff.isPending}
-                onClick={() => loadDiff.mutate()}
-              >
-                <ClipboardTextIcon aria-hidden />
-                {t(
-                  loadDiff.isPending
-                    ? "practice.diff.refreshing"
-                    : "practice.diff.refresh",
-                )}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!attemptId || runTests.isPending}
-                onClick={() => runTests.mutate()}
-              >
-                <PlayIcon aria-hidden />
-                {t(
-                  runTests.isPending
-                    ? "practice.tests.running"
-                    : "practice.tests.run",
-                )}
-              </Button>
-              <Button
-                size="sm"
-                disabled={!reviewAllowed || runReview.isPending}
-                onClick={() => runReview.mutate(undefined)}
-              >
-                <FlaskIcon aria-hidden />
-                {t(
-                  runReview.isPending
-                    ? "practice.review.running"
-                    : "practice.review.request",
-                )}
-              </Button>
-            </div>
-            <div className="grid min-h-72 gap-px bg-border lg:grid-cols-2">
-              <div className="min-w-0 bg-background p-4">
-                <p className="mb-3 text-xs font-medium text-muted-foreground">
-                  {t("practice.diff.title")}
-                </p>
-                <pre
-                  data-testid="exercise-diff"
-                  className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5"
+                <Button
+                  data-slot="exercise-action-tests"
+                  className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                  size="sm"
+                  variant={
+                    currentPracticeAction === "tests"
+                      ? "default"
+                      : testsCurrent
+                        ? "ghost"
+                        : "outline"
+                  }
+                  aria-current={
+                    currentPracticeAction === "tests" ? "step" : undefined
+                  }
+                  disabled={!attemptId || runTests.isPending}
+                  onClick={() => runTests.mutate()}
                 >
-                  {diff?.patch || t("practice.diff.empty")}
-                </pre>
-                {diff?.truncated ? (
-                  <p className="mt-3 text-xs text-warning-foreground">
-                    {t("practice.diff.truncated")}
-                  </p>
-                ) : null}
-              </div>
-              <div className="min-w-0 bg-background p-4">
-                <p className="mb-3 text-xs font-medium text-muted-foreground">
-                  {t("practice.testRun.title")}
-                </p>
-                <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5">
-                  {latestTest
-                    ? t("practice.testRun.output", {
-                        output: latestTest.output,
-                        exitCode: latestTest.exitCode,
-                      })
-                    : t("practice.testRun.empty")}
-                </pre>
-                {latestTest ? (
-                  <Badge
-                    className="mt-3"
-                    variant={
-                      latestTest.status === "passed" &&
-                      latestTest.workspaceCurrent
-                        ? "success"
-                        : "warning"
+                  <PlayIcon data-icon="inline-start" aria-hidden />
+                  {t(
+                    runTests.isPending
+                      ? "practice.tests.running"
+                      : "practice.tests.run",
+                  )}
+                </Button>
+                <Button
+                  data-slot="exercise-action-review"
+                  className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                  size="sm"
+                  variant={
+                    currentPracticeAction === "review"
+                      ? "default"
+                      : review
+                        ? "ghost"
+                        : "outline"
+                  }
+                  aria-current={
+                    currentPracticeAction === "review" ? "step" : undefined
+                  }
+                  disabled={!reviewAllowed || runReview.isPending}
+                  onClick={() => runReview.mutate(undefined)}
+                >
+                  <FlaskIcon data-icon="inline-start" aria-hidden />
+                  {t(
+                    runReview.isPending
+                      ? "practice.review.running"
+                      : "practice.review.request",
+                  )}
+                </Button>
+                {review?.status === "passed" ? (
+                  <Button
+                    data-slot="exercise-action-acceptance"
+                    className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                    size="sm"
+                    aria-current={
+                      currentPracticeAction === "acceptance"
+                        ? "step"
+                        : undefined
                     }
+                    onClick={() => acceptReview.mutate()}
+                    disabled={acceptReview.isPending}
                   >
                     {t(
-                      latestTest.status === "passed" &&
-                        latestTest.workspaceCurrent
-                        ? "practice.testRun.status.passed"
-                        : latestTest.status === "failed"
-                          ? "practice.testRun.status.failed"
-                          : "practice.testRun.status.stale",
+                      acceptReview.isPending
+                        ? "practice.reviewer.accepting"
+                        : "practice.reviewer.accept",
                     )}
-                  </Badge>
+                  </Button>
                 ) : null}
               </div>
+              <Collapsible
+                data-slot="exercise-evidence-disclosure"
+                className="min-w-0 border-t border-border/70"
+              >
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    className="group flex min-h-14 w-full min-w-0 items-center justify-between gap-3 rounded-md px-4 py-3 text-left outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:px-5"
+                  >
+                    <span className="flex min-w-0 items-center gap-3">
+                      <ClipboardTextIcon
+                        aria-hidden
+                        className="size-4 shrink-0 text-muted-foreground"
+                      />
+                      <span className="min-w-0">
+                        <span className="block break-words text-sm font-medium [overflow-wrap:anywhere]">
+                          {t("practice.diff.title")}
+                        </span>
+                        <span className="block break-words text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+                          {t("practice.testRun.title")}
+                        </span>
+                      </span>
+                    </span>
+                    <span className="flex min-w-0 shrink items-center justify-end gap-2">
+                      <Badge
+                        className="max-w-full min-w-0 whitespace-normal break-words text-left leading-5 [overflow-wrap:anywhere]"
+                        variant={
+                          !latestTest
+                            ? "secondary"
+                            : latestTest.status === "passed" &&
+                                latestTest.workspaceCurrent
+                              ? "success"
+                              : "warning"
+                        }
+                      >
+                        {latestTestStatusLabel}
+                      </Badge>
+                      <CaretDownIcon
+                        aria-hidden
+                        className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180 motion-reduce:transition-none"
+                      />
+                    </span>
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="min-w-0 divide-y divide-border/60 border-t border-border/60 bg-surface-soft">
+                    <div className="min-w-0 p-4 sm:p-5">
+                      <p className="mb-3 text-xs font-semibold text-muted-foreground">
+                        {t("practice.diff.title")}
+                      </p>
+                      <pre
+                        data-testid="exercise-diff"
+                        className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 [overflow-wrap:anywhere]"
+                      >
+                        {diff?.patch || t("practice.diff.empty")}
+                      </pre>
+                      {diff?.truncated ? (
+                        <p className="mt-3 break-words text-xs text-warning-foreground [overflow-wrap:anywhere]">
+                          {t("practice.diff.truncated")}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="min-w-0 p-4 sm:p-5">
+                      <p className="mb-3 text-xs font-semibold text-muted-foreground">
+                        {t("practice.testRun.title")}
+                      </p>
+                      <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 [overflow-wrap:anywhere]">
+                        {latestTest
+                          ? t("practice.testRun.output", {
+                              output: latestTest.output,
+                              exitCode: latestTest.exitCode,
+                            })
+                          : t("practice.testRun.empty")}
+                      </pre>
+                      {latestTest ? (
+                        <Badge
+                          className="mt-3 max-w-full min-w-0 whitespace-normal break-words text-left leading-5 [overflow-wrap:anywhere]"
+                          variant={
+                            latestTest.status === "passed" &&
+                            latestTest.workspaceCurrent
+                              ? "success"
+                              : "warning"
+                          }
+                        >
+                          {latestTestStatusLabel}
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </div>
           </div>
         </section>
 
         <aside
-          className="flex flex-col gap-4"
+          className="flex min-w-0 flex-col border-t border-border/70 2xl:border-l 2xl:border-t-0 2xl:pl-8"
           aria-label={t("practice.sidebar.label")}
         >
-          <div
+          <section
             data-slot="exercise-topics"
-            className="rounded-xl border border-border bg-card p-6"
+            className="border-b border-border/70 py-5 2xl:pt-0"
           >
-            <h2 className="font-semibold">{t("practice.topics.title")}</h2>
+            <h2 className="text-base font-semibold">
+              {t("practice.topics.title")}
+            </h2>
             <div className="mt-3 flex flex-wrap gap-2">
               {exercise.topics.map((topic) => (
-                <Badge key={topic} variant="secondary">
+                <Badge
+                  key={topic}
+                  variant="secondary"
+                  className="max-w-full min-w-0 whitespace-normal break-words text-left [overflow-wrap:anywhere]"
+                >
                   {topic}
                 </Badge>
               ))}
             </div>
-          </div>
-          <div
+          </section>
+          <section
             data-slot="exercise-review"
-            className="rounded-xl border border-border bg-card p-6"
+            aria-labelledby="exercise-review-title"
+            className="min-w-0 py-5"
           >
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="font-semibold">{t("practice.reviewer.title")}</h2>
-              <Badge
-                variant={
-                  review?.status === "passed"
-                    ? "success"
-                    : review
-                      ? "warning"
-                      : "secondary"
-                }
-              >
-                {t(
-                  review?.status === "passed"
-                    ? "practice.reviewer.status.accepted"
-                    : review
-                      ? "practice.reviewer.status.changesRequested"
-                      : "practice.reviewer.status.notRun",
-                )}
-              </Badge>
-            </div>
             {review ? (
-              <div className="mt-4 flex flex-col gap-4">
-                <p className="text-sm leading-6">{review.summary}</p>
-                {review.evidenceBundle ? (
-                  <div className="rounded-lg border border-border bg-muted/40 p-3">
-                    <p className="text-xs font-medium">
-                      {t("practice.evidenceBundle.title")}
-                    </p>
-                    <p className="mt-1 break-all font-mono text-[11px] leading-5 text-muted-foreground">
-                      {review.evidenceBundle.sha256}
-                    </p>
-                    <p className="mt-1 break-all font-mono text-[11px] leading-5 text-muted-foreground">
-                      {t("practice.evidenceBundle.snapshot", {
-                        hash: review.evidenceBundle.workspaceSnapshotHash,
-                      })}
-                    </p>
-                  </div>
-                ) : null}
-                {review.strengths.length ? (
-                  <ul className="flex flex-col gap-2 text-sm text-muted-foreground">
-                    {review.strengths.map((strength) => (
-                      <li key={strength}>✓ {strength}</li>
-                    ))}
-                  </ul>
-                ) : null}
-                <ul className="flex flex-col gap-3">
-                  {review.findings.map((finding, index) => (
-                    <li
-                      key={`${finding.category}-${index}`}
-                      className="rounded-lg bg-muted p-3 text-sm"
+              <Collapsible data-slot="exercise-review-disclosure">
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    className="group flex min-h-11 w-full min-w-0 items-center justify-between gap-3 rounded-md text-left outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  >
+                    <span
+                      id="exercise-review-title"
+                      className="min-w-0 break-words text-lg font-semibold [overflow-wrap:anywhere]"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium">{finding.category}</span>
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {t("practice.reviewer.hint", {
-                            level: finding.hintLevel,
+                      {t("practice.reviewer.title")}
+                    </span>
+                    <span className="flex min-w-0 shrink items-center justify-end gap-2">
+                      <Badge
+                        className="max-w-full min-w-0 whitespace-normal break-words text-left leading-5 [overflow-wrap:anywhere]"
+                        variant={
+                          review.status === "passed" ? "success" : "warning"
+                        }
+                      >
+                        {reviewStatusLabel}
+                      </Badge>
+                      <CaretDownIcon
+                        aria-hidden
+                        className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180 motion-reduce:transition-none"
+                      />
+                    </span>
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div
+                    data-slot="exercise-review-details"
+                    className="mt-4 flex min-w-0 flex-col gap-4 border-t border-border/70 pt-4"
+                  >
+                    <p className="min-w-0 break-words text-sm leading-6 [overflow-wrap:anywhere]">
+                      {review.summary}
+                    </p>
+                    {review.evidenceBundle ? (
+                      <div className="min-w-0 border-y border-border/70 py-3">
+                        <p className="break-words text-xs font-medium [overflow-wrap:anywhere]">
+                          {t("practice.evidenceBundle.title")}
+                        </p>
+                        <p className="mt-1 min-w-0 break-all font-mono text-xs leading-5 text-muted-foreground">
+                          {review.evidenceBundle.sha256}
+                        </p>
+                        <p className="mt-1 min-w-0 break-all font-mono text-xs leading-5 text-muted-foreground">
+                          {t("practice.evidenceBundle.snapshot", {
+                            hash: review.evidenceBundle.workspaceSnapshotHash,
                           })}
-                        </span>
+                        </p>
                       </div>
-                      <p className="mt-2 leading-5 text-muted-foreground">
-                        {finding.message}
+                    ) : null}
+                    {review.strengths.length ? (
+                      <ul className="flex min-w-0 flex-col gap-2 text-sm leading-6 text-muted-foreground">
+                        {review.strengths.map((strength) => (
+                          <li
+                            key={strength}
+                            className="flex min-w-0 items-start gap-2"
+                          >
+                            <CheckCircleIcon
+                              aria-hidden
+                              className="mt-1 size-4 shrink-0 text-success"
+                            />
+                            <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                              {strength}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <ul className="flex min-w-0 flex-col divide-y divide-border/60">
+                      {review.findings.map((finding, index) => (
+                        <li
+                          key={`${finding.category}-${index}`}
+                          className="min-w-0 py-3 text-sm first:pt-0 last:pb-0"
+                        >
+                          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                            <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
+                              {finding.category}
+                            </span>
+                            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                              {t("practice.reviewer.hint", {
+                                level: finding.hintLevel,
+                              })}
+                            </span>
+                          </div>
+                          <p className="mt-2 min-w-0 break-words leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                            {finding.message}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                    {review.status === "changes_requested" ? (
+                      <p
+                        role="status"
+                        className="min-w-0 break-words border-y border-warning/40 py-4 text-sm leading-6 text-warning-foreground [overflow-wrap:anywhere]"
+                      >
+                        {t("practice.reviewer.changesRequested")}
                       </p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+                    ) : null}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             ) : (
-              <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                {t("practice.reviewer.empty")}
-              </p>
+              <>
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+                  <h2
+                    id="exercise-review-title"
+                    className="min-w-0 break-words text-lg font-semibold [overflow-wrap:anywhere]"
+                  >
+                    {t("practice.reviewer.title")}
+                  </h2>
+                  <Badge
+                    variant="secondary"
+                    className="max-w-full min-w-0 whitespace-normal break-words text-left leading-5 [overflow-wrap:anywhere]"
+                  >
+                    {reviewStatusLabel}
+                  </Badge>
+                </div>
+                <p className="mt-3 min-w-0 break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                  {t("practice.reviewer.empty")}
+                </p>
+              </>
             )}
-          </div>
-          {review?.status === "passed" ? (
-            <Button
-              onClick={() => acceptReview.mutate()}
-              disabled={acceptReview.isPending}
-            >
-              {t(
-                acceptReview.isPending
-                  ? "practice.reviewer.accepting"
-                  : "practice.reviewer.accept",
-              )}
-            </Button>
-          ) : null}
-          {review?.status === "changes_requested" ? (
-            <p
-              role="status"
-              className="rounded-lg bg-muted p-4 text-sm leading-6 text-muted-foreground"
-            >
-              {t("practice.reviewer.changesRequested")}
-            </p>
-          ) : null}
+          </section>
         </aside>
       </div>
-      <AlertDialog open={pendingReviewDisclosure !== null}>
-        <AlertDialogContent>
+      <AlertDialog
+        open={activePendingReviewDisclosure !== null}
+        onOpenChange={(open) => {
+          if (!open && activePendingReviewDisclosure) {
+            void cancelReviewDisclosure();
+          }
+        }}
+      >
+        <AlertDialogContent className="min-w-0">
           <AlertDialogHeader>
-            <AlertDialogTitle>
+            <AlertDialogTitle className="min-w-0 break-words [overflow-wrap:anywhere]">
               {t("practice.disclosure.title")}
             </AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogDescription className="min-w-0 break-words [overflow-wrap:anywhere]">
               {t("practice.disclosure.description")}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {pendingReviewDisclosure ? (
-            <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 text-sm">
-              <div>
+          {activePendingReviewDisclosure ? (
+            <dl className="grid min-w-0 gap-3 rounded-md border border-border/60 bg-surface-soft p-4 text-sm">
+              <div className="min-w-0">
                 <dt className="font-medium">
                   {t("practice.disclosure.destination")}
                 </dt>
-                <dd className="text-muted-foreground">
-                  {pendingReviewDisclosure.disclosure.scope.destination}
+                <dd className="min-w-0 break-all text-muted-foreground">
+                  {activePendingReviewDisclosure.disclosure.scope.destination}
                 </dd>
               </div>
-              <div>
+              <div className="min-w-0">
                 <dt className="font-medium">{t("practice.disclosure.data")}</dt>
-                <dd className="text-muted-foreground">
+                <dd className="min-w-0 break-words text-muted-foreground [overflow-wrap:anywhere]">
                   {t("practice.disclosure.dataSummary", {
                     categories:
-                      pendingReviewDisclosure.disclosure.scope.payloadCategories.join(
+                      activePendingReviewDisclosure.disclosure.scope.payloadCategories.join(
                         ", ",
                       ),
-                    bytes: pendingReviewDisclosure.disclosure.scope.byteCount,
+                    bytes:
+                      activePendingReviewDisclosure.disclosure.scope.byteCount,
                   })}
                 </dd>
               </div>
-              <div>
+              <div className="min-w-0">
                 <dt className="font-medium">
                   {t("practice.disclosure.exclusions")}
                 </dt>
-                <dd className="text-muted-foreground">
-                  {pendingReviewDisclosure.disclosure.scope.exclusions.join(
+                <dd className="min-w-0 break-words text-muted-foreground [overflow-wrap:anywhere]">
+                  {activePendingReviewDisclosure.disclosure.scope.exclusions.join(
                     ", ",
                   )}
                 </dd>
               </div>
             </dl>
           ) : null}
-          <AlertDialogFooter>
+          <AlertDialogFooter className="min-w-0">
             <AlertDialogCancel
+              className="h-auto max-w-full whitespace-normal break-words py-2 text-center"
               disabled={runReview.isPending}
-              onClick={() => void cancelReviewDisclosure()}
             >
               {t("practice.disclosure.cancel")}
             </AlertDialogCancel>
             <AlertDialogAction
+              className="h-auto max-w-full whitespace-normal break-words py-2 text-center"
               disabled={runReview.isPending}
-              onClick={() => void approveReviewDisclosure()}
+              onClick={(event) => {
+                event.preventDefault();
+                void approveReviewDisclosure();
+              }}
             >
               {t("practice.disclosure.approveOnce")}
             </AlertDialogAction>

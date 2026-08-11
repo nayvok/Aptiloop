@@ -14,7 +14,7 @@ import {
   type ProviderId,
   type RoleProfile,
   type ToolPolicy,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 import type { AgentProvider } from "./provider.js";
 

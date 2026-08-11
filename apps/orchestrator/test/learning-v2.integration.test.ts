@@ -7,9 +7,14 @@ import {
   hashCanonicalJson,
   createLearningKernelRepository,
   type DatabaseConnection,
-} from "@dlh/database";
-import { learningKernelSha256 } from "@dlh/learning-core";
-import { SessionSnapshotSchema } from "@dlh/shared";
+} from "@aptiloop/database";
+import { learningKernelSha256 } from "@aptiloop/learning-core";
+import {
+  LearningMistakesResponseSchema,
+  LearningPathNextActionSchema,
+  LearningReviewsResponseSchema,
+  SessionSnapshotSchema,
+} from "@aptiloop/shared";
 import type { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -41,6 +46,27 @@ const ValidationResponseSchema = z.object({
 const ChangeReviewResponseSchema = z.object({
   review: z.object({ changeReviewHash: z.string() }),
 });
+const LearningSummarySchema = z.object({
+  state: z.enum(["not-started", "in-progress", "completed"]),
+  completedLessons: z.number().int().nonnegative(),
+  totalLessons: z.number().int().nonnegative(),
+  progressPercent: z.number().int().min(0).max(100),
+  lastActivityAt: z.string().datetime().nullable(),
+});
+const CourseLearningSummariesResponseSchema = z.object({
+  courses: z.array(
+    z.object({
+      id: z.string(),
+      activeRevisionId: z.string().nullable(),
+      revisions: z.array(
+        z.object({
+          id: z.string(),
+          learningSummary: LearningSummarySchema,
+        }),
+      ),
+    }),
+  ),
+});
 
 afterEach(async () => {
   for (const runtime of runtimes.splice(0)) await runtime.close();
@@ -52,7 +78,7 @@ afterEach(async () => {
 function createRuntime(databasePath?: string) {
   const root = databasePath
     ? path.dirname(databasePath)
-    : mkdtempSync(path.join(tmpdir(), "dlh-learning-v2-"));
+    : mkdtempSync(path.join(tmpdir(), "aptiloop-learning-v2-"));
   if (!databasePath) roots.push(root);
   const created = createApp({
     projectRoot: path.resolve("../.."),
@@ -71,7 +97,7 @@ function request(app: Hono, pathname: string, init?: RequestInit) {
     ...init,
     headers: {
       Host: "127.0.0.1:8787",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
       ...init?.headers,
@@ -573,9 +599,15 @@ describe("versioned learning API", () => {
     const pathBody = (await (
       await request(runtime.app, "/api/learning/path")
     ).json()) as {
-      curriculum: { weeks: Array<{ days: Array<{ id: string }> }> };
+      curriculum: {
+        weeks: Array<{
+          days: Array<{ id: string; topics: string[] }>;
+        }>;
+      };
     };
-    const dayId = pathBody.curriculum.weeks[0]?.days[0]?.id;
+    const dayId = pathBody.curriculum.weeks
+      .flatMap((week) => week.days)
+      .find((day) => day.topics.includes("primitive values"))?.id;
     if (!dayId) throw new Error("Seeded learning day is unavailable");
     const started = await request(runtime.app, "/api/learning/sessions/v2", {
       method: "POST",
@@ -590,7 +622,9 @@ describe("versioned learning API", () => {
     const scope = kernel.resolveSessionScope(session.id);
     const activity = kernel.listActivities(scope)[0];
     if (!activity) throw new Error("Seeded kernel activity is unavailable");
-    const knowledgeNodeId = activity.knowledgeNodeIds[0];
+    const knowledgeNodeId = activity.knowledgeNodeIds.find(
+      (candidate) => candidate === "primitive values",
+    );
     if (!knowledgeNodeId) {
       throw new Error("Seeded kernel activity has no knowledge node");
     }
@@ -598,7 +632,7 @@ describe("versioned learning API", () => {
     kernel.accept(scope, {
       operationId: "kernel-views-attempt",
       factId: attemptFactId,
-      observedAt: "2026-08-10T10:00:00.000Z",
+      observedAt: "2020-08-10T10:00:00.000Z",
       provenance: {
         kind: "learner_submission",
         sourceId: "kernel-views-attempt",
@@ -618,7 +652,7 @@ describe("versioned learning API", () => {
     kernel.accept(scope, {
       operationId: "kernel-views-evaluation",
       factId: "kernel-views-evaluation-fact",
-      observedAt: "2026-08-10T10:00:01.000Z",
+      observedAt: "2020-08-10T10:00:01.000Z",
       provenance: {
         kind: "deterministic_evaluator",
         sourceId: "kernel-views-evaluation",
@@ -656,39 +690,49 @@ describe("versioned learning API", () => {
         evidenceCount: 1,
       }),
     );
-    const mistakes = (await (
-      await request(runtime.app, "/api/learning/mistakes")
-    ).json()) as {
-      mistakes: Array<{
-        id: string;
-        errorFamily: string;
-        occurrenceCount: number;
-      }>;
-    };
+    const mistakes = LearningMistakesResponseSchema.parse(
+      await (await request(runtime.app, "/api/learning/mistakes")).json(),
+    );
     expect(mistakes.mistakes).toContainEqual(
       expect.objectContaining({
         errorFamily: "kernel-views-error",
         occurrenceCount: 1,
+        isDue: true,
       }),
     );
-    const reviews = (await (
+    const reviewsPayload = await (
       await request(runtime.app, "/api/learning/reviews")
-    ).json()) as {
-      reviews: Array<{
-        reasonCode: string;
-        sessionId: string;
-        activityId: string | null;
-        state: string;
-      }>;
-    };
+    ).json();
+    expect(JSON.stringify(reviewsPayload)).not.toContain("/session?id=");
+    const reviews = LearningReviewsResponseSchema.parse(reviewsPayload);
     expect(reviews.reviews).toContainEqual(
       expect.objectContaining({
         reasonCode: "mistake",
+        knowledgeNodeId: "primitive values",
         sessionId: session.id,
         activityId: activity.id,
         state: "pending",
+        isDue: true,
+        nextActionHref: null,
       }),
     );
+
+    runtime.state.connection.sqlite
+      .prepare(
+        `UPDATE learning_sessions
+         SET status = 'completed', current_step = 'complete',
+             completed_at = updated_at
+         WHERE id = ?`,
+      )
+      .run(session.id);
+    const historicalReviews = LearningReviewsResponseSchema.parse(
+      await (await request(runtime.app, "/api/learning/reviews")).json(),
+    );
+    expect(
+      historicalReviews.reviews.find(
+        (review) => review.reasonCode === "mistake",
+      )?.nextActionHref,
+    ).toBeNull();
   });
 
   it("completes the interview unit only with three persisted answers and a report", async () => {
@@ -1036,6 +1080,7 @@ describe("versioned learning API", () => {
           status: string;
           branchKind: string;
           contentHash: string;
+          learningSummary: z.infer<typeof LearningSummarySchema>;
         }>;
       }>;
     };
@@ -1156,14 +1201,184 @@ describe("versioned learning API", () => {
     expect(await current.json()).toEqual({ session: null });
   });
 
+  it("reports honest learning progress independently for every Course revision", async () => {
+    const { app, state } = createRuntime();
+    const readCourses = async () =>
+      CourseLearningSummariesResponseSchema.parse(
+        await (await request(app, "/api/learning/courses")).json(),
+      );
+    const findRevision = (
+      courses: z.infer<typeof CourseLearningSummariesResponseSchema>,
+      courseId: string,
+      revisionId: string,
+    ) => {
+      const summary = courses.courses
+        .find((course) => course.id === courseId)
+        ?.revisions.find(
+          (revision) => revision.id === revisionId,
+        )?.learningSummary;
+      if (!summary) {
+        throw new Error(`Missing learning summary for revision ${revisionId}`);
+      }
+      return summary;
+    };
+    const PathSchema = z.object({
+      courseContext: z.object({
+        courseId: z.string(),
+        revisionId: z.string(),
+      }),
+      curriculum: z.object({
+        weeks: z.array(
+          z.object({
+            days: z.array(z.object({ id: z.string() })),
+          }),
+        ),
+      }),
+    });
+    const StartedSessionSchema = z.object({
+      session: z.object({ id: z.string() }),
+    });
+
+    const pathResponse = await request(app, "/api/learning/path");
+    expect(pathResponse.status).toBe(200);
+    const path = PathSchema.parse(await pathResponse.json());
+    const lessons = path.curriculum.weeks.flatMap((week) => week.days);
+    const firstLesson = lessons[0];
+    const secondLesson = lessons[1];
+    if (!firstLesson || !secondLesson) {
+      throw new Error("Learning summary fixture requires at least two lessons");
+    }
+
+    const initial = findRevision(
+      await readCourses(),
+      path.courseContext.courseId,
+      path.courseContext.revisionId,
+    );
+    expect(initial).toEqual({
+      state: "not-started",
+      completedLessons: 0,
+      totalLessons: lessons.length,
+      progressPercent: 0,
+      lastActivityAt: null,
+    });
+
+    const firstStartedResponse = await request(
+      app,
+      "/api/learning/sessions/v2",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          dayId: firstLesson.id,
+          operationId: "summary-first-lesson",
+        }),
+      },
+    );
+    expect(firstStartedResponse.status).toBe(201);
+    const firstSession = StartedSessionSchema.parse(
+      await firstStartedResponse.json(),
+    ).session;
+    const firstUpdatedAt = (
+      state.connection.sqlite
+        .prepare("SELECT updated_at FROM learning_sessions WHERE id = ?")
+        .get(firstSession.id) as { updated_at: number }
+    ).updated_at;
+
+    expect(
+      findRevision(
+        await readCourses(),
+        path.courseContext.courseId,
+        path.courseContext.revisionId,
+      ),
+    ).toEqual({
+      state: "in-progress",
+      completedLessons: 0,
+      totalLessons: lessons.length,
+      progressPercent: 0,
+      lastActivityAt: new Date(firstUpdatedAt).toISOString(),
+    });
+
+    const firstCompletedAt = Date.now() + 1_000;
+    state.connection.sqlite
+      .prepare(
+        `UPDATE learning_sessions
+         SET status = 'completed', current_step = 'complete', completed_at = ?,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(firstCompletedAt, firstCompletedAt, firstSession.id);
+
+    const secondStartedResponse = await request(
+      app,
+      "/api/learning/sessions/v2",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          dayId: secondLesson.id,
+          operationId: "summary-second-lesson",
+        }),
+      },
+    );
+    expect(secondStartedResponse.status).toBe(201);
+    const secondSession = StartedSessionSchema.parse(
+      await secondStartedResponse.json(),
+    ).session;
+    const secondUpdatedAt = (
+      state.connection.sqlite
+        .prepare("SELECT updated_at FROM learning_sessions WHERE id = ?")
+        .get(secondSession.id) as { updated_at: number }
+    ).updated_at;
+    const sourceSummary = findRevision(
+      await readCourses(),
+      path.courseContext.courseId,
+      path.courseContext.revisionId,
+    );
+    expect(sourceSummary).toEqual({
+      state: "in-progress",
+      completedLessons: 1,
+      totalLessons: lessons.length,
+      progressPercent: Math.round(100 / lessons.length),
+      lastActivityAt: new Date(
+        Math.max(firstCompletedAt, secondUpdatedAt),
+      ).toISOString(),
+    });
+
+    const nextRevisionId = await cloneAndPublishActiveRevision(
+      app,
+      path.courseContext.revisionId,
+      "summary-isolated-revision",
+    );
+    const revisions = await readCourses();
+    expect(
+      findRevision(
+        revisions,
+        path.courseContext.courseId,
+        path.courseContext.revisionId,
+      ),
+    ).toEqual(sourceSummary);
+    expect(
+      findRevision(revisions, path.courseContext.courseId, nextRevisionId),
+    ).toEqual({
+      state: "not-started",
+      completedLessons: 0,
+      totalLessons: lessons.length,
+      progressPercent: 0,
+      lastActivityAt: null,
+    });
+  });
+
   it("rejects a locked day and resumes the active day idempotently", async () => {
     const { app, state } = createRuntime();
     const pathBody = (await (
       await request(app, "/api/learning/path")
     ).json()) as {
+      nextAction: unknown;
       curriculum: { weeks: Array<{ days: Array<{ id: string }> }> };
     };
     const [dayOne, dayTwo] = pathBody.curriculum.weeks[0]!.days;
+    expect(LearningPathNextActionSchema.parse(pathBody.nextAction)).toEqual({
+      type: "start",
+      lessonId: dayOne!.id,
+    });
 
     const locked = await request(app, "/api/learning/sessions/v2", {
       method: "POST",
@@ -1195,6 +1410,16 @@ describe("versioned learning API", () => {
       snapshotHash: snapshotBinding.content_hash,
     });
 
+    const resumedPath = (await (
+      await request(app, "/api/learning/path")
+    ).json()) as { nextAction: unknown };
+    expect(LearningPathNextActionSchema.parse(resumedPath.nextAction)).toEqual({
+      type: "resume",
+      lessonId: dayOne!.id,
+      sessionId: firstSession.id,
+      currentStep: firstSession.currentStep,
+    });
+
     const replay = await request(app, "/api/learning/sessions/v2", {
       method: "POST",
       body: JSON.stringify({ dayId: dayOne!.id, operationId: "start-day-1" }),
@@ -1213,6 +1438,20 @@ describe("versioned learning API", () => {
     expect(current.id).toBe(firstSession.id);
     expect(current.status).toBe("active");
     expect(current.courseContext).toEqual(firstSession.courseContext);
+
+    const conflictingStep = firstSession.snapshot.units.find(
+      (unit) => unit.stableId !== firstSession.currentStep,
+    );
+    if (!conflictingStep) throw new Error("Expected another snapshot Activity");
+    state.connection.sqlite
+      .prepare("UPDATE learning_sessions SET current_step = ? WHERE id = ?")
+      .run(conflictingStep.stableId, firstSession.id);
+    const inconsistentPath = await request(app, "/api/learning/path");
+    expect(inconsistentPath.status).toBe(400);
+    expect(await inconsistentPath.json()).toEqual({
+      error:
+        "Persisted current step conflicts with the Learning Kernel next action",
+    });
   });
 
   it("rejects a frozen legacy-v1 target before creating a session", async () => {
@@ -1236,6 +1475,7 @@ describe("versioned learning API", () => {
         id: "legacy-start-course",
         slug: "legacy-start-course",
         title: "Legacy start Course",
+        primaryLocale: "en-US",
       },
       title: "Frozen legacy revision",
     });

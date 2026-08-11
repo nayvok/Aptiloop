@@ -1,10 +1,19 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ExerciseClient } from "@/components/exercise-client";
+import { ReviewQueueClient } from "@/components/flashcards-client";
 import { KnowledgeClient } from "@/components/knowledge-client";
+import { MistakesClient } from "@/components/mistakes-client";
 import { ProviderHealth } from "@/components/provider-health";
 import { LocaleProvider } from "@/lib/i18n";
 
@@ -54,7 +63,22 @@ describe("core learning screens", () => {
           {
             connectionId: "conn:mock",
             displayName: "Deterministic Mock",
+            enabled: true,
             state: "connected",
+            observedCapabilities: {
+              connection: {
+                authenticated: true,
+                streaming: true,
+                cancellation: true,
+              },
+              models: [
+                {
+                  modelId: "mock-deterministic",
+                  available: true,
+                  typedToolCalls: "schema-constrained",
+                },
+              ],
+            },
           },
         ],
         roleProfiles: [
@@ -63,12 +87,14 @@ describe("core learning screens", () => {
             mode: "no-ai",
             connectionId: null,
             modelId: null,
+            requiredCapabilities: [],
           },
           ...(["tutor", "evaluator", "reviewer"] as const).map((role) => ({
             role,
             mode: "connection" as const,
             connectionId: "conn:mock",
             modelId: "mock-deterministic",
+            requiredCapabilities: ["streaming", "models", "cancellation"],
           })),
         ],
       },
@@ -109,9 +135,182 @@ describe("core learning screens", () => {
     });
 
     renderWithQuery(<KnowledgeClient />);
-    expect(await screen.findAllByText("Lexical scope")).toHaveLength(2);
-    expect(screen.getAllByText(/повторить/u)).not.toHaveLength(0);
-    expect(screen.getAllByText(/Подтверждений: 3/u)).not.toHaveLength(0);
+    expect(
+      await screen.findByRole("heading", { name: "JavaScript" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Lexical scope" }),
+    ).toBeVisible();
+    const reviewLink = screen.getByRole("link", {
+      name: "Нужно повторить: Lexical scope",
+    });
+    expect(reviewLink).toHaveAttribute("href", "/review");
+    expect(reviewLink).toHaveTextContent("Нужно повторить");
+    expect(screen.getByText(/Подтверждений: 3/u)).toBeVisible();
+  });
+
+  it("keeps review tasks visible without session links and discloses history on request", async () => {
+    const reviews = [
+      {
+        id: "review-pending",
+        topic:
+          "A very long pending topic that still needs deterministic review",
+        knowledgeNodeId: "primitive values",
+        dimension: "understanding",
+        activityKind: "recall",
+        reasonCode: "low_mastery",
+        dueAt: "2026-01-01T00:00:00.000Z",
+        state: "pending",
+        isDue: true,
+        sessionId: "session-review",
+        activityId: "activity-review",
+        nextActionHref: null,
+      },
+      {
+        id: "review-completed",
+        topic: "Completed review history",
+        knowledgeNodeId: "knowledge-node-completed",
+        dimension: "explanation",
+        activityKind: "correction",
+        reasonCode: "mistake",
+        dueAt: "2025-12-20T00:00:00.000Z",
+        state: "completed",
+        isDue: false,
+        sessionId: "session-history",
+        activityId: "activity-history",
+        nextActionHref: null,
+      },
+    ];
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/learning/reviews") {
+        return Promise.resolve({
+          asOf: "2026-01-02T00:00:00.000Z",
+          reviews,
+        });
+      }
+      if (path.includes("/dismiss")) return Promise.resolve({ ok: true });
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+
+    renderWithQuery(<ReviewQueueClient />);
+
+    expect(
+      await screen.findByText(
+        "A very long pending topic that still needs deterministic review",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Повторение назначено, но безопасная активность/u),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "Начать активность" }),
+    ).not.toBeInTheDocument();
+    expect(
+      document.querySelector('a[href^="/session?id="]'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Completed review history"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Полная детерминированная очередь/u,
+      }),
+    );
+    expect(await screen.findByText("Completed review history")).toBeVisible();
+
+    fireEvent.pointerDown(
+      screen.getByRole("button", {
+        name: /Убрать задание из очереди: A very long pending topic/u,
+      }),
+      { button: 0, ctrlKey: false },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "Убрать задание из очереди",
+      }),
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Убрать задание из очереди",
+    });
+    expect(dialog).toHaveTextContent(
+      "A very long pending topic that still needs deterministic review",
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Убрать задание из очереди",
+      }),
+    );
+    await waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith(
+        expect.stringContaining("/reviews/review-pending/dismiss"),
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+  });
+
+  it("does not turn Review provenance into a Start activity link", async () => {
+    apiMock.mockResolvedValue({
+      asOf: "2026-01-02T00:00:00.000Z",
+      reviews: [
+        {
+          id: "review-with-history-only",
+          topic: "Historical source session",
+          knowledgeNodeId: "knowledge-node-history-only",
+          dimension: "understanding",
+          activityKind: "recall",
+          reasonCode: "mistake",
+          dueAt: "2026-01-01T00:00:00.000Z",
+          state: "pending",
+          isDue: true,
+          sessionId: "completed-source-session",
+          activityId: "source-activity",
+          nextActionHref: null,
+        },
+      ],
+    });
+
+    renderWithQuery(<ReviewQueueClient dueOnly />);
+
+    expect(await screen.findByText("Historical source session")).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "Начать активность" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Повторение назначено, но безопасная активность/u),
+    ).toBeVisible();
+  });
+
+  it("uses server due classifications for Corrections", async () => {
+    apiMock.mockResolvedValue({
+      asOf: "2026-01-02T00:00:00.000Z",
+      mistakes: [
+        {
+          id: "mistake-not-due",
+          topic: "Past date without a due schedule",
+          errorFamily: "missing-schedule",
+          occurrenceCount: 1,
+          reviewAt: "2025-12-01T00:00:00.000Z",
+          isDue: false,
+        },
+        {
+          id: "mistake-due",
+          topic: "Kernel-scheduled correction",
+          errorFamily: "scope-error",
+          occurrenceCount: 2,
+          reviewAt: "2026-01-01T00:00:00.000Z",
+          isDue: true,
+        },
+      ],
+    });
+
+    renderWithQuery(<MistakesClient />);
+
+    expect(
+      await screen.findByText("Past date without a due schedule"),
+    ).toBeVisible();
+    expect(screen.getByText("Kernel-scheduled correction")).toBeVisible();
+    expect(screen.getByText("Сейчас назначено: 1")).toBeVisible();
   });
 
   it("restores persisted practice evidence after mounting", async () => {
@@ -188,8 +387,12 @@ describe("core learning screens", () => {
     });
 
     renderWithQuery(<ExerciseClient />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Diff от baseline/u }),
+    );
     expect(await screen.findByText("+ learner change")).toBeInTheDocument();
     expect(screen.getByText(/all tests passed/u)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Reviewer/u }));
     expect(screen.getByText("Проверь пустой массив")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Запросить проверку" }),

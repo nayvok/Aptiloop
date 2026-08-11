@@ -1,4 +1,4 @@
-import { AgentRoleSchema } from "@dlh/shared";
+import { AgentRoleSchema } from "@aptiloop/shared";
 import { describe, expect, it } from "vitest";
 
 import {

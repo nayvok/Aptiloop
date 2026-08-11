@@ -2,8 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { MockAgentProvider, type AgentProvider } from "@dlh/agent-core";
+import { MockAgentProvider, type AgentProvider } from "@aptiloop/agent-core";
 import {
+  AptiloopToolNameSchema,
   type AgentEvent,
   type AgentModel,
   type AgentSession,
@@ -11,7 +12,7 @@ import {
   type ProviderId,
   type ProviderStatus,
   type StreamAgentMessageInput,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 import type { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -40,6 +41,14 @@ const browserEventSchema = z.discriminatedUnion("type", [
       type: z.literal("message.completed"),
       turnId: z.string().uuid(),
       content: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("tool.summary"),
+      turnId: z.string().uuid(),
+      name: AptiloopToolNameSchema,
+      status: z.enum(["started", "completed"]),
     })
     .strict(),
   z
@@ -212,6 +221,43 @@ async function* toolScript(sessionId: string): AsyncIterable<AgentEvent> {
     toolCallId: "private-tool-call-id",
     toolName: "private-provider-tool",
     input: { secret: rawToolPayload },
+  };
+}
+
+async function* allowlistedToolScript(
+  sessionId: string,
+): AsyncIterable<AgentEvent> {
+  yield {
+    type: "tool.started",
+    sessionId,
+    sequence: 0,
+    timestamp,
+    toolCallId: "allowlisted-tool-call",
+    toolName: "lesson.readLearnerSafeContext",
+    input: { secret: rawToolPayload },
+  };
+  yield {
+    type: "tool.completed",
+    sessionId,
+    sequence: 1,
+    timestamp,
+    toolCallId: "allowlisted-tool-call",
+    toolName: "lesson.readLearnerSafeContext",
+    output: { secret: rawToolPayload },
+  };
+  yield {
+    type: "message.completed",
+    sessionId,
+    sequence: 2,
+    timestamp,
+    content: "Learner-safe answer",
+  };
+  yield {
+    type: "session.completed",
+    sessionId,
+    sequence: 3,
+    timestamp,
+    reason: "completed",
   };
 }
 
@@ -409,7 +455,7 @@ afterEach(async () => {
 });
 
 function runtime(options: AppOptions = {}) {
-  const root = mkdtempSync(path.join(tmpdir(), "dlh-agent-policy-"));
+  const root = mkdtempSync(path.join(tmpdir(), "aptiloop-agent-policy-"));
   roots.push(root);
   const created = createApp({
     projectRoot: path.resolve("../.."),
@@ -452,7 +498,7 @@ const request = (app: Hono, requestPath: string, init?: RequestInit) =>
     ...init,
     headers: {
       Host: "127.0.0.1:8787",
-      "X-DLH-Client": "web",
+      "X-Aptiloop-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
       ...init?.headers,
@@ -521,6 +567,27 @@ describe("M1 agent policy boundary", () => {
     expect(await state.repository.getSetting("theme")).toBe("dark");
     expect(mock.listCalls).toBe(0);
     expect(mock.createInputs).toHaveLength(0);
+  });
+
+  it("saves interface theme and locale through one strict mutation", async () => {
+    const { app, state } = runtime();
+
+    const saved = await request(app, "/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ theme: "dark", uiLocale: "ru-RU" }),
+    });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ saved: true, uiLocale: "ru-RU" });
+    expect(await state.repository.getSetting("theme")).toBe("dark");
+    expect(await state.repository.getSetting("uiLocale")).toBe("ru-RU");
+
+    const rejected = await request(app, "/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ theme: "light", uiLocale: "de-DE" }),
+    });
+    expect(rejected.status).toBe(400);
+    expect(await state.repository.getSetting("theme")).toBe("dark");
+    expect(await state.repository.getSetting("uiLocale")).toBe("ru-RU");
   });
 
   it("rejects unknown, legacy, completed, and noncurrent sessions before provider access", async () => {
@@ -1291,8 +1358,8 @@ describe("M1 agent policy boundary", () => {
     const turnId = z
       .string()
       .uuid()
-      .parse(response.headers.get("X-DLH-Agent-Turn-Id"));
-    expect(response.headers.get("X-DLH-Agent-Session-Id")).toBeNull();
+      .parse(response.headers.get("X-Aptiloop-Agent-Turn-Id"));
+    expect(response.headers.get("X-Aptiloop-Agent-Session-Id")).toBeNull();
     const body = await response.text();
     const events = parseSse(body);
     expect(events).toHaveLength(3);
@@ -1388,6 +1455,57 @@ describe("M1 agent policy boundary", () => {
       rawEventJson: null,
     });
     expect(JSON.stringify(assistant)).not.toContain(rawToolPayload);
+  });
+
+  it("emits only typed summaries for allowlisted tool activity", async () => {
+    const mock = new ScriptedProvider({ script: allowlistedToolScript });
+    const { app, state } = runtime({ providers: { mock } });
+
+    const response = await request(app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({ role: "teacher", message: "Use safe context" }),
+    });
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(parseSse(body)).toEqual([
+      expect.objectContaining({
+        type: "tool.summary",
+        name: "lesson.readLearnerSafeContext",
+        status: "started",
+      }),
+      expect.objectContaining({
+        type: "tool.summary",
+        name: "lesson.readLearnerSafeContext",
+        status: "completed",
+      }),
+      expect.objectContaining({
+        type: "message.completed",
+        content: "Learner-safe answer",
+      }),
+      expect.objectContaining({
+        type: "session.completed",
+        reason: "completed",
+      }),
+    ]);
+    expect(body).not.toContain(rawToolPayload);
+    expect(body).not.toContain("allowlisted-tool-call");
+
+    const assistant = z
+      .object({
+        toolEventsJson: z.string(),
+        rawEventJson: z.string().nullable(),
+      })
+      .parse(
+        state.connection.sqlite
+          .prepare(
+            `SELECT tool_events_json AS toolEventsJson,
+                    raw_event_json AS rawEventJson
+             FROM agent_messages WHERE role = 'assistant'`,
+          )
+          .get(),
+      );
+    expect(assistant).toEqual({ toolEventsJson: "[]", rawEventJson: null });
   });
 
   it.each(adversarialEventCases)(
@@ -1606,7 +1724,7 @@ describe("M1 agent policy boundary", () => {
     const firstTurnId = z
       .string()
       .uuid()
-      .parse(first.headers.get("X-DLH-Agent-Turn-Id"));
+      .parse(first.headers.get("X-Aptiloop-Agent-Turn-Id"));
     const firstBody = first.text();
     await firstStarted;
 
@@ -1622,7 +1740,7 @@ describe("M1 agent policy boundary", () => {
       error:
         "An agent turn is already active for this session, role, provider, and model.",
     });
-    expect(concurrent.headers.get("X-DLH-Agent-Turn-Id")).toBeNull();
+    expect(concurrent.headers.get("X-Aptiloop-Agent-Turn-Id")).toBeNull();
     expect(mock.createInputs).toHaveLength(1);
     expect(mock.cancelCalls).toEqual([]);
     expect(state.providerSessions.size).toBe(1);
@@ -1806,7 +1924,7 @@ describe("M1 agent policy boundary", () => {
     const turnId = z
       .string()
       .uuid()
-      .parse(response.headers.get("X-DLH-Agent-Turn-Id"));
+      .parse(response.headers.get("X-Aptiloop-Agent-Turn-Id"));
     const activeSession = [...state.providerSessions.values()][0];
     expect(activeSession).toBeDefined();
     expect(turnId).not.toBe(activeSession?.providerSessionId);

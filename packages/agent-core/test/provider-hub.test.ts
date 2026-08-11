@@ -8,7 +8,7 @@ import type {
   ProviderConnection,
   ProviderStatus,
   RoleProfile,
-} from "@dlh/shared";
+} from "@aptiloop/shared";
 
 import {
   CORE_TOOL_POLICIES,
