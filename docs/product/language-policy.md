@@ -32,7 +32,7 @@ Supported values are `en-US` and `ru-RU`. Resolution order is deterministic: use
 
 **Implemented baseline**
 
-The web application stores the confirmed UI locale under `aptiloop:ui-locale` in browser local storage and mirrors the same value to the `aptiloop.ui-locale` cookie for the server-rendered root language. Interface locale changes apply immediately and do not require Core availability or a database write. Malformed stored values fail closed to the supported first-run/default resolution path.
+The web application stores the confirmed UI locale under `aptiloop:ui-locale` in browser local storage and mirrors the same value to the `aptiloop.ui-locale` cookie for the server-rendered root language. Settings keeps a language selection under the allowlisted `aptiloop:ui-locale-draft` browser-session key until explicit Save or Cancel, so an unsaved selection survives Settings section changes, route exits, and reloads in the same browser session without changing the active locale. Save and Cancel clear that draft; Save applies the confirmed locale without Core availability or a database write. Blocked browser storage remains an explicit unsaved error rather than a false success. Malformed confirmed or draft values are discarded and fail closed to the active supported locale or first-run/default resolution path.
 
 ### Primary Course locale
 

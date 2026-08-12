@@ -68,6 +68,7 @@ See the [ADR index](adr/README.md). ADR status records a decision at its stated 
 ## Dated audits and verification evidence
 
 - [2026-08-12 UI/UX and runtime hardening](audits/2026-08-12-ui-ux-runtime-hardening.md)
+- [2026-08-12 differential security review](audits/2026-08-12-differential-security-review.md)
 - [2026-08-08 M1 safety-boundary and private-data inventory](audits/2026-08-08-m1-safety-boundary-inventory.md)
 - [2026-08-08 M0 repository audit and approval gate](audits/2026-08-08-core-alpha-repository-audit.md)
 

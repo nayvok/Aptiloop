@@ -26,7 +26,7 @@ The exact canonical values and contrast intent are in [`../DESIGN.md`](../DESIGN
 
 `surface-soft` is the canonical recessed-band, quiet-well, query-state, and secondary-group surface. It replaces the obsolete `surface-subtle` name; documentation and components must not introduce a parallel alias. Cool-neutral surfaces never inherit the evergreen hue. Evergreen is reserved for primary action, success, progress, and focus. Warning, destructive, selection, and activity families retain independent roles. Activity color supplements a label, icon, border/marker, and state text; it is never the only distinction.
 
-`ThemeProvider` retains `system | light | dark`, defaults to system, applies `color-scheme`, and suppresses transition noise during theme changes. Theme and UI locale are immediate browser-local preferences; the header and Settings read the same current theme instead of requiring a Core or database save. `prefers-reduced-motion` globally reduces nonessential animation, scrolling, and transforms.
+`ThemeProvider` retains `system | light | dark`, defaults to system, applies `color-scheme`, and suppresses transition noise during theme changes. Theme changes apply and persist immediately through the shared browser-local `next-themes` state. Settings keeps UI-locale selection as an allowlisted browser-session draft until explicit Save or Cancel, preserving it across section changes, route exits, and reloads without applying it. Cancel restores the active locale; Save and Cancel clear the draft. Saving the locale uses browser-local persistence only and never requires Core or a database write. `prefers-reduced-motion` globally reduces nonessential animation, scrolling, and transforms.
 
 ## Layout and navigation
 

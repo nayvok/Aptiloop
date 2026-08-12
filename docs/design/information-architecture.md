@@ -428,6 +428,12 @@ Studio light/dark must preserve editor hierarchy, validation severity, selection
 | Designer capability unknown  | exact eligible connection/model, advisory evidence gap, server-authoritative continuation and recovery | disabling every path; guessing model strength or silently switching provider |
 | Runtime missing              | exact Node/Python/editor requirement and setup/copy/manual path                                        | arbitrary command execution or shell instructions from a Pack                |
 
+### Route-boundary recovery
+
+**Implemented baseline**
+
+The App Router root error and not-found boundaries retain the App Shell whenever the root layout remains available. They provide localized retry, Back, and Home recovery. Unexpected failures use safe generic copy: raw exception messages, stacks, and request data are never rendered. A technical disclosure is shown only for a bounded, alphanumeric Next error digest and labels it as an error reference.
+
 ## Theme and responsive ownership
 
 **Implemented baseline**
