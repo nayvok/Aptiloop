@@ -734,15 +734,24 @@ describe("guided versioned session", () => {
       '[data-slot="unit-learning-brief"]',
     );
     expect(focus).toContainElement(ready as HTMLElement);
-    expect(focus).toHaveClass("w-full", "min-w-0");
+    expect(focus).toHaveClass(
+      "w-full",
+      "min-w-0",
+      "max-w-[64rem]",
+      "lg:px-8",
+      "lg:py-8",
+    );
     expect(focus).toHaveAttribute("tabindex", "-1");
     expect(focus).toHaveAccessibleName("Юнит briefing");
     expect(
       document.querySelector('[data-slot="lesson-workspace"]'),
     ).toHaveClass(
       "min-h-[calc(100dvh-var(--shell-bar-size,4.5rem))]",
-      "@min-[72rem]/lesson:grid-cols-[minmax(0,1fr)_minmax(22rem,27rem)]",
+      "@min-[72rem]/lesson:grid-cols-[minmax(0,1fr)_minmax(22rem,24rem)]",
     );
+    expect(
+      document.querySelector('[data-slot="session-header-grid"]'),
+    ).toHaveClass("max-w-[64rem]", "px-4", "sm:px-6", "lg:px-8");
     expect(ready).toHaveClass("w-full");
     expect(ready).not.toHaveClass(
       "rounded-focus",

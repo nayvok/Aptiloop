@@ -43,7 +43,6 @@ import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { EmptyState, QueryError } from "@/components/query-state";
 import { LoadingState } from "@/components/ui/loading-state";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { RouteContext } from "@/lib/route-context";
 import { groupDayIntoBlocks, type LearningBlock } from "@/lib/learning-blocks";
@@ -816,7 +815,7 @@ export function SessionClient() {
     >
       <div
         data-slot="lesson-workspace"
-        className="grid min-h-[calc(100dvh-var(--shell-bar-size,4.5rem))] min-w-0 items-start @min-[72rem]/lesson:grid-cols-[minmax(0,1fr)_minmax(22rem,27rem)] @min-[72rem]/lesson:grid-rows-[auto_minmax(0,1fr)]"
+        className="grid min-h-[calc(100dvh-var(--shell-bar-size,4.5rem))] min-w-0 items-start @min-[72rem]/lesson:grid-cols-[minmax(0,1fr)_minmax(22rem,24rem)] @min-[72rem]/lesson:grid-rows-[auto_minmax(0,1fr)]"
       >
         <SessionProgressHeader
           session={session}
@@ -834,7 +833,7 @@ export function SessionClient() {
           role="group"
           aria-label={focusedUnit.title}
           tabIndex={-1}
-          className="mx-auto w-full max-w-[60rem] min-w-0 scroll-mt-32 px-4 py-8 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-7 sm:py-10 lg:px-11 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-2 @min-[72rem]/lesson:px-12 @min-[72rem]/lesson:py-12"
+          className="mx-auto w-full max-w-[64rem] min-w-0 scroll-mt-28 px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-6 sm:py-7 lg:px-8 lg:py-8 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-2"
         >
           {showBlockTransition && activeBlock ? (
             <BlockTransition
@@ -852,9 +851,9 @@ export function SessionClient() {
             <section
               data-slot="unit-ready"
               aria-labelledby="unit-ready-title"
-              className="flex w-full flex-col gap-5"
+              className="flex w-full flex-col gap-4"
             >
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-3">
                 <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <Badge
                     variant="outline"
@@ -867,10 +866,10 @@ export function SessionClient() {
                     {formatDuration(focusedUnit.estimatedMinutes, locale)}
                   </span>
                 </div>
-                <div className="flex min-w-0 max-w-[68ch] flex-col gap-2">
+                <div className="flex min-w-0 max-w-[72ch] flex-col gap-1.5">
                   <h2
                     id="unit-ready-title"
-                    className="break-words text-pretty text-xl font-semibold leading-7 tracking-[-0.02em] [overflow-wrap:anywhere] sm:text-[1.375rem] sm:leading-[1.875rem]"
+                    className="break-words text-pretty text-[1.375rem] font-semibold leading-[1.875rem] tracking-[-0.02em] [overflow-wrap:anywhere] sm:text-2xl sm:leading-8"
                   >
                     {focusedUnit.title}
                   </h2>
@@ -1003,7 +1002,7 @@ function ReadyLearningBrief({
   return (
     <div
       data-slot="unit-learning-brief"
-      className="flex min-w-0 flex-col gap-6"
+      className="flex min-w-0 flex-col gap-5"
     >
       <section className="flex min-w-0 flex-col gap-1.5 rounded-focus bg-surface-soft/55 px-4 py-4 sm:px-5 sm:py-5">
         <h3 className="text-sm font-semibold">
@@ -1013,7 +1012,7 @@ function ReadyLearningBrief({
           {studyBody ?? unit.description}
         </p>
       </section>
-      <div className="grid min-w-0 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid min-w-0 gap-x-7 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
         <InfoList title={t("dayPlan.outcomes")} items={outcomes} />
         <InfoList
           title={t("dayPlan.topics")}
@@ -1060,14 +1059,14 @@ function SessionProgressHeader({
   return (
     <header
       data-slot="session-progress-header"
-      className="sticky top-[var(--shell-bar-size,4.5rem)] z-10 w-full bg-background/95 px-4 py-4 backdrop-blur-sm sm:px-7 lg:px-11 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-1 @min-[72rem]/lesson:px-12"
+      className="sticky top-[var(--shell-bar-size,4.5rem)] z-10 w-full bg-background/95 py-3 backdrop-blur-sm sm:py-3.5 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-1"
     >
       <div
         data-slot="session-header-grid"
-        className="mx-auto w-full max-w-[60rem] min-w-0"
+        className="mx-auto w-full max-w-[64rem] min-w-0 px-4 sm:px-6 lg:px-8"
       >
         <div data-slot="session-orientation" className="w-full min-w-0">
-          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-end sm:justify-between">
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[0.6875rem] font-medium leading-4 text-muted-foreground">
                 <p
@@ -2140,7 +2139,11 @@ function TeacherDialogueUnit({
         </p>
       </div>
       {history.isPending && !localMessages ? (
-        <Skeleton className="h-28" />
+        <LoadingState
+          label="session.loading"
+          variant="panel"
+          className="min-h-28"
+        />
       ) : history.isError ? (
         <QueryError
           message={errorMessage(history.error)}
@@ -2909,11 +2912,11 @@ function SummaryUnit({
           </Button>
         </div>
       ) : persisted.isPending && summaryId ? (
-        <div className="flex flex-col gap-3" role="status">
-          <span className="sr-only">{t("session.summary.loading")}</span>
-          <Skeleton className="h-20" />
-          <Skeleton className="h-16" />
-        </div>
+        <LoadingState
+          label="session.summary.loading"
+          variant="panel"
+          className="min-h-36"
+        />
       ) : (
         <div
           data-slot="summary-generate"

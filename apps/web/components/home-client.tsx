@@ -151,7 +151,7 @@ export function HomeClient({
 
   if (query.isLoading) {
     return (
-      <div data-slot={surfaceSlot} className="flex flex-col gap-8 lg:gap-10">
+      <div data-slot={surfaceSlot} className="flex flex-col gap-6 lg:gap-8">
         {isRevisionPreview ? <RevisionPageHeader /> : <HomePageHeader />}
         <div
           role="status"
@@ -160,7 +160,7 @@ export function HomeClient({
               ? t("authoring.loading.versions")
               : t("home.loading")
           }
-          className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-8"
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6"
         >
           <span className="sr-only">
             {isRevisionPreview
@@ -168,26 +168,23 @@ export function HomeClient({
               : t("home.loading")}
           </span>
           <div
-            className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 rounded-control border border-border/70 bg-card p-6 sm:p-8"
+            className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 rounded-panel bg-surface-soft/70 p-5 sm:p-6"
             aria-hidden
           >
             <Skeleton className="h-3 w-24" />
             <Skeleton className="h-8 w-80 max-w-[90%]" />
             <Skeleton className="h-4 w-full max-w-xl" />
             <Skeleton className="h-2 w-full max-w-xl" />
-            <div className="grid grid-cols-[minmax(0,1fr)] gap-4 border-t border-border/60 pt-5 sm:grid-cols-3">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-4 pt-2 sm:grid-cols-3">
               <Skeleton className="h-10" />
               <Skeleton className="h-10" />
               <Skeleton className="h-10" />
             </div>
           </div>
-          <div
-            aria-hidden
-            className="min-w-0 divide-y divide-border/60 border-y border-border/60"
-          >
-            <Skeleton className="my-4 h-12 rounded-control" />
-            <Skeleton className="my-4 h-12 rounded-control" />
-            <Skeleton className="my-4 h-12 rounded-control" />
+          <div aria-hidden className="grid min-w-0 gap-2 sm:grid-cols-3">
+            <Skeleton className="h-14 rounded-control" />
+            <Skeleton className="h-14 rounded-control" />
+            <Skeleton className="h-14 rounded-control" />
           </div>
         </div>
       </div>
@@ -205,7 +202,7 @@ export function HomeClient({
       );
     }
     return (
-      <div data-slot="home" className="flex flex-col gap-8 lg:gap-10">
+      <div data-slot="home" className="flex flex-col gap-6 lg:gap-8">
         <HomePageHeader />
         <QueryError
           message={t("home.unavailable")}
@@ -319,7 +316,10 @@ export function HomeClient({
     : [];
 
   return (
-    <div data-slot={surfaceSlot} className="flex flex-col gap-8 lg:gap-10">
+    <div
+      data-slot={surfaceSlot}
+      className="@container/home flex flex-col gap-6 lg:gap-8"
+    >
       {isRevisionPreview ? (
         <RevisionPageHeader
           title={course.title}
@@ -377,7 +377,7 @@ export function HomeClient({
       {currentDay ? (
         <section
           aria-labelledby="next-action-title"
-          className="flex min-w-0 flex-col gap-6 rounded-control border border-border/70 bg-card p-6 sm:p-8"
+          className="flex min-w-0 flex-col gap-5 rounded-panel bg-surface-soft/70 p-5 sm:p-6"
         >
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
@@ -391,11 +391,11 @@ export function HomeClient({
                 {t("home.lesson", { number: currentDay.order })} ·{" "}
                 {currentDay.title}
               </h2>
-              <p className="mt-2 max-w-[70ch] text-sm leading-6 text-muted-foreground">
+              <p className="mt-2 max-w-[76ch] text-sm leading-6 text-muted-foreground">
                 {nextUnit?.title ?? currentDay.goal}
               </p>
               {totalUnits > 0 ? (
-                <div className="mt-5 max-w-xl">
+                <div className="mt-5 w-full">
                   <div className="mb-2 flex items-center justify-between gap-4 text-xs">
                     <span className="font-medium">
                       {t("home.focus.lessonProgress")}
@@ -446,8 +446,8 @@ export function HomeClient({
             </Button>
           </div>
 
-          <dl className="grid divide-y divide-border/60 border-t border-border/60 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-            <div className="min-w-0 py-4 sm:pr-5">
+          <dl className="grid gap-2 sm:grid-cols-3">
+            <div className="min-w-0 rounded-control bg-background/70 px-4 py-3">
               <dt className="text-xs text-muted-foreground">
                 {t("home.focus.time")}
               </dt>
@@ -459,7 +459,7 @@ export function HomeClient({
                     })}
               </dd>
             </div>
-            <div className="min-w-0 py-4 sm:px-5">
+            <div className="min-w-0 rounded-control bg-background/70 px-4 py-3">
               <dt className="text-xs text-muted-foreground">
                 {t("home.focus.courseProgress")}
               </dt>
@@ -471,7 +471,7 @@ export function HomeClient({
               </dd>
             </div>
             {currentBlock ? (
-              <div className="min-w-0 py-4 sm:pl-5">
+              <div className="min-w-0 rounded-control bg-background/70 px-4 py-3">
                 <dt className="text-xs text-muted-foreground">
                   {t("home.focus.phase")}
                 </dt>
@@ -504,13 +504,23 @@ export function HomeClient({
       )}
 
       {blocks.length > 0 ? (
-        <section aria-labelledby="learning-phases-title" className="min-w-0">
+        <section
+          data-slot="home-learning-phases"
+          aria-labelledby="learning-phases-title"
+          className="min-w-0"
+        >
           <h2 id="learning-phases-title" className="pb-3 text-lg font-semibold">
             {t("home.phases")}
           </h2>
-          <ol className="divide-y divide-border/60 border-y border-border/60">
+          <ol
+            data-slot="home-phase-list"
+            className="grid gap-2 @min-[68rem]/home:grid-cols-3"
+          >
             {blocks.map((block) => (
-              <li key={block.id} className="flex items-start gap-3 py-4">
+              <li
+                key={block.id}
+                className="flex min-h-16 items-center gap-3 rounded-control bg-surface-soft/55 px-4 py-3"
+              >
                 <span className="grid size-8 shrink-0 place-items-center">
                   {block.status === "completed" ? (
                     <CheckCircleIcon
@@ -530,7 +540,7 @@ export function HomeClient({
                     />
                   )}
                 </span>
-                <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="font-medium">{t(phaseLabels[block.id])}</h3>
                     <p className="text-xs leading-5 text-muted-foreground">
@@ -556,11 +566,14 @@ export function HomeClient({
       ) : null}
 
       {upcoming.length > 0 ? (
-        <section aria-labelledby="upcoming-title">
+        <section data-slot="home-upcoming" aria-labelledby="upcoming-title">
           <h2 id="upcoming-title" className="pb-2 text-lg font-semibold">
             {t("home.upcoming")}
           </h2>
-          <ol className="divide-y divide-border/60 border-y border-border/60">
+          <ol
+            data-slot="home-upcoming-list"
+            className="grid gap-2 @min-[48rem]/home:grid-cols-2"
+          >
             {upcoming.map((day) => (
               <UpcomingLesson key={day.id} day={day} />
             ))}
@@ -642,7 +655,7 @@ function RevisionFailureState({
   return (
     <div
       data-slot="course-revision-preview"
-      className="flex flex-col gap-8 lg:gap-10"
+      className="flex flex-col gap-6 lg:gap-8"
     >
       <RevisionPageHeader />
       <div data-slot="course-revision-preview-error">
@@ -662,7 +675,7 @@ function RevisionMissingState({ retry }: { retry: () => void }) {
   return (
     <div
       data-slot="course-revision-preview"
-      className="flex flex-col gap-8 lg:gap-10"
+      className="flex flex-col gap-6 lg:gap-8"
     >
       <RevisionPageHeader />
       <EmptyState
@@ -731,7 +744,7 @@ function RevisionRoadmapView({
   return (
     <div
       data-slot="course-revision-preview"
-      className="flex min-w-0 flex-col gap-8 lg:gap-10"
+      className="flex min-w-0 flex-col gap-6 lg:gap-8"
     >
       <RevisionPageHeader
         title={course.title}
@@ -764,7 +777,7 @@ function RevisionRoadmapView({
         </section>
       ) : null}
 
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-8 xl:grid-cols-[minmax(0,48rem)_minmax(16rem,20rem)] xl:items-start xl:justify-between">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,23rem)] xl:items-start xl:gap-8">
         <RevisionContextRail
           course={course}
           days={days}
@@ -777,7 +790,7 @@ function RevisionRoadmapView({
         <section
           data-slot="course-roadmap"
           aria-labelledby="course-roadmap-title"
-          className="mx-auto min-w-0 w-full max-w-3xl xl:col-start-1 xl:row-start-1 xl:mx-0"
+          className="min-w-0 w-full xl:col-start-1 xl:row-start-1"
         >
           <div
             data-slot="course-roadmap-heading"
@@ -808,7 +821,7 @@ function RevisionRoadmapView({
             ) : null}
           </div>
 
-          <div className="mt-8 space-y-10">
+          <div className="mt-6 space-y-8">
             {course.weeks.map((week) => (
               <section
                 key={week.id}
@@ -828,7 +841,7 @@ function RevisionRoadmapView({
                     </p>
                   ) : null}
                 </div>
-                <ol className="space-y-4">
+                <ol className="space-y-3">
                   {week.days.map((day) => (
                     <RoadmapLesson
                       key={day.id}
@@ -873,8 +886,8 @@ function RoadmapLesson({
       aria-current={isCurrent && currentUnitId === null ? "step" : undefined}
       className={
         isCurrent
-          ? "min-w-0 rounded-panel border border-primary/35 bg-primary/[0.04]"
-          : "min-w-0 rounded-panel border border-border/55 bg-card"
+          ? "min-w-0 rounded-panel border-l-[3px] border-primary bg-primary/[0.06]"
+          : "min-w-0 rounded-panel bg-surface-soft/60"
       }
     >
       <article className="min-w-0 p-5 sm:p-6">
@@ -1037,11 +1050,11 @@ function RevisionContextRail({
   return (
     <aside
       data-slot="course-roadmap-context"
-      className="mx-auto min-w-0 w-full max-w-3xl space-y-4 xl:col-start-2 xl:row-start-1 xl:mx-0 xl:sticky xl:top-28 xl:max-w-none"
+      className="min-w-0 w-full space-y-3 xl:col-start-2 xl:row-start-1 xl:sticky xl:top-24"
     >
       <section
         data-slot="course-roadmap-summary"
-        className="rounded-panel border border-border/55 bg-card p-5"
+        className="rounded-panel bg-surface-raised p-5"
       >
         <h2 className="font-semibold">{t("home.nextAction")}</h2>
         {action ? (
@@ -1193,25 +1206,32 @@ function RoadmapStatusText({ status }: { status: LearningDay["status"] }) {
 function UpcomingLesson({ day }: { day: LearningDay }) {
   const { t } = useI18n();
   return (
-    <li className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+    <li
+      data-slot="home-upcoming-lesson"
+      className="flex min-w-0 flex-col gap-3 rounded-control bg-surface-soft/45 px-4 py-3.5"
+    >
       <div className="min-w-0 [overflow-wrap:anywhere]">
         <p className="font-medium leading-6">
           {t("home.lesson", { number: day.order })} · {day.title}
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <p className="text-xs text-muted-foreground">
           {t("home.estimated", { minutes: day.estimatedMinutes })}
         </p>
+        <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full bg-background/60 px-2.5 py-1 text-xs text-muted-foreground">
+          {day.status === "completed" ? (
+            <CheckCircleIcon aria-hidden weight="fill" />
+          ) : day.status === "locked" ? (
+            <LockKeyIcon aria-hidden />
+          ) : (
+            <span aria-hidden className="size-2 rounded-full bg-primary" />
+          )}
+          <span className="break-words [overflow-wrap:anywhere]">
+            {t(dayStatusLabels[day.status])}
+          </span>
+        </span>
       </div>
-      <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-        {day.status === "completed" ? (
-          <CheckCircleIcon aria-hidden weight="fill" />
-        ) : day.status === "locked" ? (
-          <LockKeyIcon aria-hidden />
-        ) : (
-          <span aria-hidden className="size-2 rounded-full bg-primary" />
-        )}
-        {t(dayStatusLabels[day.status])}
-      </span>
     </li>
   );
 }

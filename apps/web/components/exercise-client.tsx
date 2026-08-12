@@ -41,8 +41,8 @@ import {
 } from "@/components/ui/collapsible";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryError } from "@/components/query-state";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
 
 const protectedKeys = new Set([
   "referenceAnswer",
@@ -697,16 +697,7 @@ export function ExerciseClient() {
   usePageRouteContext(pageRouteContext);
 
   if (query.isLoading) {
-    return (
-      <div
-        className="flex flex-col gap-5"
-        role="status"
-        aria-label={t("practice.loading")}
-      >
-        <Skeleton className="h-20" />
-        <Skeleton className="h-96" />
-      </div>
-    );
+    return <LoadingState label="practice.loading" variant="page" />;
   }
   if (query.isError || !query.data) {
     return (

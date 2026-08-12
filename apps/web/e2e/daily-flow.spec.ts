@@ -168,6 +168,8 @@ test("hydrates a collapsed desktop rail without an expanded-frame flash", async 
 
   await page.goto("/");
   const sidebar = page.locator('[data-slot="sidebar"]');
+  const sidebarHeader = page.locator('[data-slot="sidebar-header"]');
+  const sidebarBrand = page.locator('[data-slot="sidebar-brand"]');
   const utilityHeader = page.locator('[data-slot="utility-header"]');
   await expect(sidebar).toHaveAttribute("data-state", "collapsed");
   await expect
@@ -178,6 +180,29 @@ test("hydrates a collapsed desktop rail without an expanded-frame flash", async 
       Math.round((await utilityHeader.boundingBox())?.height ?? 0),
     )
     .toBe(72);
+  await expect
+    .poll(async () => {
+      const rail = await sidebar.boundingBox();
+      const corner = await sidebarHeader.boundingBox();
+      const brand = await sidebarBrand.boundingBox();
+      return rail && corner && brand
+        ? {
+            corner: [Math.round(corner.width), Math.round(corner.height)],
+            inset: [
+              Math.round(brand.x - corner.x),
+              Math.round(brand.y - corner.y),
+              Math.round(corner.x + corner.width - brand.x - brand.width),
+              Math.round(corner.y + corner.height - brand.y - brand.height),
+            ],
+            railWidth: Math.round(rail.width),
+          }
+        : null;
+    })
+    .toEqual({
+      corner: [72, 72],
+      inset: [12, 12, 12, 12],
+      railWidth: 72,
+    });
 
   const collapsedNavLink = sidebar
     .locator('[data-slot="sidebar-primary-navigation"]')
@@ -202,6 +227,131 @@ test("hydrates a collapsed desktop rail without an expanded-frame flash", async 
   expect(observedStates).toContain("collapsed");
   expect(observedStates).not.toContain("expanded");
 });
+
+for (const preference of [
+  {
+    cookie: "false",
+    stored: "true",
+    expectedState: "collapsed",
+    expectedWidth: 72,
+    expectedLabelDisplay: "none",
+  },
+  {
+    cookie: "true",
+    stored: "false",
+    expectedState: "expanded",
+    expectedWidth: 248,
+    expectedLabelDisplay: "block",
+  },
+] as const) {
+  test(`keeps the ${preference.expectedState} rail visually stable while local storage overrides its cookie`, async ({
+    context,
+    page,
+  }) => {
+    await seedRussianInterface(page);
+    await context.addCookies([
+      {
+        name: "aptiloop.sidebar-collapsed",
+        value: preference.cookie,
+        url: webOrigin,
+      },
+    ]);
+    await page.addInitScript((stored) => {
+      window.localStorage.setItem("aptiloop:sidebar-collapsed", stored);
+      const samples: string[] = [];
+      Object.defineProperty(window, "__aptiloopSidebarVisualStates", {
+        configurable: true,
+        value: samples,
+      });
+      let frames = 0;
+      const recordVisualState = () => {
+        const sidebar = document.querySelector<HTMLElement>(
+          '[data-slot="sidebar"]',
+        );
+        const label = document.querySelector<HTMLElement>(
+          '[data-slot="sidebar-link-label"]',
+        );
+        if (sidebar && label) {
+          const labelStyle = getComputedStyle(label);
+          const sample = [
+            Math.round(sidebar.getBoundingClientRect().width),
+            labelStyle.display,
+            labelStyle.visibility,
+          ].join(":");
+          if (samples.at(-1) !== sample) samples.push(sample);
+        }
+        frames += 1;
+        if (
+          frames < 120 &&
+          !samples.some((sample) => {
+            const [width, , visibility] = sample.split(":");
+            return Number(width) > 0 && visibility !== "hidden";
+          })
+        ) {
+          requestAnimationFrame(recordVisualState);
+        }
+      };
+      document.addEventListener(
+        "DOMContentLoaded",
+        () => {
+          requestAnimationFrame(recordVisualState);
+        },
+        {
+          once: true,
+        },
+      );
+    }, preference.stored);
+
+    await page.goto("/");
+    const sidebar = page.locator('[data-slot="sidebar"]');
+    await expect(sidebar).toHaveAttribute(
+      "data-state",
+      preference.expectedState,
+    );
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-sidebar-collapsed",
+      preference.stored,
+    );
+    await expect
+      .poll(async () => Math.round((await sidebar.boundingBox())?.width ?? 0))
+      .toBe(preference.expectedWidth);
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          () =>
+            (
+              window as typeof window & {
+                __aptiloopSidebarVisualStates?: string[];
+              }
+            ).__aptiloopSidebarVisualStates?.some((sample) => {
+              const [width, , visibility] = sample.split(":");
+              return Number(width) > 0 && visibility !== "hidden";
+            }) ?? false,
+        ),
+      )
+      .toBe(true);
+
+    const samples = await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            __aptiloopSidebarVisualStates?: string[];
+          }
+        ).__aptiloopSidebarVisualStates ?? [],
+    );
+    const visibleSamples = samples.filter((sample) => {
+      const [width, , visibility] = sample.split(":");
+      return Number(width) > 0 && visibility !== "hidden";
+    });
+    expect(visibleSamples.length).toBeGreaterThan(0);
+    for (const sample of visibleSamples) {
+      const [width, display, visibility] = sample.split(":");
+      expect(Number(width)).toBe(preference.expectedWidth);
+      expect(display).toBe(preference.expectedLabelDisplay);
+      expect(visibility).not.toBe("hidden");
+    }
+  });
+}
 
 test("completes restart-safe Day 1 through correction, summary, mastery and review", async ({
   page,

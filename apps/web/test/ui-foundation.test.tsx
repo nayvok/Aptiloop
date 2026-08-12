@@ -4,6 +4,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -82,6 +83,8 @@ beforeEach(() => {
   window.localStorage.clear();
   document.cookie =
     "aptiloop.sidebar-collapsed=; Path=/; Max-Age=0; SameSite=Strict";
+  delete document.documentElement.dataset.sidebarCollapsed;
+  delete document.documentElement.dataset.sidebarHydrated;
 });
 
 afterEach(cleanup);
@@ -169,10 +172,19 @@ describe("UI foundation", () => {
     expect(sidebar).toHaveClass("w-[var(--shell-rail-expanded)]");
     expect(container.querySelector('[data-slot="sidebar-header"]')).toHaveClass(
       "h-[var(--shell-bar-size)]",
+      "after:h-px",
     );
     expect(container.querySelector('[data-slot="utility-header"]')).toHaveClass(
       "h-[var(--shell-bar-size)]",
+      "after:h-px",
     );
+    expect(sidebar).not.toHaveClass("border-r");
+    expect(
+      container.querySelector('[data-slot="utility-header-content"]'),
+    ).toHaveClass("w-full", "px-4", "sm:px-6", "lg:px-6");
+    expect(
+      container.querySelector('[data-slot="utility-header-content"]'),
+    ).not.toHaveClass("mx-auto", "max-w-[1440px]", "lg:px-11");
     expect(container.querySelector('[data-slot="shell-content"]')).toHaveClass(
       "md:pl-[var(--shell-rail-expanded)]",
     );
@@ -235,6 +247,7 @@ describe("UI foundation", () => {
       ).queryByRole("button", { name: "Свернуть боковую панель" }),
     ).not.toBeInTheDocument();
     expect(desktopToggle).toHaveAttribute("aria-expanded", "true");
+    expect(desktopToggle).toHaveClass("size-11", "md:size-11");
     const breadcrumbs = within(utilityHeader).getByRole("navigation", {
       name: "Навигационная цепочка",
     });
@@ -245,6 +258,12 @@ describe("UI foundation", () => {
     expect(
       container.querySelectorAll('[data-slot="provider-health"]'),
     ).toHaveLength(1);
+    expect(screen.getByRole("main")).toHaveClass("lg:px-6");
+    expect(screen.getByRole("main")).not.toHaveClass(
+      "mx-auto",
+      "max-w-[1440px]",
+      "lg:px-11",
+    );
 
     fireEvent.click(desktopToggle);
 
@@ -333,6 +352,44 @@ describe("UI foundation", () => {
     expect(sidebar).toHaveClass("w-[var(--shell-rail-expanded)]");
     expect(document.cookie).toContain("aptiloop.sidebar-collapsed=false");
   });
+
+  it.each([
+    { initialSidebarCollapsed: false, stored: "true", expected: "collapsed" },
+    { initialSidebarCollapsed: true, stored: "false", expected: "expanded" },
+  ])(
+    "reconciles a $expected rail before marking sidebar hydration complete",
+    async ({ initialSidebarCollapsed, stored, expected }) => {
+      apiMock.mockReturnValue(new Promise(() => {}));
+      window.localStorage.setItem("aptiloop:sidebar-collapsed", stored);
+      document.documentElement.dataset.sidebarHydrated = "false";
+
+      const { container } = renderWithQuery(
+        <AppShell initialSidebarCollapsed={initialSidebarCollapsed}>
+          <p>Основное содержимое</p>
+        </AppShell>,
+      );
+
+      expect(container.querySelector('[data-slot="sidebar"]')).toHaveAttribute(
+        "data-state",
+        expected,
+      );
+      expect(document.documentElement).toHaveAttribute(
+        "data-sidebar-collapsed",
+        stored,
+      );
+      expect(document.documentElement).toHaveAttribute(
+        "data-sidebar-hydrated",
+        "false",
+      );
+      await waitFor(() =>
+        expect(document.documentElement).toHaveAttribute(
+          "data-sidebar-hydrated",
+          "true",
+        ),
+      );
+      expect(document.cookie).toContain(`aptiloop.sidebar-collapsed=${stored}`);
+    },
+  );
 
   it("gives an open lesson the immersive shell surface with mobile nav clearance", () => {
     apiMock.mockReturnValue(new Promise(() => {}));
@@ -811,21 +868,12 @@ describe("UI foundation", () => {
     const disclosures = topicList?.querySelector(
       '[data-slot="skill-topic-disclosures"]',
     );
-    expect(disclosures).toHaveClass(
-      "divide-y",
-      "border-border/70",
-      "min-[1440px]:hidden",
-    );
+    expect(disclosures).toHaveClass("grid", "gap-2", "min-[1180px]:hidden");
     expect(disclosures).not.toHaveClass("xl:hidden");
     const tableRegion = topicList?.querySelector(
       '[data-slot="skill-topic-table"]',
     );
-    expect(tableRegion).toHaveClass(
-      "border",
-      "border-border/70",
-      "hidden",
-      "min-[1440px]:block",
-    );
+    expect(tableRegion).toHaveClass("hidden", "min-[1180px]:block");
     expect(tableRegion).not.toHaveClass("xl:block");
 
     const table = screen.getByRole("table");

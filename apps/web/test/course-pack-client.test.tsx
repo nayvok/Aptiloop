@@ -991,6 +991,24 @@ describe("Course library", () => {
     expect(
       within(currentRow as HTMLElement).getByText("Текущий курс"),
     ).toBeVisible();
+    const progressRings = Array.from(
+      view.container.querySelectorAll<HTMLElement>(
+        '[data-slot="course-progress-ring"]',
+      ),
+    );
+    expect(progressRings).toHaveLength(2);
+    expect(progressRings.map((ring) => ring.dataset.percent)).toEqual([
+      "50",
+      "0",
+    ]);
+    expect(
+      progressRings.map(
+        (ring) =>
+          ring.querySelector('[data-slot="course-progress-value"]')
+            ?.textContent,
+      ),
+    ).toEqual(["50%", "0%"]);
+    expect(progressRings[0]).toHaveClass("size-10", "shrink-0");
     expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(2);
     expect(screen.getByText("Показано 1–2 из 2")).toBeInTheDocument();
 
@@ -1034,6 +1052,61 @@ describe("Course library", () => {
     expect(
       screen.queryByRole("heading", { name: "Draft systems" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps a three-digit completed percentage centered in the fixed ring", async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === "/course-packs") {
+        return { storageAvailable: true, packs: [] };
+      }
+      if (path === "/learning/courses") {
+        return {
+          courses: [
+            {
+              id: "complete-course",
+              stableId: "complete-course",
+              title: "Complete foundations",
+              description:
+                "A deliberately long completion description that must not resize the progress ring.",
+              primaryLocale: "en-US",
+              selected: true,
+              activeRevisionId: "complete-v1",
+              currentSessionId: null,
+              revisions: [
+                {
+                  id: "complete-v1",
+                  revisionNumber: 1,
+                  status: "published",
+                  branchKind: "upstream",
+                  contentHash,
+                  learningSummary: {
+                    state: "completed",
+                    completedLessons: 12,
+                    totalLessons: 12,
+                    progressPercent: 100,
+                    lastActivityAt: "2026-08-10T02:00:00.000Z",
+                  },
+                },
+              ],
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+
+    const view = renderWithQuery(<CourseLibraryClient />);
+    expect(
+      await screen.findByRole("heading", { name: "Complete foundations" }),
+    ).toBeInTheDocument();
+    const ring = view.container.querySelector<HTMLElement>(
+      '[data-slot="course-progress-ring"]',
+    );
+    expect(ring).toHaveAttribute("data-percent", "100");
+    expect(ring).toHaveClass("size-10", "shrink-0");
+    expect(
+      ring?.querySelector('[data-slot="course-progress-value"]'),
+    ).toHaveTextContent("100%");
   });
 
   it("restores search, filter, and pagination from browser history and reloads", async () => {

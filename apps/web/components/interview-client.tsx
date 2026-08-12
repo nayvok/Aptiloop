@@ -1607,7 +1607,7 @@ export function InterviewClient({
     return (
       <div
         data-slot="interview-setup"
-        className="flex w-full min-w-0 flex-col gap-8"
+        className="flex w-full min-w-0 flex-col gap-6"
       >
         {returnToSession}
         <InterviewHeader
@@ -1880,7 +1880,7 @@ export function InterviewClient({
     return (
       <div
         data-slot="interview-opening-retry"
-        className="flex w-full min-w-0 flex-col gap-8"
+        className="flex w-full min-w-0 flex-col gap-6"
       >
         {returnToSession}
         <InterviewHeader
@@ -1937,7 +1937,7 @@ export function InterviewClient({
   return (
     <div
       data-slot="interview-session"
-      className="flex w-full min-w-0 flex-col gap-8"
+      className="flex w-full min-w-0 flex-col gap-6"
     >
       {returnToSession}
       <InterviewHeader
@@ -1984,7 +1984,7 @@ function InterviewReportView({
   return (
     <div
       data-slot="interview-report"
-      className="flex w-full min-w-0 flex-col gap-8"
+      className="flex w-full min-w-0 flex-col gap-6"
     >
       {returnToSession}
       <InterviewHeader
@@ -1998,11 +1998,11 @@ function InterviewReportView({
           </Badge>
         }
       />
-      <article className="w-full min-w-0 border-y border-border">
+      <article className="flex w-full min-w-0 flex-col gap-3 rounded-panel bg-surface-soft/35 p-3 sm:p-4">
         <section
           data-slot="report-limits"
           aria-label={t("interview.report.limitsAria")}
-          className="border-b border-border/70 bg-muted/35 px-4 py-4 sm:px-6"
+          className="rounded-control bg-muted/45 px-4 py-3 sm:px-5"
         >
           <p className="max-w-[72ch] text-sm font-medium leading-6 text-muted-foreground">
             {t("interview.report.limits")}
@@ -2011,7 +2011,7 @@ function InterviewReportView({
 
         <section
           aria-labelledby="report-summary-title"
-          className="border-b border-border/70 px-4 py-7 sm:px-6 md:px-8 md:py-9"
+          className="rounded-control bg-background/70 px-4 py-5 sm:px-5 sm:py-6"
         >
           <DetailHeading
             id="report-summary-title"
@@ -2025,7 +2025,7 @@ function InterviewReportView({
         </section>
 
         <section
-          className="grid divide-y divide-border/70 border-b border-border/70 sm:grid-cols-3 sm:divide-x sm:divide-y-0"
+          className="grid gap-2 sm:grid-cols-3"
           aria-label={t("interview.report.metricsAria")}
         >
           <Metric
@@ -2042,7 +2042,7 @@ function InterviewReportView({
           />
         </section>
 
-        <div className="grid divide-y divide-border/70 border-b border-border/70 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+        <div className="grid gap-2 lg:grid-cols-2">
           <ReportList
             title={t("interview.report.strengths")}
             items={report.strengths}
@@ -2056,21 +2056,21 @@ function InterviewReportView({
         </div>
 
         <section
-          className="border-b border-border/70 px-4 py-7 sm:px-6 md:px-8"
+          className="rounded-control bg-background/70 px-4 py-5 sm:px-5 sm:py-6"
           aria-labelledby="evidence-title"
         >
           <DetailHeading id="evidence-title" className="font-semibold">
             {t("interview.report.evidence")}
           </DetailHeading>
-          <ol className="mt-4 divide-y divide-border/60">
+          <ol className="mt-3 flex flex-col gap-1">
             {report.evidence.map((item) => (
               <li key={`${item.questionNumber}-${item.topic}`}>
-                <Collapsible className="group/evidence">
+                <Collapsible className="group/evidence rounded-control px-3 hover:bg-muted/45">
                   <CollapsibleTrigger asChild>
                     <Button
                       type="button"
                       variant="ghost"
-                      className="h-auto min-h-14 w-full max-w-full justify-between rounded-none px-0 py-4 text-left whitespace-normal"
+                      className="h-auto min-h-12 w-full max-w-full justify-between rounded-none px-0 py-3 text-left whitespace-normal"
                     >
                       <span className="flex min-w-0 flex-wrap items-center gap-2">
                         <Badge variant="outline">
@@ -2104,7 +2104,7 @@ function InterviewReportView({
           </ol>
         </section>
 
-        <footer className="flex flex-col gap-4 px-4 py-6 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8">
+        <footer className="flex flex-col gap-4 rounded-control bg-background/70 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div className="min-w-0">
             <p className="font-semibold">{t("interview.report.nextTitle")}</p>
             <p className="mt-1 max-w-[56ch] text-sm leading-6 text-muted-foreground">
@@ -2126,7 +2126,7 @@ function InterviewReportView({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="px-4 py-5 sm:px-6">
+    <div className="rounded-control bg-background/70 px-4 py-4 sm:px-5">
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
     </div>
@@ -2144,7 +2144,7 @@ function ReportList({
 }) {
   const Heading = headingLevel === 3 ? "h3" : "h2";
   return (
-    <section className="px-4 py-7 sm:px-6 md:px-8">
+    <section className="rounded-control bg-background/70 px-4 py-5 sm:px-5 sm:py-6">
       <Heading className="text-lg font-semibold">{title}</Heading>
       <ul className="mt-4 flex flex-col gap-3 text-sm leading-6 text-muted-foreground">
         {items.map((item) => (

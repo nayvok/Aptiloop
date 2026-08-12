@@ -60,8 +60,12 @@ afterEach(() => {
 });
 
 describe("Course authoring routes", () => {
-  it("presents two assisted starts and a quieter manual fallback", () => {
-    render(<NewCoursePage />);
+  it("presents two assisted starts in a balanced grid and a quieter manual fallback", () => {
+    const view = render(<NewCoursePage />);
+
+    expect(
+      view.container.querySelector('[data-slot="course-creation-paths"]'),
+    ).toHaveClass("grid", "md:grid-cols-2");
 
     const external = screen.getByRole("radio", {
       name: /Use an external model/u,

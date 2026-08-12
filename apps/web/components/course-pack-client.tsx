@@ -1098,7 +1098,7 @@ function CoursePackClient({
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-7 lg:gap-9">
+    <div className="flex min-w-0 flex-col gap-6 lg:gap-8">
       <PageHeader
         title={t("courses.page.title")}
         description={t("page.courses.description")}
@@ -1131,29 +1131,16 @@ function CoursePackClient({
           </div>
         ) : null}
         {learningCourses.isError ? (
-          <div className="flex flex-col gap-3 rounded-panel border border-destructive/25 bg-destructive/10 p-5 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">
-                {t("courses.current.unavailable")}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t("courses.current.unavailableDescription")}
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full shrink-0 sm:w-auto"
-              onClick={() => void learningCourses.refetch()}
-            >
-              {t("query.retry")}
-            </Button>
-          </div>
+          <QueryError
+            message={t("courses.current.unavailableDescription")}
+            diagnostic={learningCourses.error.message}
+            retry={() => void learningCourses.refetch()}
+          />
         ) : null}
         {learningCourses.isSuccess && currentCourse ? (
           <article
             data-slot="course-current-summary"
-            className="relative flex min-w-0 flex-col gap-4 overflow-hidden rounded-panel bg-surface-soft/75 px-5 py-5 sm:min-h-[8.25rem] sm:flex-row sm:items-center sm:justify-between sm:px-6"
+            className="relative flex min-w-0 flex-col gap-4 overflow-hidden rounded-panel bg-surface-soft/75 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"
           >
             <span
               aria-hidden
@@ -1237,19 +1224,16 @@ function CoursePackClient({
           {t("courses.library.title")}
         </h2>
 
-        {learningCourses.isLoading || library.isLoading ? (
+        {!learningCourses.isError &&
+        (learningCourses.isLoading || library.isLoading) ? (
           <CourseLibrarySkeleton />
         ) : null}
-        {learningCourses.isError || library.isError ? (
+        {!learningCourses.isError && library.isError ? (
           <QueryError
-            message={
-              library.error?.message ??
-              learningCourses.error?.message ??
-              t("courses.current.unavailable")
-            }
+            message={t("courses.current.unavailable")}
+            diagnostic={library.error.message}
             retry={() => {
-              if (learningCourses.isError) void learningCourses.refetch();
-              if (library.isError) void library.refetch();
+              void library.refetch();
             }}
           />
         ) : null}
@@ -1373,21 +1357,21 @@ function CoursePackClient({
             ) : (
               <div
                 data-slot="course-library-table"
-                className="min-w-0 overflow-hidden rounded-panel bg-surface-raised shadow-sm"
+                className="min-w-0 overflow-hidden rounded-panel bg-surface-raised"
               >
-                <Table className="table-fixed md:table-auto">
+                <Table className="table-fixed">
                   <TableHeader className="hidden md:table-header-group [&_th]:h-[3.75rem] [&_th]:text-[0.9375rem]">
                     <TableRow>
-                      <TableHead className="w-[40%] px-6">
+                      <TableHead className="w-[38%] px-6">
                         {t("courses.table.course")}
                       </TableHead>
-                      <TableHead className="w-[18%]">
+                      <TableHead className="w-[17%] px-3">
                         {t("courses.table.revisionStatus")}
                       </TableHead>
-                      <TableHead className="w-[27%]">
+                      <TableHead className="w-[27%] px-3">
                         {t("courses.table.progress")}
                       </TableHead>
-                      <TableHead className="w-[15%] text-right">
+                      <TableHead className="w-[18%] px-4 text-right">
                         {t("courses.table.actions")}
                       </TableHead>
                     </TableRow>
@@ -1974,7 +1958,7 @@ function CourseLibraryRow({
       <TableRow
         data-state={current ? "selected" : undefined}
         className={cn(
-          "grid min-h-0 grid-cols-1 gap-4 px-4 py-4 data-[state=selected]:bg-primary/[0.035] md:table-row md:h-[100px] md:px-0 md:py-0",
+          "grid min-h-0 grid-cols-1 gap-4 px-4 py-4 data-[state=selected]:bg-primary/[0.035] md:table-row md:h-[112px] md:px-0 md:py-0",
         )}
       >
         <TableCell className="relative min-w-0 whitespace-normal p-0 md:table-cell md:px-6 md:py-4">
@@ -2005,7 +1989,7 @@ function CourseLibraryRow({
             </div>
           </div>
         </TableCell>
-        <TableCell className="min-w-0 whitespace-normal p-0 md:table-cell md:px-2 md:py-4">
+        <TableCell className="min-w-0 whitespace-normal p-0 md:table-cell md:px-3 md:py-4 md:align-middle">
           <p className="mb-1 text-xs font-medium text-muted-foreground md:hidden">
             {t("courses.table.revisionStatus")}
           </p>
@@ -2024,30 +2008,30 @@ function CourseLibraryRow({
             </span>
           </p>
         </TableCell>
-        <TableCell className="min-w-0 whitespace-normal p-0 md:table-cell md:px-2 md:py-4">
+        <TableCell className="min-w-0 whitespace-normal p-0 md:table-cell md:px-3 md:py-4 md:align-middle">
           <p className="mb-1 text-xs font-medium text-muted-foreground md:hidden">
             {t("courses.table.progress")}
           </p>
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5">
             <CourseProgressRing
               percent={progress.progressPercent}
               label={progressLabel}
             />
             <div className="min-w-0">
-              <p className="text-sm">
+              <p className="text-sm font-medium leading-5">
                 {t(learningStateLabels[progress.state])}
               </p>
-              <p className="mt-1 min-w-0 break-words text-xs text-muted-foreground">
+              <p className="mt-0.5 min-w-0 break-words text-xs leading-4 text-muted-foreground">
                 {lastActivity}
               </p>
             </div>
           </div>
         </TableCell>
-        <TableCell className="min-w-0 whitespace-normal p-0 md:table-cell md:px-2 md:py-4 md:text-right">
+        <TableCell className="min-w-0 whitespace-normal p-0 md:table-cell md:px-4 md:py-4 md:text-right md:align-middle">
           <p className="mb-1 text-xs font-medium text-muted-foreground md:hidden">
             {t("courses.table.actions")}
           </p>
-          <div className="flex min-w-0 items-center gap-1 md:justify-end">
+          <div className="flex min-w-0 items-center gap-1.5 md:justify-end">
             {primaryPath ? (
               <Button
                 asChild
@@ -2415,11 +2399,17 @@ function CourseProgressRing({
 
   return (
     <div
+      data-slot="course-progress-ring"
+      data-percent={percent}
       role="img"
       aria-label={label}
-      className="flex shrink-0 items-center gap-2"
+      className="relative grid size-10 shrink-0 place-items-center"
     >
-      <svg aria-hidden viewBox="0 0 40 40" className="size-9 -rotate-90">
+      <svg
+        aria-hidden
+        viewBox="0 0 40 40"
+        className="absolute inset-0 size-10 -rotate-90"
+      >
         <circle
           cx="20"
           cy="20"
@@ -2440,7 +2430,11 @@ function CourseProgressRing({
           className="stroke-success"
         />
       </svg>
-      <span aria-hidden className="text-sm font-medium tabular-nums">
+      <span
+        aria-hidden
+        data-slot="course-progress-value"
+        className="relative z-[1] text-[0.625rem] font-semibold leading-none tracking-[-0.04em] tabular-nums"
+      >
         {percent}%
       </span>
     </div>
@@ -2511,7 +2505,7 @@ function CourseLibrarySkeleton() {
       <div
         aria-hidden
         data-slot="course-library-skeleton"
-        className="overflow-hidden rounded-panel bg-surface-raised shadow-sm"
+        className="overflow-hidden rounded-panel bg-surface-raised"
       >
         {["course-skeleton-one", "course-skeleton-two"].map((key) => (
           <div

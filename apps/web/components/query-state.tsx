@@ -24,9 +24,9 @@ export function QueryError({
       data-slot="query-error"
       data-kind={kind}
       role="alert"
-      className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-3 rounded-panel border bg-surface-raised p-4 sm:p-5 ${
-        kind === "warning" ? "border-warning/45" : "border-destructive/30"
-      }`}
+      className={`relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-3 overflow-hidden rounded-panel bg-surface-soft/80 p-4 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:px-5 ${
+        kind === "warning" ? "before:bg-warning" : "before:bg-destructive"
+      } before:absolute before:inset-y-0 before:left-0 before:w-0.5`}
     >
       <span
         aria-hidden
@@ -40,7 +40,7 @@ export function QueryError({
           }`}
         />
       </span>
-      <div className="min-w-0 pt-1">
+      <div className="min-w-0 py-0.5">
         <h2 className="font-semibold text-foreground">
           {title ?? t("query.failed")}
         </h2>
@@ -60,7 +60,7 @@ export function QueryError({
       </div>
       {retry ? (
         <Button
-          className="col-start-2 justify-self-start"
+          className="col-start-2 justify-self-start sm:col-start-3 sm:row-start-1 sm:row-span-2 sm:justify-self-end"
           variant="outline"
           onClick={retry}
         >
@@ -83,11 +83,11 @@ export function EmptyState({
   return (
     <div
       data-slot="empty-state"
-      className="flex min-h-36 flex-col items-start justify-center gap-4 rounded-panel bg-surface-soft p-5 text-left sm:p-6"
+      className="grid min-w-0 gap-4 rounded-panel bg-surface-soft/80 p-5 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-6 sm:py-5"
     >
-      <div>
+      <div className="min-w-0">
         <p className="font-medium">{title}</p>
-        <p className="mt-1 max-w-[55ch] text-sm text-muted-foreground">
+        <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
           {description}
         </p>
       </div>

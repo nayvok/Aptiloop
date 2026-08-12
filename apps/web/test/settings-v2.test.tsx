@@ -307,23 +307,28 @@ describe("Settings v2", () => {
     for (const tab of within(localNavigation as HTMLElement).getAllByRole(
       "tab",
     )) {
-      expect(tab).toHaveClass("min-h-11", "border-0", "after:hidden");
+      expect(tab).toHaveClass(
+        "min-h-10",
+        "border-0",
+        "whitespace-normal",
+        "after:hidden",
+      );
     }
     expect(
       container.querySelector('[data-slot="settings-selected-pane"]'),
-    ).toHaveClass("min-w-0");
+    ).toHaveClass("min-w-0", "xl:max-w-[68rem]");
     const interfaceSurface = container.querySelector(
       '[data-slot="settings-selected-pane"] [data-slot="field-group"]',
     );
     expect(interfaceSurface).toHaveClass(
-      "gap-2",
-      "rounded-2xl",
-      "bg-surface-soft/55",
+      "gap-0",
+      "rounded-xl",
+      "bg-surface-soft/50",
     );
     expect(interfaceSurface).not.toHaveClass("border", "divide-y");
     expect(
       container.querySelector('[data-slot="settings-interface-footer"]'),
-    ).toHaveClass("border-t", "border-border/30");
+    ).toHaveClass("border-t", "border-border/35", "py-3.5");
     const mobileControl = container.querySelector(
       '[data-slot="settings-mobile-section-control"]',
     );

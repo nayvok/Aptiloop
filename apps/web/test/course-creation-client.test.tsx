@@ -190,6 +190,26 @@ afterEach(() => {
 });
 
 describe("Course creation brief", () => {
+  it("uses the available authoring width while preserving a readable manual measure", () => {
+    const assisted = renderCreation(<CourseCreationClient mode="external" />);
+    expect(
+      assisted.container.querySelector(
+        '[data-slot="assisted-course-creation"]',
+      ),
+    ).toHaveClass("w-full", "min-w-0");
+    expect(
+      assisted.container.querySelector(
+        '[data-slot="assisted-course-creation"]',
+      ),
+    ).not.toHaveClass("max-w-[76rem]");
+    assisted.unmount();
+
+    const manual = renderCreation(<CourseCreationClient mode="manual" />);
+    expect(
+      manual.container.querySelector('[data-slot="manual-course-creation"]'),
+    ).toHaveClass("w-full", "sm:max-w-[64rem]");
+  });
+
   it("restores edits after reload and clears them only on explicit action", async () => {
     window.localStorage.setItem(
       AUTHORING_BRIEF_STORAGE_KEY,

@@ -208,6 +208,18 @@ describe("Aptiloop Home", () => {
     expect(screen.getByText("Demonstrate")).toBeVisible();
     expect(screen.getByText("Practice and review")).toBeVisible();
     expect(screen.getByText(/Functions and closures/u)).toBeVisible();
+    expect(container.querySelector('[data-slot="home"]')).toHaveClass(
+      "@container/home",
+    );
+    expect(
+      container.querySelector('[data-slot="home-phase-list"]'),
+    ).toHaveClass("@min-[68rem]/home:grid-cols-3");
+    expect(
+      container.querySelector('[data-slot="home-upcoming-list"]'),
+    ).toHaveClass("@min-[48rem]/home:grid-cols-2");
+    expect(
+      container.querySelector('[data-slot="home-upcoming-lesson"]'),
+    ).toHaveClass("rounded-control", "bg-surface-soft/45");
     expect(screen.queryByText("Evidence basis")).not.toBeInTheDocument();
     expect(screen.queryByText("Published revision 2")).not.toBeInTheDocument();
     expect(screen.queryByText("sha256-path-v2")).not.toBeInTheDocument();

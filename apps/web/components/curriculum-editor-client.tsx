@@ -54,6 +54,7 @@ import {
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryError } from "@/components/query-state";
+import { LoadingState } from "@/components/ui/loading-state";
 import {
   Sheet,
   SheetContent,
@@ -63,7 +64,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -541,10 +541,9 @@ function usePendingOperations() {
 const fieldClass =
   "min-h-11 w-full min-w-0 rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
 const labelClass = "flex min-w-0 flex-col gap-2 text-sm font-medium";
-const panelClass =
-  "min-w-0 rounded-[14px] border border-border/60 bg-card p-5 sm:p-6";
+const panelClass = "min-w-0 rounded-[14px] bg-surface-soft/45 p-5 sm:p-6";
 const focusPanelClass =
-  "min-w-0 rounded-[18px] bg-surface-raised p-5 shadow-[0_16px_45px_oklch(0_0_0/0.07)] sm:p-7";
+  "min-w-0 rounded-[16px] bg-surface-raised p-5 shadow-[0_16px_45px_oklch(0_0_0/0.07)] sm:p-6";
 
 const depthMessageKeys = {
   foundation: "unit.depth.foundation",
@@ -2445,16 +2444,7 @@ function StudioPreviewPanel({ version }: { version: Version }) {
   });
 
   if (preview.isLoading) {
-    return (
-      <div
-        role="status"
-        aria-label={t("authoring.preview.loading")}
-        className="grid gap-4"
-      >
-        <Skeleton className="h-28" />
-        <Skeleton className="h-56" />
-      </div>
-    );
+    return <LoadingState label="authoring.preview.loading" variant="panel" />;
   }
 
   if (preview.isError || !preview.data) {
@@ -2479,7 +2469,7 @@ function StudioPreviewPanel({ version }: { version: Version }) {
     <section
       data-slot="adaptive-studio-preview"
       aria-labelledby="studio-preview-heading"
-      className={`${panelClass} grid min-w-0 gap-6`}
+      className={`${panelClass} grid min-w-0 gap-5`}
     >
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
@@ -2509,7 +2499,7 @@ function StudioPreviewPanel({ version }: { version: Version }) {
           description={t("authoring.preview.emptyDescription")}
         />
       ) : (
-        <div className="grid min-w-0 gap-7">
+        <div className="grid min-w-0 gap-6">
           {learnerPreview.weeks.map((week) => (
             <section
               key={week.stableId}
@@ -2533,7 +2523,7 @@ function StudioPreviewPanel({ version }: { version: Version }) {
                 type="single"
                 collapsible
                 {...(firstLesson ? { defaultValue: firstLesson } : {})}
-                className="border-y border-border/70"
+                className="rounded-[14px] bg-background/70 px-3 sm:px-4"
               >
                 {week.days.map((day) => (
                   <AccordionItem key={day.stableId} value={day.stableId}>
@@ -2555,7 +2545,7 @@ function StudioPreviewPanel({ version }: { version: Version }) {
                         </span>
                       </span>
                     </AccordionTrigger>
-                    <AccordionContent className="grid min-w-0 gap-5 px-1">
+                    <AccordionContent className="grid min-w-0 gap-4 px-1">
                       <div className="max-w-[70ch] min-w-0">
                         <p className="break-words text-sm leading-6 [overflow-wrap:anywhere]">
                           {day.goal}
@@ -2566,7 +2556,7 @@ function StudioPreviewPanel({ version }: { version: Version }) {
                           </p>
                         ) : null}
                       </div>
-                      <ol className="min-w-0 divide-y divide-border/60 border-y border-border/60">
+                      <ol className="min-w-0 divide-y divide-border/50 rounded-lg bg-surface-soft/45 px-3">
                         {day.activities.map((activity, index) => (
                           <li
                             key={activity.stableId}
@@ -3058,7 +3048,7 @@ function GraphEditor({
     );
   return (
     <section
-      className={`${focusPanelClass} grid gap-5`}
+      className={`${focusPanelClass} grid gap-4`}
       aria-labelledby="manual-editor-heading"
       data-slot="manual-course-editor"
     >
@@ -3095,7 +3085,7 @@ function GraphEditor({
               ?.days[0]?.id;
             selectStructure(weekId, firstDayId);
           }}
-          className="grid min-w-0 gap-3"
+          className="grid min-w-0 gap-2"
         >
           {graph.weeks.map((week, weekIndex) => (
             <WeekEditor
@@ -3655,7 +3645,11 @@ function PersonalAdaptationPanel({
         className={panelClass}
         aria-label={t("authoring.adaptation.title")}
       >
-        <Skeleton className="h-32" />
+        <LoadingState
+          label="authoring.loading.graph"
+          variant="panel"
+          className="min-h-32"
+        />
       </section>
     );
   }
@@ -3878,7 +3872,7 @@ function CourseStudioHeader({
   return (
     <header
       data-slot="course-studio-header"
-      className="flex min-w-0 flex-col gap-5 border-b border-border/70 pb-6 sm:flex-row sm:items-start sm:justify-between"
+      className="flex min-w-0 flex-col gap-4 rounded-[14px] bg-surface-soft/45 p-5 sm:flex-row sm:items-start sm:justify-between sm:p-6"
     >
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
@@ -4047,7 +4041,7 @@ function AddWeekCard({
   return (
     <section
       data-slot="add-week"
-      className={`${panelClass} flex flex-wrap items-center justify-between gap-4`}
+      className="flex flex-wrap items-center justify-between gap-4 rounded-[14px] bg-surface-soft/45 p-5 sm:p-6"
     >
       <div className="min-w-0">
         <h3 className="font-semibold">{t("authoring.addWeek.title")}</h3>
@@ -4412,11 +4406,7 @@ export function CurriculumEditorClient({
   };
 
   if (versions.isLoading)
-    return (
-      <div role="status" aria-label={t("authoring.loading.versions")}>
-        <Skeleton className="h-72" />
-      </div>
-    );
+    return <LoadingState label="authoring.loading.versions" />;
   if (versions.isError || !versions.data)
     return (
       <QueryError
@@ -4425,7 +4415,7 @@ export function CurriculumEditorClient({
       />
     );
   return (
-    <div className="flex min-w-0 flex-col gap-8">
+    <div className="flex min-w-0 flex-col gap-6">
       {actionError ? (
         <Alert variant="destructive" data-slot="studio-action-error">
           <AlertTitle>{t("authoring.error.actionTitle")}</AlertTitle>
@@ -4464,16 +4454,14 @@ export function CurriculumEditorClient({
                 description={t("authoring.selectRevision.description")}
               />
             ) : graph.isLoading ? (
-              <div role="status" aria-label={t("authoring.loading.graph")}>
-                <Skeleton className="h-96" />
-              </div>
+              <LoadingState label="authoring.loading.graph" variant="panel" />
             ) : graph.isError || !graph.data ? (
               <QueryError
                 message={t("authoring.error.graphUnavailable")}
                 retry={() => void graph.refetch()}
               />
             ) : (
-              <div className="grid gap-6">
+              <div className="grid gap-5">
                 <CourseStudioHeader
                   version={selectedVersion}
                   graph={graph.data.curriculum}
@@ -4519,9 +4507,9 @@ export function CurriculumEditorClient({
 
                   <TabsContent
                     value="program"
-                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    className="mt-5 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   >
-                    <div className="grid gap-6">
+                    <div className="grid gap-4">
                       <GraphEditor
                         graph={graph.data.curriculum}
                         mutate={mutate}
@@ -4536,7 +4524,7 @@ export function CurriculumEditorClient({
 
                   <TabsContent
                     value="designer"
-                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    className="mt-5 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   >
                     {graph.data.curriculum.version.status === "draft" ? (
                       <CourseDesignerPanel
@@ -4564,7 +4552,7 @@ export function CurriculumEditorClient({
 
                   <TabsContent
                     value="preview"
-                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    className="mt-5 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   >
                     <StudioPreviewPanel
                       version={graph.data.curriculum.version}
@@ -4573,7 +4561,7 @@ export function CurriculumEditorClient({
 
                   <TabsContent
                     value="release"
-                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    className="mt-5 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   >
                     {graph.data.curriculum.version.status === "draft" ? (
                       <PublishPanel
@@ -4595,9 +4583,9 @@ export function CurriculumEditorClient({
 
                   <TabsContent
                     value="history"
-                    className="mt-6 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    className="mt-5 min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   >
-                    <div className="grid gap-6">
+                    <div className="grid gap-4 min-[70rem]:grid-cols-2 min-[70rem]:items-start">
                       <VersionHistory
                         versions={selectedCourseVersions.filter(
                           (version) => version.id !== selectedVersion.id,
@@ -4658,7 +4646,7 @@ export function CurriculumStudioClient({
 }) {
   const { t } = useI18n();
   return (
-    <div className="flex min-w-0 flex-col gap-6">
+    <div className="flex min-w-0 flex-col gap-5">
       <div>
         <Button asChild variant="ghost" size="sm" className="-ml-3">
           <Link href="/courses">

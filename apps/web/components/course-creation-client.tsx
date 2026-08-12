@@ -754,7 +754,8 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
   if (mode === "manual") {
     return (
       <form
-        className="w-full max-w-[52rem] rounded-lg border border-border bg-card p-5 sm:p-6"
+        data-slot="manual-course-creation"
+        className="w-full min-w-0 rounded-[14px] bg-surface-raised p-5 shadow-[0_16px_45px_oklch(0_0_0/0.07)] sm:max-w-[64rem] sm:p-7"
         aria-label={t("authoring.manual.form")}
         onSubmit={(event) => {
           event.preventDefault();
@@ -778,7 +779,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
           );
         }}
       >
-        <FieldGroup>
+        <FieldGroup className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(16rem,0.6fr)]">
           <Field>
             <FieldLabel htmlFor="manual-course-title">
               {t("authoring.field.curriculumTitle")}
@@ -800,7 +801,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
               setManualPrimaryLocaleError(null);
             }}
           />
-          <Field>
+          <Field className="md:col-span-2">
             <FieldLabel htmlFor="manual-course-description">
               {t("authoring.field.curriculumDescription")}
             </FieldLabel>
@@ -812,7 +813,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
             />
           </Field>
         </FieldGroup>
-        <div className="mt-6 flex justify-end border-t border-border pt-5">
+        <div className="mt-6 flex justify-end">
           <Button type="submit" disabled={busy} className="w-full sm:w-auto">
             {busy ? <Spinner /> : <PlusIcon aria-hidden />}
             {busy
@@ -826,7 +827,8 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
 
   return (
     <form
-      className="w-full max-w-[76rem] min-w-0"
+      data-slot="assisted-course-creation"
+      className="w-full min-w-0"
       aria-label={
         mode === "external"
           ? t("authoring.external.form")
@@ -861,9 +863,9 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
         }
       }}
     >
-      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <section className="min-w-0 rounded-lg border border-border bg-card p-5 sm:p-6">
-          <div className="mb-6 flex min-w-0 flex-col gap-3 border-b border-border pb-5 sm:flex-row sm:items-start sm:justify-between">
+      <div className="grid min-w-0 items-start gap-5 min-[72rem]:grid-cols-[minmax(0,1fr)_clamp(18rem,26vw,23rem)] min-[72rem]:gap-7">
+        <section className="min-w-0 rounded-[14px] bg-surface-raised p-5 shadow-[0_16px_45px_oklch(0_0_0/0.07)] sm:p-7">
+          <div className="mb-6 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h2 className="font-semibold">{t("authoring.brief.title")}</h2>
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
@@ -905,7 +907,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
           )}
         </section>
 
-        <aside className="min-w-0 xl:sticky xl:top-24 xl:self-start">
+        <aside className="grid min-w-0 gap-4 min-[72rem]:sticky min-[72rem]:top-20 min-[72rem]:self-start">
           {mode === "guided" ? (
             <ReadinessPanel
               readiness={readiness}
@@ -921,7 +923,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
             </Alert>
           )}
 
-          <div className="mt-4 grid gap-3 rounded-lg border border-border bg-card p-4">
+          <div className="grid gap-3 rounded-[14px] bg-surface-soft/65 p-4 sm:p-5">
             <Button
               type="submit"
               disabled={busy || (mode === "guided" && !readiness.eligible)}
@@ -971,7 +973,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
           </div>
 
           {mode === "guided" && !readiness.eligible ? (
-            <div className="mt-4 grid gap-2 border-t border-border pt-4 text-sm">
+            <div className="grid gap-2 rounded-[14px] bg-surface-soft/45 p-4 text-sm">
               <p className="font-medium">
                 {t("authoring.connected.alternatives")}
               </p>

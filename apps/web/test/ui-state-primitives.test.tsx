@@ -31,7 +31,12 @@ describe("honest UI state primitives", () => {
 
     const alert = screen.getByRole("alert");
     expect(alert).toHaveAttribute("data-kind", "warning");
-    expect(alert).toHaveClass("grid", "border-warning/45", "p-4");
+    expect(alert).toHaveClass(
+      "grid",
+      "bg-surface-soft/80",
+      "before:bg-warning",
+      "p-4",
+    );
     expect(alert).toHaveTextContent("Course revision unavailable");
     expect(screen.getByText("diagnostic-id")).not.toBeVisible();
     fireEvent.click(screen.getByText("Technical details"));
@@ -73,9 +78,13 @@ describe("honest UI state primitives", () => {
     const settings = screen.getByRole("tablist", { name: "Settings" });
     expect(workspace).toHaveAttribute("data-variant", "segmented");
     expect(settings).toHaveAttribute("data-variant", "rail");
-    expect(screen.getByRole("tab", { name: "One" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    const selectedWorkspaceTab = screen.getByRole("tab", { name: "One" });
+    expect(selectedWorkspaceTab).toHaveAttribute("aria-selected", "true");
+    expect(selectedWorkspaceTab).toHaveClass(
+      "group-data-[variant=segmented]/tabs-list:data-[state=active]:shadow-none",
+      "transition-[color,background-color,border-color]",
+      "motion-reduce:transition-none",
     );
+    expect(selectedWorkspaceTab).not.toHaveClass("transition-all");
   });
 });

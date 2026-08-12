@@ -548,6 +548,7 @@ describe("CurriculumEditorClient", () => {
       '[data-slot="course-studio-header"]',
     );
     expect(studioHeader).toHaveTextContent("Асинхронный JavaScript");
+    expect(studioHeader).toHaveClass("bg-surface-soft/45", "p-5", "sm:p-6");
     expect(studioHeader).not.toHaveTextContent("Aptiloop authoring brief v2");
     expect(
       screen.queryByRole("button", { name: "Клонировать в черновик" }),

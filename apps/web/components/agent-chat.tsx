@@ -491,9 +491,9 @@ export function AgentChat({
     <section
       data-slot="agent-chat"
       aria-busy={streaming}
-      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-y border-border bg-background"
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background"
     >
-      <div className="flex min-w-0 flex-col gap-3 border-b border-border py-3 md:flex-row md:items-center md:justify-between">
+      <div className="flex min-w-0 flex-col gap-3 pb-3 md:flex-row md:items-center md:justify-between">
         <div className="md:hidden">
           <label className="sr-only" htmlFor="agent-role-select">
             {t("chat.a11y.roleSelector")}
@@ -601,7 +601,7 @@ export function AgentChat({
                 : ""}
       </p>
       <MessageScrollerProvider>
-        <MessageScroller className="min-h-0 flex-1 border-b border-border">
+        <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport
             role="region"
             aria-label={t("chat.a11y.transcript")}
@@ -676,7 +676,7 @@ export function AgentChat({
               )}
               {tools.length ? (
                 <MessageScrollerItem>
-                  <Collapsible className="group/tools border-y border-border text-xs text-muted-foreground">
+                  <Collapsible className="group/tools rounded-control bg-surface-soft/55 px-3 text-xs text-muted-foreground">
                     <CollapsibleTrigger asChild>
                       <Button
                         type="button"
@@ -713,7 +713,7 @@ export function AgentChat({
         </MessageScroller>
       </MessageScrollerProvider>
       <form
-        className="shrink-0 py-4"
+        className="shrink-0 pt-4"
         onSubmit={(event) => {
           event.preventDefault();
           void send();

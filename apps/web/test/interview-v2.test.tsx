@@ -1284,7 +1284,11 @@ describe("versioned interview workflow", () => {
     const destinationSurface = document.querySelector(
       '[data-slot="review-destination-navigation"]',
     );
-    expect(destinationSurface).toHaveClass("gap-3");
+    expect(destinationSurface).toHaveClass(
+      "gap-3",
+      "rounded-panel",
+      "bg-surface-soft/45",
+    );
     expect(destinationSurface).not.toHaveClass("border");
     const destinationNav = within(destinationSurface as HTMLElement);
     const desktopNav = destinationSurface?.querySelector(
@@ -1294,6 +1298,8 @@ describe("versioned interview workflow", () => {
       '[data-slot="review-mobile-nav"]',
     );
     expect(desktopNav).toHaveClass("hidden", "grid-cols-4", "xl:grid");
+    expect(desktopNav).toHaveClass("bg-transparent", "p-0");
+    expect(desktopNav).not.toHaveClass("shadow-sm");
     expect(desktopNav).toHaveAttribute("data-variant", "segmented");
     expect(mobileNav).toHaveClass("xl:hidden");
     expect(within(desktopNav as HTMLElement).getAllByRole("tab")).toHaveLength(
@@ -1304,7 +1310,11 @@ describe("versioned interview workflow", () => {
       "tab",
       { name: "Интервью" },
     );
-    expect(activeDestination).toHaveClass("min-h-11", "text-[0.9375rem]");
+    expect(activeDestination).toHaveClass(
+      "min-h-11",
+      "text-[0.9375rem]",
+      "shadow-none",
+    );
     expect(activeDestination).toHaveAttribute("aria-current", "page");
     expect(activeDestination).toHaveAttribute("data-active", "true");
     expect(activeDestination).toHaveAttribute("role", "tab");

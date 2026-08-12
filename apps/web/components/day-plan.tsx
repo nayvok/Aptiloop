@@ -61,7 +61,7 @@ export function DayPlanRail({ session }: { session: LearnerSession }) {
     <aside
       data-slot="day-plan-rail"
       aria-label={t("session.plan")}
-      className="sticky top-[var(--shell-bar-size,4.5rem)] hidden h-[calc(100dvh-var(--shell-bar-size,4.5rem))] min-w-0 self-start overflow-y-auto overscroll-contain border-l border-border/60 bg-surface-soft/40 px-6 py-7 [scrollbar-gutter:stable] @min-[72rem]/lesson:col-start-2 @min-[72rem]/lesson:row-span-2 @min-[72rem]/lesson:row-start-1 @min-[72rem]/lesson:block"
+      className="sticky top-[var(--shell-bar-size,4.5rem)] hidden h-[calc(100dvh-var(--shell-bar-size,4.5rem))] min-w-0 self-start overflow-y-auto overscroll-contain border-l border-border/50 bg-surface-soft/35 px-5 py-6 [scrollbar-gutter:stable] @min-[72rem]/lesson:col-start-2 @min-[72rem]/lesson:row-span-2 @min-[72rem]/lesson:row-start-1 @min-[72rem]/lesson:block"
     >
       <DayPlanContent session={session} variant="rail" />
     </aside>
@@ -129,11 +129,11 @@ function DayPlanContent({
           </SheetDescription>
         </SheetHeader>
       ) : (
-        <header className="pb-5">
+        <header className="pb-4">
           <h2 className="break-words text-xl font-semibold leading-7 tracking-[-0.02em] [overflow-wrap:anywhere]">
             {t("session.plan")}
           </h2>
-          <p className="mt-3 break-words text-sm font-semibold leading-5 [overflow-wrap:anywhere]">
+          <p className="mt-2.5 break-words text-pretty text-sm font-semibold leading-5 [overflow-wrap:anywhere]">
             {t("dayPlan.title", { order: day.order, title: day.title })}
           </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -170,12 +170,12 @@ function DayPlanContent({
 
       <div
         className={cn(
-          "flex flex-1 flex-col pt-6",
+          "flex flex-1 flex-col pt-5",
           variant === "sheet" &&
             "overflow-y-auto overscroll-contain px-5 pb-6 [scrollbar-gutter:stable]",
         )}
       >
-        <section className="flex min-w-0 flex-col gap-5">
+        <section className="flex min-w-0 flex-col gap-4">
           <h3 className="text-sm font-semibold">{t("dayPlan.phases")}</h3>
           <ol data-slot="day-plan-stepper" className="flex flex-col gap-1">
             {visibleBlocks.map((block, index) => {
@@ -219,7 +219,7 @@ function DayPlanContent({
                   <div
                     className={cn(
                       "min-w-0",
-                      index < visibleBlocks.length - 1 ? "pb-7" : "pb-0",
+                      index < visibleBlocks.length - 1 ? "pb-6" : "pb-0",
                     )}
                   >
                     <div className="flex min-w-0 items-start justify-between gap-3">
@@ -247,7 +247,7 @@ function DayPlanContent({
                       </span>
                     </div>
 
-                    <ol className="mt-3 flex flex-col gap-1.5">
+                    <ol className="mt-2.5 flex flex-col gap-1">
                       {block.units.map((unit) => {
                         const status =
                           progressByUnit.get(unit.id)?.status ?? "locked";
@@ -259,7 +259,7 @@ function DayPlanContent({
                             data-status={status}
                             aria-current={current ? "step" : undefined}
                             className={cn(
-                              "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-2.5 rounded-control px-3 py-2.5 text-sm",
+                              "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-2.5 rounded-control px-2.5 py-2 text-sm",
                               current
                                 ? "bg-background shadow-sm"
                                 : "bg-transparent",
@@ -321,7 +321,7 @@ function DayPlanContent({
 
         <div
           data-slot="day-plan-secondary"
-          className="mt-7 flex flex-col gap-1 border-t border-border/60 pt-3"
+          className="mt-6 flex flex-col gap-1 border-t border-border/50 pt-2.5"
         >
           <details data-slot="day-plan-goal" className="group">
             <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-control px-2 py-2.5 text-sm font-semibold outline-none hover:bg-background/50 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">

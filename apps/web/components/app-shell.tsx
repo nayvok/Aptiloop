@@ -206,7 +206,7 @@ function SidebarToggle({
       aria-label={label}
       variant="ghost"
       size="icon"
-      className="size-11 shrink-0 rounded-control text-muted-foreground shadow-none hover:text-foreground"
+      className="size-11 shrink-0 rounded-control text-muted-foreground shadow-none hover:text-foreground md:size-11"
       onClick={onClick}
     >
       <SidebarSimpleIcon weight={collapsed ? "regular" : "fill"} />
@@ -320,6 +320,7 @@ export function AppShell({
 
   useLayoutEffect(() => {
     setThemeMounted(true);
+    let revealFrame = 0;
     try {
       const stored = window.localStorage.getItem(sidebarStorageKey);
       if (stored === "true" || stored === "false") {
@@ -329,7 +330,12 @@ export function AppShell({
       }
     } catch {
       // A blocked storage API should not prevent shell navigation.
+    } finally {
+      revealFrame = window.requestAnimationFrame(() => {
+        document.documentElement.dataset.sidebarHydrated = "true";
+      });
     }
+    return () => window.cancelAnimationFrame(revealFrame);
   }, []);
 
   useEffect(() => {
@@ -406,7 +412,7 @@ export function AppShell({
           data-slot="sidebar"
           data-state={sidebarCollapsed ? "collapsed" : "expanded"}
           className={cn(
-            "fixed inset-y-0 left-0 z-30 hidden border-r border-border/70 bg-sidebar transition-[width] duration-150 motion-reduce:transition-none md:flex md:flex-col",
+            "fixed inset-y-0 left-0 z-30 hidden bg-sidebar after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border/70 transition-[width] duration-150 motion-reduce:transition-none md:flex md:flex-col",
             sidebarCollapsed
               ? "w-[var(--shell-rail-collapsed)]"
               : "w-[var(--shell-rail-expanded)]",
@@ -415,7 +421,7 @@ export function AppShell({
           <header
             data-slot="sidebar-header"
             className={cn(
-              "flex h-[var(--shell-bar-size)] shrink-0 items-center border-b border-border/60",
+              "relative flex h-[var(--shell-bar-size)] shrink-0 items-center after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border/60",
               sidebarCollapsed ? "justify-center px-3" : "justify-start px-4",
             )}
           >
@@ -467,9 +473,12 @@ export function AppShell({
         >
           <header
             data-slot="utility-header"
-            className="sticky top-0 z-20 h-[var(--shell-bar-size)] border-b border-border/70 bg-background"
+            className="sticky top-0 z-20 h-[var(--shell-bar-size)] bg-background after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border/70"
           >
-            <div className="mx-auto flex h-full w-full max-w-[1440px] items-center justify-between gap-3 px-4 sm:px-7 lg:px-11">
+            <div
+              data-slot="utility-header-content"
+              className="flex h-full w-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-6"
+            >
               <div className="flex min-w-0 flex-1 items-center gap-2.5">
                 <Link
                   href="/"
@@ -525,7 +534,7 @@ export function AppShell({
               "w-full pb-28 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               immersiveSession
                 ? "min-h-[calc(100dvh-var(--shell-bar-size))] px-0 pt-0 md:pb-0"
-                : "mx-auto max-w-[1440px] px-4 py-8 sm:px-7 sm:py-10 md:pb-12 lg:px-11 lg:py-8",
+                : "px-4 py-8 sm:px-6 sm:py-10 md:pb-12 lg:px-6 lg:py-8",
             )}
           >
             {children}

@@ -298,9 +298,14 @@ function modelDisabledReason(
   return null;
 }
 
-const sectionClass = "min-w-0 scroll-mt-24";
+const sectionClass = "min-w-0 scroll-mt-20";
 const sectionSurfaceClass =
-  "mt-5 min-w-0 overflow-hidden rounded-lg border border-border bg-background";
+  "mt-4 min-w-0 overflow-hidden rounded-xl border border-border/60 bg-background";
+
+const sectionHeadingClass =
+  "text-pretty text-lg font-semibold tracking-[-0.015em]";
+const sectionDescriptionClass =
+  "mt-1 max-w-[62ch] text-pretty text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]";
 
 function exactSelectionValue(connectionId: string, modelId: string): string {
   return `${encodeURIComponent(connectionId)}|${encodeURIComponent(modelId)}`;
@@ -585,13 +590,13 @@ function SettingsSectionNavigation({
         <TabsList
           aria-label={t("nav.settings")}
           variant="rail"
-          className="h-auto w-full flex-col items-stretch gap-1 rounded-xl p-1.5"
+          className="sticky top-20 h-auto w-full flex-col items-stretch gap-0.5 rounded-xl bg-surface-soft/35 p-1"
         >
           {settingsSections.map((section) => (
             <TabsTrigger
               key={section.value}
               value={section.value}
-              className="min-h-11 flex-none justify-start rounded-lg border-0 px-4 py-2.5 text-left shadow-none before:absolute before:inset-y-2.5 before:left-1.5 before:w-0.5 before:rounded-full before:bg-foreground/70 before:opacity-0 before:transition-opacity data-[state=active]:before:opacity-100 after:hidden motion-reduce:before:transition-none"
+              className="min-h-10 flex-none justify-start rounded-lg border-0 px-3.5 py-2 text-left leading-5 whitespace-normal shadow-none before:absolute before:inset-y-2 before:left-1 before:w-0.5 before:rounded-full before:bg-primary before:opacity-0 before:transition-opacity data-[state=active]:before:opacity-100 after:hidden motion-reduce:before:transition-none"
             >
               {t(section.label)}
             </TabsTrigger>
@@ -617,13 +622,16 @@ function SettingsLayout({
         value={activeSection}
         onValueChange={navigateToSection}
         orientation="vertical"
-        className="min-w-0 flex-col gap-6 xl:grid xl:grid-cols-[13rem_minmax(0,1fr)] xl:items-start xl:gap-8"
+        className="min-w-0 flex-col gap-5 xl:grid xl:grid-cols-[11.5rem_minmax(0,1fr)] xl:items-start xl:gap-6 2xl:grid-cols-[12.5rem_minmax(0,1fr)]"
       >
         <SettingsSectionNavigation
           activeSection={activeSection}
           navigateToSection={navigateToSection}
         />
-        <div data-slot="settings-selected-pane" className="min-w-0">
+        <div
+          data-slot="settings-selected-pane"
+          className="min-w-0 xl:max-w-[68rem]"
+        >
           {children}
         </div>
       </Tabs>
@@ -662,24 +670,21 @@ function InterfaceSettingsPane() {
         aria-labelledby="settings-interface-title"
         className={sectionClass}
       >
-        <div className="mb-6">
-          <h2
-            id="settings-interface-title"
-            className="text-lg font-semibold tracking-[-0.015em]"
-          >
+        <header className="mb-4 min-w-0">
+          <h2 id="settings-interface-title" className={sectionHeadingClass}>
             {t("settings.section.interface")}
           </h2>
-          <p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
+          <p className={sectionDescriptionClass}>
             {t("settings.section.interfaceDescription")}
           </p>
-        </div>
+        </header>
 
-        <FieldGroup className="mt-5 gap-2 rounded-2xl bg-surface-soft/55 p-2 sm:p-3">
+        <FieldGroup className="gap-0 rounded-xl bg-surface-soft/50 px-4 sm:px-5">
           <Field
             orientation="responsive"
-            className="rounded-xl px-3 py-4 sm:px-4"
+            className="gap-4 border-b border-border/35 py-4 @md/field-group:grid @md/field-group:grid-cols-[minmax(12rem,1fr)_minmax(13rem,18rem)] @md/field-group:items-center"
           >
-            <FieldContent>
+            <FieldContent className="min-w-0">
               <FieldLabel htmlFor="theme">{t("settings.theme")}</FieldLabel>
               <FieldDescription>{t("settings.theme.help")}</FieldDescription>
             </FieldContent>
@@ -692,7 +697,7 @@ function InterfaceSettingsPane() {
                   setStorageAvailable(browserPreferenceStorageAvailable());
                 }}
               >
-                <SelectTrigger id="theme" className="w-full sm:max-w-72">
+                <SelectTrigger id="theme" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -713,7 +718,7 @@ function InterfaceSettingsPane() {
               <div
                 role="status"
                 aria-label={t("query.loadingSettings")}
-                className="w-full sm:max-w-72"
+                className="w-full"
               >
                 <span className="sr-only">{t("query.loadingSettings")}</span>
                 <Skeleton aria-hidden className="h-11 w-full" />
@@ -722,9 +727,9 @@ function InterfaceSettingsPane() {
           </Field>
           <Field
             orientation="responsive"
-            className="rounded-xl px-3 py-4 sm:px-4"
+            className="gap-4 py-4 @md/field-group:grid @md/field-group:grid-cols-[minmax(12rem,1fr)_minmax(13rem,18rem)] @md/field-group:items-center"
           >
-            <FieldContent>
+            <FieldContent className="min-w-0">
               <FieldLabel htmlFor="ui-locale">
                 {t("settings.locale")}
               </FieldLabel>
@@ -738,7 +743,7 @@ function InterfaceSettingsPane() {
                 setStorageAvailable(browserPreferenceStorageAvailable());
               }}
             >
-              <SelectTrigger id="ui-locale" className="w-full sm:max-w-72">
+              <SelectTrigger id="ui-locale" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -755,7 +760,7 @@ function InterfaceSettingsPane() {
           </Field>
           <div
             data-slot="settings-interface-footer"
-            className="mx-3 mt-1 border-t border-border/30 px-0 pt-3 pb-2 sm:mx-4"
+            className="border-t border-border/35 py-3.5"
           >
             {storageAvailable === false ? (
               <span role="alert" className="text-sm text-warning-foreground">
@@ -765,7 +770,7 @@ function InterfaceSettingsPane() {
               <span
                 role="status"
                 aria-live="polite"
-                className="text-sm text-muted-foreground"
+                className="text-xs leading-5 text-muted-foreground"
               >
                 {t("settings.localOnly")}
               </span>
@@ -870,11 +875,13 @@ export function SettingsForm() {
         navigateToSection={navigateToSection}
       >
         <TabsContent value={activeSection}>
-          <LoadingState
-            label="query.loadingSettings"
-            variant="panel"
-            className="min-h-64"
-          />
+          <section className={sectionClass}>
+            <LoadingState
+              label="query.loadingSettings"
+              variant="panel"
+              className="min-h-48"
+            />
+          </section>
         </TabsContent>
       </SettingsLayout>
     );
@@ -886,10 +893,12 @@ export function SettingsForm() {
         navigateToSection={navigateToSection}
       >
         <TabsContent value={activeSection}>
-          <QueryError
-            message={t("query.settingsUnavailable")}
-            retry={() => void query.refetch()}
-          />
+          <section className={sectionClass}>
+            <QueryError
+              message={t("query.settingsUnavailable")}
+              retry={() => void query.refetch()}
+            />
+          </section>
         </TabsContent>
       </SettingsLayout>
     );
@@ -952,23 +961,21 @@ export function SettingsForm() {
 
       <TabsContent value="ai">
         <section aria-labelledby="settings-ai-title" className={sectionClass}>
-          <div className="mb-2">
-            <div>
-              <h2
-                id="settings-ai-title"
-                className="text-lg font-semibold tracking-[-0.015em]"
-              >
-                {t("settings.section.ai")}
-              </h2>
-              <p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
-                {t("settings.section.aiDescription")}
-              </p>
-            </div>
-          </div>
+          <header className="mb-4 min-w-0">
+            <h2 id="settings-ai-title" className={sectionHeadingClass}>
+              {t("settings.section.ai")}
+            </h2>
+            <p className={sectionDescriptionClass}>
+              {t("settings.section.aiDescription")}
+            </p>
+          </header>
 
           <div className={sectionSurfaceClass}>
             <FieldGroup className="gap-0">
-              <Field orientation="responsive" className="px-5 py-5 sm:px-6">
+              <Field
+                orientation="responsive"
+                className="gap-4 px-4 py-4 sm:px-5 @md/field-group:grid @md/field-group:grid-cols-[minmax(12rem,1fr)_minmax(16rem,28rem)] @md/field-group:items-start"
+              >
                 <FieldContent>
                   <FieldLabel htmlFor="default-ai-profile">
                     {t("settings.defaultModel")}
@@ -1034,7 +1041,7 @@ export function SettingsForm() {
             </FieldGroup>
 
             <Collapsible>
-              <div className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+              <div className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <div className="min-w-0">
                   <p className="text-sm font-medium">
                     {t("settings.roleOverrides")}
@@ -1076,7 +1083,7 @@ export function SettingsForm() {
                       <Field
                         key={meta.role}
                         orientation="responsive"
-                        className="px-5 py-5 sm:px-6"
+                        className="gap-4 px-4 py-4 sm:px-5 @md/field-group:grid @md/field-group:grid-cols-[minmax(12rem,1fr)_minmax(16rem,28rem)] @md/field-group:items-start"
                       >
                         <FieldContent>
                           <FieldLabel htmlFor={`role-${meta.role}`}>
@@ -1144,7 +1151,7 @@ export function SettingsForm() {
               </CollapsibleContent>
             </Collapsible>
 
-            <div className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-6">
+            <div className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-5">
               <span
                 role="status"
                 aria-live="polite"
@@ -1190,15 +1197,12 @@ export function SettingsForm() {
           className={sectionClass}
         >
           <Collapsible>
-            <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <h2
-                  id="settings-local-title"
-                  className="text-lg font-semibold tracking-[-0.015em]"
-                >
+                <h2 id="settings-local-title" className={sectionHeadingClass}>
                   {t("settings.section.local")}
                 </h2>
-                <p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
+                <p className={sectionDescriptionClass}>
                   {t("settings.section.localDescription")}
                 </p>
               </div>

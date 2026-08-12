@@ -22,7 +22,9 @@ try {
     document.documentElement.dataset.sidebarCollapsed = value;
     document.cookie = "aptiloop.sidebar-collapsed=" + value + "; Path=/; Max-Age=31536000; SameSite=Strict";
   }
-} catch {}
+} catch {} finally {
+  document.documentElement.dataset.sidebarHydrated = "prepaint";
+}
 `;
 
 export const metadata: Metadata = {
@@ -47,7 +49,12 @@ export default async function RootLayout({
     cookieStore.get("aptiloop.sidebar-collapsed")?.value === "true";
 
   return (
-    <html lang={initialLocale} suppressHydrationWarning>
+    <html
+      lang={initialLocale}
+      data-sidebar-collapsed={String(initialSidebarCollapsed)}
+      data-sidebar-hydrated="false"
+      suppressHydrationWarning
+    >
       <body>
         <Script id="aptiloop-sidebar-preference" strategy="beforeInteractive">
           {sidebarPreferenceBootstrap}

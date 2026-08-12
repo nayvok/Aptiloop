@@ -90,7 +90,7 @@ export function KnowledgeClient() {
         role="status"
         aria-live="polite"
         aria-label={t("skills.loading")}
-        className="flex flex-col gap-6"
+        className="grid gap-6"
       >
         <span className="sr-only">{t("skills.loading")}</span>
         {[0, 1].map((group) => (
@@ -98,11 +98,11 @@ export function KnowledgeClient() {
             <div className="pb-3">
               <Skeleton className="h-5 w-40" />
             </div>
-            <div className="divide-y divide-border/70 border-y border-border/70">
+            <div className="grid gap-2">
               {[0, 1].map((topic) => (
                 <div
                   key={topic}
-                  className="grid gap-4 py-4 min-[1440px]:grid-cols-[minmax(0,1.4fr)_repeat(6,minmax(5rem,0.6fr))_8rem]"
+                  className="grid gap-4 rounded-control bg-surface-soft/70 p-4 min-[1180px]:grid-cols-[minmax(0,1.4fr)_repeat(6,minmax(5rem,0.6fr))_8rem]"
                 >
                   <Skeleton className="h-10 w-52 max-w-[80%]" />
                   {dimensions.map((dimension) => (
@@ -150,7 +150,7 @@ export function KnowledgeClient() {
   const firstDueTopic = query.data.topics.find((topic) => topic.reviewDue);
 
   return (
-    <div data-slot="skills-index" className="flex min-w-0 flex-col gap-6">
+    <div data-slot="skills-index" className="flex min-w-0 flex-col gap-5">
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="max-w-[72ch] text-sm leading-6 text-muted-foreground">
           {t("skills.scaleDescription")}
@@ -178,7 +178,7 @@ export function KnowledgeClient() {
               aria-labelledby={`skill-group-${groupIndex}`}
               className="min-w-0"
             >
-              <header className="pb-3">
+              <header className="pb-2">
                 <h2
                   id={`skill-group-${groupIndex}`}
                   className="break-words text-lg font-semibold [overflow-wrap:anywhere]"
@@ -190,14 +190,14 @@ export function KnowledgeClient() {
               <div data-slot="skill-topic-list" className="min-w-0">
                 <div
                   data-slot="skill-topic-disclosures"
-                  className="divide-y divide-border/70 border-y border-border/70 min-[1440px]:hidden"
+                  className="grid gap-2 min-[1180px]:hidden"
                 >
                   {topics.map((topic) => (
                     <Collapsible
                       key={topic.id}
                       defaultOpen={topic.id === firstDueInGroup}
                       data-slot="skill-topic"
-                      className="min-w-0"
+                      className="min-w-0 rounded-control bg-surface-soft/65 px-4 data-[state=open]:bg-surface-soft"
                     >
                       <header className="flex min-w-0 items-start gap-3 py-4">
                         <div className="min-w-0 flex-1">
@@ -233,7 +233,7 @@ export function KnowledgeClient() {
                         </div>
                       </header>
                       <CollapsibleContent>
-                        <dl className="grid gap-4 border-t border-border/60 py-4">
+                        <dl className="grid gap-4 pb-4 pt-1">
                           {dimensions.map((dimension) => {
                             const value = topic.scores[dimension];
                             const formattedValue = formatNumber(value, {
@@ -262,7 +262,7 @@ export function KnowledgeClient() {
 
                 <div
                   data-slot="skill-topic-table"
-                  className="hidden overflow-hidden rounded-control border border-border/70 min-[1440px]:block"
+                  className="hidden overflow-hidden rounded-panel bg-surface-raised min-[1180px]:block"
                 >
                   <Table className="min-w-[64rem] table-fixed">
                     <TableHeader>

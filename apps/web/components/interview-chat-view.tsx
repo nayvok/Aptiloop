@@ -84,12 +84,9 @@ export function InterviewChatView({
   return (
     <div
       aria-busy={action !== null}
-      className="flex min-w-0 flex-col border-y border-border bg-background"
+      className="flex min-w-0 flex-col bg-background"
     >
-      <div
-        data-slot="interview-question-progress"
-        className="border-b border-border py-4"
-      >
+      <div data-slot="interview-question-progress" className="pb-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold">
             {t("interview.session.questionProgress", {
@@ -109,7 +106,7 @@ export function InterviewChatView({
         />
       </div>
       <MessageScrollerProvider>
-        <MessageScroller className="h-[clamp(20rem,40vh,30rem)] flex-none border-b border-border">
+        <MessageScroller className="h-[clamp(20rem,40vh,30rem)] flex-none">
           <MessageScrollerViewport
             role="region"
             aria-label={t("interview.chat.transcript")}
@@ -200,14 +197,14 @@ export function InterviewChatView({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      <div className="flex min-w-0 flex-col gap-3 py-4">
+      <div className="flex min-w-0 flex-col gap-3 pt-4">
         {actionError ? (
           <Alert id="interview-chat-error" variant="destructive">
             <AlertDescription>{actionError}</AlertDescription>
           </Alert>
         ) : null}
         {ready ? (
-          <div className="flex min-w-0 flex-col gap-3 border-y border-border py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-3 rounded-control bg-surface-soft/60 p-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="min-w-0 max-w-2xl text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
               {t("interview.chat.readyDescription")}
             </p>

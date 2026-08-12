@@ -34,6 +34,8 @@ describe("LoadingState", () => {
     expect(status).toHaveAttribute("aria-atomic", "true");
     expect(status).toHaveAttribute("data-variant", "page");
     expect(status).toHaveTextContent("Loading lesson…");
+    expect(status).toHaveClass("rounded-none", "bg-transparent");
+    expect(status).not.toHaveClass("rounded-panel", "bg-surface-soft/45");
 
     const spinner = container.querySelector('[data-slot="spinner"]');
     expect(spinner).toHaveAttribute("aria-hidden", "true");
@@ -46,8 +48,10 @@ describe("LoadingState", () => {
       variant: "panel",
     });
 
-    expect(
-      screen.getByRole("status", { name: "Загружаю интервью…" }),
-    ).toHaveAttribute("data-variant", "panel");
+    const status = screen.getByRole("status", {
+      name: "Загружаю интервью…",
+    });
+    expect(status).toHaveAttribute("data-variant", "panel");
+    expect(status).toHaveClass("rounded-panel", "bg-surface-soft/45");
   });
 });

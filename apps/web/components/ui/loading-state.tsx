@@ -5,8 +5,8 @@ import { type MessageKey, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const variantClasses = {
-  page: "min-h-[18rem] sm:min-h-[22rem]",
-  panel: "min-h-40",
+  page: "min-h-[18rem] rounded-none bg-transparent sm:min-h-[22rem]",
+  panel: "min-h-40 rounded-panel bg-surface-soft/45",
   inline: "min-h-11 flex-row rounded-none bg-transparent p-0 text-left",
 } as const;
 
@@ -31,7 +31,7 @@ export function LoadingState({
       aria-atomic="true"
       aria-label={message}
       className={cn(
-        "flex min-w-0 flex-col items-center justify-center gap-3 rounded-panel bg-surface-soft/45 p-6 text-center text-sm text-muted-foreground",
+        "flex min-w-0 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground",
         variantClasses[variant],
         className,
       )}

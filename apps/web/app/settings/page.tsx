@@ -4,7 +4,7 @@ import { Suspense } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { SettingsForm } from "@/components/settings-form";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LoadingState } from "@/components/ui/loading-state";
 import { useI18n } from "@/lib/i18n";
 
 export default function SettingsPage() {
@@ -16,17 +16,7 @@ export default function SettingsPage() {
         description={t("page.settings.description")}
       />
       <Suspense
-        fallback={
-          <div
-            role="status"
-            aria-label={t("query.loadingSettings")}
-            className="flex min-w-0 flex-col gap-4"
-          >
-            <span className="sr-only">{t("query.loadingSettings")}</span>
-            <Skeleton className="h-11 w-full" />
-            <Skeleton className="h-56 w-full" />
-          </div>
-        }
+        fallback={<LoadingState label="query.loadingSettings" variant="page" />}
       >
         <SettingsForm />
       </Suspense>

@@ -49,10 +49,11 @@ export function ReviewPageSkeleton({
   const { t } = useI18n();
   return (
     <div
+      data-slot="review-loading-state"
       role="status"
       aria-live="polite"
       aria-label={t(label)}
-      className="flex min-w-0 flex-col gap-6"
+      className="flex min-w-0 flex-col gap-5"
     >
       <span className="sr-only">{t(label)}</span>
       {!compact ? (
@@ -61,8 +62,12 @@ export function ReviewPageSkeleton({
           <Skeleton className="h-6 w-[34rem] max-w-full" />
         </div>
       ) : null}
-      <div aria-hidden className="flex flex-col gap-4">
-        <Skeleton className="h-10 w-[28rem] max-w-full" />
+      <div aria-hidden className="flex flex-col gap-5">
+        <div className="grid h-11 w-[46rem] max-w-full grid-cols-4 gap-1">
+          {[0, 1, 2, 3].map((tab) => (
+            <Skeleton key={tab} className="h-full rounded-control" />
+          ))}
+        </div>
         <div className="grid gap-3">
           {[0, 1].map((row) => (
             <div
@@ -93,7 +98,7 @@ export function ReviewClient() {
   };
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
+    <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
         title={t("nav.review")}
         description={t("page.review.description")}
@@ -105,7 +110,7 @@ export function ReviewClient() {
       >
         <div
           data-slot="review-destination-navigation"
-          className="flex min-w-0 flex-col gap-3"
+          className="flex w-full max-w-[58rem] min-w-0 flex-col gap-3 rounded-panel bg-surface-soft/45 p-3 sm:p-4"
         >
           <nav aria-label={t("nav.review")} className="min-w-0">
             <div data-slot="review-mobile-nav" className="xl:hidden">
@@ -131,7 +136,7 @@ export function ReviewClient() {
             <TabsList
               data-slot="review-desktop-nav"
               variant="segmented"
-              className="hidden h-auto w-full max-w-[46rem] grid-cols-4 justify-start gap-1 p-1 xl:grid"
+              className="hidden h-auto w-full max-w-[50rem] grid-cols-4 justify-start gap-2 bg-transparent p-0 xl:grid"
             >
               {views.map((view) => {
                 const selected = active === view.id;
@@ -141,7 +146,7 @@ export function ReviewClient() {
                     value={view.id}
                     aria-current={selected ? "page" : undefined}
                     data-active={selected}
-                    className="min-h-11 min-w-0 rounded-control px-3 py-2 text-[0.9375rem] data-[state=active]:font-semibold"
+                    className="min-h-11 min-w-0 rounded-control border border-border/55 bg-background/35 px-3 py-2 text-[0.9375rem] shadow-none hover:bg-accent/45 data-[state=active]:border-primary/30 data-[state=active]:bg-accent/70 data-[state=active]:font-semibold dark:data-[state=active]:bg-accent/70"
                   >
                     {selected ? <CheckIcon aria-hidden weight="bold" /> : null}
                     <span className="min-w-0 truncate">{t(view.label)}</span>
@@ -150,7 +155,7 @@ export function ReviewClient() {
               })}
             </TabsList>
           </nav>
-          <p className="max-w-[70ch] px-1 pt-1 text-sm leading-6 text-muted-foreground">
+          <p className="max-w-[70ch] px-1 pb-0.5 text-sm leading-6 text-muted-foreground">
             {t(viewDescriptions[active])}
           </p>
         </div>

@@ -45,7 +45,7 @@ export default function NewCoursePage() {
   const [selectedPathId, setSelectedPathId] = useState<AssistedPathId>();
   const selectedPath = assistedPaths.find((path) => path.id === selectedPathId);
   return (
-    <div className="flex min-w-0 flex-col gap-6">
+    <div className="flex min-w-0 flex-col gap-5">
       <div>
         <Button asChild variant="ghost" size="sm" className="-ml-3">
           <Link href="/courses">
@@ -59,7 +59,7 @@ export default function NewCoursePage() {
         description={t("authoring.entry.description")}
       />
 
-      <FieldSet className="w-full max-w-[76rem] min-w-0 gap-5 pb-1">
+      <FieldSet className="w-full min-w-0 gap-5 pb-1">
         <div>
           <FieldLegend className="text-sm font-semibold">
             {t("authoring.entry.assistedTitle")}
@@ -69,11 +69,12 @@ export default function NewCoursePage() {
           </p>
         </div>
         <RadioGroup
+          data-slot="course-creation-paths"
           value={selectedPathId ?? null}
           onValueChange={(value) => setSelectedPathId(value as AssistedPathId)}
-          className="gap-0 overflow-hidden rounded-lg border border-border bg-card"
+          className="grid gap-3 md:grid-cols-2"
         >
-          {assistedPaths.map((path, index) => {
+          {assistedPaths.map((path) => {
             const descriptionId = `${path.id}-description`;
             const guidanceId = `${path.id}-guidance`;
             const badgeId = `${path.id}-badge`;
@@ -82,8 +83,7 @@ export default function NewCoursePage() {
                 key={path.id}
                 htmlFor={`${path.id}-path`}
                 className={cn(
-                  "grid min-w-0 cursor-pointer grid-cols-[auto_2.75rem_minmax(0,1fr)] gap-x-3 gap-y-2 border-border p-4 transition-colors has-data-[state=checked]:bg-accent/65 hover:bg-accent/40 sm:grid-cols-[auto_3rem_minmax(0,1fr)_minmax(11rem,auto)] sm:items-start sm:gap-x-5 sm:p-6",
-                  index > 0 && "border-t",
+                  "grid min-w-0 cursor-pointer grid-cols-[auto_2.75rem_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-[14px] bg-surface-soft/55 p-4 transition-colors has-data-[state=checked]:bg-accent hover:bg-accent/70 sm:grid-cols-[auto_3rem_minmax(0,1fr)] sm:items-start sm:gap-x-4 sm:p-5",
                 )}
               >
                 <RadioGroupItem
@@ -114,7 +114,7 @@ export default function NewCoursePage() {
                 </span>
                 <span
                   id={badgeId}
-                  className="col-start-3 min-w-0 break-words text-xs leading-5 font-medium text-muted-foreground sm:col-start-4 sm:text-right"
+                  className="col-start-3 min-w-0 break-words text-xs leading-5 font-medium text-muted-foreground"
                 >
                   {t(path.badge)}
                 </span>
@@ -123,7 +123,7 @@ export default function NewCoursePage() {
           })}
         </RadioGroup>
 
-        <div className="flex min-w-0 flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-col gap-3 pt-1 sm:flex-row sm:items-center sm:justify-between">
           <Button asChild variant="outline" className="w-full sm:w-auto">
             <Link href="/courses">{t("authoring.common.cancel")}</Link>
           </Button>
@@ -152,7 +152,7 @@ export default function NewCoursePage() {
         </div>
       </FieldSet>
 
-      <section className="flex w-full max-w-[76rem] min-w-0 flex-col gap-4 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
+      <section className="flex w-full min-w-0 flex-col gap-4 rounded-[14px] bg-surface-soft/45 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <PencilSimpleIcon aria-hidden className="text-muted-foreground" />
