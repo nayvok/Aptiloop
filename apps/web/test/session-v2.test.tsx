@@ -751,7 +751,7 @@ describe("guided versioned session", () => {
     expect(focus).toHaveClass(
       "w-full",
       "min-w-0",
-      "max-w-[64rem]",
+      "max-w-[72rem]",
       "lg:px-8",
       "lg:py-8",
     );
@@ -765,7 +765,7 @@ describe("guided versioned session", () => {
     );
     expect(
       document.querySelector('[data-slot="session-header-grid"]'),
-    ).toHaveClass("max-w-[64rem]", "px-4", "sm:px-6", "lg:px-8");
+    ).toHaveClass("max-w-[72rem]", "px-4", "sm:px-6", "lg:px-8");
     expect(ready).toHaveClass("w-full");
     expect(ready).not.toHaveClass(
       "rounded-focus",
