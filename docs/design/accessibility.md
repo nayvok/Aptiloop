@@ -35,6 +35,7 @@ Calm Workshop — Clear Slate is the approved direction name, not a separate sta
 - Query, validation, streaming, save, and interview states use bounded `role="status"` or `role="alert"` regions rather than announcing every visual update.
 - Review uses semantic desktop tabs and a labeled compact Select for the same Due/Mistakes/Cards/Interviews destinations.
 - The closed ActivityFrame registry provides typed labels/status and a localized unsupported-type alert; lesson and roadmap progress use accessible values and current-step semantics.
+- The desktop lesson-plan rail and compact Sheet expose the same phase structure, textual current/completed/locked state, and `aria-current`; changing composition does not change semantic order or deterministic lesson state.
 - `en-US` and `ru-RU` catalogs drive application strings and root language independently from Course locale.
 - Global reduced-motion rules and component `motion-reduce` variants remove nonessential transitions and transforms.
 
@@ -114,7 +115,7 @@ Instructions never rely only on position, shape, color, sound, or gesture. “Se
 - User-applied text spacing—line height 1.5×, paragraph spacing 2×, letter spacing 0.12×, word spacing 0.16×—does not clip or overlap content.
 - Tooltip/popover content triggered by hover or focus is dismissible, hoverable, and persistent under WCAG conditions. Essential instructions never live only in a tooltip.
 - Sticky lesson actions and bottom navigation do not cover zoomed focus targets or validation errors.
-- The desktop rail remains exactly 280px expanded or 72px collapsed without content overlap, clipped destinations, focus loss, or layout jitter. At zoom/reflow breakpoints it yields to the mobile shell rather than squeezing beside 320px content.
+- The desktop rail remains exactly 248px expanded or 72px collapsed without content overlap, clipped destinations, focus loss, or layout jitter. The 72px collapsed rail retains the centered brand mark, and its square destination fields remain distinct from the collapse control in the utility header. At zoom/reflow breakpoints it yields to the mobile shell rather than squeezing beside 320px content.
 
 ## Operable
 
@@ -228,7 +229,7 @@ Aptiloop itself is local single-user and does not add a product login for Core A
 
 **Approved Core Alpha target**
 
-Desktop rail and mobile bottom navigation are landmarks with distinct labels if both ever coexist during a breakpoint transition. Active page uses `aria-current="page"`. The 280px/72px collapse control exposes its state with `aria-expanded`; collapsing preserves destination order and focus, while every icon-only destination keeps an accessible name and a dismissible, hoverable Radix tooltip. No custom hover label may overlap the content plane. Icons are decorative when visible text labels already name the destination. The utility-header breadcrumb follows the ordered ancestor/current-page pattern, and the final crumb exposes `aria-current="page"`.
+Desktop rail and mobile bottom navigation are landmarks with distinct labels if both ever coexist during a breakpoint transition. Active page uses `aria-current="page"`. The 248px/72px rail is controlled by the utility-header button immediately before the breadcrumb; that button exposes `aria-expanded`, retains its accessible name in both states, and preserves focus. Collapsing retains the centered brand mark, destination order, and a dismissible, hoverable Radix tooltip for every icon-only destination. No custom hover label may overlap the content plane. Icons are decorative when visible text labels already name the destination. The utility-header breadcrumb follows the ordered ancestor/current-page pattern, and the final crumb exposes `aria-current="page"`.
 
 ### Sheets and dialogs
 

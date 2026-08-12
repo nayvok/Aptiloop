@@ -26,17 +26,17 @@ The exact canonical values and contrast intent are in [`../DESIGN.md`](../DESIGN
 
 `surface-soft` is the canonical recessed-band, quiet-well, query-state, and secondary-group surface. It replaces the obsolete `surface-subtle` name; documentation and components must not introduce a parallel alias. Cool-neutral surfaces never inherit the evergreen hue. Evergreen is reserved for primary action, success, progress, and focus. Warning, destructive, selection, and activity families retain independent roles. Activity color supplements a label, icon, border/marker, and state text; it is never the only distinction.
 
-`ThemeProvider` retains `system | light | dark`, applies `color-scheme`, and suppresses transition noise during theme changes. `prefers-reduced-motion` globally reduces nonessential animation, scrolling, and transforms.
+`ThemeProvider` retains `system | light | dark`, defaults to system, applies `color-scheme`, and suppresses transition noise during theme changes. Theme and UI locale are immediate browser-local preferences; the header and Settings read the same current theme instead of requiring a Core or database save. `prefers-reduced-motion` globally reduces nonessential animation, scrolling, and transforms.
 
 ## Layout and navigation
 
 **Implemented baseline**
 
 - Primary destinations are exactly Home, Courses, Review, Skills, and Settings.
-- The desktop rail is exactly 280px expanded and 72px collapsed. Icon centers, 56px row heights, navigation order, and focus order remain stable between states; collapsed destinations use Radix tooltips and never render overlay labels into the content plane.
-- Expanded mode shows the neutral mark and wordmark with an icon-only collapse control at the brand row's top-right edge. Collapsed mode removes the mark and wordmark and centers the expand control inside the same 72px rail; it never creates another strip.
+- The desktop rail is exactly 248px expanded and 72px collapsed. The collapsed width equals the utility-header height. Icon centers, 48px row heights, navigation order, and focus order remain stable between states; collapsed destinations use square hit fields and Radix tooltips and never render overlay labels into the content plane.
+- Expanded mode shows the neutral mark and wordmark; collapsed mode retains the centered mark in the same 72px rail. The icon-only collapse/expand control is in the utility header immediately before the breadcrumb, not in the brand row or a second strip. The browser-local collapse preference is restored before the interactive shell paints so reload does not flash an expanded rail first.
 - Home, Courses, Review, and Skills occupy the upper navigation; Settings is the final lower navigation item. The footer contains no AI/provider badge, theme switch, or ambiguous status pill.
-- The opaque 92px utility header contains a labeled breadcrumb on the left and coherent 44px outlined AI and theme controls on the right. Interface locale is changed only in Settings. Provider recovery remains in Settings or the affected workflow.
+- The opaque 72px utility header contains the collapse/expand control and labeled breadcrumb on the left and coherent 44px outlined AI and theme controls on the right. Interface locale is changed only in Settings. Provider recovery remains in Settings or the affected workflow.
 - The shared header and main content use the same 44px desktop gutter inside a fluid maximum width of about 1440px.
 - The separate page header owns a 44px title, 17px description, and 48–50px page actions. It does not repeat the breadcrumb or substitute a top-level title for nested routes.
 - `/courses/*`, compatibility `/session?id=`, exercise, and lesson-linked interview contexts keep Courses active. Home is active only for Home.
@@ -55,7 +55,7 @@ The design system owns reusable composition, not route semantics. The canonical 
 
 **Implemented baseline**
 
-`AppShell` owns the 280px/72px rail, collapsed tooltips, five-item mobile bottom navigation, utility header, entity breadcrumb slot, route-to-primary-destination mapping, skip link, and main landmark. `PageHeader` owns only route title, description, and page actions. Neither owns lesson progression.
+`AppShell` owns the 248px/72px rail, pre-hydration collapse restoration, collapsed tooltips, five-item mobile bottom navigation, utility header, privacy-safe route title, entity breadcrumb slot, route-to-primary-destination mapping, skip link, and main landmark. `PageHeader` owns only route title, description, and page actions. Neither owns lesson progression.
 
 ### Breadcrumb
 
@@ -75,11 +75,17 @@ Desktop destination tabs use the shared Radix Tabs primitive with visible focus 
 
 `apps/web/components/ui/textarea.tsx` is the multiline input primitive. `apps/web/components/interview-chat-view.tsx` composes the transcript and composer, preserves Enter/Shift+Enter behavior, and limits live status to one meaningful operation boundary at a time.
 
-### DayPlanSheet
+### DayPlan rail and sheet
 
 **Implemented baseline**
 
-`apps/web/components/day-plan.tsx` presents the lesson plan in a Sheet so the current activity remains the focus. The trigger belongs to the lesson-orientation row, not the global utility header.
+`apps/web/components/day-plan.tsx` presents one semantic lesson plan as a substantial, independently scrolling desktop rail when the lesson container has enough width and as a full-height Sheet below that threshold. The trigger belongs to lesson orientation, not the global utility header. Current, completed, and locked text, phase structure, and `aria-current` remain equivalent in both compositions.
+
+### LoadingState and stable skeletons
+
+**Implemented baseline**
+
+The shared localized `LoadingState` is the default for route and query boundaries whose eventual geometry is not yet known. Skeletons are limited to bounded regions whose approximate shape is stable; they do not invent a page structure or announce each pulse. Both patterns expose one concise status through the owning region.
 
 ### Sheet, Popover, and toast feedback
 
@@ -92,7 +98,7 @@ Sheet is for plan, context, inspector, and bounded mobile navigation. Popover ma
 **Approved Core Alpha target**
 
 - Primary mobile controls and icon buttons have at least a 44px target.
-- Buttons, inputs, badges, progress, skeletons, sheets, dialogs, and toasts use shared semantic primitives.
+- Buttons, inputs, badges, progress, loading states, bounded skeletons, sheets, dialogs, and toasts use shared semantic primitives.
 - Loading exposes `role="status"` or `aria-busy`; errors identify the failing layer and a recovery action; empty states explain what creates content.
 - Published revisions are read-only. Clone, Apply, install, and Publish are distinct explicit actions.
 - Destructive or irreversible operations require confirmation and state the consequence.
@@ -121,7 +127,7 @@ Automated component tests cover selected semantics, theme, and reduced-motion co
 1. component states for loading, empty, error, success, offline, AI Off, and protected data;
 2. keyboard walkthrough through library → create, library → import/intake, Home → session → practice → summary, and Studio gates;
 3. light, dark, and system screenshots without hydration warnings;
-4. 280px/72px rail, collapsed tooltip, 1440×900 desktop, 390×844 mobile, and 320 CSS px reflow checks;
+4. 248px/72px rail, pre-hydration collapsed restoration, collapsed tooltip, 1440×900 desktop, 390×844 mobile, and 320 CSS px reflow checks;
 5. reduced-motion and forced-colors checks;
 6. rendered contrast checks for text, focus, selected navigation, controls, statuses, and activity surfaces;
 7. the applicable repository format, lint, typecheck, web component, and E2E gates, reported separately from visual approval.

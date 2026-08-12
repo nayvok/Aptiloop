@@ -19,6 +19,8 @@ Calm Workshop — Clear Slate is the approved direction name, not a separate sta
 
 Session activities preserve bounded context-scoped local drafts for learner input where implemented. Exercise and linked Interview routes retain exact Course/lesson entity breadcrumbs and server-owned session association rather than presenting themselves as unrelated destinations. This is the implemented migration seam; no parallel learning state machine is permitted.
 
+The lesson presentation is a container-aware two-column workspace. Orientation and the current activity form the left canvas; when available content width permits, the lesson-plan rail spans both rows, stays below the App Shell, fills the remaining viewport height, and scrolls independently. Narrower layouts keep one activity column and expose the same plan in an accessible sheet. Phase grouping, locked/current/completed text, `aria-current`, persisted `currentStep`, and every completion mutation retain their existing deterministic owners.
+
 ## Activity model boundary
 
 **Approved Core Alpha target**
@@ -62,13 +64,18 @@ The frame owns shared loading, focus, status announcements, save state, capabili
 
 **Implemented baseline**
 
-- Sticky lesson context spans the available content width.
-- ActivityFrame is centered at 720–800px.
-- A contextual region appears only for sources, notes, evidence, or capability help that is useful alongside the task and fits the exercised viewport.
-- The main activity is an open editorial field; `surface-soft` is reserved for quiet context/evidence wells rather than wrapping every activity in a nested card.
+- Sticky lesson orientation and the activity occupy the left column; the substantial plan rail occupies the right column only when the lesson container, rather than the raw viewport, has enough width.
+- The plan rail has one canvas boundary, viewport-height independent scrolling, a connected phase timeline, and concise locked/current/completed text. Internal step rows use spacing and a current-step surface instead of stacked separators.
+- ActivityFrame is centered on a readable measure up to 54rem.
+- A contextual region appears only for sources, notes, evidence, or capability help that is useful alongside the task and fits the exercised viewport. Missing-source authoring remains available as a low-emphasis contextual link rather than a competing lesson action.
+- The main activity is an open editorial field; `surface-soft` is reserved for quiet context/evidence wells rather than wrapping every activity in a nested card or dividing every region with a rule.
 - Technical evidence may use a wider workspace up to the content maximum, while learner instructions retain readable measure.
 
 ### Mobile composition
+
+**Implemented baseline**
+
+Below the lesson-container rail threshold, the workspace is one edge-safe activity column and Plan opens the same semantic content in the existing full-height sheet. Radix owns dialog focus containment, Escape, close, and trigger focus return; long activity content retains horizontal containment.
 
 **Approved Core Alpha target**
 
@@ -353,7 +360,7 @@ Consent is scoped to the displayed provider/tool/data categories. A changed prov
 
 ### Loading
 
-Frame skeleton preserves header/material/response/footer regions. `aria-busy` is set on the region; one concise status is announced. Previously loaded lesson context remains visible. Starting, saving, scoring, checking, reviewing, and completing use distinct verbs.
+The route and session-query boundary use the shared localized page LoadingState because the activity shape is not known yet. A bounded renderer subregion may use a skeleton only when its approximate geometry is stable. One concise status is announced; starting, saving, scoring, checking, reviewing, and completing use distinct verbs.
 
 ### Empty
 

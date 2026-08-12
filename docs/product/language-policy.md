@@ -30,6 +30,10 @@ UI locale controls application-owned presentation:
 
 Supported values are `en-US` and `ru-RU`. Resolution order is deterministic: use the saved user setting; otherwise show an explicit first-run choice prefilled from a supported browser/OS locale (`ru`/`ru-*` → `ru-RU`, `en`/`en-*` → `en-US`, anything else → `en-US`). The prefill is not persisted until the user confirms it. Browser/OS changes never alter an existing saved preference silently. UI locale does not choose or prefill a Course locale.
 
+**Implemented baseline**
+
+The web application stores the confirmed UI locale under `aptiloop:ui-locale` in browser local storage and mirrors the same value to the `aptiloop.ui-locale` cookie for the server-rendered root language. Interface locale changes apply immediately and do not require Core availability or a database write. Malformed stored values fail closed to the supported first-run/default resolution path.
+
 ### Primary Course locale
 
 **Approved Core Alpha target**

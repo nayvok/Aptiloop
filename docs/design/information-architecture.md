@@ -83,6 +83,7 @@ Meaningful navigation state is recoverable without moving server authority into 
 - **Review:** `/review` is canonical Due; `?view={destination}` preserves `mistakes`, `cards`, or `interviews`.
 - **Chat:** `?role=` preserves the strict role selection while unrelated safe query parameters survive canonicalization.
 - **Lesson contexts:** `/session?id=`, `/exercise?sessionId=`, and lesson-linked `/interview` preserve exact server-owned entity association.
+- **Browser identity:** the manifest and icon identify Aptiloop, while the localized document title is derived only from allowlisted route shapes and controlled enum query values. Entity names, IDs, and arbitrary query text never enter the browser tab title.
 
 Invalid or ambiguous URL state is replaced with a safe canonical value, never interpreted as a new entity or executable instruction. Compatibility redirects preserve stable links without creating a second navigation model.
 
@@ -92,10 +93,10 @@ Invalid or ambiguous URL state is replaced with a safe canonical value, never in
 
 Direction: Calm Workshop — Clear Slate.
 
-- The left rail is exactly 280px expanded and 72px collapsed. Width changes do not move icon centers, reorder destinations, clip labels, or change focus order. Collapsed items have accessible names and Radix tooltips; no custom label overlays page content. Collapse/expand exposes `aria-expanded` and preserves focus.
-- The brand row owns identity only. Collapse/expand is a distinct edge-aligned control. Theme and provider utilities never appear in the brand stack or sidebar footer.
+- The left rail is exactly 248px expanded and 72px collapsed, with 48px destination rows. Width changes do not move icon centers, reorder destinations, clip labels, or change focus order. Collapsed items have square hit fields, accessible names, and Radix tooltips; no custom label overlays page content. The stored collapse state is restored before the interactive shell paints.
+- The brand row owns identity only: expanded shows the mark and wordmark, while collapsed retains the centered mark. Collapse/expand is a distinct control in the 72px utility header immediately before the breadcrumb; it exposes `aria-expanded` and preserves focus. Theme and provider utilities never appear in the brand stack or sidebar footer.
 - Home, Courses, Review, and Skills occupy the main scrollable navigation group. Settings is the final navigation item in the lower group. One `nav` landmark or uniquely named landmarks preserve a coherent navigation model and `aria-current="page"` semantics. The footer contains no AI, provider, runtime, or ambiguous local-status pill.
-- A restrained sticky utility header contains a labeled breadcrumb on the left and theme plus a compact layer-aware provider utility on the right. Provider detail/recovery remains in Settings or the affected workflow; the header does not present a generic “AI ready” KPI.
+- A restrained 72px sticky utility header contains collapse/expand and a labeled breadcrumb on the left and theme plus a compact layer-aware provider utility on the right. Provider detail/recovery remains in Settings or the affected workflow; the header does not present a generic “AI ready” KPI.
 - Route ownership drives active navigation: Home only for `/`; Courses for `/courses/*`, compatibility `/session?id=`, exercise, and lesson-linked interview contexts; Review for `/review/*`; Skills for `/skills/*`; Settings for `/settings/*`.
 - The separate page header owns title, description, and page actions. It does not repeat the breadcrumb or show a false top-level title for a nested route.
 - Main width follows the screen: reading views cap content measure; lists and Studio use available width.
@@ -322,9 +323,9 @@ Required states: no branch, branch current, Draft saved/saving/failed, upstream 
 Desktop wireframe:
 
 - The utility-header breadcrumb resolves `Courses › {Course} › {Lesson}` from entity data for both the target route and compatibility `/session?id=`. Courses remains the active primary destination; loading entity labels use an honest loading state and never fall back to Home.
-- A sticky lesson-orientation row may add activity N/M, remaining estimate, Plan, and Leave safely, but it does not repeat the shell breadcrumb or page title.
-- Center 720–800px ActivityFrame.
-- Optional contextual region for sources, notes, evidence, or runtime details when the exercised viewport has sufficient space.
+- Lesson orientation and the current ActivityFrame share an open left canvas with a readable measure up to 54rem; orientation may add activity N/M, remaining estimate, Plan, and Leave safely without repeating the shell breadcrumb or page title.
+- When the post-sidebar lesson container has enough width, a substantial plan rail occupies the right column across orientation and activity rows, stays below the App Shell, fills the remaining viewport height, and scrolls independently. One canvas boundary provides the persistent structural divider.
+- Below that container threshold, the workspace returns to one edge-safe activity column and the same lesson plan opens in the accessible full-height Sheet. Current, completed, and locked text, phase structure, and `aria-current` remain equivalent.
 - Activity frame anatomy and code/review/source contexts follow [`activity-renderers.md`](activity-renderers.md).
 
 Mobile wireframe: one pane, compact progress header, Plan/Context sheets, contained code/output scroll, and sticky primary action above bottom navigation. No desktop rail remains squeezed beside content.
@@ -359,19 +360,18 @@ Required states: loading, no topics, topic without evidence, evidence available,
 
 **Approved Core Alpha target**
 
-Settings is a list of categories, not one long form:
+Settings is a list of four responsibilities, not one long form:
 
-- Language
-- Appearance & Accessibility
-- Core & Storage
-- Runtimes
-- Optional AI Tools
-- Privacy & Data
-- Diagnostics
+- Interface
+- AI roles
+- Connections
+- Core & local paths
 
-Desktop may show category navigation plus selected settings pane. Mobile shows category rows and dedicated screens. Save state stays next to the changed setting; immediate theme/locale changes explain whether they also need persistence.
+Developer diagnostics remain contained in Core & local paths rather than becoming another primary destination. Desktop shows category navigation plus the selected pane; compact layouts use one labeled selector for the same four sections.
 
-Required states for every category: loading; ready; saved; saving; save failed with retained input; restart required; permission denied; browser offline; Core unavailable; storage unavailable; and unsupported capability. Provider settings additionally distinguish AI Off, auth missing/invalid, provider/model unavailable, capability mismatch, and retained unsent input.
+Theme and UI locale apply immediately from browser-local state and expose their exact current values. They neither wait for Aptiloop Core nor borrow a database Save action. Server-owned AI-role and connection changes retain adjacent saved, saving, validation, and failure state with input preserved.
+
+Interface required states are current value, immediate application, reload restoration, and a usable in-memory fallback when browser persistence is blocked. Core/local and provider sections additionally distinguish loading, ready, saved, saving, save failure, permission denied, browser offline, Core/storage unavailable, unsupported capability, AI Off, auth invalid, provider/model unavailable, capability mismatch, and retained unsent input as applicable.
 
 ### Core, storage, runtime, and AI status
 

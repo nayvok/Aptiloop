@@ -179,11 +179,11 @@ Phosphor remains the single icon family. Navigation uses regular weight and sele
 
 **Approved Core Alpha target**
 
-Desktop uses one stable navigation rail: 280px expanded and 72px collapsed. Expanding or collapsing changes only the rail width; icon centers, 56px row heights, navigation order, and focus order remain stable. Expanded mode shows a larger neutral Aptiloop mark and wordmark with an icon-only collapse control at the top right. Collapsed mode removes the mark and wordmark and centers the expand control in the same 72px rail header; it never adds a second strip. Collapsed destinations use centered 48px hit fields, accessible names, and Radix tooltips; they never render custom labels over page content.
+Desktop uses one stable navigation rail: 248px expanded and 72px collapsed, matching the 72px utility-header height. Expanding or collapsing changes only the rail width; icon centers, 48px row heights, navigation order, and focus order remain stable. Expanded mode shows the Aptiloop mark and wordmark; collapsed mode retains the mark as identity in the same 72px rail and never adds a second strip. Collapsed destinations use centered square hit fields, accessible names, and Radix tooltips; they never render custom labels over page content.
 
 Home, Courses, Review, and Skills stay in the upper navigation; Settings is the final item in the lower group. The rail footer contains no AI/provider badge, theme switch, or ambiguous local-status pill. Active navigation uses the cool-neutral accent surface, stronger text/icon treatment, and `aria-current`, not a green block.
 
-The opaque 92px utility header owns location and two global utilities: a labeled breadcrumb is left-aligned; coherent 44px outlined AI and theme controls are right-aligned. Interface locale is changed only in Settings so it is not duplicated in global chrome. Provider detail and recovery remain in Settings or the affected workflow. The brand stack and sidebar footer never duplicate these utilities. `/courses/*`, compatibility `/session?id=`, exercise, and lesson-linked interview routes keep Courses active; Home is active only for Home.
+The opaque 72px utility header owns shell collapse, location, and two global utilities. The icon-only collapse/expand control appears immediately before the labeled breadcrumb; coherent 44px outlined AI and theme controls are right-aligned. Interface locale is changed only in Settings so it is not duplicated in global chrome, while the header theme control and Settings theme selector use the same immediate browser-local preference. Provider detail and recovery remain in Settings or the affected workflow. The brand stack and sidebar footer never duplicate these utilities. `/courses/*`, compatibility `/session?id=`, exercise, and lesson-linked interview routes keep Courses active; Home is active only for Home.
 
 **Implemented baseline** — Core Alpha remains local-first and single-user. It must not render a fake account, avatar, login, disabled account placeholder, or authentication affordance.
 
@@ -291,6 +291,10 @@ Skills is an evidence-backed topic index. Topic groups use open surfaces with a 
 
 ### Learning Session and ActivityFrame
 
+**Implemented baseline**
+
+The lesson surface is an immersive, container-aware workspace with an open 54rem ActivityFrame canvas and a substantial desktop plan rail. Below the rail threshold, the same semantic plan opens in the accessible sheet. Surface contrast and spacing replace repeated rules, and presentation never infers readiness or changes `currentStep`, evidence, completion, or kernel ownership. [`docs/design/activity-renderers.md`](docs/design/activity-renderers.md) owns the detailed rail, sheet, activity-layer, focus, and state contract.
+
 **Approved Core Alpha target**
 
 The utility-header breadcrumb resolves `Courses › {Course} › {Lesson}` for the target lesson route and the compatibility `/session?id=` route. Courses remains the active primary destination; the shell never reports Home merely because the compatibility URL is top-level. While entity labels load, the breadcrumb shows an honest loading label rather than falling back to Home. The session header is sticky only when it materially preserves orientation below the App Shell. It adds phase/activity position, remaining estimate, Plan, and Continue later without repeating the shell breadcrumb or page title; one continuous progress track closes the header.
@@ -326,9 +330,13 @@ Studio is 70% editorial workspace and 30% developer instrument. Existing forms, 
 
 ### Settings and Connections
 
+**Implemented baseline**
+
+Settings uses four calm sections: Interface, AI roles, Connections, and Core & local paths, with developer diagnostics contained in the local section. Theme and UI locale expose their exact current values, apply immediately from browser-local preference state, and do not require Aptiloop Core or a database save. The utility-header theme control and Settings theme selector stay synchronized through the same theme provider.
+
 **Approved Core Alpha target**
 
-Settings groups Interface, Core/local paths, AI roles, Connections, and diagnostics as calm sections. Local paths and IDs use mono and wrap safely. Theme and locale controls expose their exact current values.
+Settings preserves those four responsibilities without turning the page into one long form. Local paths and IDs use mono and wrap safely. Server-owned role, connection, and runtime mutations retain adjacent save, validation, and recovery state; browser-local Interface preferences do not borrow those server save semantics.
 
 Connection rows show display name, provider kind, locality, model observation count, and readable health state. Credential secrets are never rendered. Errors identify authentication, model, capability, provider, or disclosure layer and show only safe recovery actions. Add connection is primary within Connections, not for the whole Settings page. AI role assignment remains server-owned and visibly separate from connection authentication.
 

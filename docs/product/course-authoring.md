@@ -10,6 +10,8 @@ This document defines the complete authoring contract. The implemented mechanism
 
 The current Aptiloop application has an Adaptive Studio workflow backed by versioned curriculum tables. It can create or clone a draft revision, edit/reorder week/day/unit records through typed forms, validate, Preview, review changes, and explicitly publish an immutable revision with a content hash. The optional M10 Course Designer persists its finite workflow and diagnostics, reads only the selected Draft and explicitly approved sources, returns strict stable-ID changes with immutable provider/model/prompt attribution, and requires separate Apply, Preview, Changes, and Publish decisions.
 
+Manual and assisted Course creation require an explicit primary Course locale. Common valid BCP 47 locales are presented with interface-localized display names, while a validated custom-locale path preserves the broader Course schema. The choice is persisted as Draft/Course metadata and remains independent from the local `en-US`/`ru-RU` interface preference.
+
 The active curriculum and Authoring Kit fixture are development content, not production Courses. Source Snapshot/Capsule tables contain no approved production material. Complete production Course locale resources remain **Approved Core Alpha target** work. Existing Russian Course fixture content and retained legacy authoring routes are compatibility surfaces, not production Course localization evidence.
 
 ## Authoring principles

@@ -101,6 +101,10 @@ See [Course authoring](docs/product/course-authoring.md).
 
 The interface supports `en-US` and `ru-RU`. UI locale is independent from a Course's one required primary locale. Optional Course translations are explicit resources; they do not change identifiers, graph semantics, evidence types, code, or trusted check IDs. Retained Russian development Course content and historical documents are not application-string fallbacks or production Course localization evidence.
 
+**Implemented baseline**
+
+Course creation keeps the primary Course locale as explicit Draft metadata. The manual and assisted creation forms offer a localized common-locale selector plus a validated custom BCP 47 path; neither form derives or mutates the Course locale from the local interface preference.
+
 See [Language policy](docs/product/language-policy.md) and [Terminology](docs/product/terminology.md).
 
 ## Non-goals
