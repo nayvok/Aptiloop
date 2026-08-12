@@ -875,7 +875,7 @@ export function SessionClient() {
           role="group"
           aria-label={focusedUnit.title}
           tabIndex={-1}
-          className="mx-auto w-full max-w-[64rem] min-w-0 scroll-mt-28 px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-6 sm:py-7 lg:px-8 lg:py-8 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-2"
+          className="mx-auto w-full max-w-[72rem] min-w-0 scroll-mt-28 px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-6 sm:py-7 lg:px-8 lg:py-8 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-2"
         >
           {showBlockTransition && activeBlock ? (
             <BlockTransition
@@ -1063,7 +1063,7 @@ function SessionProgressHeader({
     >
       <div
         data-slot="session-header-grid"
-        className="mx-auto w-full max-w-[64rem] min-w-0 px-4 sm:px-6 lg:px-8"
+        className="mx-auto w-full max-w-[72rem] min-w-0 px-4 sm:px-6 lg:px-8"
       >
         <div data-slot="session-orientation" className="w-full min-w-0">
           <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-end sm:justify-between">

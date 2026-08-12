@@ -1,10 +1,31 @@
-import { describe, expect, it } from "vitest";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import type { AgentProvider } from "@aptiloop/agent-core";
+import {
+  createLearningRepository,
+  migrateDatabase,
+  openDatabase,
+  ProviderHubRepository,
+  type DatabaseConnection,
+} from "@aptiloop/database";
+import type { ProviderId } from "@aptiloop/shared";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  ProviderManagementService,
   normalizeProviderLoginAnswer,
   normalizeProviderLoginEvent,
   normalizeProviderLoginPrompt,
 } from "../src/provider-management.js";
+import { ProviderRuntime } from "../src/provider-runtime.js";
 
 const promptId = "88a6558f-d070-478e-adbc-18678089cb43";
 const githubPrompt = {
@@ -320,6 +341,212 @@ describe("provider login boundary", () => {
           verificationUri: "https://github.com/login/device",
         }),
       ).toThrow("Provider returned an invalid device code");
+    }
+  });
+
+  it("quarantines a persisted enterprise credential before provider registration or dispatch", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "aptiloop-legacy-copilot-"));
+    const databasePath = path.join(root, "restart.sqlite");
+    const credentialPath = path.join(
+      root,
+      ".data",
+      "provider-credentials.json",
+    );
+    const connectionId = "conn:pi:github-copilot:legacy";
+    const storedCredential = JSON.stringify(
+      {
+        version: 1,
+        credentials: {
+          [connectionId]: {
+            type: "oauth",
+            refresh: "retained-refresh-secret",
+            access: "retained-access-secret",
+            expires: 1_900_000_000_000,
+            enterpriseUrl: "legacy.ghe.example",
+            retainedMarker: "must-survive-quarantine",
+          },
+        },
+      },
+      null,
+      2,
+    );
+    let initialConnection: DatabaseConnection | null = null;
+    let restartedConnection: DatabaseConnection | null = null;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("Network access must not start"));
+
+    try {
+      initialConnection = openDatabase(databasePath);
+      migrateDatabase(initialConnection);
+      const initialRepository = createLearningRepository(initialConnection);
+      await initialRepository.setSetting("providerHubManagedConnections", {
+        version: 1,
+        connections: [
+          {
+            connectionId,
+            catalogId: "github-copilot-subscription",
+            displayName: "Legacy GitHub Copilot",
+            baseUrl: null,
+            modelIds: [],
+          },
+        ],
+      });
+      const initialHub = new ProviderHubRepository(initialConnection);
+      initialHub.saveConnection({
+        connectionId,
+        adapterId: "pi",
+        providerType: "github-copilot",
+        displayName: "Legacy GitHub Copilot",
+        credentialRef: `credential:${connectionId}`,
+        endpointProfileId: null,
+        enabled: true,
+        external: true,
+        state: "degraded",
+        observedCapabilities: {
+          providerType: "github-copilot",
+          adapterVersion: "0.84.1",
+          observedAt: "2026-08-12T12:00:00.000Z",
+          models: [
+            {
+              modelId: "copilot-model",
+              available: true,
+              contextTokens: 128_000,
+              outputTokens: 16_000,
+              typedToolCalls: "schema-constrained",
+              parallelToolCalls: false,
+              attachments: ["text"],
+            },
+          ],
+          connection: {
+            authenticated: true,
+            streaming: true,
+            cancellation: true,
+          },
+        },
+        lastCheckedAt: "2026-08-12T12:00:00.000Z",
+      });
+      initialHub.saveRoleProfile({
+        role: "course-designer",
+        mode: "connection",
+        connectionId,
+        modelId: "copilot-model",
+        requiredCapabilities: ["streaming", "models", "cancellation"],
+        toolPolicyId: "apt.role.course-designer.v2",
+        budgets: {
+          maxInputBytes: 128_000,
+          maxOutputBytes: 64_000,
+          maxEvents: 100,
+          maxToolCalls: 4,
+          deadlineMs: 60_000,
+        },
+      });
+      initialConnection.close();
+      initialConnection = null;
+
+      mkdirSync(path.dirname(credentialPath), { recursive: true });
+      writeFileSync(credentialPath, storedCredential, "utf8");
+
+      restartedConnection = openDatabase(databasePath, { fileMustExist: true });
+      const repository = createLearningRepository(restartedConnection);
+      const connectionProviders = new Map<string, AgentProvider>();
+      const management = new ProviderManagementService({
+        connection: restartedConnection,
+        repository,
+        projectRoot: root,
+        connectionProviders,
+      });
+
+      await management.ensureLoaded();
+
+      expect(connectionProviders.has(connectionId)).toBe(false);
+      expect(readFileSync(credentialPath, "utf8")).toBe(storedCredential);
+      expect(
+        new ProviderHubRepository(restartedConnection)
+          .listConnections()
+          .find((connection) => connection.connectionId === connectionId),
+      ).toMatchObject({
+        enabled: false,
+        state: "misconfigured",
+        credentialRef: `credential:${connectionId}`,
+        observedCapabilities: null,
+      });
+      expect(await management.describe()).toMatchObject({
+        connections: [
+          {
+            connectionId,
+            credentialConfigured: false,
+            recoveryState: "reauthentication-required",
+          },
+        ],
+      });
+
+      const getStatus = vi.fn(async () => {
+        throw new Error("Blocked provider status must not run");
+      });
+      const listModels = vi.fn(async () => {
+        throw new Error("Blocked provider model discovery must not run");
+      });
+      const blockedProvider: AgentProvider = {
+        id: "pi",
+        getStatus,
+        listModels,
+        async createSession() {
+          throw new Error("Blocked provider session must not be created");
+        },
+        async *streamMessage() {
+          throw new Error("Blocked provider stream must not run");
+        },
+        async cancelSession() {},
+      };
+      const providers = Object.fromEntries(
+        (["mock", "codex", "opencode", "pi"] as const).map((id) => [
+          id,
+          blockedProvider,
+        ]),
+      ) as Record<ProviderId, AgentProvider>;
+      const runtime = new ProviderRuntime({
+        connection: restartedConnection,
+        providers,
+        connectionProviders,
+        ensureProviders: () => management.ensureLoaded(),
+        developmentMode: false,
+      });
+      const hub = new ProviderHubRepository(restartedConnection);
+      for (const connection of hub.listConnections()) {
+        if (connection.connectionId === connectionId || !connection.enabled) {
+          continue;
+        }
+        hub.saveConnection({
+          ...connection,
+          enabled: false,
+          state: "disabled",
+          observedCapabilities: null,
+        });
+      }
+
+      await expect(
+        runtime.resolveDispatch({
+          role: "course-designer",
+          payload: "This payload must never be dispatched.",
+        }),
+      ).rejects.toMatchObject({
+        failure: { code: "connection_disabled" },
+      });
+      expect(getStatus).not.toHaveBeenCalled();
+      expect(listModels).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(
+        restartedConnection.sqlite
+          .prepare("SELECT COUNT(*) AS count FROM provider_turn_provenance")
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(readFileSync(credentialPath, "utf8")).toBe(storedCredential);
+    } finally {
+      initialConnection?.close();
+      restartedConnection?.close();
+      fetchSpy.mockRestore();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

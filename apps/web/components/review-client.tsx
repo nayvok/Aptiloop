@@ -167,7 +167,7 @@ export function ReviewClient() {
                     value={view.id}
                     aria-current={selected ? "page" : undefined}
                     data-active={selected}
-                    className="min-h-11 min-w-0 rounded-control border border-border/55 bg-background/35 px-3 py-2 text-[0.9375rem] shadow-none hover:bg-accent/45 data-[state=active]:border-primary/30 data-[state=active]:bg-accent/70 data-[state=active]:font-semibold dark:data-[state=active]:bg-accent/70"
+                    className="min-h-11 min-w-0 rounded-control border border-border/55 bg-background/35 px-3 py-2 text-[0.9375rem] shadow-none before:hidden after:hidden hover:bg-accent/45 data-[state=active]:border-primary/30 data-[state=active]:bg-accent/70 data-[state=active]:font-semibold dark:data-[state=active]:bg-accent/70"
                   >
                     {selected ? <CheckIcon aria-hidden weight="bold" /> : null}
                     <span className="min-w-0 truncate">{t(view.label)}</span>
