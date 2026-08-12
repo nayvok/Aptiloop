@@ -37,12 +37,12 @@ export function ActivityFrame({
       data-activity-type={activityType}
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
-      className={cn("w-full max-w-[48rem] min-w-0", className)}
+      className={cn("w-full max-w-[54rem] min-w-0", className)}
     >
       {slots.accessibility}
       <header
         data-slot="activity-context"
-        className="flex min-w-0 flex-col gap-3 border-b border-border/60 pb-4 sm:flex-row sm:items-start sm:justify-between sm:pb-5"
+        className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
       >
         <div className="flex min-w-0 max-w-[72ch] flex-col gap-2">
           {slots.context}
@@ -66,13 +66,13 @@ export function ActivityFrame({
           {slots.status}
         </div>
       </header>
-      <div data-slot="activity-content" className="min-w-0 pb-1 pt-5">
+      <div data-slot="activity-content" className="min-w-0 pb-1 pt-7">
         {children}
       </div>
       {slots.runtime ? (
         <div
           data-slot="activity-runtime"
-          className="mb-5 min-w-0 border-y border-border/60 bg-surface-soft/60 py-4 sm:py-5"
+          className="mb-6 min-w-0 rounded-focus bg-surface-soft/60 px-4 py-4 sm:px-5 sm:py-5"
         >
           {slots.runtime}
         </div>
@@ -80,16 +80,13 @@ export function ActivityFrame({
       {slots.evidence ? (
         <div
           data-slot="activity-evidence"
-          className="mb-5 min-w-0 border-t border-border/60 pt-5 sm:pt-6"
+          className="mb-6 min-w-0 rounded-focus bg-surface-soft/45 px-4 py-4 sm:px-5 sm:py-5"
         >
           {slots.evidence}
         </div>
       ) : null}
       {slots.actions ? (
-        <footer
-          data-slot="activity-actions"
-          className="mb-5 min-w-0 border-t border-border/60 pt-5 sm:pt-6"
-        >
+        <footer data-slot="activity-actions" className="mb-6 min-w-0 pt-2">
           {slots.actions}
         </footer>
       ) : null}

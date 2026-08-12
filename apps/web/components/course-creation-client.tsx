@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CourseLocaleSchema, type CourseLocale } from "@aptiloop/shared";
 import {
@@ -34,6 +34,14 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
@@ -43,6 +51,24 @@ import { cn } from "@/lib/utils";
 export const AUTHORING_BRIEF_STORAGE_KEY = "aptiloop.course-authoring-brief.v1";
 
 type CreationMode = "external" | "guided" | "manual";
+
+const commonCourseLocales = [
+  "en-US",
+  "en-GB",
+  "ru-RU",
+  "de-DE",
+  "fr-FR",
+  "es-ES",
+  "pt-BR",
+  "zh-CN",
+  "ja-JP",
+  "ko-KR",
+] as const satisfies readonly CourseLocale[];
+const customCourseLocaleValue = "__custom-course-locale__";
+
+function isCommonCourseLocale(value: string): value is CourseLocale {
+  return commonCourseLocales.some((locale) => locale === value);
+}
 
 const modelCapabilitySchema = z.object({
   modelId: z.string().trim().min(1).max(300),
@@ -276,15 +302,126 @@ function usePersistentBrief() {
   return { brief, clear, storageError, update };
 }
 
+function focusCourseLocaleField(id: string) {
+  const customInput = document.getElementById(`${id}-custom`);
+  const trigger = document.getElementById(id);
+  (customInput ?? trigger)?.focus();
+}
+
+function CourseLocaleField({
+  id,
+  value,
+  error,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  error: string | null;
+  onChange: (value: string) => void;
+}) {
+  const { locale, t } = useI18n();
+  const [emptyCustomMode, setEmptyCustomMode] = useState(false);
+  const customMode =
+    emptyCustomMode || (value.length > 0 && !isCommonCourseLocale(value));
+  const displayNames = useMemo(
+    () =>
+      new Intl.DisplayNames([locale], {
+        type: "language",
+        languageDisplay: "standard",
+      }),
+    [locale],
+  );
+  const descriptionId = `${id}-description`;
+  const errorId = `${id}-error`;
+  const describedBy = error ? `${descriptionId} ${errorId}` : descriptionId;
+
+  useEffect(() => {
+    if (error) focusCourseLocaleField(id);
+  }, [error, id]);
+
+  return (
+    <Field data-invalid={error ? true : undefined}>
+      <FieldLabel htmlFor={id}>{t("authoring.brief.primaryLocale")}</FieldLabel>
+      <Select
+        value={
+          customMode
+            ? customCourseLocaleValue
+            : isCommonCourseLocale(value)
+              ? value
+              : ""
+        }
+        onValueChange={(nextValue) => {
+          if (nextValue === customCourseLocaleValue) {
+            setEmptyCustomMode(true);
+            onChange(isCommonCourseLocale(value) ? "" : value);
+            return;
+          }
+          if (!isCommonCourseLocale(nextValue)) return;
+          setEmptyCustomMode(false);
+          onChange(nextValue);
+        }}
+      >
+        <SelectTrigger
+          id={id}
+          className="w-full"
+          aria-required="true"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
+        >
+          <SelectValue
+            placeholder={t("authoring.brief.primaryLocalePlaceholder")}
+          />
+        </SelectTrigger>
+        <SelectContent align="start">
+          <SelectGroup>
+            {commonCourseLocales.map((courseLocale) => (
+              <SelectItem key={courseLocale} value={courseLocale}>
+                {displayNames.of(courseLocale) ?? courseLocale} · {courseLocale}
+              </SelectItem>
+            ))}
+            <SelectItem value={customCourseLocaleValue}>
+              {t("authoring.brief.primaryLocaleOther")}
+            </SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+      {customMode ? (
+        <div className="grid gap-2 rounded-control bg-surface-soft/70 p-3">
+          <FieldLabel htmlFor={`${id}-custom`}>
+            {t("authoring.brief.primaryLocaleCustomLabel")}
+          </FieldLabel>
+          <Input
+            id={`${id}-custom`}
+            value={value}
+            minLength={2}
+            maxLength={35}
+            autoComplete="off"
+            placeholder="en-US"
+            aria-required="true"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={describedBy}
+            onChange={(event) => {
+              setEmptyCustomMode(event.target.value.length === 0);
+              onChange(event.target.value);
+            }}
+          />
+        </div>
+      ) : null}
+      <FieldDescription id={descriptionId}>
+        {t("authoring.brief.primaryLocaleDescription")}
+      </FieldDescription>
+      <FieldError id={errorId}>{error}</FieldError>
+    </Field>
+  );
+}
+
 function BriefFields({
   brief,
   primaryLocaleError,
-  onPrimaryLocaleInvalid,
   onChange,
 }: {
   brief: AuthoringBriefDraft;
   primaryLocaleError: string | null;
-  onPrimaryLocaleInvalid: () => void;
   onChange: <Key extends keyof AuthoringBriefDraft>(
     key: Key,
     value: AuthoringBriefDraft[Key],
@@ -335,39 +472,12 @@ function BriefFields({
           onChange={(event) => onChange("currentLevel", event.target.value)}
         />
       </Field>
-      <Field data-invalid={primaryLocaleError ? true : undefined}>
-        <FieldLabel htmlFor="authoring-primary-locale">
-          {t("authoring.brief.primaryLocale")}
-        </FieldLabel>
-        <Input
-          id="authoring-primary-locale"
-          name="primaryLocale"
-          value={brief.primaryLocale}
-          required
-          minLength={2}
-          maxLength={35}
-          autoComplete="off"
-          placeholder="en-US"
-          aria-invalid={primaryLocaleError ? true : undefined}
-          aria-describedby={
-            primaryLocaleError
-              ? "authoring-primary-locale-description authoring-primary-locale-error"
-              : "authoring-primary-locale-description"
-          }
-          onInvalid={(event) => {
-            event.preventDefault();
-            onPrimaryLocaleInvalid();
-            event.currentTarget.focus();
-          }}
-          onChange={(event) => onChange("primaryLocale", event.target.value)}
-        />
-        <FieldDescription id="authoring-primary-locale-description">
-          {t("authoring.brief.primaryLocaleDescription")}
-        </FieldDescription>
-        <FieldError id="authoring-primary-locale-error">
-          {primaryLocaleError}
-        </FieldError>
-      </Field>
+      <CourseLocaleField
+        id="authoring-primary-locale"
+        value={brief.primaryLocale}
+        error={primaryLocaleError}
+        onChange={(value) => onChange("primaryLocale", value)}
+      />
       <Field className="md:col-span-2">
         <FieldLabel htmlFor="authoring-pacing">
           {t("authoring.brief.pacing")}
@@ -531,6 +641,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
   const [manualPrimaryLocaleError, setManualPrimaryLocaleError] = useState<
     string | null
   >(null);
+  const [manualPrimaryLocale, setManualPrimaryLocale] = useState("");
   const identityRef = useRef<{
     signature: string;
     operationId: string;
@@ -649,13 +760,13 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
           const primaryLocale = CourseLocaleSchema.safeParse(
-            String(form.get("primaryLocale") ?? "").trim(),
+            manualPrimaryLocale.trim(),
           );
           if (!primaryLocale.success) {
             setManualPrimaryLocaleError(
               t("authoring.brief.primaryLocaleError"),
             );
-            document.getElementById("manual-course-primary-locale")?.focus();
+            focusCourseLocaleField("manual-course-primary-locale");
             return;
           }
           setManualPrimaryLocaleError(null);
@@ -680,40 +791,15 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
               autoComplete="off"
             />
           </Field>
-          <Field data-invalid={manualPrimaryLocaleError ? true : undefined}>
-            <FieldLabel htmlFor="manual-course-primary-locale">
-              {t("authoring.brief.primaryLocale")}
-            </FieldLabel>
-            <Input
-              id="manual-course-primary-locale"
-              name="primaryLocale"
-              required
-              minLength={2}
-              maxLength={35}
-              autoComplete="off"
-              placeholder="en-US"
-              aria-invalid={manualPrimaryLocaleError ? true : undefined}
-              aria-describedby={
-                manualPrimaryLocaleError
-                  ? "manual-course-primary-locale-description manual-course-primary-locale-error"
-                  : "manual-course-primary-locale-description"
-              }
-              onInvalid={(event) => {
-                event.preventDefault();
-                setManualPrimaryLocaleError(
-                  t("authoring.brief.primaryLocaleError"),
-                );
-                event.currentTarget.focus();
-              }}
-              onChange={() => setManualPrimaryLocaleError(null)}
-            />
-            <FieldDescription id="manual-course-primary-locale-description">
-              {t("authoring.brief.primaryLocaleDescription")}
-            </FieldDescription>
-            <FieldError id="manual-course-primary-locale-error">
-              {manualPrimaryLocaleError}
-            </FieldError>
-          </Field>
+          <CourseLocaleField
+            id="manual-course-primary-locale"
+            value={manualPrimaryLocale}
+            error={manualPrimaryLocaleError}
+            onChange={(value) => {
+              setManualPrimaryLocale(value);
+              setManualPrimaryLocaleError(null);
+            }}
+          />
           <Field>
             <FieldLabel htmlFor="manual-course-description">
               {t("authoring.field.curriculumDescription")}
@@ -756,7 +842,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
             )
           ) {
             setPrimaryLocaleError(t("authoring.brief.primaryLocaleError"));
-            document.getElementById("authoring-primary-locale")?.focus();
+            focusCourseLocaleField("authoring-primary-locale");
           } else {
             toast.error(t("authoring.brief.validationError"));
           }
@@ -800,9 +886,6 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
           <BriefFields
             brief={brief}
             primaryLocaleError={primaryLocaleError}
-            onPrimaryLocaleInvalid={() =>
-              setPrimaryLocaleError(t("authoring.brief.primaryLocaleError"))
-            }
             onChange={(key, value) => {
               if (key === "primaryLocale") setPrimaryLocaleError(null);
               update(key, value);

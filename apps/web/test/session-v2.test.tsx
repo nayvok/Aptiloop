@@ -564,8 +564,9 @@ describe("guided versioned session", () => {
 
     const trigger = await screen.findByRole("button", { name: /Шаги урока/u });
     expect(trigger).toBeVisible();
-    expect(trigger).toHaveClass("xl:hidden");
-    // The plan stays beside the work on wide screens and moves into a sheet below xl.
+    expect(trigger).toHaveClass("@min-[72rem]/lesson:hidden");
+    // The plan stays beside the work when the lesson container is wide enough
+    // and moves into a sheet below that available-width threshold.
     expect(document.querySelector('[data-slot="day-plan-sheet"]')).toBeNull();
     const focus = document.querySelector('[data-slot="lesson-focus"]');
     const rail = document.querySelector('[data-slot="day-plan-rail"]');
@@ -573,8 +574,9 @@ describe("guided versioned session", () => {
     expect(within(focus as HTMLElement).queryByText("Цель")).toBeNull();
     expect(rail).toHaveClass(
       "hidden",
-      "xl:block",
+      "@min-[72rem]/lesson:block",
       "sticky",
+      "h-[calc(100dvh-var(--shell-bar-size,4.5rem))]",
       "overflow-y-auto",
       "overscroll-contain",
       "[scrollbar-gutter:stable]",
@@ -691,9 +693,14 @@ describe("guided versioned session", () => {
     const orientation = document.querySelector(
       '[data-slot="session-orientation"]',
     );
-    expect(header).toHaveClass("sticky", "border-b");
-    expect(header).not.toHaveClass("rounded-focus", "bg-card", "shadow-sm");
-    expect(orientation).toHaveClass("mx-auto", "max-w-[48rem]");
+    expect(header).toHaveClass("sticky", "top-[var(--shell-bar-size,4.5rem)]");
+    expect(header).not.toHaveClass(
+      "border-b",
+      "rounded-focus",
+      "bg-card",
+      "shadow-sm",
+    );
+    expect(orientation).toHaveClass("w-full", "min-w-0");
     expect(header).toHaveTextContent("Значения, типы и объекты");
     expect(
       within(header as HTMLElement).getByText(
@@ -728,11 +735,13 @@ describe("guided versioned session", () => {
     );
     expect(focus).toContainElement(ready as HTMLElement);
     expect(focus).toHaveClass("w-full", "min-w-0");
+    expect(focus).toHaveAttribute("tabindex", "-1");
+    expect(focus).toHaveAccessibleName("Юнит briefing");
     expect(
       document.querySelector('[data-slot="lesson-workspace"]'),
     ).toHaveClass(
-      "max-w-[77rem]",
-      "xl:grid-cols-[minmax(0,48rem)_minmax(24rem,26rem)]",
+      "min-h-[calc(100dvh-var(--shell-bar-size,4.5rem))]",
+      "@min-[72rem]/lesson:grid-cols-[minmax(0,1fr)_minmax(22rem,27rem)]",
     );
     expect(ready).toHaveClass("w-full");
     expect(ready).not.toHaveClass(
@@ -750,6 +759,12 @@ describe("guided versioned session", () => {
     expect(learningBrief).toHaveTextContent(
       "Для этой активности источник ещё не назначен.",
     );
+    expect(within(ready as HTMLElement).queryByText("Доступно")).toBeNull();
+    expect(
+      within(learningBrief as HTMLElement).getByRole("link", {
+        name: "Открыть редактор курса",
+      }),
+    ).toHaveClass("text-xs", "text-muted-foreground");
 
     fireEvent.click(screen.getByRole("button", { name: "Продолжить позже" }));
     expect(pushMock).toHaveBeenCalledWith("/");
@@ -1208,13 +1223,15 @@ describe("guided versioned session", () => {
       document.querySelectorAll('[data-slot="activity-frame"]'),
     ).toHaveLength(1);
     expect(activity).toContainElement(briefing as HTMLElement);
-    expect(overview).toHaveClass("border-y");
-    expect(plan).toHaveClass("border-b");
-    expect(sources).toHaveClass("border-y");
-    expect(actions).toHaveClass("border-t");
-    for (const section of [overview, plan, sources, actions]) {
-      expect(section).not.toHaveClass("bg-surface-soft", "rounded-panel");
-    }
+    expect(overview).not.toHaveClass("border-y");
+    expect(overview?.querySelector("section")).toHaveClass(
+      "rounded-focus",
+      "bg-surface-soft/45",
+    );
+    expect(plan).toHaveClass("rounded-focus", "bg-surface-soft/45");
+    expect(sources).toHaveClass("rounded-focus", "bg-surface-soft/40");
+    expect(actions).not.toHaveClass("border-t");
+    expect(document.querySelector('[data-slot="lesson-focus"]')).toHaveFocus();
     expect(
       screen.queryByLabelText("Подтверждаю: цели и границы дня понятны"),
     ).not.toBeInTheDocument();

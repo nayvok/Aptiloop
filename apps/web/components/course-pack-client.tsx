@@ -1151,7 +1151,10 @@ function CoursePackClient({
           </div>
         ) : null}
         {learningCourses.isSuccess && currentCourse ? (
-          <article className="relative flex min-w-0 flex-col gap-4 overflow-hidden rounded-panel border border-border bg-surface-raised px-5 py-5 sm:min-h-[8.25rem] sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <article
+            data-slot="course-current-summary"
+            className="relative flex min-w-0 flex-col gap-4 overflow-hidden rounded-panel bg-surface-soft/75 px-5 py-5 sm:min-h-[8.25rem] sm:flex-row sm:items-center sm:justify-between sm:px-6"
+          >
             <span
               aria-hidden
               className="absolute inset-y-0 left-0 w-[3px] bg-success"
@@ -1220,7 +1223,7 @@ function CoursePackClient({
           </article>
         ) : null}
         {learningCourses.isSuccess && !currentCourse ? (
-          <div className="rounded-panel border border-border bg-surface-soft p-5">
+          <div className="rounded-panel bg-surface-soft/75 p-5">
             <p className="text-sm font-medium">{t("courses.current.none")}</p>
             <p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
               {t("courses.current.noneDescription")}
@@ -1368,7 +1371,10 @@ function CoursePackClient({
                 }
               />
             ) : (
-              <div className="min-w-0 overflow-hidden rounded-panel border border-border bg-surface-raised">
+              <div
+                data-slot="course-library-table"
+                className="min-w-0 overflow-hidden rounded-panel bg-surface-raised shadow-sm"
+              >
                 <Table className="table-fixed md:table-auto">
                   <TableHeader className="hidden md:table-header-group [&_th]:h-[3.75rem] [&_th]:text-[0.9375rem]">
                     <TableRow>
@@ -1968,7 +1974,7 @@ function CourseLibraryRow({
       <TableRow
         data-state={current ? "selected" : undefined}
         className={cn(
-          "grid min-h-0 grid-cols-1 gap-4 px-4 py-4 data-[state=selected]:bg-background md:table-row md:h-[100px] md:px-0 md:py-0",
+          "grid min-h-0 grid-cols-1 gap-4 px-4 py-4 data-[state=selected]:bg-primary/[0.035] md:table-row md:h-[100px] md:px-0 md:py-0",
         )}
       >
         <TableCell className="relative min-w-0 whitespace-normal p-0 md:table-cell md:px-6 md:py-4">
@@ -1983,9 +1989,14 @@ function CourseLibraryRow({
               <BookOpenIcon aria-hidden />
             </div>
             <div className="min-w-0">
-              <h3 className="min-w-0 break-words text-base font-semibold leading-5">
-                {course.title}
-              </h3>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h3 className="min-w-0 break-words text-base font-semibold leading-5">
+                  {course.title}
+                </h3>
+                {current ? (
+                  <Badge variant="success">{t("courses.current.title")}</Badge>
+                ) : null}
+              </div>
               {course.description ? (
                 <p className="mt-1 line-clamp-2 break-words text-sm leading-5 text-muted-foreground md:line-clamp-1">
                   {course.description}
@@ -2499,7 +2510,8 @@ function CourseLibrarySkeleton() {
       </div>
       <div
         aria-hidden
-        className="overflow-hidden rounded-panel border border-border bg-surface-raised"
+        data-slot="course-library-skeleton"
+        className="overflow-hidden rounded-panel bg-surface-raised shadow-sm"
       >
         {["course-skeleton-one", "course-skeleton-two"].map((key) => (
           <div

@@ -86,7 +86,7 @@ function ReviewRow({
     <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
       <article
         data-slot="review-row"
-        className="grid min-w-0 gap-4 py-4 sm:py-5 xl:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)_auto] xl:items-start"
+        className="grid min-w-0 gap-4 rounded-panel bg-surface-soft/55 px-4 py-4 sm:px-5 sm:py-5 xl:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)_auto] xl:items-start"
       >
         <header className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -247,14 +247,14 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
         role="status"
         aria-live="polite"
         aria-label={t("cards.loading")}
-        className="divide-y divide-border/70 border-y border-border/70"
+        className="grid gap-3"
       >
         <span className="sr-only">{t("cards.loading")}</span>
         {[0, 1].map((row) => (
           <div
             key={row}
             aria-hidden
-            className="grid gap-4 py-5 xl:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)_2.25rem]"
+            className="grid gap-4 rounded-panel bg-surface-soft/55 px-4 py-5 sm:px-5 xl:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)_2.25rem]"
           >
             <div className="flex flex-col gap-3">
               <Skeleton className="h-5 w-28" />
@@ -351,10 +351,7 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
       ) : null}
 
       {visibleReviews.length ? (
-        <div
-          data-slot="review-list"
-          className="divide-y divide-border/70 border-y border-border/70"
-        >
+        <div data-slot="review-list" className="grid gap-3">
           {visibleReviews.map((review) => (
             <ReviewRow
               key={review.id}
@@ -365,7 +362,7 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
           ))}
         </div>
       ) : (
-        <div className="border-y border-border/70 py-6">
+        <div className="rounded-panel bg-surface-soft/55 p-5 sm:p-6">
           <h2 className="font-semibold">{t("cards.empty.title")}</h2>
           <p className="mt-1 max-w-[70ch] text-sm leading-6 text-muted-foreground">
             {t("cards.empty.description")}
@@ -374,7 +371,7 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
       )}
 
       {!dueOnly && historyReviews.length ? (
-        <Collapsible className="border-b border-border/70">
+        <Collapsible className="rounded-panel bg-surface-soft/40 px-4 sm:px-5">
           <CollapsibleTrigger
             aria-label={t("review.viewDescription.cards")}
             className="group/history flex min-h-11 w-full min-w-0 items-center justify-between gap-3 py-3 text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -402,7 +399,7 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
             />
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <div className="divide-y divide-border/70 border-t border-border/70">
+            <div className="grid gap-3 pb-4">
               {historyReviews.map((review) => (
                 <ReviewRow
                   key={review.id}

@@ -4490,11 +4490,11 @@ export function CurriculumEditorClient({
                 >
                   <div
                     data-slot="studio-workspace-tabs-scroll"
-                    className="min-w-0 overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-border/70"
+                    className="min-w-0 overflow-x-auto overflow-y-hidden overscroll-x-contain"
                   >
                     <TabsList
-                      variant="line"
-                      className="min-w-full justify-start"
+                      variant="segmented"
+                      className="min-w-max justify-start"
                       aria-label={t("authoring.workspace.aria")}
                     >
                       {(

@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { AgentChat } from "@/components/agent-chat";
 import { PageHeader } from "@/components/page-header";
+import { LoadingState } from "@/components/ui/loading-state";
 import { chatRoleHref, resolveChatRole, type ChatRole } from "@/lib/chat-role";
 import { useI18n } from "@/lib/i18n";
 
@@ -35,14 +36,12 @@ function ChatRoleRoute() {
 }
 
 function ChatRoleFallback() {
-  const { t } = useI18n();
   return (
-    <div
-      role="status"
-      className="flex min-h-40 flex-1 items-center justify-center border-y border-border text-sm text-muted-foreground"
-    >
-      {t("chat.status.loading")}
-    </div>
+    <LoadingState
+      label="chat.status.loading"
+      variant="panel"
+      className="flex-1"
+    />
   );
 }
 

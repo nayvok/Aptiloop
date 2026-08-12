@@ -32,10 +32,25 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
+async function seedRussianInterface(page: Page): Promise<void> {
+  await page.context().addCookies([
+    {
+      name: "aptiloop.ui-locale",
+      value: "ru-RU",
+      url: webOrigin,
+    },
+  ]);
+  await page.addInitScript(() => {
+    window.localStorage.setItem("aptiloop:ui-locale", "ru-RU");
+  });
+}
+
 test("hydrates stored light and dark themes without an icon mismatch", async ({
+  context,
   page,
 }) => {
   const browserErrors: string[] = [];
+  const interfaceMutations: string[] = [];
   page.on("console", (message) => {
     if (
       message.type() === "error" &&
@@ -49,16 +64,19 @@ test("hydrates stored light and dark themes without an icon mismatch", async ({
       browserErrors.push(message.text());
     }
   });
-  await page.addInitScript(() => {
-    window.localStorage.setItem("theme", "dark");
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      /\/api\/settings(?:\/locale)?$/u.test(new URL(request.url()).pathname)
+    ) {
+      interfaceMutations.push(request.url());
+    }
   });
-
   const response = await page.goto("/");
   expect(response?.headers()["x-frame-options"]).toBe("DENY");
   expect(response?.headers()["content-security-policy"]).toContain(
     "frame-ancestors 'none'",
   );
-  await expect(page.locator("html")).toHaveClass(/dark/u);
   await expect(
     page.getByRole("heading", { name: "Choose interface language" }),
   ).toBeVisible();
@@ -69,10 +87,120 @@ test("hydrates stored light and dark themes without an icon mismatch", async ({
   await page.getByRole("button", { name: "Использовать этот язык" }).click();
   await expect(page.getByRole("alertdialog")).toBeHidden();
   await expect(page.locator("html")).toHaveAttribute("lang", "ru-RU");
-  await expect(
-    page.getByRole("button", { name: "Включить тему: системная" }),
-  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.localStorage.getItem("aptiloop:ui-locale"),
+    ),
+  ).toBe("ru-RU");
+  expect(
+    (await context.cookies()).find(
+      (cookie) => cookie.name === "aptiloop.ui-locale",
+    )?.value,
+  ).toBe("ru-RU");
+  expect(interfaceMutations).toEqual([]);
+
+  await page.evaluate(() => window.localStorage.setItem("theme", "dark"));
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveClass(/dark/u);
+  await expect(page.locator("html")).toHaveAttribute("lang", "ru-RU");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+
+  await page.getByRole("link", { name: "Настройки" }).click();
+  await expect(page).toHaveTitle("Настройки · Aptiloop");
+  const themePreference = page.getByLabel("Тема");
+  await expect(themePreference).toContainText("Тёмная");
+
+  await themePreference.click();
+  await page.getByRole("option", { name: "Светлая" }).click();
+  await expect(page.locator("html")).toHaveClass(/light/u);
+  expect(await page.evaluate(() => window.localStorage.getItem("theme"))).toBe(
+    "light",
+  );
+
+  await page.getByRole("button", { name: "Включить тему: Тёмная" }).click();
+  await expect(page.locator("html")).toHaveClass(/dark/u);
+  await expect(themePreference).toContainText("Тёмная");
+
+  await page.getByRole("button", { name: "Включить тему: Системная" }).click();
+  await expect(themePreference).toContainText("Системная");
+  expect(await page.evaluate(() => window.localStorage.getItem("theme"))).toBe(
+    "system",
+  );
+
+  await page.reload();
+  await expect(page.getByLabel("Тема")).toContainText("Системная");
   expect(browserErrors).toEqual([]);
+});
+
+test("hydrates a collapsed desktop rail without an expanded-frame flash", async ({
+  context,
+  page,
+}) => {
+  await seedRussianInterface(page);
+  await context.addCookies([
+    {
+      name: "aptiloop.sidebar-collapsed",
+      value: "true",
+      url: webOrigin,
+    },
+  ]);
+  await page.addInitScript(() => {
+    window.localStorage.setItem("aptiloop:sidebar-collapsed", "true");
+    const observedStates: string[] = [];
+    Object.defineProperty(window, "__aptiloopSidebarStates", {
+      configurable: true,
+      value: observedStates,
+    });
+    const recordSidebarState = () => {
+      const state = document
+        .querySelector('[data-slot="sidebar"]')
+        ?.getAttribute("data-state");
+      if (state && observedStates.at(-1) !== state) observedStates.push(state);
+    };
+    new MutationObserver(recordSidebarState).observe(document, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      attributeFilter: ["data-state"],
+    });
+  });
+
+  await page.goto("/");
+  const sidebar = page.locator('[data-slot="sidebar"]');
+  const utilityHeader = page.locator('[data-slot="utility-header"]');
+  await expect(sidebar).toHaveAttribute("data-state", "collapsed");
+  await expect
+    .poll(async () => Math.round((await sidebar.boundingBox())?.width ?? 0))
+    .toBe(72);
+  await expect
+    .poll(async () =>
+      Math.round((await utilityHeader.boundingBox())?.height ?? 0),
+    )
+    .toBe(72);
+
+  const collapsedNavLink = sidebar
+    .locator('[data-slot="sidebar-primary-navigation"]')
+    .locator('[data-slot="sidebar-link"]')
+    .first();
+  await expect
+    .poll(async () => {
+      const box = await collapsedNavLink.boundingBox();
+      return box ? [Math.round(box.width), Math.round(box.height)] : [];
+    })
+    .toEqual([48, 48]);
+  await expect(sidebar.getByRole("link", { name: /Aptiloop/u })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-sidebar-collapsed",
+    "true",
+  );
+  const observedStates = await page.evaluate(
+    () =>
+      (window as typeof window & { __aptiloopSidebarStates?: string[] })
+        .__aptiloopSidebarStates ?? [],
+  );
+  expect(observedStates).toContain("collapsed");
+  expect(observedStates).not.toContain("expanded");
 });
 
 test("completes restart-safe Day 1 through correction, summary, mastery and review", async ({
@@ -80,6 +208,8 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
   request,
 }) => {
   test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await seedRussianInterface(page);
   await page.goto("/");
   await expect(
     page.getByRole("heading", {
@@ -289,11 +419,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
 
   await page.getByRole("link", { name: "Навыки" }).click();
   await expect(
-    page.getByRole("heading", {
-      level: 3,
-      name: "primitive values",
-      exact: true,
-    }),
+    page.getByRole("cell", { name: "primitive values", exact: true }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Повторение" }).click();
   await page.getByRole("tab", { name: "Исправления" }).click();
@@ -328,13 +454,15 @@ test("publishes a curriculum graph and keeps an active session on its original r
   request,
 }) => {
   test.setTimeout(120_000);
+  await seedRussianInterface(page);
   await page.goto("/courses/new");
   await page.getByRole("link", { name: "Создать пустой черновик" }).click();
   await expect(page).toHaveURL(/\/courses\/new\/manual$/u, {
     timeout: 15_000,
   });
   await page.getByLabel("Название программы").fill("E2E Curriculum");
-  await page.getByLabel("Основная локаль курса").fill("ru-RU");
+  await page.getByLabel("Основная локаль курса").click();
+  await page.getByRole("option", { name: /ru-RU/u }).click();
   await page.getByRole("button", { name: "Создать черновик" }).click();
   await expect(page).toHaveURL(/\/courses\/studio\?version=/u, {
     timeout: 15_000,
@@ -447,6 +575,7 @@ test("publishes a curriculum graph and keeps an active session on its original r
 });
 
 test("runs and restores the dedicated interview workflow", async ({ page }) => {
+  await seedRussianInterface(page);
   await page.goto("/interview");
   await expect(
     page.getByRole("radio", { name: /Только изученные/u }),

@@ -30,14 +30,14 @@ export function MistakesClient() {
         role="status"
         aria-live="polite"
         aria-label={t("mistakes.loading")}
-        className="divide-y divide-border/70 border-y border-border/70"
+        className="grid gap-3"
       >
         <span className="sr-only">{t("mistakes.loading")}</span>
         {[0, 1].map((row) => (
           <div
             key={row}
             aria-hidden
-            className="grid gap-4 py-5 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1fr)_minmax(0,1fr)]"
+            className="grid gap-4 rounded-panel bg-surface-soft/55 px-4 py-5 sm:px-5 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1fr)_minmax(0,1fr)]"
           >
             <div className="flex flex-col gap-3">
               <Skeleton className="h-5 w-44 max-w-[75%]" />
@@ -85,11 +85,11 @@ export function MistakesClient() {
         </div>
       ) : null}
 
-      <div className="divide-y divide-border/70 border-y border-border/70">
+      <div className="grid gap-3">
         {query.data.mistakes.map((mistake) => (
           <article
             key={mistake.id}
-            className="grid min-w-0 gap-4 py-4 sm:py-5 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1fr)_minmax(0,1fr)] xl:gap-6"
+            className="grid min-w-0 gap-4 rounded-panel bg-surface-soft/55 px-4 py-4 sm:px-5 sm:py-5 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1fr)_minmax(0,1fr)] xl:gap-6"
           >
             <header className="min-w-0">
               <h2 className="break-words font-semibold leading-6 [overflow-wrap:anywhere]">

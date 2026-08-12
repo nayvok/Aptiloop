@@ -50,7 +50,7 @@ vi.mock("@/lib/api", () => ({
   api: apiMock,
 }));
 vi.mock("next-themes", () => ({
-  useTheme: () => ({ setTheme: setThemeMock }),
+  useTheme: () => ({ theme: "system", setTheme: setThemeMock }),
 }));
 vi.mock("next/navigation", async () => {
   const React = await import("react");
@@ -248,6 +248,8 @@ beforeEach(() => {
   navigationState.push.mockClear();
   navigationState.setSearch("");
   setThemeMock.mockReset();
+  window.localStorage.clear();
+  document.cookie = "aptiloop.ui-locale=; Path=/; Max-Age=0";
   apiMock.mockImplementation((path: string, init?: RequestInit) => {
     if (path === "/settings" && init?.method === "PUT") {
       return Promise.resolve({ saved: true });
@@ -305,28 +307,48 @@ describe("SettingsForm", () => {
     expect(screen.getByText("zed")).toBeVisible();
   });
 
-  it("keeps interface choices as a Draft and applies them after one save", async () => {
+  it("applies browser-owned interface choices immediately without a server mutation", async () => {
     renderForm();
     await screen.findByRole("heading", { name: "Interface" });
     expect(setThemeMock).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByLabelText("Theme"));
     fireEvent.click(await screen.findByRole("option", { name: "Dark" }));
-    expect(setThemeMock).not.toHaveBeenCalled();
+    expect(setThemeMock).toHaveBeenCalledWith("dark");
+
+    fireEvent.click(screen.getByLabelText("Interface language"));
     fireEvent.click(
-      screen.getByRole("button", { name: "Save interface settings" }),
+      await screen.findByRole("option", { name: "Русский (Россия)" }),
     );
 
-    await waitFor(() => {
-      const mutation = apiMock.mock.calls.find(
+    expect(
+      await screen.findByRole("heading", { name: "Интерфейс" }),
+    ).toBeVisible();
+    expect(document.documentElement.lang).toBe("ru-RU");
+    expect(window.localStorage.getItem("aptiloop:ui-locale")).toBe("ru-RU");
+    expect(
+      screen.queryByRole("button", { name: "Save interface settings" }),
+    ).not.toBeInTheDocument();
+    expect(
+      apiMock.mock.calls.some(
         ([path, init]) => path === "/settings" && init?.method === "PUT",
-      );
-      expect(JSON.parse(String(mutation?.[1]?.body))).toEqual({
-        theme: "dark",
-        uiLocale: "en-US",
+      ),
+    ).toBe(false);
+  });
+
+  it("warns honestly when browser preference storage is unavailable", async () => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new DOMException("Storage blocked", "SecurityError");
       });
-    });
-    expect(setThemeMock).toHaveBeenCalledWith("dark");
+
+    renderForm();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Browser storage is unavailable",
+    );
+    setItem.mockRestore();
   });
 
   it("saves all four exact role profiles as one strict mutation", async () => {
@@ -372,7 +394,9 @@ describe("SettingsForm", () => {
     await screen.findByRole("tab", { name: "Connections" });
     openTab("Connections");
 
-    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add connection" }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: "Add connection",
     });
@@ -446,7 +470,9 @@ describe("SettingsForm", () => {
     await screen.findByRole("tab", { name: "Connections" });
     openTab("Connections");
 
-    fireEvent.click(screen.getByRole("button", { name: "Add connection" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add connection" }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: "Add connection",
     });

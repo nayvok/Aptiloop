@@ -93,6 +93,9 @@
   --ring: oklch(0.5 0.13 151);
   --sidebar: oklch(0.982 0.002 260);
   --overlay: oklch(0.14 0.01 260 / 0.44);
+  --shell-bar-size: 4.5rem;
+  --shell-rail-collapsed: var(--shell-bar-size);
+  --shell-rail-expanded: 15.5rem;
   --shape-control: 0.5rem;
   --shape-panel: 0.5rem;
   --shape-focus: 0.5rem;
@@ -194,6 +197,71 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
   text-rendering: optimizeLegibility;
+}
+
+@media (min-width: 48rem) {
+  html[data-sidebar-collapsed="true"] [data-slot="sidebar"] {
+    width: var(--shell-rail-collapsed);
+  }
+
+  html[data-sidebar-collapsed="true"] [data-slot="shell-content"] {
+    padding-left: var(--shell-rail-collapsed);
+  }
+
+  html[data-sidebar-collapsed="true"] [data-slot="sidebar-brand"] {
+    width: 3rem;
+    flex: none;
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0;
+  }
+
+  html[data-sidebar-collapsed="true"] [data-slot="sidebar-header"] {
+    justify-content: center;
+    padding-inline: 0.75rem;
+  }
+
+  html[data-sidebar-collapsed="true"] [data-slot="sidebar-brand-label"],
+  html[data-sidebar-collapsed="true"] [data-slot="sidebar-link-label"] {
+    display: none;
+  }
+
+  html[data-sidebar-collapsed="true"] [data-slot="sidebar-link"] {
+    width: 3rem;
+    align-self: center;
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0;
+  }
+
+  html[data-sidebar-collapsed="false"] [data-slot="sidebar"] {
+    width: var(--shell-rail-expanded);
+  }
+
+  html[data-sidebar-collapsed="false"] [data-slot="sidebar-header"] {
+    justify-content: flex-start;
+    padding-inline: 1rem;
+  }
+
+  html[data-sidebar-collapsed="false"] [data-slot="sidebar-brand"] {
+    width: auto;
+    flex: 1 1 0%;
+    justify-content: flex-start;
+    gap: 0.625rem;
+    padding-inline: 0.25rem;
+  }
+
+  html[data-sidebar-collapsed="false"] [data-slot="sidebar-link"] {
+    width: 100%;
+    align-self: stretch;
+    justify-content: flex-start;
+    gap: 0.75rem;
+    padding-inline: 0.5rem;
+  }
+
+  html[data-sidebar-collapsed="false"] [data-slot="shell-content"] {
+    padding-left: var(--shell-rail-expanded);
+  }
 }
 
 :where(h1, h2, h3) {

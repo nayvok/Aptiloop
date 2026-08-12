@@ -3,21 +3,24 @@
 import {
   ArrowCounterClockwiseIcon,
   BooksIcon,
-  CaretLeftIcon,
-  CaretRightIcon,
   ChartLineUpIcon,
   DesktopIcon,
   GearSixIcon,
   HouseIcon,
   MoonIcon,
+  SidebarSimpleIcon,
   SunIcon,
 } from "@phosphor-icons/react";
-import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Fragment, useCallback, useLayoutEffect, useState } from "react";
-import { toast } from "sonner";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
 
 import { ProviderHealth } from "@/components/provider-health";
 import {
@@ -33,19 +36,18 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { type MessageKey, useI18n } from "@/lib/i18n";
-import { api } from "@/lib/api";
 import {
   type PrimaryRouteHref,
   type RouteContext,
   resolveRouteContext,
 } from "@/lib/route-context";
+import { resolveRouteTitleKey } from "@/lib/route-title";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -69,6 +71,16 @@ type NavItem = (typeof nav)[number];
 const desktopPrimaryNav = nav.slice(0, -1);
 const settingsNavItem = nav[4];
 const sidebarStorageKey = "aptiloop:sidebar-collapsed";
+const sidebarCookieKey = "aptiloop.sidebar-collapsed";
+
+function mirrorSidebarPreference(collapsed: boolean) {
+  try {
+    document.documentElement.dataset.sidebarCollapsed = String(collapsed);
+    document.cookie = `${sidebarCookieKey}=${String(collapsed)}; Path=/; Max-Age=31536000; SameSite=Strict`;
+  } catch {
+    // Cookie restrictions should not prevent the in-memory preference.
+  }
+}
 
 function AptiloopMark({ className }: { className?: string }) {
   return (
@@ -117,9 +129,11 @@ function SidebarLink({
       data-slot="sidebar-link"
       data-active={active}
       href={item.href}
+      aria-label={label}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "group relative flex h-14 w-full items-center gap-3 overflow-hidden rounded-control px-2 text-base font-normal text-muted-foreground outline-none transition-colors duration-150 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar motion-reduce:transition-none",
+        "group relative flex h-12 w-full items-center overflow-hidden rounded-control text-base font-normal text-muted-foreground outline-none transition-colors duration-150 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar motion-reduce:transition-none",
+        collapsed ? "w-12 self-center justify-center gap-0 px-0" : "gap-3 px-2",
         active && "bg-accent text-foreground",
       )}
     >
@@ -137,11 +151,9 @@ function SidebarLink({
       >
         <Icon className="size-5" weight="regular" />
       </span>
-      {collapsed ? (
-        <span className="sr-only">{label}</span>
-      ) : (
-        <span className="min-w-0 truncate">{label}</span>
-      )}
+      <span data-slot="sidebar-link-label" className="min-w-0 truncate">
+        {label}
+      </span>
     </Link>
   );
 
@@ -156,17 +168,23 @@ function SidebarLink({
   );
 }
 
-function SidebarBrand() {
+function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   const { t } = useI18n();
   const label = `${t("brand.name")} · ${t("nav.home")}`;
   return (
     <Link
       href="/"
       aria-label={label}
-      className="flex h-12 min-w-0 flex-1 items-center gap-3 rounded-control px-1 text-xl font-semibold tracking-[-0.025em] outline-none transition-colors hover:bg-accent/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+      data-slot="sidebar-brand"
+      className={cn(
+        "flex h-12 items-center rounded-control text-xl font-semibold tracking-[-0.025em] outline-none transition-colors hover:bg-accent/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
+        collapsed ? "w-12 justify-center px-0" : "min-w-0 flex-1 gap-2.5 px-1",
+      )}
     >
-      <AptiloopMark className="size-10 text-primary" />
-      <span className="truncate">{t("brand.name")}</span>
+      <AptiloopMark className="size-9 text-primary" />
+      <span data-slot="sidebar-brand-label" className="truncate">
+        {t("brand.name")}
+      </span>
     </Link>
   );
 }
@@ -188,17 +206,17 @@ function SidebarToggle({
       aria-label={label}
       variant="ghost"
       size="icon"
-      className="size-11 shrink-0 rounded-control text-muted-foreground shadow-none hover:text-foreground md:size-11"
+      className="size-11 shrink-0 rounded-control text-muted-foreground shadow-none hover:text-foreground"
       onClick={onClick}
     >
-      {collapsed ? <CaretRightIcon /> : <CaretLeftIcon />}
+      <SidebarSimpleIcon weight={collapsed ? "regular" : "fill"} />
     </Button>
   );
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent side="right" sideOffset={10}>
+      <TooltipContent side="bottom" sideOffset={8}>
         {label}
       </TooltipContent>
     </Tooltip>
@@ -247,7 +265,13 @@ function RouteBreadcrumbs({ context }: { context: RouteContext }) {
   );
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  initialSidebarCollapsed = false,
+}: {
+  children: React.ReactNode;
+  initialSidebarCollapsed?: boolean;
+}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const routeKey = `${pathname}?${searchParams.toString()}`;
@@ -269,12 +293,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     pageRouteContext?.routeKey === routeKey
       ? pageRouteContext.context
       : resolveRouteContext(pathname, searchParams);
-  const queryClient = useQueryClient();
-  const { theme, setTheme } = useTheme();
+  const immersiveSession = pathname === "/session";
+  const { resolvedTheme, theme, setTheme } = useTheme();
   const { t } = useI18n();
+  const routeTitleKey = resolveRouteTitleKey(pathname, searchParams);
+  const documentTitle = routeTitleKey
+    ? `${t(routeTitleKey)} · ${t("brand.name")}`
+    : t("brand.name");
   const [themeMounted, setThemeMounted] = useState(false);
-  const [themeSaving, setThemeSaving] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    initialSidebarCollapsed,
+  );
   const visibleTheme =
     themeMounted &&
     (theme === "system" || theme === "light" || theme === "dark")
@@ -292,13 +321,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useLayoutEffect(() => {
     setThemeMounted(true);
     try {
-      setSidebarCollapsed(
-        window.localStorage.getItem(sidebarStorageKey) === "true",
-      );
+      const stored = window.localStorage.getItem(sidebarStorageKey);
+      if (stored === "true" || stored === "false") {
+        const storedCollapsed = stored === "true";
+        setSidebarCollapsed(storedCollapsed);
+        mirrorSidebarPreference(storedCollapsed);
+      }
     } catch {
       // A blocked storage API should not prevent shell navigation.
     }
   }, []);
+
+  useEffect(() => {
+    const synchronizeSidebar = (event: StorageEvent) => {
+      if (event.key !== sidebarStorageKey) return;
+      const nextCollapsed = event.newValue === "true";
+      setSidebarCollapsed(nextCollapsed);
+      mirrorSidebarPreference(nextCollapsed);
+    };
+
+    window.addEventListener("storage", synchronizeSidebar);
+    return () => window.removeEventListener("storage", synchronizeSidebar);
+  }, []);
+
+  useEffect(() => {
+    if (resolvedTheme !== "light" && resolvedTheme !== "dark") return;
+    const color = resolvedTheme === "dark" ? "#0f1013" : "#fcfcfd";
+    for (const meta of document.querySelectorAll<HTMLMetaElement>(
+      'meta[name="theme-color"]',
+    )) {
+      meta.content = color;
+    }
+  }, [pathname, resolvedTheme]);
 
   const toggleSidebar = () => {
     setSidebarCollapsed((current) => {
@@ -308,31 +362,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       } catch {
         // Keep the in-memory preference when storage is unavailable.
       }
+      mirrorSidebarPreference(nextCollapsed);
       return nextCollapsed;
     });
   };
 
-  const changeTheme = async () => {
-    if (themeSaving) return;
-    const previousTheme = visibleTheme;
-    setThemeSaving(true);
+  const changeTheme = () => {
     setTheme(nextTheme);
-    try {
-      await api<{ saved: true }>("/settings", {
-        method: "PUT",
-        body: JSON.stringify({ theme: nextTheme }),
-      });
-      await queryClient.invalidateQueries({
-        queryKey: ["settings", "page"],
-      });
-    } catch (error) {
-      setTheme(previousTheme);
-      toast.error(
-        error instanceof Error ? error.message : t("settings.saveError"),
-      );
-    } finally {
-      setThemeSaving(false);
-    }
   };
 
   const themeIcon =
@@ -353,6 +389,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       register={registerPageRouteContext}
       routeKey={routeKey}
     >
+      <title>{documentTitle}</title>
       <div
         data-slot="app-shell"
         data-sidebar-collapsed={sidebarCollapsed}
@@ -370,30 +407,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           data-state={sidebarCollapsed ? "collapsed" : "expanded"}
           className={cn(
             "fixed inset-y-0 left-0 z-30 hidden border-r border-border/70 bg-sidebar transition-[width] duration-150 motion-reduce:transition-none md:flex md:flex-col",
-            sidebarCollapsed ? "w-[4.5rem]" : "w-[17.5rem]",
+            sidebarCollapsed
+              ? "w-[var(--shell-rail-collapsed)]"
+              : "w-[var(--shell-rail-expanded)]",
           )}
         >
           <header
             data-slot="sidebar-header"
             className={cn(
-              "flex h-[5.75rem] shrink-0 items-center border-b border-border/60",
-              sidebarCollapsed
-                ? "justify-center px-3"
-                : "justify-between gap-2 px-5",
+              "flex h-[var(--shell-bar-size)] shrink-0 items-center border-b border-border/60",
+              sidebarCollapsed ? "justify-center px-3" : "justify-start px-4",
             )}
           >
-            {sidebarCollapsed ? null : <SidebarBrand />}
-            <SidebarToggle
-              collapsed={sidebarCollapsed}
-              label={collapseLabel}
-              onClick={toggleSidebar}
-            />
+            <SidebarBrand collapsed={sidebarCollapsed} />
           </header>
 
           <nav
             id="desktop-sidebar-navigation"
             aria-label={t("a11y.primaryNavigation")}
-            className="flex min-h-0 flex-1 flex-col px-3 py-5"
+            className="flex min-h-0 flex-1 flex-col px-3 py-4"
           >
             <div
               data-slot="sidebar-primary-navigation"
@@ -410,8 +442,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               ))}
             </div>
 
-            <Separator className="mx-1 mt-5" />
-
             <div
               data-slot="sidebar-lower-navigation"
               className="mt-auto flex flex-col gap-1.5"
@@ -427,14 +457,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
 
         <div
+          data-slot="shell-content"
           className={cn(
             "transition-[padding] duration-150 motion-reduce:transition-none",
-            sidebarCollapsed ? "md:pl-[4.5rem]" : "md:pl-[17.5rem]",
+            sidebarCollapsed
+              ? "md:pl-[var(--shell-rail-collapsed)]"
+              : "md:pl-[var(--shell-rail-expanded)]",
           )}
         >
           <header
             data-slot="utility-header"
-            className="sticky top-0 z-20 h-[4.5rem] border-b border-border/70 bg-background md:h-[5.75rem]"
+            className="sticky top-0 z-20 h-[var(--shell-bar-size)] border-b border-border/70 bg-background"
           >
             <div className="mx-auto flex h-full w-full max-w-[1440px] items-center justify-between gap-3 px-4 sm:px-7 lg:px-11">
               <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -445,6 +478,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 >
                   <AptiloopMark className="size-9 text-primary" />
                 </Link>
+                <div
+                  data-slot="desktop-sidebar-toggle"
+                  className="hidden md:block"
+                >
+                  <SidebarToggle
+                    collapsed={sidebarCollapsed}
+                    label={collapseLabel}
+                    onClick={toggleSidebar}
+                  />
+                </div>
                 <RouteBreadcrumbs context={routeContext} />
               </div>
 
@@ -462,9 +505,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       variant="outline"
                       size="icon"
                       className="size-11 rounded-control text-muted-foreground shadow-none hover:text-foreground md:size-11"
-                      disabled={themeSaving}
-                      aria-busy={themeSaving}
-                      onClick={() => void changeTheme()}
+                      onClick={changeTheme}
                     >
                       {themeIcon}
                     </Button>
@@ -480,7 +521,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <main
             id="main-content"
             tabIndex={-1}
-            className="mx-auto w-full max-w-[1440px] px-4 py-8 pb-28 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-7 sm:py-10 md:pb-12 lg:px-11 lg:py-8"
+            className={cn(
+              "w-full pb-28 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              immersiveSession
+                ? "min-h-[calc(100dvh-var(--shell-bar-size))] px-0 pt-0 md:pb-0"
+                : "mx-auto max-w-[1440px] px-4 py-8 sm:px-7 sm:py-10 md:pb-12 lg:px-11 lg:py-8",
+            )}
           >
             {children}
           </main>

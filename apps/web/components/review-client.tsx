@@ -63,9 +63,12 @@ export function ReviewPageSkeleton({
       ) : null}
       <div aria-hidden className="flex flex-col gap-4">
         <Skeleton className="h-10 w-[28rem] max-w-full" />
-        <div className="divide-y divide-border/70 border-y border-border/70">
+        <div className="grid gap-3">
           {[0, 1].map((row) => (
-            <div key={row} className="grid gap-4 py-5 xl:grid-cols-2">
+            <div
+              key={row}
+              className="grid gap-4 rounded-panel bg-surface-soft/60 p-4 xl:grid-cols-2"
+            >
               <Skeleton className="h-14" />
               <Skeleton className="h-14" />
             </div>
@@ -98,11 +101,11 @@ export function ReviewClient() {
       <Tabs
         value={active}
         onValueChange={navigateToView}
-        className="min-w-0 gap-4"
+        className="min-w-0 gap-6"
       >
         <div
           data-slot="review-destination-navigation"
-          className="flex min-w-0 flex-col gap-3 rounded-control border border-border/70 bg-surface-soft/35 p-2"
+          className="flex min-w-0 flex-col gap-3"
         >
           <nav aria-label={t("nav.review")} className="min-w-0">
             <div data-slot="review-mobile-nav" className="xl:hidden">
@@ -127,7 +130,8 @@ export function ReviewClient() {
 
             <TabsList
               data-slot="review-desktop-nav"
-              className="hidden h-auto w-full max-w-[46rem] grid-cols-4 justify-start gap-1 bg-transparent p-0 xl:grid"
+              variant="segmented"
+              className="hidden h-auto w-full max-w-[46rem] grid-cols-4 justify-start gap-1 p-1 xl:grid"
             >
               {views.map((view) => {
                 const selected = active === view.id;
@@ -146,7 +150,7 @@ export function ReviewClient() {
               })}
             </TabsList>
           </nav>
-          <p className="max-w-[70ch] px-1 text-sm leading-5 text-muted-foreground">
+          <p className="max-w-[70ch] px-1 pt-1 text-sm leading-6 text-muted-foreground">
             {t(viewDescriptions[active])}
           </p>
         </div>

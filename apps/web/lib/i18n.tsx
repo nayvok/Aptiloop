@@ -1,7 +1,12 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createContext, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 
 import {
   AlertDialog,
@@ -13,9 +18,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
-import { api } from "@/lib/api";
-
 export type UiLocale = "en-US" | "ru-RU";
+
+export const uiLocaleStorageKey = "aptiloop:ui-locale";
+const uiLocaleCookieName = "aptiloop.ui-locale";
 
 export function isUiLocale(value: unknown): value is UiLocale {
   return value === "en-US" || value === "ru-RU";
@@ -163,10 +169,10 @@ const enUS = {
   "settings.section.interfaceDescription":
     "Appearance and language are local preferences.",
   "settings.theme": "Theme",
-  "settings.theme.help": "Applied immediately and saved when you confirm.",
+  "settings.theme.help": "Applied immediately and saved in this browser.",
   "settings.locale": "Interface language",
   "settings.locale.help":
-    "Does not change Course content or its primary locale.",
+    "Applied immediately in this browser. Does not change Course content or its primary locale.",
   "settings.section.local": "Core & local paths",
   "settings.section.localDescription":
     "Diagnostic values owned by Aptiloop. They are never sent by this browser.",
@@ -246,7 +252,9 @@ const enUS = {
   "settings.developerDiagnostics": "Developer diagnostics",
   "settings.saved": "Settings saved",
   "settings.saveError": "Could not save settings",
-  "settings.localOnly": "Settings remain local",
+  "settings.localOnly": "Saved automatically in this browser",
+  "settings.localStorageUnavailable":
+    "Browser storage is unavailable. Changes apply now but may reset after reload.",
   "settings.save": "Save interface settings",
   "settings.status.off": "Off",
   "settings.status.starting": "Starting",
@@ -319,7 +327,7 @@ const enUS = {
   "provider.off": "AI Off",
   "provider.needsAttention": "AI needs attention",
   "provider.title": "Optional AI assistance",
-  "provider.rolesReady": "{ready} of {total} roles ready",
+  "provider.rolesReady": "{ready} of {total} configured AI roles ready",
   "provider.unavailable": "Unavailable",
   "provider.noModel": "No model",
   "provider.problem": "One or more connections need configuration.",
@@ -1142,6 +1150,9 @@ const enUS = {
   "authoring.brief.currentLevelPlaceholder":
     "For example: Comfortable with JavaScript syntax, new to concurrency",
   "authoring.brief.primaryLocale": "Primary Course locale",
+  "authoring.brief.primaryLocalePlaceholder": "Select a Course language",
+  "authoring.brief.primaryLocaleOther": "Other BCP 47 locale…",
+  "authoring.brief.primaryLocaleCustomLabel": "Custom Course locale",
   "authoring.brief.primaryLocaleDescription":
     "Use a BCP 47 locale such as en-US, ru-RU, de-DE, or ja-JP. This is independent from the interface language.",
   "authoring.brief.primaryLocaleError":
@@ -1613,9 +1624,10 @@ const ruRU: Record<MessageKey, string> = {
   "settings.section.interfaceDescription":
     "Оформление и язык хранятся как локальные настройки.",
   "settings.theme": "Тема",
-  "settings.theme.help": "Применяется сразу и сохраняется после подтверждения.",
+  "settings.theme.help": "Применяется сразу и сохраняется в этом браузере.",
   "settings.locale": "Язык интерфейса",
-  "settings.locale.help": "Не меняет содержимое и основной язык курса.",
+  "settings.locale.help":
+    "Применяется сразу в этом браузере. Не меняет содержимое и основной язык курса.",
   "settings.section.local": "Core и локальные пути",
   "settings.section.localDescription":
     "Диагностические значения принадлежат Aptiloop и не отправляются браузером.",
@@ -1695,7 +1707,9 @@ const ruRU: Record<MessageKey, string> = {
   "settings.developerDiagnostics": "Диагностика разработчика",
   "settings.saved": "Настройки сохранены",
   "settings.saveError": "Не удалось сохранить настройки",
-  "settings.localOnly": "Настройки остаются локальными",
+  "settings.localOnly": "Автоматически сохраняется в этом браузере",
+  "settings.localStorageUnavailable":
+    "Хранилище браузера недоступно. Изменения применятся сейчас, но могут сброситься после перезагрузки.",
   "settings.save": "Сохранить настройки интерфейса",
   "settings.status.off": "Выключено",
   "settings.status.starting": "Запускается",
@@ -1768,7 +1782,7 @@ const ruRU: Record<MessageKey, string> = {
   "provider.off": "AI выключен",
   "provider.needsAttention": "AI требует внимания",
   "provider.title": "Необязательная AI-помощь",
-  "provider.rolesReady": "Готово ролей: {ready} из {total}",
+  "provider.rolesReady": "Готово настроенных AI-ролей: {ready} из {total}",
   "provider.unavailable": "Недоступно",
   "provider.noModel": "Модель не выбрана",
   "provider.problem": "Одно или несколько подключений требуют настройки.",
@@ -2588,6 +2602,9 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.brief.currentLevelPlaceholder":
     "Например: Знает синтаксис JavaScript, но не знаком с конкурентностью",
   "authoring.brief.primaryLocale": "Основная локаль курса",
+  "authoring.brief.primaryLocalePlaceholder": "Выберите язык курса",
+  "authoring.brief.primaryLocaleOther": "Другая локаль BCP 47…",
+  "authoring.brief.primaryLocaleCustomLabel": "Пользовательская локаль курса",
   "authoring.brief.primaryLocaleDescription":
     "Укажите локаль BCP 47, например en-US, ru-RU, de-DE или ja-JP. Она не зависит от языка интерфейса.",
   "authoring.brief.primaryLocaleError":
@@ -2937,14 +2954,61 @@ type LocaleContextValue = {
 
 const LocaleContext = createContext<LocaleContextValue | null>(null);
 
-type SettingsLocaleResponse = {
-  uiLocale: UiLocale | null;
-};
-
 function browserLocale(): UiLocale {
   if (typeof navigator === "undefined") return "en-US";
   const preferred = navigator.languages?.[0] ?? navigator.language;
   return /^ru(?:-|$)/iu.test(preferred) ? "ru-RU" : "en-US";
+}
+
+function readLocaleCookie(): UiLocale | null {
+  if (typeof document === "undefined") return null;
+  const prefix = `${uiLocaleCookieName}=`;
+  for (const part of document.cookie.split(";")) {
+    const candidate = part.trim();
+    if (!candidate.startsWith(prefix)) continue;
+    try {
+      const value = decodeURIComponent(candidate.slice(prefix.length));
+      return isUiLocale(value) ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function writeLocaleCookie(locale: UiLocale): void {
+  document.cookie = `${uiLocaleCookieName}=${locale}; Path=/; Max-Age=31536000; SameSite=Strict`;
+}
+
+function clearLocaleCookie(): void {
+  document.cookie = `${uiLocaleCookieName}=; Path=/; Max-Age=0; SameSite=Strict`;
+}
+
+function readStoredLocale(): { available: boolean; value: string | null } {
+  try {
+    return {
+      available: true,
+      value: window.localStorage.getItem(uiLocaleStorageKey),
+    };
+  } catch {
+    return { available: false, value: null };
+  }
+}
+
+function persistStoredLocale(locale: UiLocale): void {
+  try {
+    window.localStorage.setItem(uiLocaleStorageKey, locale);
+  } catch {
+    // The in-memory preference and cookie mirror remain usable when storage is blocked.
+  }
+}
+
+function discardMalformedStoredLocale(): void {
+  try {
+    window.localStorage.removeItem(uiLocaleStorageKey);
+  } catch {
+    // A blocked storage API needs no further recovery here.
+  }
 }
 
 function interpolate(
@@ -2967,51 +3031,85 @@ export function LocaleProvider({
   initialLocale?: UiLocale;
   syncSettings?: boolean;
 }) {
-  const queryClient = useQueryClient();
   const [locale, setLocaleState] = useState<UiLocale>(initialLocale);
   const [draftLocale, setDraftLocale] = useState<UiLocale>(initialLocale);
-  const settings = useQuery({
-    queryKey: ["settings", "locale"],
-    queryFn: () => api<SettingsLocaleResponse>("/settings"),
-    enabled: syncSettings,
-  });
-  const saveLocale = useMutation({
-    mutationFn: (uiLocale: UiLocale) =>
-      api<{ saved: true; uiLocale: UiLocale }>("/settings/locale", {
-        method: "PUT",
-        body: JSON.stringify({ uiLocale }),
-      }),
-    onSuccess: (result) => {
-      setLocaleState(result.uiLocale);
-      document.cookie = `aptiloop.ui-locale=${result.uiLocale}; Path=/; Max-Age=31536000; SameSite=Strict`;
-      queryClient.setQueryData<SettingsLocaleResponse>(
-        ["settings", "locale"],
-        (current) =>
-          current ? { ...current, uiLocale: result.uiLocale } : current,
-      );
-    },
-  });
+  const [showFirstRun, setShowFirstRun] = useState(false);
+
+  const setLocale = useCallback((nextLocale: UiLocale) => {
+    if (!isUiLocale(nextLocale)) return;
+    setLocaleState(nextLocale);
+    setDraftLocale(nextLocale);
+    document.documentElement.lang = nextLocale;
+    persistStoredLocale(nextLocale);
+    writeLocaleCookie(nextLocale);
+  }, []);
 
   useEffect(() => {
-    if (!syncSettings || !settings.data) return;
-    const resolved = isUiLocale(settings.data.uiLocale)
-      ? settings.data.uiLocale
-      : browserLocale();
-    setLocaleState(resolved);
-    setDraftLocale(resolved);
-  }, [settings.data, syncSettings]);
+    const stored = readStoredLocale();
+    const resolveUnsavedLocale = () => {
+      const resolved = syncSettings ? browserLocale() : initialLocale;
+      setLocaleState(resolved);
+      setDraftLocale(resolved);
+      clearLocaleCookie();
+      setShowFirstRun(syncSettings);
+    };
+    const applyConfirmedLocale = (confirmedLocale: UiLocale) => {
+      setLocaleState(confirmedLocale);
+      setDraftLocale(confirmedLocale);
+      writeLocaleCookie(confirmedLocale);
+      setShowFirstRun(false);
+    };
+
+    if (!stored.available) {
+      const cookieLocale = readLocaleCookie();
+      if (cookieLocale) {
+        applyConfirmedLocale(cookieLocale);
+      } else {
+        resolveUnsavedLocale();
+      }
+    } else if (isUiLocale(stored.value)) {
+      const storedLocale = stored.value;
+      setLocaleState(storedLocale);
+      setDraftLocale(storedLocale);
+      writeLocaleCookie(storedLocale);
+      setShowFirstRun(false);
+    } else if (stored.value === null) {
+      const cookieLocale = readLocaleCookie();
+      if (cookieLocale) {
+        applyConfirmedLocale(cookieLocale);
+        persistStoredLocale(cookieLocale);
+      } else {
+        resolveUnsavedLocale();
+      }
+    } else {
+      discardMalformedStoredLocale();
+      resolveUnsavedLocale();
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== uiLocaleStorageKey) return;
+      if (isUiLocale(event.newValue)) {
+        applyConfirmedLocale(event.newValue);
+        return;
+      }
+      if (event.newValue !== null) discardMalformedStoredLocale();
+      resolveUnsavedLocale();
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [initialLocale, syncSettings]);
 
   useEffect(() => {
+    const cookieLocale = readLocaleCookie();
+    if (cookieLocale && cookieLocale !== locale) {
+      writeLocaleCookie(locale);
+    }
     document.documentElement.lang = locale;
   }, [locale]);
 
   const value: LocaleContextValue = {
     locale,
-    setLocale: (nextLocale) => {
-      if (!isUiLocale(nextLocale)) return;
-      setLocaleState(nextLocale);
-      document.cookie = `aptiloop.ui-locale=${nextLocale}; Path=/; Max-Age=31536000; SameSite=Strict`;
-    },
+    setLocale,
     t: (key, values) =>
       interpolate(
         catalogs[locale][key] ?? catalogs["en-US"][key] ?? key,
@@ -3022,8 +3120,6 @@ export function LocaleProvider({
     formatNumber: (number, options) =>
       new Intl.NumberFormat(locale, options).format(number),
   };
-  const showFirstRun =
-    syncSettings && settings.isSuccess && settings.data.uiLocale === null;
 
   return (
     <LocaleContext.Provider value={value}>
@@ -3059,19 +3155,14 @@ export function LocaleProvider({
               {value.t("locale.field.description")}
             </FieldDescription>
           </Field>
-          {saveLocale.isError ? (
-            <p role="alert" className="text-sm text-destructive">
-              {value.t("locale.saveError")}
-            </p>
-          ) : null}
           <AlertDialogFooter>
             <AlertDialogAction
-              disabled={saveLocale.isPending}
-              onClick={() => saveLocale.mutate(draftLocale)}
+              onClick={() => {
+                setLocale(draftLocale);
+                setShowFirstRun(false);
+              }}
             >
-              {value.t(
-                saveLocale.isPending ? "locale.saving" : "locale.confirm",
-              )}
+              {value.t("locale.confirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

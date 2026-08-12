@@ -9,6 +9,8 @@ const alertVariants = cva(
     variants: {
       variant: {
         default: "bg-card text-card-foreground",
+        warning:
+          "border-warning/45 bg-warning/10 text-foreground *:data-[slot=alert-title]:text-warning-foreground *:data-[slot=alert-description]:text-foreground [&>svg]:text-warning-foreground",
         destructive:
           "border-destructive/30 bg-destructive/10 text-foreground *:data-[slot=alert-title]:text-destructive *:data-[slot=alert-description]:text-foreground [&>svg]:text-destructive",
       },
@@ -27,6 +29,7 @@ function Alert({
   return (
     <div
       data-slot="alert"
+      data-variant={variant ?? "default"}
       role="alert"
       className={cn(alertVariants({ variant }), className)}
       {...props}

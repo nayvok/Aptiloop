@@ -61,7 +61,7 @@ export function DayPlanRail({ session }: { session: LearnerSession }) {
     <aside
       data-slot="day-plan-rail"
       aria-label={t("session.plan")}
-      className="sticky top-[12.5rem] hidden max-h-[calc(100vh-13.5rem)] min-w-0 overflow-y-auto overscroll-contain border-l border-border/60 pl-6 [scrollbar-gutter:stable] xl:block"
+      className="sticky top-[var(--shell-bar-size,4.5rem)] hidden h-[calc(100dvh-var(--shell-bar-size,4.5rem))] min-w-0 self-start overflow-y-auto overscroll-contain border-l border-border/60 bg-surface-soft/40 px-6 py-7 [scrollbar-gutter:stable] @min-[72rem]/lesson:col-start-2 @min-[72rem]/lesson:row-span-2 @min-[72rem]/lesson:row-start-1 @min-[72rem]/lesson:block"
     >
       <DayPlanContent session={session} variant="rail" />
     </aside>
@@ -113,26 +113,29 @@ function DayPlanContent({
     <>
       {variant === "sheet" ? (
         <SheetHeader>
-          <SheetTitle>
-            {t("dayPlan.title", { order: day.order, title: day.title })}
-          </SheetTitle>
+          <SheetTitle className="text-xl">{t("session.plan")}</SheetTitle>
           <SheetDescription>
-            {t("dayPlan.meta", {
-              duration: formatMinutesShort(day.estimatedMinutes, locale),
-              depth: depthMessageKey(day.depthLevel)
-                ? t(depthMessageKey(day.depthLevel)!)
-                : day.depthLevel,
-            })}
+            <span className="block font-medium text-foreground">
+              {t("dayPlan.title", { order: day.order, title: day.title })}
+            </span>
+            <span className="mt-0.5 block">
+              {t("dayPlan.meta", {
+                duration: formatMinutesShort(day.estimatedMinutes, locale),
+                depth: depthMessageKey(day.depthLevel)
+                  ? t(depthMessageKey(day.depthLevel)!)
+                  : day.depthLevel,
+              })}
+            </span>
           </SheetDescription>
         </SheetHeader>
       ) : (
-        <header className="border-b border-border/60 pb-4">
-          <p className="text-xs font-medium text-muted-foreground">
+        <header className="pb-5">
+          <h2 className="break-words text-xl font-semibold leading-7 tracking-[-0.02em] [overflow-wrap:anywhere]">
             {t("session.plan")}
-          </p>
-          <h2 className="mt-1 break-words text-base font-semibold leading-6 [overflow-wrap:anywhere]">
-            {t("dayPlan.title", { order: day.order, title: day.title })}
           </h2>
+          <p className="mt-3 break-words text-sm font-semibold leading-5 [overflow-wrap:anywhere]">
+            {t("dayPlan.title", { order: day.order, title: day.title })}
+          </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {t("dayPlan.meta", {
               duration: formatMinutesShort(day.estimatedMinutes, locale),
@@ -147,8 +150,8 @@ function DayPlanContent({
       <div
         data-slot="day-plan-summary"
         className={cn(
-          "border-border/60 py-3",
-          variant === "sheet" ? "border-y px-6" : "border-b",
+          "rounded-control bg-background/55 px-3 py-3",
+          variant === "sheet" && "mx-5",
         )}
       >
         <div className="flex items-center justify-between gap-3 text-xs font-medium text-muted-foreground">
@@ -167,14 +170,14 @@ function DayPlanContent({
 
       <div
         className={cn(
-          "flex flex-1 flex-col py-5",
+          "flex flex-1 flex-col pt-6",
           variant === "sheet" &&
-            "overflow-y-auto overscroll-contain px-5 [scrollbar-gutter:stable]",
+            "overflow-y-auto overscroll-contain px-5 pb-6 [scrollbar-gutter:stable]",
         )}
       >
-        <section className="flex min-w-0 flex-col gap-4">
+        <section className="flex min-w-0 flex-col gap-5">
           <h3 className="text-sm font-semibold">{t("dayPlan.phases")}</h3>
-          <ol data-slot="day-plan-stepper" className="flex flex-col">
+          <ol data-slot="day-plan-stepper" className="flex flex-col gap-1">
             {visibleBlocks.map((block, index) => {
               const blockActive = block.id === currentBlockId;
               const blockComplete = block.status === "completed";
@@ -239,21 +242,12 @@ function DayPlanContent({
                           })}
                         </p>
                       </div>
-                      <Badge
-                        variant={
-                          blockComplete
-                            ? "success"
-                            : blockActive
-                              ? "outline"
-                              : "secondary"
-                        }
-                        className="h-auto max-w-28 shrink-0 whitespace-normal break-words py-1 text-right"
-                      >
+                      <span className="max-w-24 shrink-0 break-words pt-0.5 text-right text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
                         {t(unitStatusMessageKeys[block.status])}
-                      </Badge>
+                      </span>
                     </div>
 
-                    <ol className="mt-3 flex flex-col divide-y divide-border/60 border-y border-border/60">
+                    <ol className="mt-3 flex flex-col gap-1.5">
                       {block.units.map((unit) => {
                         const status =
                           progressByUnit.get(unit.id)?.status ?? "locked";
@@ -265,8 +259,10 @@ function DayPlanContent({
                             data-status={status}
                             aria-current={current ? "step" : undefined}
                             className={cn(
-                              "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-2.5 px-2 py-3 text-sm",
-                              current && "bg-accent/55",
+                              "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-2.5 rounded-control px-3 py-2.5 text-sm",
+                              current
+                                ? "bg-background shadow-sm"
+                                : "bg-transparent",
                             )}
                           >
                             <span
@@ -325,20 +321,17 @@ function DayPlanContent({
 
         <div
           data-slot="day-plan-secondary"
-          className="border-t border-border/60"
+          className="mt-7 flex flex-col gap-1 border-t border-border/60 pt-3"
         >
-          <details
-            data-slot="day-plan-goal"
-            className="group border-b border-border/60"
-          >
-            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 py-3 text-sm font-semibold outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <details data-slot="day-plan-goal" className="group">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-control px-2 py-2.5 text-sm font-semibold outline-none hover:bg-background/50 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
               {t("dayPlan.goal")}
               <CaretDownIcon
                 aria-hidden
                 className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180 motion-reduce:transition-none"
               />
             </summary>
-            <div className="flex flex-col gap-5 pb-5">
+            <div className="flex flex-col gap-5 px-2 pb-5">
               <p className="max-w-[65ch] break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
                 {day.goal}
               </p>
@@ -367,18 +360,15 @@ function DayPlanContent({
           </details>
 
           {day.topics.length || day.outOfScope.length ? (
-            <details
-              data-slot="day-plan-topics"
-              className="group border-b border-border/60"
-            >
-              <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 py-3 text-sm font-semibold outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+            <details data-slot="day-plan-topics" className="group">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-control px-2 py-2.5 text-sm font-semibold outline-none hover:bg-background/50 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
                 {t("dayPlan.topics")}
                 <CaretDownIcon
                   aria-hidden
                   className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180 motion-reduce:transition-none"
                 />
               </summary>
-              <div className="flex flex-col gap-5 pb-5">
+              <div className="flex flex-col gap-5 px-2 pb-5">
                 {day.topics.length ? (
                   <div className="flex flex-wrap gap-2">
                     {day.topics.map((topic) => (

@@ -80,6 +80,8 @@ beforeEach(() => {
   setThemeMock.mockReset();
   pathnameState.value = "/";
   window.localStorage.clear();
+  document.cookie =
+    "aptiloop.sidebar-collapsed=; Path=/; Max-Age=0; SameSite=Strict";
 });
 
 afterEach(cleanup);
@@ -145,9 +147,15 @@ describe("UI foundation", () => {
       screen.getByRole("button", { name: "Включить тему: Светлая" }),
     );
     expect(setThemeMock).toHaveBeenCalledWith("light");
+    expect(document.title).toBe("Главная · Aptiloop");
+    expect(
+      apiMock.mock.calls.some(
+        ([path, init]) => path === "/settings" && init?.method === "PUT",
+      ),
+    ).toBe(false);
   });
 
-  it("keeps the desktop rail stable and free of provider footer content", () => {
+  it("renders the compact desktop shell and keeps its rail preference local", () => {
     apiMock.mockReturnValue(new Promise(() => {}));
 
     const { container } = renderWithQuery(
@@ -158,7 +166,16 @@ describe("UI foundation", () => {
 
     const sidebar = container.querySelector('[data-slot="sidebar"]');
     expect(sidebar).toHaveAttribute("data-state", "expanded");
-    expect(sidebar).toHaveClass("w-[17.5rem]");
+    expect(sidebar).toHaveClass("w-[var(--shell-rail-expanded)]");
+    expect(container.querySelector('[data-slot="sidebar-header"]')).toHaveClass(
+      "h-[var(--shell-bar-size)]",
+    );
+    expect(container.querySelector('[data-slot="utility-header"]')).toHaveClass(
+      "h-[var(--shell-bar-size)]",
+    );
+    expect(container.querySelector('[data-slot="shell-content"]')).toHaveClass(
+      "md:pl-[var(--shell-rail-expanded)]",
+    );
     expect(
       within(sidebar as HTMLElement).getByRole("link", {
         name: "Aptiloop · Главная",
@@ -178,7 +195,7 @@ describe("UI foundation", () => {
       "text-foreground",
       "gap-3",
       "px-2",
-      "h-14",
+      "h-12",
     );
     expect(
       homeLink.querySelector('[data-slot="sidebar-icon-column"]'),
@@ -204,55 +221,74 @@ describe("UI foundation", () => {
       container.querySelector('[data-slot="sidebar-footer"]'),
     ).not.toBeInTheDocument();
     expect(
+      sidebar?.querySelector('[data-slot="separator"]'),
+    ).not.toBeInTheDocument();
+    const utilityHeader = container.querySelector(
+      '[data-slot="utility-header"]',
+    ) as HTMLElement;
+    const desktopToggle = within(utilityHeader).getByRole("button", {
+      name: "Свернуть боковую панель",
+    });
+    expect(
       within(
         container.querySelector('[data-slot="sidebar-header"]') as HTMLElement,
-      ).getByRole("button", { name: "Свернуть боковую панель" }),
-    ).toHaveAttribute("aria-expanded", "true");
+      ).queryByRole("button", { name: "Свернуть боковую панель" }),
+    ).not.toBeInTheDocument();
+    expect(desktopToggle).toHaveAttribute("aria-expanded", "true");
+    const breadcrumbs = within(utilityHeader).getByRole("navigation", {
+      name: "Навигационная цепочка",
+    });
+    expect(
+      desktopToggle.compareDocumentPosition(breadcrumbs) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(
       container.querySelectorAll('[data-slot="provider-health"]'),
     ).toHaveLength(1);
 
-    fireEvent.click(
-      within(sidebar as HTMLElement).getByRole("button", {
-        name: "Свернуть боковую панель",
-      }),
-    );
+    fireEvent.click(desktopToggle);
 
     expect(sidebar).toHaveAttribute("data-state", "collapsed");
-    expect(sidebar).toHaveClass("w-[4.5rem]");
+    expect(sidebar).toHaveClass("w-[var(--shell-rail-collapsed)]");
+    expect(container.querySelector('[data-slot="shell-content"]')).toHaveClass(
+      "md:pl-[var(--shell-rail-collapsed)]",
+    );
     expect(window.localStorage.getItem("aptiloop:sidebar-collapsed")).toBe(
       "true",
     );
+    expect(document.cookie).toContain("aptiloop.sidebar-collapsed=true");
     expect(
-      within(sidebar as HTMLElement).getByRole("button", {
+      within(utilityHeader).getByRole("button", {
         name: "Развернуть боковую панель",
       }),
     ).toHaveAttribute("aria-expanded", "false");
     expect(
-      within(sidebar as HTMLElement).getByRole("button", {
+      within(utilityHeader).getByRole("button", {
         name: "Развернуть боковую панель",
       }),
     ).toHaveClass("size-11", "rounded-control");
-    expect(sidebar).toHaveClass("w-[4.5rem]");
+    expect(sidebar).toHaveClass("w-[var(--shell-rail-collapsed)]");
 
     const collapsedCoursesLink = within(sidebar as HTMLElement).getByRole(
       "link",
       { name: "Курсы" },
     );
     expect(
-      within(sidebar as HTMLElement).queryByRole("link", {
+      within(sidebar as HTMLElement).getByRole("link", {
         name: "Aptiloop · Главная",
       }),
-    ).not.toBeInTheDocument();
+    ).toHaveClass("h-12", "w-12", "justify-center");
     expect(
       sidebar?.querySelector('[data-slot="aptiloop-mark"]'),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
     expect(collapsedCoursesLink).not.toHaveAttribute("title");
-    expect(collapsedCoursesLink).toHaveClass("w-full", "gap-3", "px-2");
-    expect(collapsedCoursesLink).not.toHaveClass(
-      "mx-auto",
+    expect(collapsedCoursesLink).toHaveClass(
+      "h-12",
       "w-12",
+      "self-center",
       "justify-center",
+      "gap-0",
+      "px-0",
     );
     expect(
       sidebar?.querySelectorAll('[data-slot="collapsed-rail-label"]'),
@@ -260,8 +296,8 @@ describe("UI foundation", () => {
     expect(
       within(
         container.querySelector('[data-slot="sidebar-header"]') as HTMLElement,
-      ).getByRole("button", { name: "Развернуть боковую панель" }),
-    ).toHaveClass("size-11", "rounded-control");
+      ).queryByRole("button", { name: "Развернуть боковую панель" }),
+    ).not.toBeInTheDocument();
     expect(
       within(
         container.querySelector(
@@ -269,6 +305,55 @@ describe("UI foundation", () => {
         ) as HTMLElement,
       ).queryByRole("button", { name: "Язык интерфейса" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("hydrates a layout-derived collapsed rail and follows cross-tab storage changes", () => {
+    apiMock.mockReturnValue(new Promise(() => {}));
+    window.localStorage.setItem("aptiloop:sidebar-collapsed", "true");
+
+    const { container } = renderWithQuery(
+      <AppShell initialSidebarCollapsed>
+        <p>Основное содержимое</p>
+      </AppShell>,
+    );
+
+    const sidebar = container.querySelector('[data-slot="sidebar"]');
+    expect(sidebar).toHaveAttribute("data-state", "collapsed");
+    expect(sidebar).toHaveClass("w-[var(--shell-rail-collapsed)]");
+
+    fireEvent(
+      window,
+      new StorageEvent("storage", {
+        key: "aptiloop:sidebar-collapsed",
+        newValue: "false",
+      }),
+    );
+
+    expect(sidebar).toHaveAttribute("data-state", "expanded");
+    expect(sidebar).toHaveClass("w-[var(--shell-rail-expanded)]");
+    expect(document.cookie).toContain("aptiloop.sidebar-collapsed=false");
+  });
+
+  it("gives an open lesson the immersive shell surface with mobile nav clearance", () => {
+    apiMock.mockReturnValue(new Promise(() => {}));
+    pathnameState.value = "/session";
+
+    renderWithQuery(
+      <AppShell>
+        <p>Занятие</p>
+      </AppShell>,
+    );
+
+    const main = screen.getByRole("main");
+    expect(main).toHaveClass(
+      "min-h-[calc(100dvh-var(--shell-bar-size))]",
+      "px-0",
+      "pt-0",
+      "pb-28",
+      "md:pb-0",
+    );
+    expect(main).not.toHaveClass("max-w-[1440px]", "lg:py-8");
+    expect(document.title).toBe("Урок · Aptiloop");
   });
 
   it.each([
@@ -547,7 +632,9 @@ describe("UI foundation", () => {
     expect(
       await screen.findByText("Необязательная AI-помощь"),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Готово ролей: 4 из 4/u)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Готово настроенных AI-ролей: 3 из 3/u),
+    ).toBeInTheDocument();
     expect(screen.getByText("Дизайнер курса")).toBeInTheDocument();
     expect(
       screen.getAllByText(/Deterministic Mock · mock-deterministic/u),
@@ -646,7 +733,9 @@ describe("UI foundation", () => {
       expect(
         await screen.findByText(new RegExp(detail, "u")),
       ).toBeInTheDocument();
-      expect(screen.getByText(/Готово ролей: 3 из 4/u)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Готово настроенных AI-ролей: 0 из 1/u),
+      ).toBeInTheDocument();
     },
   );
 

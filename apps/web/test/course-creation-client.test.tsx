@@ -21,6 +21,12 @@ import {
 } from "@/components/course-creation-client";
 import { LocaleProvider, type UiLocale } from "@/lib/i18n";
 
+Object.defineProperty(Element.prototype, "scrollIntoView", {
+  configurable: true,
+  value: vi.fn(),
+  writable: true,
+});
+
 const { fetchMock, pushMock, toastErrorMock, toastSuccessMock } = vi.hoisted(
   () => ({
     fetchMock: vi.fn(),
@@ -67,7 +73,36 @@ function renderCreation(
   );
 }
 
-function fillRequiredBrief() {
+async function selectCourseLocale(label: string, localeCode: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  const options = await screen.findAllByRole("option");
+  const option = options.find((candidate) =>
+    candidate.textContent?.includes(localeCode),
+  );
+  if (!option) throw new Error(`Missing Course locale option: ${localeCode}`);
+  fireEvent.click(option);
+}
+
+async function selectCustomCourseLocale(
+  label: string,
+  fieldId: string,
+  value: string,
+) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  fireEvent.click(
+    await screen.findByRole("option", { name: "Other BCP 47 locale…" }),
+  );
+  const input = document.getElementById(`${fieldId}-custom`);
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing custom Course locale input: ${fieldId}`);
+  }
+  fireEvent.change(input, { target: { value } });
+  return input;
+}
+
+async function fillRequiredBrief(
+  courseLocale: string | null = brief.primaryLocale,
+) {
   fireEvent.change(screen.getByLabelText("Topic or learning goal"), {
     target: { value: brief.topicGoal },
   });
@@ -77,9 +112,9 @@ function fillRequiredBrief() {
   fireEvent.change(screen.getByLabelText("Current level"), {
     target: { value: brief.currentLevel },
   });
-  fireEvent.change(screen.getByLabelText("Primary Course locale"), {
-    target: { value: brief.primaryLocale },
-  });
+  if (courseLocale) {
+    await selectCourseLocale("Primary Course locale", courseLocale);
+  }
   fireEvent.change(screen.getByLabelText("Pacing and available time"), {
     target: { value: brief.pacing },
   });
@@ -165,7 +200,9 @@ describe("Course creation brief", () => {
     expect(await screen.findByLabelText("Topic or learning goal")).toHaveValue(
       brief.topicGoal,
     );
-    expect(screen.getByLabelText("Primary Course locale")).toHaveValue("en-US");
+    expect(
+      screen.getByRole("combobox", { name: "Primary Course locale" }),
+    ).toHaveTextContent("en-US");
     fireEvent.change(screen.getByLabelText("Current level"), {
       target: { value: "Intermediate" },
     });
@@ -177,14 +214,33 @@ describe("Course creation brief", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Clear brief" }));
     expect(screen.getByLabelText("Topic or learning goal")).toHaveValue("");
-    expect(screen.getByLabelText("Primary Course locale")).toHaveValue("");
+    expect(
+      screen.getByRole("combobox", { name: "Primary Course locale" }),
+    ).toHaveTextContent("Select a Course language");
     expect(window.localStorage.getItem(AUTHORING_BRIEF_STORAGE_KEY)).toBeNull();
   });
 
   it("does not derive a new Course locale from the interface locale", () => {
     renderCreation(<CourseCreationClient mode="external" />);
 
-    expect(screen.getByLabelText("Primary Course locale")).toHaveValue("");
+    expect(
+      screen.getByRole("combobox", { name: "Primary Course locale" }),
+    ).toHaveTextContent("Select a Course language");
+  });
+
+  it("renders common Course locales with localized display names", async () => {
+    renderCreation(<CourseCreationClient mode="external" />, "ru-RU");
+
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "Основная локаль курса" }),
+    );
+
+    expect(
+      await screen.findByRole("option", { name: /русский.*ru-RU/iu }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("option", { name: /немецкий.*de-DE/iu }),
+    ).toBeVisible();
   });
 
   it("round-trips exact bounded brief fields and retains legacy descriptions", () => {
@@ -229,9 +285,41 @@ describe("Course creation brief", () => {
 
   it("shows inline locale feedback without clearing or submitting an invalid brief", async () => {
     renderCreation(<CourseCreationClient mode="external" />);
-    fillRequiredBrief();
-    fireEvent.change(screen.getByLabelText("Primary Course locale"), {
-      target: { value: "not_a_locale" },
+    await fillRequiredBrief();
+    const customLocale = await selectCustomCourseLocale(
+      "Primary Course locale",
+      "authoring-primary-locale",
+      "not_a_locale",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Download instruction file" }),
+    );
+
+    expect(
+      await screen.findByText(
+        "Enter a valid BCP 47 Course locale, such as en-US or ru-RU.",
+      ),
+    ).toHaveAttribute("role", "alert");
+    expect(customLocale).toHaveAttribute("aria-invalid", "true");
+    const localeTrigger = screen.getByRole("combobox", {
+      name: "Primary Course locale",
+    });
+    expect(localeTrigger).toHaveAttribute("aria-invalid", "true");
+    expect(localeTrigger).toHaveFocus();
+    expect(customLocale).toHaveValue("not_a_locale");
+    expect(screen.getByLabelText("Topic or learning goal")).toHaveValue(
+      brief.topicGoal,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("replaces native required-locale feedback with the localized inline error", async () => {
+    renderCreation(<CourseCreationClient mode="external" />);
+    await fillRequiredBrief(null);
+    const primaryLocale = screen.getByRole("combobox", {
+      name: "Primary Course locale",
     });
 
     fireEvent.click(
@@ -243,37 +331,7 @@ describe("Course creation brief", () => {
         "Enter a valid BCP 47 Course locale, such as en-US or ru-RU.",
       ),
     ).toHaveAttribute("role", "alert");
-    expect(screen.getByLabelText("Primary Course locale")).toHaveAttribute(
-      "aria-invalid",
-      "true",
-    );
-    expect(screen.getByLabelText("Primary Course locale")).toHaveFocus();
-    expect(screen.getByLabelText("Primary Course locale")).toHaveValue(
-      "not_a_locale",
-    );
-    expect(screen.getByLabelText("Topic or learning goal")).toHaveValue(
-      brief.topicGoal,
-    );
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(toastErrorMock).not.toHaveBeenCalled();
-  });
-
-  it("replaces native required-locale feedback with the localized inline error", async () => {
-    renderCreation(<CourseCreationClient mode="external" />);
-    fillRequiredBrief();
-    const primaryLocale = screen.getByLabelText("Primary Course locale");
-    fireEvent.change(primaryLocale, { target: { value: "" } });
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Download instruction file" }),
-    );
-
-    expect(
-      await screen.findByText(
-        "Enter a valid BCP 47 Course locale, such as en-US or ru-RU.",
-      ),
-    ).toHaveAttribute("role", "alert");
-    expect(primaryLocale).toHaveValue("");
+    expect(primaryLocale).toHaveTextContent("Select a Course language");
     expect(primaryLocale).toHaveAttribute("aria-invalid", "true");
     expect(primaryLocale).toHaveFocus();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -344,7 +402,7 @@ describe("Course creation brief", () => {
     renderCreation(<CourseCreationClient mode="guided" />);
 
     expect(await screen.findByText("Technically ready")).toBeInTheDocument();
-    fillRequiredBrief();
+    await fillRequiredBrief();
     fireEvent.click(
       screen.getByRole("button", { name: "Create Draft and open Designer" }),
     );
@@ -471,9 +529,7 @@ describe("Course creation brief", () => {
     fireEvent.change(screen.getByLabelText("Название программы"), {
       target: { value: "Manual systems course" },
     });
-    fireEvent.change(screen.getByLabelText("Основная локаль курса"), {
-      target: { value: "en-US" },
-    });
+    await selectCourseLocale("Основная локаль курса", "en-US");
     fireEvent.click(screen.getByRole("button", { name: "Создать черновик" }));
 
     await waitFor(() =>
@@ -489,14 +545,48 @@ describe("Course creation brief", () => {
     expect(body.curriculum.primaryLocale).toBe("en-US");
   });
 
+  it("keeps an uncommon valid BCP 47 Course locale through the custom path", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ version: { id: "manual-custom" } }), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    renderCreation(<CourseCreationClient mode="manual" />);
+    fireEvent.change(screen.getByLabelText("Course title"), {
+      target: { value: "Custom locale course" },
+    });
+    const customLocale = await selectCustomCourseLocale(
+      "Primary Course locale",
+      "manual-course-primary-locale",
+      "sr-Latn-RS",
+    );
+
+    expect(customLocale.labels?.[0]).toHaveTextContent("Custom Course locale");
+    fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+
+    await waitFor(() =>
+      expect(pushMock).toHaveBeenCalledWith(
+        "/courses/studio?version=manual-custom&mode=manual&tab=program",
+      ),
+    );
+    const request = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(request?.[1]?.body)) as {
+      curriculum: { primaryLocale: string };
+    };
+    expect(body.curriculum.primaryLocale).toBe("sr-Latn-RS");
+  });
+
   it("retains and focuses an invalid manual Course locale without a request", async () => {
     renderCreation(<CourseCreationClient mode="manual" />);
 
     fireEvent.change(screen.getByLabelText("Course title"), {
       target: { value: "Manual systems course" },
     });
-    const primaryLocale = screen.getByLabelText("Primary Course locale");
-    fireEvent.change(primaryLocale, { target: { value: "not_a_locale" } });
+    const primaryLocale = await selectCustomCourseLocale(
+      "Primary Course locale",
+      "manual-course-primary-locale",
+      "not_a_locale",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
 
     expect(
@@ -506,7 +596,9 @@ describe("Course creation brief", () => {
     ).toHaveAttribute("role", "alert");
     expect(primaryLocale).toHaveValue("not_a_locale");
     expect(primaryLocale).toHaveAttribute("aria-invalid", "true");
-    expect(primaryLocale).toHaveFocus();
+    expect(
+      screen.getByRole("combobox", { name: "Primary Course locale" }),
+    ).toHaveFocus();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(pushMock).not.toHaveBeenCalled();
   });
@@ -541,9 +633,7 @@ describe("Course creation brief", () => {
 
     const title = screen.getByLabelText("Course title");
     fireEvent.change(title, { target: { value: "Retained local title" } });
-    fireEvent.change(screen.getByLabelText("Primary Course locale"), {
-      target: { value: "en-US" },
-    });
+    await selectCourseLocale("Primary Course locale", "en-US");
     fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
 
     await waitFor(() =>

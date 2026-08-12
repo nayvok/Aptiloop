@@ -575,6 +575,11 @@ describe("CurriculumEditorClient", () => {
       "overscroll-x-contain",
     );
     expect(
+      view.container.querySelector(
+        '[aria-label="Рабочая область Course Studio"]',
+      ),
+    ).toHaveAttribute("data-variant", "segmented");
+    expect(
       view.container.querySelector('[data-slot="course-designer"]'),
     ).not.toBeNull();
     expect(

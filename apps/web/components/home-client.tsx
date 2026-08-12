@@ -350,7 +350,10 @@ export function HomeClient({
       )}
 
       {requiresSelection ? (
-        <section className="flex min-w-0 flex-col gap-4 border-y border-border/70 py-5 sm:flex-row sm:items-center sm:justify-between">
+        <section
+          data-slot="course-selection-callout"
+          className="flex min-w-0 flex-col gap-4 rounded-panel bg-surface-soft/75 p-5 sm:flex-row sm:items-center sm:justify-between"
+        >
           <div className="min-w-0">
             <h2 className="font-semibold">{t("home.selectCourse.title")}</h2>
             <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
@@ -642,35 +645,14 @@ function RevisionFailureState({
       className="flex flex-col gap-8 lg:gap-10"
     >
       <RevisionPageHeader />
-      <section
-        data-slot="course-revision-preview-error"
-        role="alert"
-        className="flex min-h-40 flex-col items-start justify-center gap-4 rounded-control border border-border/70 bg-card p-6 sm:p-8"
-      >
-        <div>
-          <h2 className="font-semibold">
-            {t("courses.current.revisionUnavailable")}
-          </h2>
-          <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
-            {t("courses.library.selectionUnknownHelp")}
-          </p>
-        </div>
-        {diagnostic ? (
-          <details className="max-w-full text-sm text-muted-foreground">
-            <summary className="cursor-pointer font-medium text-foreground">
-              {t("courses.library.details")}
-            </summary>
-            <p className="mt-2 max-w-[65ch] [overflow-wrap:anywhere]">
-              {diagnostic}
-            </p>
-          </details>
-        ) : null}
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-          <Button type="button" onClick={retry}>
-            {t("query.retry")}
-          </Button>
-        </div>
-      </section>
+      <div data-slot="course-revision-preview-error">
+        <QueryError
+          title={t("courses.current.revisionUnavailable")}
+          message={t("courses.library.selectionUnknownHelp")}
+          {...(diagnostic ? { diagnostic } : {})}
+          retry={retry}
+        />
+      </div>
     </div>
   );
 }
@@ -759,7 +741,10 @@ function RevisionRoadmapView({
       />
 
       {requiresSelection ? (
-        <section className="flex min-w-0 flex-col gap-4 border-y border-border/70 py-5 sm:flex-row sm:items-center sm:justify-between">
+        <section
+          data-slot="course-selection-callout"
+          className="flex min-w-0 flex-col gap-4 rounded-panel bg-surface-soft/75 p-5 sm:flex-row sm:items-center sm:justify-between"
+        >
           <div className="min-w-0">
             <h2 className="font-semibold">{t("home.selectCourse.title")}</h2>
             <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
@@ -794,7 +779,10 @@ function RevisionRoadmapView({
           aria-labelledby="course-roadmap-title"
           className="mx-auto min-w-0 w-full max-w-3xl xl:col-start-1 xl:row-start-1 xl:mx-0"
         >
-          <div className="flex min-w-0 flex-col gap-3 border-b border-border/70 pb-5 sm:flex-row sm:items-end sm:justify-between">
+          <div
+            data-slot="course-roadmap-heading"
+            className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"
+          >
             <div className="min-w-0">
               <h2 id="course-roadmap-title" className="text-xl font-semibold">
                 {t("home.courseRoadmap")}
@@ -820,7 +808,7 @@ function RevisionRoadmapView({
             ) : null}
           </div>
 
-          <div className="mt-7 space-y-9">
+          <div className="mt-8 space-y-10">
             {course.weeks.map((week) => (
               <section
                 key={week.id}
@@ -885,8 +873,8 @@ function RoadmapLesson({
       aria-current={isCurrent && currentUnitId === null ? "step" : undefined}
       className={
         isCurrent
-          ? "min-w-0 rounded-control border border-primary/40 bg-primary/[0.035]"
-          : "min-w-0 rounded-control border border-border/70 bg-card"
+          ? "min-w-0 rounded-panel border border-primary/35 bg-primary/[0.04]"
+          : "min-w-0 rounded-panel border border-border/55 bg-card"
       }
     >
       <article className="min-w-0 p-5 sm:p-6">
@@ -911,17 +899,17 @@ function RoadmapLesson({
         {blocks.length > 0 ? (
           <details
             data-slot="course-roadmap-lesson-details"
-            className="group mt-5 border-t border-border/60"
+            className="group mt-5"
             open={isCurrent ? true : undefined}
           >
-            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-control bg-surface-soft/65 px-3 py-2.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
               {t("session.plan")}
               <CaretDownIcon
                 aria-hidden
                 className="shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
               />
             </summary>
-            <ol className="divide-y divide-border/60 border-t border-border/60">
+            <ol className="mt-3 space-y-4 px-1">
               {blocks.map((block) => (
                 <RoadmapPhase
                   key={block.id}
@@ -956,7 +944,7 @@ function RoadmapPhase({
       data-slot="course-roadmap-phase"
       data-status={block.status}
       data-current={isCurrent ? "true" : undefined}
-      className="py-4"
+      className="py-1"
     >
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
         <div className="flex min-w-0 items-center gap-2.5">
@@ -1051,7 +1039,10 @@ function RevisionContextRail({
       data-slot="course-roadmap-context"
       className="mx-auto min-w-0 w-full max-w-3xl space-y-4 xl:col-start-2 xl:row-start-1 xl:mx-0 xl:sticky xl:top-28 xl:max-w-none"
     >
-      <section className="rounded-control border border-border/70 bg-card p-5">
+      <section
+        data-slot="course-roadmap-summary"
+        className="rounded-panel border border-border/55 bg-card p-5"
+      >
         <h2 className="font-semibold">{t("home.nextAction")}</h2>
         {action ? (
           <div className="mt-4 min-w-0 [overflow-wrap:anywhere]">
@@ -1105,32 +1096,33 @@ function RevisionContextRail({
             <ArrowRightIcon data-icon="inline-end" aria-hidden />
           </Button>
         ) : null}
-      </section>
-
-      <section className="rounded-control border border-border/70 bg-card p-5">
-        <h2 className="font-semibold">{t("courses.table.progress")}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {t("home.courseProgress", {
-            complete: completedDays,
-            total: days.length,
-          })}
-        </p>
-        {days.length > 0 ? (
-          <Progress
-            className="mt-3"
-            value={completedDays}
-            max={days.length}
-            aria-label={t("home.focus.courseProgress")}
-            aria-valuetext={t("home.courseProgress", {
+        <div className="mt-5 rounded-control bg-surface-soft/75 p-4">
+          <h3 className="text-sm font-semibold">
+            {t("courses.table.progress")}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("home.courseProgress", {
               complete: completedDays,
               total: days.length,
             })}
-          />
-        ) : null}
+          </p>
+          {days.length > 0 ? (
+            <Progress
+              className="mt-3"
+              value={completedDays}
+              max={days.length}
+              aria-label={t("home.focus.courseProgress")}
+              aria-valuetext={t("home.courseProgress", {
+                complete: completedDays,
+                total: days.length,
+              })}
+            />
+          ) : null}
+        </div>
       </section>
 
-      <details className="rounded-control border border-border/70 bg-card p-5 text-sm">
-        <summary className="cursor-pointer font-medium">
+      <details className="rounded-control bg-surface-soft/65 p-4 text-sm">
+        <summary className="min-h-11 cursor-pointer content-center rounded-control font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
           {t("courses.library.details")}
         </summary>
         <p className="mt-4 text-sm font-medium">

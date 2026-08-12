@@ -1,10 +1,20 @@
 import { CircleNotchIcon } from "@phosphor-icons/react";
+import type { ComponentProps } from "react";
 
-export function Spinner({ className = "size-4" }: { className?: string }) {
+import { cn } from "@/lib/utils";
+
+export function Spinner({
+  className,
+  ...props
+}: ComponentProps<typeof CircleNotchIcon>) {
   return (
     <CircleNotchIcon
+      {...props}
       aria-hidden
-      className={`animate-spin ${className}`}
+      className={cn(
+        "size-4 animate-spin motion-reduce:animate-none",
+        className,
+      )}
       data-slot="spinner"
     />
   );

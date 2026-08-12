@@ -232,6 +232,8 @@ beforeEach(() => {
   navigationState.setSearch("");
   setThemeMock.mockReset();
   document.documentElement.lang = "en-US";
+  window.localStorage.clear();
+  document.cookie = "aptiloop.ui-locale=; Path=/; Max-Age=0";
 });
 
 afterEach(cleanup);
@@ -247,7 +249,7 @@ describe("Settings v2", () => {
     localeLowercase.mockRestore();
   });
 
-  it("does not change locale or theme while mounting saved settings", async () => {
+  it("binds Interface to browser preferences without loading Core settings", async () => {
     renderSettings();
 
     expect(
@@ -255,30 +257,22 @@ describe("Settings v2", () => {
     ).toBeVisible();
     expect(document.documentElement.lang).toBe("en-US");
     expect(setThemeMock).not.toHaveBeenCalled();
-    expect(
-      apiMock.mock.calls.some(
-        ([path, init]) => path === "/settings/locale" && init?.method === "PUT",
-      ),
-    ).toBe(false);
-    expect(screen.getByLabelText("Theme")).toHaveTextContent("System");
+    expect(apiMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Theme")).toHaveTextContent("Light");
   });
 
-  it("keeps the mounted locale cache isolated from the Settings page query", async () => {
-    apiMock.mockImplementation((path: string) => {
-      if (path === "/settings") return Promise.resolve(settingsResponse);
-      throw new Error(`Unexpected API call: ${path}`);
-    });
+  it("keeps Interface usable when Core settings are unavailable", async () => {
+    apiMock.mockRejectedValue(new Error("Core unavailable"));
     const client = new QueryClient({
       defaultOptions: {
-        queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+        queries: { retry: false },
         mutations: { retry: false },
       },
     });
-    client.setQueryData(["settings", "locale"], { uiLocale: "en-US" });
 
     render(
       <QueryClientProvider client={client}>
-        <LocaleProvider initialLocale="en-US">
+        <LocaleProvider initialLocale="en-US" syncSettings={false}>
           <SettingsForm />
         </LocaleProvider>
       </QueryClientProvider>,
@@ -288,12 +282,11 @@ describe("Settings v2", () => {
       await screen.findByRole("heading", { name: "Interface" }),
     ).toBeVisible();
     expect(document.documentElement.lang).toBe("en-US");
-    expect(client.getQueryData(["settings", "locale"])).toEqual({
-      uiLocale: "en-US",
-    });
-    expect(client.getQueryData(["settings", "page"])).toMatchObject({
-      uiLocale: "ru-RU",
-    });
+    expect(screen.getByLabelText("Theme")).toHaveTextContent("Light");
+    expect(screen.getByLabelText("Interface language")).toHaveTextContent(
+      "English (United States)",
+    );
+    expect(apiMock).not.toHaveBeenCalled();
   });
 
   it("renders deliberate desktop navigation and a compact mobile section control", async () => {
@@ -304,14 +297,33 @@ describe("Settings v2", () => {
       '[data-slot="settings-local-navigation"]',
     );
     expect(localNavigation).toHaveClass("hidden", "xl:block");
-    expect(
-      within(localNavigation as HTMLElement).getByRole("tablist", {
-        name: "Settings",
-      }),
-    ).toHaveAttribute("aria-orientation", "vertical");
+    const desktopTablist = within(localNavigation as HTMLElement).getByRole(
+      "tablist",
+      { name: "Settings" },
+    );
+    expect(desktopTablist).toHaveAttribute("aria-orientation", "vertical");
+    expect(desktopTablist).toHaveAttribute("data-variant", "rail");
+    expect(desktopTablist).not.toHaveClass("border", "bg-background");
+    for (const tab of within(localNavigation as HTMLElement).getAllByRole(
+      "tab",
+    )) {
+      expect(tab).toHaveClass("min-h-11", "border-0", "after:hidden");
+    }
     expect(
       container.querySelector('[data-slot="settings-selected-pane"]'),
     ).toHaveClass("min-w-0");
+    const interfaceSurface = container.querySelector(
+      '[data-slot="settings-selected-pane"] [data-slot="field-group"]',
+    );
+    expect(interfaceSurface).toHaveClass(
+      "gap-2",
+      "rounded-2xl",
+      "bg-surface-soft/55",
+    );
+    expect(interfaceSurface).not.toHaveClass("border", "divide-y");
+    expect(
+      container.querySelector('[data-slot="settings-interface-footer"]'),
+    ).toHaveClass("border-t", "border-border/30");
     const mobileControl = container.querySelector(
       '[data-slot="settings-mobile-section-control"]',
     );
@@ -328,7 +340,7 @@ describe("Settings v2", () => {
     expect(
       await screen.findByRole("tab", { name: "Connections" }),
     ).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("Deterministic Mock")).toBeVisible();
+    expect(await screen.findByText("Deterministic Mock")).toBeVisible();
 
     openSection("AI roles");
     await screen.findByLabelText("Default model");
@@ -365,6 +377,10 @@ describe("Settings v2", () => {
   it("applies one default AI profile while keeping per-role overrides optional", async () => {
     const { client } = renderSettings();
     client.setQueryData(["settings"], structuredClone(settingsResponse));
+    client.setQueryData(
+      ["settings", "provider-health"],
+      structuredClone(settingsResponse),
+    );
     await screen.findByRole("tab", { name: "AI roles" });
     openSection("AI roles");
 
@@ -426,8 +442,17 @@ describe("Settings v2", () => {
         })),
       );
       expect(client.getQueryState(["settings"])?.isInvalidated).toBe(true);
-      expect(client.getQueryState(["settings", "page"])?.isInvalidated).toBe(
-        true,
+      const providerSettings = client.getQueryData<typeof settingsResponse>([
+        "settings",
+        "provider-health",
+      ]);
+      expect(providerSettings?.ai.roleProfiles).toEqual(
+        providerSettings?.ai.roleProfiles.map((profile) => ({
+          ...profile,
+          mode: "connection",
+          connectionId: "conn:pi:openai",
+          modelId: "pi-exact",
+        })),
       );
     });
   });

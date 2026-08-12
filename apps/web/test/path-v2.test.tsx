@@ -358,6 +358,9 @@ describe("Aptiloop Home", () => {
       screen.queryByRole("heading", { level: 1, name: "Home" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(
+      document.querySelector('[data-slot="course-selection-callout"]'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Use this Course" }));
 
     await vi.waitFor(() => {
@@ -425,11 +428,14 @@ describe("Aptiloop Home", () => {
       ),
     ).toHaveTextContent("Activity 2: study");
     expect(container.querySelectorAll('[aria-current="step"]')).toHaveLength(1);
-    expect(container.querySelector('[data-slot="course-roadmap"]')).toHaveClass(
-      "max-w-3xl",
-    );
+    expect(
+      container.querySelector('[data-slot="course-roadmap-heading"]'),
+    ).toBeInTheDocument();
     expect(
       container.querySelector('[data-slot="course-roadmap-context"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-slot="course-roadmap-summary"]'),
     ).toBeInTheDocument();
     const technicalDetails = screen
       .getByText("Technical details")
@@ -741,6 +747,11 @@ describe("Aptiloop Home", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Course revision unavailable",
     );
+    expect(
+      document
+        .querySelector('[data-slot="course-revision-preview-error"]')
+        ?.querySelector('[data-slot="query-error"]'),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 1, name: "Preview revision" }),
     ).toBeVisible();

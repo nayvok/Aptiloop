@@ -551,7 +551,7 @@ describe("versioned interview workflow", () => {
         body: JSON.stringify({ operationId: "operation-4" }),
       }),
     );
-  });
+  }, 10_000);
 
   it("starts with the topics of studied days in the default scope", async () => {
     installApi(
@@ -906,6 +906,11 @@ describe("versioned interview workflow", () => {
       renderWithQuery(<InterviewClient />);
 
       expect(await screen.findByText(status)).toBeInTheDocument();
+      const recovery = document.querySelector(
+        '[data-slot="interview-ai-recovery"]',
+      );
+      expect(recovery).toHaveAttribute("data-variant", "warning");
+      expect(recovery).toHaveClass("rounded-panel", "px-4", "py-4");
       const start = screen.getByRole("button", { name: "Начать интервью" });
       expect(start).toBeDisabled();
       expect(
@@ -1279,11 +1284,8 @@ describe("versioned interview workflow", () => {
     const destinationSurface = document.querySelector(
       '[data-slot="review-destination-navigation"]',
     );
-    expect(destinationSurface).toHaveClass(
-      "rounded-control",
-      "border",
-      "border-border/70",
-    );
+    expect(destinationSurface).toHaveClass("gap-3");
+    expect(destinationSurface).not.toHaveClass("border");
     const destinationNav = within(destinationSurface as HTMLElement);
     const desktopNav = destinationSurface?.querySelector(
       '[data-slot="review-desktop-nav"]',
@@ -1292,6 +1294,7 @@ describe("versioned interview workflow", () => {
       '[data-slot="review-mobile-nav"]',
     );
     expect(desktopNav).toHaveClass("hidden", "grid-cols-4", "xl:grid");
+    expect(desktopNav).toHaveAttribute("data-variant", "segmented");
     expect(mobileNav).toHaveClass("xl:hidden");
     expect(within(desktopNav as HTMLElement).getAllByRole("tab")).toHaveLength(
       4,

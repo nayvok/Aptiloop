@@ -6,24 +6,44 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 
 export function QueryError({
+  title,
   message,
   diagnostic,
   retry,
+  kind = "error",
 }: {
+  title?: string;
   message: string;
   diagnostic?: string;
   retry?: () => void;
+  kind?: "error" | "warning";
 }) {
   const { t } = useI18n();
   return (
     <div
       data-slot="query-error"
+      data-kind={kind}
       role="alert"
-      className="flex min-h-36 flex-col items-start justify-center gap-4 rounded-panel bg-destructive/10 p-5 sm:p-6"
+      className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-3 rounded-panel border bg-surface-raised p-4 sm:p-5 ${
+        kind === "warning" ? "border-warning/45" : "border-destructive/30"
+      }`}
     >
-      <WarningCircleIcon aria-hidden className="size-6 text-destructive" />
-      <div>
-        <p className="font-semibold text-foreground">{t("query.failed")}</p>
+      <span
+        aria-hidden
+        className={`flex size-9 items-center justify-center rounded-full ${
+          kind === "warning" ? "bg-warning/15" : "bg-destructive/10"
+        }`}
+      >
+        <WarningCircleIcon
+          className={`size-5 ${
+            kind === "warning" ? "text-warning-foreground" : "text-destructive"
+          }`}
+        />
+      </span>
+      <div className="min-w-0 pt-1">
+        <h2 className="font-semibold text-foreground">
+          {title ?? t("query.failed")}
+        </h2>
         <p className="mt-1 max-w-[65ch] text-sm text-muted-foreground">
           {message}
         </p>
@@ -39,7 +59,11 @@ export function QueryError({
         ) : null}
       </div>
       {retry ? (
-        <Button variant="outline" onClick={retry}>
+        <Button
+          className="col-start-2 justify-self-start"
+          variant="outline"
+          onClick={retry}
+        >
           {t("query.retry")}
         </Button>
       ) : null}

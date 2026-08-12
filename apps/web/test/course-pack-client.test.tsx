@@ -973,11 +973,24 @@ describe("Course library", () => {
       throw new Error(`Unexpected API call: ${path}`);
     });
 
-    renderWithQuery(<CourseLibraryClient />);
+    const view = renderWithQuery(<CourseLibraryClient />);
 
     expect(
       await screen.findByRole("heading", { name: "Current foundations" }),
     ).toBeInTheDocument();
+    expect(
+      view.container.querySelector('[data-slot="course-current-summary"]'),
+    ).toBeInTheDocument();
+    expect(
+      view.container.querySelector('[data-slot="course-library-table"]'),
+    ).toBeInTheDocument();
+    const currentRow = screen
+      .getByRole("heading", { name: "Current foundations" })
+      .closest("tr");
+    expect(currentRow).not.toBeNull();
+    expect(
+      within(currentRow as HTMLElement).getByText("Текущий курс"),
+    ).toBeVisible();
     expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(2);
     expect(screen.getByText("Показано 1–2 из 2")).toBeInTheDocument();
 

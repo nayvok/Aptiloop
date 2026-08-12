@@ -17,12 +17,14 @@ import {
   CaretDownIcon,
   CheckCircleIcon,
   ChatCircleDotsIcon,
+  WarningCircleIcon,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { z } from "zod";
 
 import { api, ApiError } from "@/lib/api";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,6 +57,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Markdown } from "@/components/ui/markdown";
+import { LoadingState } from "@/components/ui/loading-state";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
@@ -64,7 +67,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { type MessageKey, useI18n } from "@/lib/i18n";
 import { formatMinutesShort } from "@/lib/time";
@@ -662,8 +664,11 @@ function getInterviewAiReadiness(
       if (capability === "streaming") return observed.connection.streaming;
       if (capability === "cancellation")
         return observed.connection.cancellation;
-      if (capability === "tools" || capability === "structured-output") {
+      if (capability === "tools") {
         return model.typedToolCalls !== "none";
+      }
+      if (capability === "structured-output") {
+        return model.typedToolCalls === "schema-constrained";
       }
       return false;
     },
@@ -1509,12 +1514,10 @@ export function InterviewClient({
           </dl>
         ) : null}
         {disclosureError ? (
-          <p
-            role="alert"
-            className="border-y border-destructive/30 bg-destructive/10 py-3 text-sm text-destructive"
-          >
-            {disclosureError}
-          </p>
+          <Alert variant="destructive">
+            <WarningCircleIcon aria-hidden />
+            <AlertDescription>{disclosureError}</AlertDescription>
+          </Alert>
         ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={action !== null}>
@@ -1534,63 +1537,57 @@ export function InterviewClient({
     </AlertDialog>
   );
   const readinessRecovery = aiReadiness.ready ? null : (
-    <div
+    <Alert
       data-slot="interview-ai-recovery"
       role="status"
-      className="flex min-w-0 flex-col gap-3 border-y border-warning/35 bg-warning/10 py-4 text-sm sm:flex-row sm:items-center sm:justify-between"
+      variant="warning"
+      className="min-w-0"
     >
-      <p className="min-w-0 leading-6 text-warning-foreground">
-        <span className="font-semibold">
-          {aiReadiness.kind === "checking"
-            ? t("provider.checking")
-            : aiReadiness.kind === "off"
-              ? t("provider.off")
-              : aiReadiness.kind === "unavailable" && settingsQuery.isError
-                ? t("provider.statusUnavailable")
-                : t("provider.needsAttention")}
-        </span>
+      <WarningCircleIcon aria-hidden />
+      <AlertTitle>
+        {aiReadiness.kind === "checking"
+          ? t("provider.checking")
+          : aiReadiness.kind === "off"
+            ? t("provider.off")
+            : aiReadiness.kind === "unavailable" && settingsQuery.isError
+              ? t("provider.statusUnavailable")
+              : t("provider.needsAttention")}
+      </AlertTitle>
+      <AlertDescription className="sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4">
         {aiReadiness.kind !== "checking" ? (
-          <span> {t("chat.composer.unavailablePlaceholder")}</span>
+          <span>{t("chat.composer.unavailablePlaceholder")}</span>
+        ) : (
+          <span>{t("provider.checking")}</span>
+        )}
+        {settingsQuery.isError ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-2 justify-self-start sm:mt-0 sm:shrink-0"
+            onClick={() => void settingsQuery.refetch()}
+          >
+            <ArrowClockwiseIcon data-icon="inline-start" aria-hidden />
+            {t("query.retry")}
+          </Button>
+        ) : aiReadiness.kind !== "checking" ? (
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            className="mt-2 justify-self-start sm:mt-0 sm:shrink-0"
+          >
+            <Link href={`/settings?section=${aiReadiness.recoverySection}`}>
+              {t("chat.composer.configureAi")}
+            </Link>
+          </Button>
         ) : null}
-      </p>
-      {settingsQuery.isError ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="self-start sm:shrink-0"
-          onClick={() => void settingsQuery.refetch()}
-        >
-          <ArrowClockwiseIcon data-icon="inline-start" aria-hidden />
-          {t("query.retry")}
-        </Button>
-      ) : aiReadiness.kind !== "checking" ? (
-        <Button
-          asChild
-          variant="outline"
-          size="sm"
-          className="self-start sm:shrink-0"
-        >
-          <Link href={`/settings?section=${aiReadiness.recoverySection}`}>
-            {t("chat.composer.configureAi")}
-          </Link>
-        </Button>
-      ) : null}
-    </div>
+      </AlertDescription>
+    </Alert>
   );
 
   if (interviewQuery.isLoading) {
-    return (
-      <div
-        data-slot="interview-loading"
-        className="flex w-full flex-col gap-6"
-        role="status"
-        aria-label={t("interview.loading")}
-      >
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-80 w-full" />
-      </div>
-    );
+    return <LoadingState label="interview.loading" variant="page" />;
   }
 
   if (interviewQuery.error) {
@@ -1619,10 +1616,10 @@ export function InterviewClient({
           description={t("interview.setup.description")}
         />
         <section
-          className="w-full min-w-0 border-y border-border bg-background"
+          className="w-full min-w-0 rounded-panel bg-surface-soft/35 p-4 sm:p-6"
           aria-labelledby="interview-setup-title"
         >
-          <div className="border-b border-border py-6">
+          <div className="pb-5">
             <DetailHeading
               id="interview-setup-title"
               className="text-xl font-semibold tracking-[-0.02em]"
@@ -1634,8 +1631,8 @@ export function InterviewClient({
             </p>
           </div>
 
-          <div className="grid min-w-0 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
-            <div className="min-w-0 py-6 lg:pr-8">
+          <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)] lg:gap-8">
+            <div className="min-w-0">
               <FieldSet disabled={action !== null}>
                 <FieldLegend>{t("interview.setup.scope")}</FieldLegend>
                 <RadioGroup
@@ -1712,32 +1709,30 @@ export function InterviewClient({
                         {t("interview.setup.loadingTopics")}
                       </p>
                     ) : pathQuery.isError ? (
-                      <div
-                        role="alert"
-                        className="flex min-w-0 flex-col gap-3 border-y border-border py-4 sm:flex-row sm:items-center sm:justify-between"
-                      >
-                        <p className="min-w-0 text-sm leading-6 text-muted-foreground">
-                          {t("interview.setup.topicsLoadError")}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void pathQuery.refetch()}
-                          >
-                            {t("interview.setup.retryTopics")}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setScopeMode("manual")}
-                          >
-                            {t("interview.setup.chooseManual")}
-                          </Button>
-                        </div>
-                      </div>
+                      <Alert variant="warning">
+                        <WarningCircleIcon aria-hidden />
+                        <AlertDescription className="sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4">
+                          <span>{t("interview.setup.topicsLoadError")}</span>
+                          <span className="mt-2 flex flex-wrap gap-2 sm:mt-0">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void pathQuery.refetch()}
+                            >
+                              {t("interview.setup.retryTopics")}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setScopeMode("manual")}
+                            >
+                              {t("interview.setup.chooseManual")}
+                            </Button>
+                          </span>
+                        </AlertDescription>
+                      </Alert>
                     ) : scopeMode === "studied" ? (
-                      <div className="flex min-w-0 flex-col gap-3 border-y border-border py-4">
+                      <div className="flex min-w-0 flex-col gap-3 rounded-control bg-background/75 p-4">
                         <p className="text-sm leading-6 text-muted-foreground">
                           {t("interview.setup.noStudiedTopics")}
                         </p>
@@ -1759,7 +1754,7 @@ export function InterviewClient({
               </FieldSet>
             </div>
 
-            <aside className="min-w-0 border-t border-border py-6 lg:border-t-0 lg:border-l lg:pl-8">
+            <aside className="min-w-0 rounded-control bg-background/75 p-4 sm:p-5">
               <FieldGroup className="gap-5">
                 <Field>
                   <FieldLabel htmlFor="interview-difficulty">
@@ -1817,7 +1812,7 @@ export function InterviewClient({
                   </Select>
                 </Field>
               </FieldGroup>
-              <div className="mt-6 flex min-w-0 flex-col gap-2 border-y border-border py-4 text-sm leading-6 text-muted-foreground">
+              <div className="mt-6 flex min-w-0 flex-col gap-2 rounded-control bg-surface-soft p-4 text-sm leading-6 text-muted-foreground">
                 <p>
                   {t("interview.setup.durationEstimate", {
                     duration: formatMinutesShort(questionCount * 5, locale),
@@ -1830,15 +1825,17 @@ export function InterviewClient({
           </div>
 
           {actionError ? (
-            <p
-              role="alert"
-              className="border-t border-destructive/30 bg-destructive/10 py-4 text-sm text-destructive [overflow-wrap:anywhere]"
-            >
-              {actionError}
-            </p>
+            <Alert variant="destructive" className="mt-5">
+              <WarningCircleIcon aria-hidden />
+              <AlertDescription className="[overflow-wrap:anywhere]">
+                {actionError}
+              </AlertDescription>
+            </Alert>
           ) : null}
-          {readinessRecovery}
-          <footer className="flex justify-stretch border-t border-border py-5 sm:justify-end">
+          {readinessRecovery ? (
+            <div className="mt-5">{readinessRecovery}</div>
+          ) : null}
+          <footer className="flex justify-stretch pt-5 sm:justify-end">
             <Button
               className="w-full max-w-full whitespace-normal sm:w-auto"
               onClick={() => void startInterview()}
@@ -1894,7 +1891,7 @@ export function InterviewClient({
             <Badge variant="warning">{t("interview.opening.status")}</Badge>
           }
         />
-        <section className="w-full border-y border-border py-6">
+        <section className="w-full rounded-panel bg-surface-soft/35 p-5 sm:p-6">
           <DetailHeading className="text-xl font-semibold tracking-[-0.02em]">
             {t("interview.opening.errorTitle")}
           </DetailHeading>
@@ -1904,14 +1901,16 @@ export function InterviewClient({
             })}
           </p>
           {actionError ? (
-            <p
-              role="alert"
-              className="mt-4 border-y border-destructive/30 bg-destructive/10 py-4 text-sm text-destructive [overflow-wrap:anywhere]"
-            >
-              {actionError}
-            </p>
+            <Alert variant="destructive" className="mt-4">
+              <WarningCircleIcon aria-hidden />
+              <AlertDescription className="[overflow-wrap:anywhere]">
+                {actionError}
+              </AlertDescription>
+            </Alert>
           ) : null}
-          {readinessRecovery}
+          {readinessRecovery ? (
+            <div className="mt-4">{readinessRecovery}</div>
+          ) : null}
           <Button
             className="mt-5 w-full max-w-full whitespace-normal sm:w-auto"
             onClick={() => draft && void startInterview(draft)}

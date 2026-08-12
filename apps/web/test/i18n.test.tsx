@@ -1,4 +1,3 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
   fireEvent,
@@ -8,18 +7,16 @@ import {
 } from "@testing-library/react";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   catalogs,
   LocaleProvider,
   type MessageKey,
   type UiLocale,
+  uiLocaleStorageKey,
   useI18n,
 } from "@/lib/i18n";
-const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }));
-
-vi.mock("@/lib/api", () => ({ api: apiMock }));
 
 function LocaleProbe() {
   const { formatDate, formatNumber, locale, setLocale, t } = useI18n();
@@ -41,18 +38,26 @@ function LocaleProbe() {
   );
 }
 
-function renderLocaleProbe() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+function renderLocaleProbe(initialLocale: UiLocale = "en-US") {
   return render(
-    <QueryClientProvider client={queryClient}>
-      <LocaleProvider initialLocale="en-US">
-        <LocaleProbe />
-      </LocaleProvider>
-    </QueryClientProvider>,
+    <LocaleProvider initialLocale={initialLocale} syncSettings={false}>
+      <LocaleProbe />
+    </LocaleProvider>,
   );
 }
+
+function renderFirstRunLocaleProbe(initialLocale: UiLocale = "en-US") {
+  return render(
+    <LocaleProvider initialLocale={initialLocale}>
+      <LocaleProbe />
+    </LocaleProvider>,
+  );
+}
+
+beforeEach(() => {
+  window.localStorage.clear();
+  document.cookie = "aptiloop.ui-locale=; Path=/; Max-Age=0";
+});
 
 afterEach(() => {
   cleanup();
@@ -103,7 +108,6 @@ describe("UI locale contract", () => {
   });
 
   it("switches locale, updates html lang, interpolates, formats, and exposes missing keys", async () => {
-    apiMock.mockResolvedValue({ uiLocale: "en-US" });
     renderLocaleProbe();
 
     expect(await screen.findByText("Home")).toBeInTheDocument();
@@ -120,10 +124,11 @@ describe("UI locale contract", () => {
     expect(screen.getByText("10.08.2026")).toBeInTheDocument();
     expect(screen.getByText(/1\s234,5/u)).toBeInTheDocument();
     await waitFor(() => expect(document.documentElement.lang).toBe("ru-RU"));
+    expect(window.localStorage.getItem(uiLocaleStorageKey)).toBe("ru-RU");
+    expect(document.cookie).toContain("aptiloop.ui-locale=ru-RU");
   });
 
   it("ignores malformed runtime locale values", async () => {
-    apiMock.mockResolvedValue({ uiLocale: "en-US" });
     renderLocaleProbe();
 
     expect(await screen.findByText("Home")).toBeInTheDocument();
@@ -131,6 +136,100 @@ describe("UI locale contract", () => {
 
     expect(screen.getByText("Home")).toBeInTheDocument();
     await waitFor(() => expect(document.documentElement.lang).toBe("en-US"));
+  });
+
+  it("hydrates from canonical local storage and mirrors the locale to the SSR cookie", async () => {
+    window.localStorage.setItem(uiLocaleStorageKey, "ru-RU");
+    renderLocaleProbe("en-US");
+
+    expect(await screen.findByText("Главная")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("ru-RU");
+    expect(document.cookie).toContain("aptiloop.ui-locale=ru-RU");
+  });
+
+  it("discards malformed stored locales and safely keeps the SSR fallback", async () => {
+    window.localStorage.setItem(uiLocaleStorageKey, "de-DE");
+    renderLocaleProbe("en-US");
+
+    expect(await screen.findByText("Home")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(window.localStorage.getItem(uiLocaleStorageKey)).toBeNull();
+  });
+
+  it("ignores a malformed locale cookie without breaking the local fallback", async () => {
+    document.cookie = "aptiloop.ui-locale=%; Path=/";
+    renderLocaleProbe("en-US");
+
+    expect(await screen.findByText("Home")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(window.localStorage.getItem(uiLocaleStorageKey)).toBeNull();
+  });
+
+  it("uses the confirmed cookie mirror when local storage reads are blocked", async () => {
+    document.cookie = "aptiloop.ui-locale=ru-RU; Path=/";
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("Storage blocked", "SecurityError");
+    });
+
+    renderFirstRunLocaleProbe("en-US");
+
+    expect(await screen.findByText("Главная")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("ru-RU");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("uses the browser prefill and keeps first-run confirmation when local storage reads are blocked", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("Storage blocked", "SecurityError");
+    });
+    vi.spyOn(window.navigator, "languages", "get").mockReturnValue(["ru-RU"]);
+
+    renderFirstRunLocaleProbe("en-US");
+
+    expect(await screen.findByText("Главная")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("ru-RU");
+    expect(
+      screen.getByRole("alertdialog", { name: "Выберите язык интерфейса" }),
+    ).toBeVisible();
+    expect(document.cookie).not.toContain("aptiloop.ui-locale=");
+  });
+
+  it("resets to the unsaved fallback when another tab removes the stored locale", async () => {
+    window.localStorage.setItem(uiLocaleStorageKey, "ru-RU");
+    renderLocaleProbe("en-US");
+    expect(await screen.findByText("Главная")).toBeInTheDocument();
+
+    window.localStorage.removeItem(uiLocaleStorageKey);
+    fireEvent(
+      window,
+      new StorageEvent("storage", {
+        key: uiLocaleStorageKey,
+        newValue: null,
+      }),
+    );
+
+    expect(await screen.findByText("Home")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(document.cookie).not.toContain("aptiloop.ui-locale=");
+  });
+
+  it("discards a malformed cross-tab locale without restoring the cookie mirror", async () => {
+    window.localStorage.setItem(uiLocaleStorageKey, "ru-RU");
+    renderLocaleProbe("en-US");
+    expect(await screen.findByText("Главная")).toBeInTheDocument();
+
+    window.localStorage.setItem(uiLocaleStorageKey, "de-DE");
+    fireEvent(
+      window,
+      new StorageEvent("storage", {
+        key: uiLocaleStorageKey,
+        newValue: "de-DE",
+      }),
+    );
+
+    expect(await screen.findByText("Home")).toBeInTheDocument();
+    expect(window.localStorage.getItem(uiLocaleStorageKey)).toBeNull();
+    expect(document.cookie).not.toContain("aptiloop.ui-locale=");
   });
 
   it("keeps hardcoded Russian out of production TypeScript outside the locale catalog", async () => {

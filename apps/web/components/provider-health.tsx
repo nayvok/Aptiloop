@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { z } from "zod";
 
 import {
   PopoverContent,
@@ -13,37 +14,75 @@ import { api } from "@/lib/api";
 import { type MessageKey, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
-type Connection = {
-  connectionId: string;
-  displayName: string;
-  enabled: boolean;
-  state: string;
-  observedCapabilities: {
-    connection: {
-      authenticated: boolean;
-      streaming: boolean;
-      cancellation: boolean;
-    };
-    models: Array<{
-      modelId: string;
-      available: boolean;
-      typedToolCalls: "none" | "best-effort" | "schema-constrained";
-    }>;
-  } | null;
-};
-type RoleProfile = {
-  role: "course-designer" | "tutor" | "evaluator" | "reviewer";
-  mode: "no-ai" | "connection";
-  connectionId: string | null;
-  modelId: string | null;
-  requiredCapabilities: string[];
-};
-type Settings = {
-  ai: {
-    connections: Connection[];
-    roleProfiles: RoleProfile[];
-  };
-};
+const settingsSchema = z
+  .object({
+    ai: z
+      .object({
+        connections: z.array(
+          z
+            .object({
+              connectionId: z.string(),
+              displayName: z.string(),
+              enabled: z.boolean(),
+              state: z.string(),
+              observedCapabilities: z
+                .object({
+                  connection: z
+                    .object({
+                      authenticated: z.boolean(),
+                      streaming: z.boolean(),
+                      cancellation: z.boolean(),
+                    })
+                    .passthrough(),
+                  models: z.array(
+                    z
+                      .object({
+                        modelId: z.string(),
+                        available: z.boolean(),
+                        typedToolCalls: z.enum([
+                          "none",
+                          "best-effort",
+                          "schema-constrained",
+                        ]),
+                      })
+                      .passthrough(),
+                  ),
+                })
+                .passthrough()
+                .nullable(),
+            })
+            .passthrough(),
+        ),
+        roleProfiles: z.array(
+          z
+            .object({
+              role: z.enum([
+                "course-designer",
+                "tutor",
+                "evaluator",
+                "reviewer",
+              ]),
+              mode: z.enum(["no-ai", "connection"]),
+              connectionId: z.string().nullable(),
+              modelId: z.string().nullable(),
+              requiredCapabilities: z.array(
+                z.enum([
+                  "streaming",
+                  "models",
+                  "tools",
+                  "structured-output",
+                  "cancellation",
+                ]),
+              ),
+            })
+            .passthrough(),
+        ),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+type Settings = z.infer<typeof settingsSchema>;
+type RoleProfile = Settings["ai"]["roleProfiles"][number];
 const roleLabels: Readonly<Record<RoleProfile["role"], MessageKey>> = {
   "course-designer": "role.courseDesigner",
   tutor: "role.tutor",
@@ -65,7 +104,7 @@ export function ProviderHealth({
     : undefined;
   const settingsQuery = useQuery({
     queryKey: ["settings", "provider-health"],
-    queryFn: () => api<Settings>("/settings"),
+    queryFn: async () => settingsSchema.parse(await api<unknown>("/settings")),
   });
   const settings = settingsQuery.data?.ai ?? null;
   const roles =
@@ -85,7 +124,7 @@ export function ProviderHealth({
   const allOff =
     roles.length > 0 && roles.every((role) => role.mode === "no-ai");
   const roleIsReady = (role: (typeof roles)[number]) => {
-    if (role.mode === "no-ai") return true;
+    if (role.mode === "no-ai") return false;
     const observed = role.connection?.observedCapabilities;
     const model = observed?.models.find(
       (candidate) => candidate.modelId === role.modelId && candidate.available,
@@ -98,7 +137,7 @@ export function ProviderHealth({
     ) {
       return false;
     }
-    return (role.requiredCapabilities ?? []).every((capability) => {
+    return role.requiredCapabilities.every((capability) => {
       switch (capability) {
         case "streaming":
           return observed.connection.streaming;
@@ -115,20 +154,16 @@ export function ProviderHealth({
       }
     });
   };
-  const ready = roles.length > 0 && roles.every((role) => roleIsReady(role));
-  const hasDegraded = roles.some(
-    (role) =>
-      role.mode === "connection" &&
-      Boolean(role.modelId) &&
-      role.status === "degraded",
+  const configuredRoles = roles.filter((role) => role.mode === "connection");
+  const ready =
+    configuredRoles.length > 0 && configuredRoles.every(roleIsReady);
+  const hasDegraded = configuredRoles.some(
+    (role) => Boolean(role.modelId) && role.status === "degraded",
   );
-  const hasProblem = roles.some(
-    (role) =>
-      role.mode === "connection" &&
-      role.status !== "degraded" &&
-      !roleIsReady(role),
+  const hasProblem = configuredRoles.some(
+    (role) => role.status !== "degraded" && !roleIsReady(role),
   );
-  const readyCount = roles.filter((role) => roleIsReady(role)).length;
+  const readyCount = configuredRoles.filter(roleIsReady).length;
 
   if (settingsQuery.isLoading) {
     return (
@@ -151,12 +186,13 @@ export function ProviderHealth({
   }
   if (settingsQuery.isError) {
     return (
-      <span
+      <Link
+        href="/settings?section=connections"
         data-slot="provider-health"
         data-state="error"
-        role="status"
+        aria-label={t("provider.statusUnavailable")}
         className={cn(
-          "inline-flex h-7 items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-3 text-xs font-medium text-destructive",
+          "inline-flex h-7 items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-3 text-xs font-medium text-destructive outline-none transition-colors hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
           compactControlClass,
         )}
       >
@@ -164,7 +200,7 @@ export function ProviderHealth({
         <span data-slot="provider-health-label" className={compactLabelClass}>
           {t("provider.statusUnavailable")}
         </span>
-      </span>
+      </Link>
     );
   }
 
@@ -212,10 +248,12 @@ export function ProviderHealth({
           <div>
             <p className="text-sm font-semibold">{t("provider.title")}</p>
             <p className="text-xs text-muted-foreground">
-              {t("provider.rolesReady", {
-                ready: readyCount,
-                total: roles.length,
-              })}
+              {allOff
+                ? t("provider.off")
+                : t("provider.rolesReady", {
+                    ready: readyCount,
+                    total: configuredRoles.length,
+                  })}
             </p>
           </div>
           <ul className="flex flex-col gap-2">
@@ -223,7 +261,16 @@ export function ProviderHealth({
               <li
                 key={role.role}
                 data-slot="provider-role"
-                data-status={role.status}
+                data-status={
+                  role.mode === "no-ai"
+                    ? "off"
+                    : roleIsReady(role)
+                      ? "ready"
+                      : role.status === "degraded"
+                        ? "degraded"
+                        : "problem"
+                }
+                data-connection-status={role.status}
                 className="flex items-center justify-between gap-2 text-sm"
               >
                 <span className="min-w-0 truncate text-muted-foreground">
@@ -232,9 +279,23 @@ export function ProviderHealth({
                 <span className="flex min-w-0 items-center gap-1.5 text-xs">
                   <span
                     aria-hidden
+                    data-slot="provider-role-indicator"
+                    data-state={
+                      role.mode === "no-ai"
+                        ? "off"
+                        : roleIsReady(role)
+                          ? "ready"
+                          : role.status === "degraded"
+                            ? "degraded"
+                            : "problem"
+                    }
                     className={cn(
                       "size-1.5 shrink-0 rounded-full",
-                      roleIsReady(role) ? "bg-success" : "bg-warning",
+                      role.mode === "no-ai"
+                        ? "bg-muted-foreground/55"
+                        : roleIsReady(role)
+                          ? "bg-success"
+                          : "bg-warning",
                     )}
                   />
                   <span className="truncate">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -42,6 +42,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { EmptyState, QueryError } from "@/components/query-state";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { RouteContext } from "@/lib/route-context";
@@ -589,6 +590,8 @@ export function SessionClient() {
     ? (["learning-session-v2", requestedSessionId] as const)
     : (["learning-session-current"] as const);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const lessonFocusRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusIdentityRef = useRef<string | null>(null);
 
   const query = useQuery({
     queryKey,
@@ -605,6 +608,25 @@ export function SessionClient() {
   });
 
   const session = query.data?.session ?? null;
+  const focusIdentity = session
+    ? `${session.id}:${session.currentStep}:${
+        session.unitProgress.find(
+          (item) =>
+            item.unitId === session.currentStep ||
+            session.snapshot.units.find(
+              (unit) => unit.stableId === session.currentStep,
+            )?.id === item.unitId,
+        )?.status ?? session.status
+      }`
+    : null;
+  useEffect(() => {
+    if (!focusIdentity) return;
+    const previousIdentity = previousFocusIdentityRef.current;
+    previousFocusIdentityRef.current = focusIdentity;
+    if (previousIdentity && previousIdentity !== focusIdentity) {
+      lessonFocusRef.current?.focus();
+    }
+  }, [focusIdentity]);
   const pageRouteContext = useMemo<RouteContext | null>(() => {
     if (!session) return null;
     const courseId =
@@ -699,19 +721,10 @@ export function SessionClient() {
 
   if (query.isPending) {
     return (
-      <div
-        data-slot="session-loading"
-        className="flex flex-col gap-4"
-        role="status"
-        aria-label={t("session.loading")}
-      >
-        <span className="sr-only">{t("session.loading")}</span>
-        <Skeleton className="h-20" />
-        <div className="grid gap-4 md:grid-cols-[14rem_minmax(0,1fr)]">
-          <Skeleton className="h-72" />
-          <Skeleton className="h-96" />
-        </div>
-      </div>
+      <LoadingState
+        label="session.loading"
+        className="min-h-[calc(100dvh-var(--shell-bar-size,4.5rem))] rounded-none"
+      />
     );
   }
 
@@ -799,23 +812,30 @@ export function SessionClient() {
   return (
     <div
       data-slot="guided-session"
-      className="flex w-full min-w-0 flex-col [&_[data-slot=badge]]:h-auto [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:break-words [&_[data-slot=badge]]:py-1 [&_[data-slot=button]]:h-auto [&_[data-slot=button]]:max-w-full [&_[data-slot=button]]:whitespace-normal"
+      className="@container/lesson min-w-0 [&_[data-slot=badge]]:h-auto [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:break-words [&_[data-slot=badge]]:py-1 [&_[data-slot=button]]:h-auto [&_[data-slot=button]]:max-w-full [&_[data-slot=button]]:whitespace-normal"
     >
-      <SessionProgressHeader
-        session={session}
-        completed={completed}
-        activeBlock={activeBlock}
-        activeBlockIndex={activeBlockIndex}
-        activeActivityIndex={activeActivityIndex}
-        phaseTotal={visibleBlocks.length}
-        onContinueLater={() => router.push("/")}
-      />
-
       <div
         data-slot="lesson-workspace"
-        className="mx-auto grid w-full max-w-[77rem] min-w-0 items-start gap-8 pt-4 sm:pt-5 xl:grid-cols-[minmax(0,48rem)_minmax(24rem,26rem)]"
+        className="grid min-h-[calc(100dvh-var(--shell-bar-size,4.5rem))] min-w-0 items-start @min-[72rem]/lesson:grid-cols-[minmax(0,1fr)_minmax(22rem,27rem)] @min-[72rem]/lesson:grid-rows-[auto_minmax(0,1fr)]"
       >
-        <div data-slot="lesson-focus" className="w-full min-w-0">
+        <SessionProgressHeader
+          session={session}
+          completed={completed}
+          activeBlock={activeBlock}
+          activeBlockIndex={activeBlockIndex}
+          activeActivityIndex={activeActivityIndex}
+          phaseTotal={visibleBlocks.length}
+          onContinueLater={() => router.push("/")}
+        />
+
+        <div
+          ref={lessonFocusRef}
+          data-slot="lesson-focus"
+          role="group"
+          aria-label={focusedUnit.title}
+          tabIndex={-1}
+          className="mx-auto w-full max-w-[60rem] min-w-0 scroll-mt-32 px-4 py-8 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-7 sm:py-10 lg:px-11 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-2 @min-[72rem]/lesson:px-12 @min-[72rem]/lesson:py-12"
+        >
           {showBlockTransition && activeBlock ? (
             <BlockTransition
               block={activeBlock}
@@ -860,10 +880,7 @@ export function SessionClient() {
                 </div>
               </div>
               <ReadyLearningBrief session={session} unit={focusedUnit} />
-              <div className="flex flex-col items-start gap-3 border-t border-border/60 pt-5 sm:flex-row sm:items-center sm:justify-between">
-                <Badge variant="secondary">
-                  {t(unitStatusMessageKeys[focusedProgress.status])}
-                </Badge>
+              <div className="flex justify-stretch pt-1 sm:justify-end">
                 <Button
                   className="w-full sm:w-auto"
                   disabled={pendingAction !== null}
@@ -986,9 +1003,9 @@ function ReadyLearningBrief({
   return (
     <div
       data-slot="unit-learning-brief"
-      className="flex min-w-0 flex-col gap-5"
+      className="flex min-w-0 flex-col gap-6"
     >
-      <section className="flex min-w-0 flex-col gap-1.5 border-y border-border/60 py-4">
+      <section className="flex min-w-0 flex-col gap-1.5 rounded-focus bg-surface-soft/55 px-4 py-4 sm:px-5 sm:py-5">
         <h3 className="text-sm font-semibold">
           {t("session.learningBrief.title")}
         </h3>
@@ -996,7 +1013,7 @@ function ReadyLearningBrief({
           {studyBody ?? unit.description}
         </p>
       </section>
-      <div className="grid min-w-0 gap-5 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3">
+      <div className="grid min-w-0 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         <InfoList title={t("dayPlan.outcomes")} items={outcomes} />
         <InfoList
           title={t("dayPlan.topics")}
@@ -1043,16 +1060,13 @@ function SessionProgressHeader({
   return (
     <header
       data-slot="session-progress-header"
-      className="sticky top-[4.5rem] z-10 w-full border-b border-border/70 bg-background/95 py-3 backdrop-blur-sm md:top-[5.75rem]"
+      className="sticky top-[var(--shell-bar-size,4.5rem)] z-10 w-full bg-background/95 px-4 py-4 backdrop-blur-sm sm:px-7 lg:px-11 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-1 @min-[72rem]/lesson:px-12"
     >
       <div
         data-slot="session-header-grid"
-        className="mx-auto w-full max-w-[77rem] min-w-0"
+        className="mx-auto w-full max-w-[60rem] min-w-0"
       >
-        <div
-          data-slot="session-orientation"
-          className="mx-auto w-full max-w-[48rem] min-w-0 xl:mx-0"
-        >
+        <div data-slot="session-orientation" className="w-full min-w-0">
           <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[0.6875rem] font-medium leading-4 text-muted-foreground">
@@ -1099,7 +1113,7 @@ function SessionProgressHeader({
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="xl:hidden"
+                    className="@min-[72rem]/lesson:hidden"
                   >
                     <ListIcon aria-hidden className="size-4" />
                     {t("session.plan")}
@@ -1195,7 +1209,7 @@ function BlockTransition({
           </ul>
         </div>
       ) : null}
-      <div className="flex flex-col gap-1.5 border-y border-border/60 py-4 sm:py-5">
+      <div className="flex flex-col gap-1.5 rounded-focus bg-surface-soft/55 px-4 py-4 sm:px-5 sm:py-5">
         <p className="text-sm font-semibold">{t("session.transition.next")}</p>
         <p className="text-sm leading-6 text-muted-foreground">
           {t("session.transition.meta", {
@@ -1462,23 +1476,20 @@ function BriefingUnitImpl({
 
   return (
     <div data-slot="briefing" className="flex flex-col gap-6">
-      <div
-        data-slot="briefing-overview"
-        className="grid border-y border-border/60 md:grid-cols-2"
-      >
+      <div data-slot="briefing-overview" className="grid gap-3 md:grid-cols-2">
         <BriefingSection
           title={t("session.briefing.topics")}
           items={day.topics}
           empty={t("session.briefing.topicsEmpty")}
-          className="py-5 md:pr-8"
+          className="rounded-focus bg-surface-soft/45 px-4 py-4 sm:px-5 sm:py-5"
         />
         <BriefingSection
           title={t("session.briefing.outcomes")}
           items={day.expectedOutcomes}
           empty={t("session.briefing.outcomesEmpty")}
-          className="border-t border-border/60 py-5 md:border-l md:border-t-0 md:pl-8"
+          className="rounded-focus bg-surface-soft/45 px-4 py-4 sm:px-5 sm:py-5"
         />
-        <section className="flex min-w-0 flex-col gap-2 border-t border-border/60 py-5 md:pr-8">
+        <section className="flex min-w-0 flex-col gap-2 rounded-focus bg-surface-soft/45 px-4 py-4 sm:px-5 sm:py-5">
           <h3 className="text-sm font-medium">{t("session.briefing.level")}</h3>
           <p className="break-words text-lg font-semibold [overflow-wrap:anywhere]">
             {depthMessageKey(day.depthLevel)
@@ -1493,18 +1504,18 @@ function BriefingUnitImpl({
           title={t("session.briefing.scope")}
           items={outOfScope}
           empty={t("session.briefing.scopeEmpty")}
-          className="border-t border-border/60 py-5 md:border-l md:pl-8"
+          className="rounded-focus bg-surface-soft/45 px-4 py-4 sm:px-5 sm:py-5"
         />
       </div>
 
       <section
         data-slot="briefing-plan"
-        className="flex flex-col gap-3 border-b border-border/60 pb-5"
+        className="flex flex-col gap-3 rounded-focus bg-surface-soft/45 px-4 py-4 sm:px-5 sm:py-5"
       >
         <h3 className="text-base font-semibold">
           {t("session.briefing.plan")}
         </h3>
-        <ol className="flex flex-col divide-y divide-border/60 text-sm">
+        <ol className="flex flex-col gap-1 text-sm">
           {blocks
             .filter((block) => block.totalCount > 0)
             .map((block, index) => (
@@ -1549,7 +1560,7 @@ function BriefingUnitImpl({
       ) : (
         <div
           data-slot="briefing-actions"
-          className="flex flex-col items-start gap-4 border-t border-border/60 pt-5 sm:flex-row sm:items-center sm:justify-between"
+          className="flex flex-col items-start gap-4 pt-1 sm:flex-row sm:items-center sm:justify-between"
         >
           <p className="max-w-[55ch] text-sm leading-6 text-muted-foreground">
             {t("session.briefing.skipDescription")}
@@ -3012,9 +3023,8 @@ function Sources({
       <div
         data-slot="unit-sources"
         className={cn(
-          "flex flex-col gap-3",
-          "border-y border-border/60 py-5",
-          flat ? null : "px-0",
+          "flex flex-col gap-3 rounded-focus bg-surface-soft/40 px-4 py-4 sm:px-5",
+          flat ? null : "mt-1",
         )}
       >
         <div className="flex flex-col gap-1">
@@ -3026,33 +3036,25 @@ function Sources({
         <p className="text-sm leading-6 text-muted-foreground">
           {t("session.sources.own")}
         </p>
-        <div>
-          <Button asChild variant="outline" size="sm">
-            <Link
-              href={`/courses/studio?version=${encodeURIComponent(curriculumVersionId)}`}
-            >
-              {t("session.sources.openEditor")}
-            </Link>
-          </Button>
-        </div>
+        <Link
+          href={`/courses/studio?version=${encodeURIComponent(curriculumVersionId)}`}
+          className="inline-flex w-fit items-center gap-1.5 rounded-control text-xs font-medium text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {t("session.sources.openEditor")}
+          <ArrowUpRightIcon aria-hidden className="size-3.5" />
+        </Link>
       </div>
     );
   }
   return (
     <div data-slot="unit-sources" className="flex flex-col gap-3">
       <h3 className="text-base font-semibold">{t("session.sources.title")}</h3>
-      <ul
-        className={cn(
-          "flex flex-col divide-y divide-border/60",
-          "border-y border-border/60",
-          flat ? null : "px-0",
-        )}
-      >
+      <ul className={cn("flex flex-col gap-3", flat ? null : "px-0")}>
         {unit.sources.map((source) => (
           <li
             key={source.id}
             data-slot="source-card"
-            className="flex min-w-0 flex-col gap-3 py-4 sm:py-5"
+            className="flex min-w-0 flex-col gap-3 rounded-focus bg-surface-soft/40 px-4 py-4 sm:px-5 sm:py-5"
           >
             <div className="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:justify-between">
               <div className="min-w-0">
