@@ -222,8 +222,8 @@ body {
   }
 
   html[data-sidebar-collapsed="true"] [data-slot="sidebar-brand"] {
-    width: 3rem;
-    flex: none;
+    width: 100%;
+    flex: 1 1 0%;
     justify-content: center;
     gap: 0;
     padding-inline: 0;
@@ -231,7 +231,7 @@ body {
 
   html[data-sidebar-collapsed="true"] [data-slot="sidebar-header"] {
     justify-content: center;
-    padding-inline: 0.75rem;
+    padding-inline: 0;
   }
 
   html[data-sidebar-collapsed="true"] [data-slot="sidebar-brand-label"],

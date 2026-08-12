@@ -166,8 +166,9 @@ export class ProviderManagementService {
       connections: await Promise.all(
         [...this.#configs.values()].map(async (config) => {
           const entry = getPiProviderCatalogEntry(config.catalogId);
-          const blockedLegacyCredential =
-            this.#blockedLegacyCredentialIds.has(config.connectionId);
+          const blockedLegacyCredential = this.#blockedLegacyCredentialIds.has(
+            config.connectionId,
+          );
           return {
             connectionId: config.connectionId,
             catalogId: config.catalogId,

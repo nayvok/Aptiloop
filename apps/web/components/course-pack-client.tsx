@@ -2687,19 +2687,19 @@ function CourseProgressRing({
       data-percent={percent}
       role="img"
       aria-label={label}
-      className="relative grid size-10 shrink-0 place-items-center"
+      className="relative grid size-11 shrink-0 place-items-center"
     >
       <svg
         aria-hidden
         viewBox="0 0 40 40"
-        className="absolute inset-0 size-10 -rotate-90"
+        className="absolute inset-0 size-11 -rotate-90"
       >
         <circle
           cx="20"
           cy="20"
           r={radius}
           fill="none"
-          strokeWidth="4"
+          strokeWidth="3.5"
           className="stroke-muted"
         />
         <circle
@@ -2707,7 +2707,7 @@ function CourseProgressRing({
           cy="20"
           r={radius}
           fill="none"
-          strokeWidth="4"
+          strokeWidth="3.5"
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={offset}
@@ -2717,7 +2717,7 @@ function CourseProgressRing({
       <span
         aria-hidden
         data-slot="course-progress-value"
-        className="relative z-[1] text-[0.625rem] font-semibold leading-none tracking-[-0.04em] tabular-nums"
+        className="relative z-[1] text-[0.6875rem] font-semibold leading-none tracking-[-0.04em] tabular-nums"
       >
         {percent}%
       </span>

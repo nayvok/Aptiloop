@@ -1197,7 +1197,7 @@ describe("Course library", () => {
             ?.textContent,
       ),
     ).toEqual(["50%", "0%"]);
-    expect(progressRings[0]).toHaveClass("size-10", "shrink-0");
+    expect(progressRings[0]).toHaveClass("size-11", "shrink-0");
     expect(
       within(currentRow as HTMLElement).getByRole("button", {
         name: "Другие действия для курса «Current foundations»",
@@ -1297,7 +1297,7 @@ describe("Course library", () => {
       '[data-slot="course-progress-ring"]',
     );
     expect(ring).toHaveAttribute("data-percent", "100");
-    expect(ring).toHaveClass("size-10", "shrink-0");
+    expect(ring).toHaveClass("size-11", "shrink-0");
     expect(
       ring?.querySelector('[data-slot="course-progress-value"]'),
     ).toHaveTextContent("100%");

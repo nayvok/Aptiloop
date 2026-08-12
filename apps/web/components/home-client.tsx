@@ -1215,17 +1215,17 @@ function UpcomingLesson({ day }: { day: LearningDay }) {
   return (
     <li
       data-slot="home-upcoming-lesson"
-      className="flex min-w-0 flex-col gap-3 rounded-control bg-surface-soft/45 px-4 py-3.5"
+      className="flex min-w-0 flex-col gap-2.5 rounded-control bg-surface-soft/45 px-4 py-3.5"
     >
       <div className="min-w-0 [overflow-wrap:anywhere]">
         <p className="font-medium leading-6">
           {t("home.lesson", { number: day.order })} · {day.title}
         </p>
       </div>
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <p className="text-xs text-muted-foreground">
-          {t("home.estimated", { minutes: day.estimatedMinutes })}
-        </p>
+      <p className="text-xs text-muted-foreground">
+        {t("home.estimated", { minutes: day.estimatedMinutes })}
+      </p>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full bg-background/60 px-2.5 py-1 text-xs text-muted-foreground">
           {day.status === "completed" ? (
             <CheckCircleIcon aria-hidden weight="fill" />

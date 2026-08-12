@@ -494,8 +494,16 @@ describe("provider login boundary", () => {
         async createSession() {
           throw new Error("Blocked provider session must not be created");
         },
-        async *streamMessage() {
-          throw new Error("Blocked provider stream must not run");
+        streamMessage() {
+          return {
+            [Symbol.asyncIterator]() {
+              return {
+                async next() {
+                  throw new Error("Blocked provider stream must not run");
+                },
+              };
+            },
+          };
         },
         async cancelSession() {},
       };
