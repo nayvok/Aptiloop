@@ -66,7 +66,8 @@ The frame owns shared loading, focus, status announcements, save state, capabili
 
 - Sticky lesson orientation and the activity occupy the left column; the substantial plan rail occupies the right column only when the lesson container, rather than the raw viewport, has enough width.
 - The plan rail has one canvas boundary, viewport-height independent scrolling, a connected phase timeline, and concise locked/current/completed text. Internal step rows use spacing and a current-step surface instead of stacked separators.
-- ActivityFrame is centered on a readable measure up to 54rem.
+- The sticky lesson orientation and ActivityFrame share one centered canvas boundary up to about 64rem, so progress and activity content align while prose inside the canvas retains its own readable measure.
+- The desktop plan rail stays within roughly 22–24rem and yields to the sheet composition when the post-sidebar lesson container cannot support both columns comfortably.
 - A contextual region appears only for sources, notes, evidence, or capability help that is useful alongside the task and fits the exercised viewport. Missing-source authoring remains available as a low-emphasis contextual link rather than a competing lesson action.
 - The main activity is an open editorial field; `surface-soft` is reserved for quiet context/evidence wells rather than wrapping every activity in a nested card or dividing every region with a rule.
 - Technical evidence may use a wider workspace up to the content maximum, while learner instructions retain readable measure.

@@ -131,8 +131,8 @@ Normal text must reach WCAG 2.2 AA contrast. Large text and graphical/control bo
 
 A 4px base produces steps `4, 8, 12, 16, 20, 24, 32, 40, 48, 64`.
 
-- Page section rhythm: 32px mobile, 40px desktop.
-- Page header to first region: 24–32px.
+- Page section rhythm: 24px by default and 32px only between distinct workflow regions.
+- Page header to first region: 20–24px.
 - Standard surface padding: 20px mobile, 24px desktop.
 - Focus field padding: 24px mobile, 32px desktop.
 - Related list rows: 16–20px vertical.
@@ -145,7 +145,7 @@ A 4px base produces steps `4, 8, 12, 16, 20, 24, 32, 40, 48, 64`.
 
 - UI, authored prose, and labels: Geist Sans.
 - Code, paths, stable IDs, hashes, versions, provider/model IDs, checks, and compact technical evidence: Geist Mono.
-- Page title: 28/34, weight 650, tracking `-0.025em`.
+- Page title: 32/37 mobile and about 38/43 desktop, weight 650, tracking `-0.03em`.
 - Focus value/title: 24–30/32–38, weight 620–650.
 - Section title: 18–20/26–28, weight 600.
 - Activity title: 22/30, weight 620.
@@ -191,7 +191,7 @@ The opaque 72px utility header owns shell collapse, location, and two global uti
 
 **Approved Core Alpha target**
 
-Main content uses a fluid centered maximum width of about 1440px and a shared 44px desktop gutter with the utility header.
+Main content and the utility header use the full post-rail canvas with shared 16px mobile and 24px desktop gutters. Readability limits belong to prose and focused forms, not to the shell itself.
 
 Mobile uses one 64–72px sticky header and one five-destination bottom bar. Labels remain visible in both locales. Safe-area padding, 320px reflow, and no second navigation row are mandatory.
 
@@ -199,7 +199,7 @@ Mobile uses one 64–72px sticky header and one five-destination bottom bar. Lab
 
 **Approved Core Alpha target**
 
-The page header is open, without a full-width hard divider. It contains one 44px title, a readable 17px one- or two-line description, and optional right-aligned 48–50px page actions. It never repeats the utility header breadcrumb or renders a false top-level title for a nested route. On mobile, actions wrap below content without clipping.
+The page header is open, without a full-width hard divider. It contains one compact responsive title, a readable 16px one- or two-line description, and optional right-aligned 44px page actions. It never repeats the utility header breadcrumb or renders a false top-level title for a nested route. On mobile, actions wrap below content without clipping.
 
 ### Buttons and controls
 
@@ -293,7 +293,7 @@ Skills is an evidence-backed topic index. Topic groups use open surfaces with a 
 
 **Implemented baseline**
 
-The lesson surface is an immersive, container-aware workspace with an open 54rem ActivityFrame canvas and a substantial desktop plan rail. Below the rail threshold, the same semantic plan opens in the accessible sheet. Surface contrast and spacing replace repeated rules, and presentation never infers readiness or changes `currentStep`, evidence, completion, or kernel ownership. [`docs/design/activity-renderers.md`](docs/design/activity-renderers.md) owns the detailed rail, sheet, activity-layer, focus, and state contract.
+The lesson surface is an immersive, container-aware workspace with an open ActivityFrame canvas capped near 64rem and a quieter 22–24rem desktop plan rail. The sticky orientation and activity use the same canvas edges. Below the rail threshold, the same semantic plan opens in the accessible sheet. Surface contrast and spacing replace repeated rules, and presentation never infers readiness or changes `currentStep`, evidence, completion, or kernel ownership. [`docs/design/activity-renderers.md`](docs/design/activity-renderers.md) owns the detailed rail, sheet, activity-layer, focus, and state contract.
 
 **Approved Core Alpha target**
 

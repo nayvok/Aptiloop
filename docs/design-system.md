@@ -34,11 +34,11 @@ The exact canonical values and contrast intent are in [`../DESIGN.md`](../DESIGN
 
 - Primary destinations are exactly Home, Courses, Review, Skills, and Settings.
 - The desktop rail is exactly 248px expanded and 72px collapsed. The collapsed width equals the utility-header height. Icon centers, 48px row heights, navigation order, and focus order remain stable between states; collapsed destinations use square hit fields and Radix tooltips and never render overlay labels into the content plane.
-- Expanded mode shows the neutral mark and wordmark; collapsed mode retains the centered mark in the same 72px rail. The icon-only collapse/expand control is in the utility header immediately before the breadcrumb, not in the brand row or a second strip. The browser-local collapse preference is restored before the interactive shell paints so reload does not flash an expanded rail first.
+- Expanded mode shows the neutral mark and wordmark; collapsed mode retains the centered mark in the same 72px rail. The icon-only collapse/expand control is in the utility header immediately before the breadcrumb, not in the brand row or a second strip. The browser-local collapse preference is restored before the interactive shell paints; rail geometry, labels, and transitions remain prepaint-controlled through hydration so cookie/local-storage reconciliation does not flash the wrong composition.
 - Home, Courses, Review, and Skills occupy the upper navigation; Settings is the final lower navigation item. The footer contains no AI/provider badge, theme switch, or ambiguous status pill.
 - The opaque 72px utility header contains the collapse/expand control and labeled breadcrumb on the left and coherent 44px outlined AI and theme controls on the right. Interface locale is changed only in Settings. Provider recovery remains in Settings or the affected workflow.
-- The shared header and main content use the same 44px desktop gutter inside a fluid maximum width of about 1440px.
-- The separate page header owns a 44px title, 17px description, and 48–50px page actions. It does not repeat the breadcrumb or substitute a top-level title for nested routes.
+- The shared header and main content use the full post-rail canvas with the same 16px mobile and 24px desktop gutters; prose and focused forms own their own readability limits.
+- The separate page header owns a compact responsive title, 16px description, and 44px page actions. It does not repeat the breadcrumb or substitute a top-level title for nested routes.
 - `/courses/*`, compatibility `/session?id=`, exercise, and lesson-linked interview contexts keep Courses active. Home is active only for Home.
 - Mobile uses one compact top context bar and one five-item bottom navigation with visible labels and safe-area padding. It has no second navigation row or squeezed desktop rail.
 - Reading surfaces use a 64–72ch measure; lists and Studio may use the available content width. Complete usable reflow at 320 CSS px remains an **Approved Core Alpha target** beyond the focused responsive paths already exercised.
@@ -85,7 +85,7 @@ Desktop destination tabs use the shared Radix Tabs primitive with visible focus 
 
 **Implemented baseline**
 
-The shared localized `LoadingState` is the default for route and query boundaries whose eventual geometry is not yet known. Skeletons are limited to bounded regions whose approximate shape is stable; they do not invent a page structure or announce each pulse. Both patterns expose one concise status through the owning region.
+The shared localized `LoadingState` is the default for route and query boundaries whose eventual geometry is not yet known. Page loading is open and transparent; panel loading may retain one quiet `surface-soft` frame. Skeletons are limited to bounded regions whose approximate shape is stable; they do not invent a page structure or announce each pulse. Both patterns expose one concise status through the owning region.
 
 ### Sheet, Popover, and toast feedback
 
