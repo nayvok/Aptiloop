@@ -2,10 +2,8 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import {
-  createDevelopmentCoursePackFixture,
-  validateCoursePackBytes,
-} from "@aptiloop/course-authoring-kit";
+import { validateCoursePackBytes } from "@aptiloop/course-authoring-kit";
+import { createDevelopmentCoursePackFixture } from "../../../packages/course-authoring-kit/test/fixture.js";
 import {
   createCourseFoundationRepository,
   createCoursePackRepository,

@@ -13,7 +13,7 @@ Aptiloop Core Alpha is local-first and single-user. Two local forms exist in the
 - local Node processes, where direct mode accepts only `127.0.0.1`, `::1`, or `localhost` and the orchestrator defaults to `127.0.0.1:8787`;
 - the committed two-service Compose topology, with host publication restricted to `127.0.0.1:3000` and `127.0.0.1:8787`.
 
-Compose runs the web and orchestrator as non-root container users, waits for local health checks, stores SQLite data and attempt data in named volumes, and bind-mounts repository-controlled exercise templates. Only explicit `ORCHESTRATOR_BIND_MODE=container-loopback-published` permits the orchestrator to listen on `0.0.0.0` inside its private container network; host mappings remain `127.0.0.1:3000` and `127.0.0.1:8787`.
+Compose runs the web and orchestrator as non-root container users with read-only root filesystems, dropped Linux capabilities, `no-new-privileges`, an init process, and a 30-second graceful-stop window; waits for local health checks; and stores SQLite data and private runtime data in named volumes. During shutdown, the orchestrator stops accepting API work, reports itself not ready, cancels active provider turns and trusted checks, drains persistence, and closes SQLite before exit. Final images contain built runtime files and production dependencies only. They do not mount or copy repository fixture directories, and production startup seeds no Course. The web authoring route includes only the exact schema and a topic-neutral, non-installable structural scaffold; concrete Course fixtures remain test-only. Only explicit `ORCHESTRATOR_BIND_MODE=container-loopback-published` permits the orchestrator to listen on `0.0.0.0` inside its private container network; host mappings remain `127.0.0.1:3000` and `127.0.0.1:8787`.
 
 This is **local packaging, not authenticated public self-hosting**. Do not change `127.0.0.1` port publication to `0.0.0.0`, publish it through a router/tunnel, or place a public proxy in front of it.
 
@@ -31,7 +31,7 @@ Default process-mode locations are:
 | Learner attempt workspaces        | `.data/exercise-attempts`                                |
 | External provider learning access | Explicit Provider Hub connection and per-turn disclosure |
 
-Compose stores the database in `harness-data` and attempt workspaces in `harness-attempts`. These volumes are private runtime data and are not source fixtures. They can contain answers, transcripts, mastery, mistakes, diffs, test output, provider/model metadata, and local paths.
+Compose stores the database in `harness-data` and the app-owned `.data` directory in `harness-attempts`. These volumes are private runtime data and are not source fixtures. The latter can contain attempt workspaces and the POSIX plaintext provider credential file in addition to answers, transcripts, mastery, mistakes, diffs, test output, provider/model metadata, and local paths. Treat the cold paired archive as a secret-bearing private backup; it is not the sanitized cross-device export.
 
 Private data is never uploaded or shared without an explicit user action naming destination and scope. Course Packs, exports, logs, process environments, and model prompts must not carry credentials. External providers are optional and resolved only by the server-owned Provider Hub; an unavailable provider remains an explicit failure and never becomes Mock. Mock is limited to tests, CI, and development. Any Course, source, learner evidence, transcript, workspace, or profile disclosure to a provider requires the recorded destination-specific decision defined by the M6 policy.
 
@@ -74,13 +74,15 @@ See [Core Alpha Migration Strategy](docs/migration/core-alpha-migration-strategy
 
 The observed candidate inventory and exact disposition are recorded in [M1 Safety-Boundary and Private-Data Inventory](docs/audits/2026-08-08-m1-safety-boundary-inventory.md).
 
-The current exercise path copies a trusted repository template into an attempt workspace and accepts only the app-owned browser command ID `test`, with an outer `shell: false` runner, sanitized environment, timeout, output cap, cancellation, and process-tree cleanup. Check and review freshness bind the exact attempt/check identity to a canonical complete-workspace SHA-256 plus complete non-truncated Git diff evidence; the evidence-only Reviewer has no write/apply route. The compatibility plan still invokes repository-controlled `npm test`, so learner-template scripts and npm lifecycle behavior remain trusted-code authority.
+In source-checkout development operation, the exercise path copies a trusted repository template into an attempt workspace and accepts only the app-owned browser command ID `test`, with an outer `shell: false` runner, sanitized environment, timeout, output cap, cancellation, and process-tree cleanup. Check and review freshness bind the exact attempt/check identity to a canonical complete-workspace SHA-256 plus complete non-truncated Git diff evidence; the evidence-only Reviewer has no write/apply route. The compatibility plan still invokes repository-controlled `npm test`, so learner-template scripts and npm lifecycle behavior remain trusted-code authority.
+
+The production Compose profile intentionally ships no fixture-backed trusted exercise templates. A Course Pack cannot add executable templates, and any Course that references an absent trusted template fails explicitly. Git and Python 3 remain installed because those app-owned execution environments are advertised and can serve a future separately approved trusted-template installation path; their presence does not make Course content executable.
 
 It is therefore **native, unsandboxed, trusted-only execution**. The process has the authority of the orchestrator/container user within its reachable environment, and current execution does not enforce network denial or host resource quotas. Path containment and a browser command allowlist are not a hostile-code sandbox.
 
 Consequences:
 
-- run only repository-controlled trusted templates;
+- in source-checkout development mode, run only repository-controlled trusted templates;
 - do not connect imported Course Pack files to the native runner;
 - do not add commands, scripts, executable arguments, environment values, plugins, secrets, or host paths to Course Packs;
 - do not treat a container alone as sufficient isolation;

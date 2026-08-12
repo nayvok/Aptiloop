@@ -619,6 +619,18 @@ describe("guided versioned session", () => {
     expect(plan).toHaveTextContent("Ожидаемые результаты");
     expect(plan).toHaveTextContent("Вне занятия");
     expect(plan).toHaveTextContent("Брифинг");
+    const estimates = plan?.querySelectorAll(
+      '[data-slot="estimated-duration"]',
+    );
+    expect(estimates).toHaveLength(3);
+    expect(
+      Array.from(estimates ?? [], (estimate) => estimate.textContent),
+    ).toEqual(["Примерно 3 ч", "Примерно 10 мин", "Примерно 10 мин"]);
+    for (const estimate of estimates ?? []) {
+      expect(estimate).toHaveClass("whitespace-nowrap");
+    }
+    expect(plan).not.toHaveTextContent(/Активность: 1\s*·/u);
+    expect(plan).not.toHaveTextContent(/Брифинг\s*·\s*Примерно/u);
     expect(
       plan?.querySelector('[data-slot="day-plan-goal"]'),
     ).not.toHaveAttribute("open");
@@ -721,7 +733,9 @@ describe("guided versioned session", () => {
         "Этап 1 из 1 · Понять · Активность 1 из 1",
       ),
     ).toHaveAttribute("data-slot", "phase-activity-line");
-    expect(header).toHaveTextContent("Осталось на этапе:");
+    expect(
+      within(header as HTMLElement).getByText("Осталось примерно 10 мин"),
+    ).toHaveAttribute("data-slot", "estimated-duration");
     expect(
       within(header as HTMLElement).getAllByRole("progressbar"),
     ).toHaveLength(1);
@@ -1318,7 +1332,14 @@ describe("guided versioned session", () => {
     expect(
       within(transition as HTMLElement).getByText("Юнит study"),
     ).toBeVisible();
-    expect(screen.getByText(/Подтвердить · Активностей: 1/u)).toBeVisible();
+    expect(
+      within(transition as HTMLElement).getByText(
+        "Подтвердить · Активность: 1",
+      ),
+    ).toBeVisible();
+    expect(
+      within(transition as HTMLElement).getByText("Примерно 10 мин"),
+    ).toHaveAttribute("data-slot", "estimated-duration");
     expect(
       screen.getByRole("button", { name: "Продолжить сейчас" }),
     ).toBeEnabled();

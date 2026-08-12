@@ -187,7 +187,13 @@ export function createCatalogPiAgentProvider(
 ): PiAgentProvider {
   const entry = getPiProviderCatalogEntry(input.catalogId);
   const provider = createCatalogProvider(entry, input);
-  const models = createModels({ credentials: input.credentials });
+  const models = createModels({
+    credentials: input.credentials,
+    authContext: {
+      env: async () => undefined,
+      fileExists: async () => false,
+    },
+  });
   models.setProvider(provider);
   return new PiAgentProvider({
     models,

@@ -30,6 +30,22 @@ interface ProviderConnectionRow {
   last_checked_at: string | null;
 }
 
+export interface ListProviderConnectionsOptions {
+  readonly includeRetired?: boolean;
+}
+
+export interface RetireProviderConnectionInput {
+  readonly connectionId: string;
+  readonly retiredAt: string;
+  readonly applicationSetting?: {
+    readonly key: string;
+    readonly valueJson: string;
+    readonly updatedAt: number;
+  };
+}
+
+const maximumApplicationSettingBytes = 1_000_000;
+
 interface RoleProfileRow {
   role: string;
   mode: string;
@@ -75,7 +91,7 @@ export class ProviderHubRepository {
   saveConnection(input: ProviderConnection): ProviderConnection {
     const connection = ProviderConnectionSchema.parse(input);
     const now = Date.now();
-    this.#connection.sqlite
+    const result = this.#connection.sqlite
       .prepare(
         `INSERT INTO provider_hub_connections
           (connection_id, adapter_id, provider_type, display_name,
@@ -93,7 +109,8 @@ export class ProviderHubRepository {
            state = excluded.state,
            observed_capabilities_json = excluded.observed_capabilities_json,
            last_checked_at = excluded.last_checked_at,
-           updated_at = excluded.updated_at`,
+           updated_at = excluded.updated_at
+         WHERE provider_hub_connections.retired_at IS NULL`,
       )
       .run(
         connection.connectionId,
@@ -112,20 +129,83 @@ export class ProviderHubRepository {
         now,
         now,
       );
+    if (result.changes !== 1) {
+      throw new Error(
+        `Provider connection ${connection.connectionId} is retired`,
+      );
+    }
     return connection;
   }
 
-  listConnections(): ProviderConnection[] {
+  listConnections(
+    options: ListProviderConnectionsOptions = {},
+  ): ProviderConnection[] {
     const rows = this.#connection.sqlite
       .prepare(
         `SELECT connection_id, adapter_id, provider_type, display_name,
                 credential_ref, endpoint_profile_id, enabled, external, state,
                 observed_capabilities_json, last_checked_at
          FROM provider_hub_connections
+         WHERE retired_at IS NULL OR ? = 1
          ORDER BY display_name, connection_id`,
       )
-      .all() as unknown as ProviderConnectionRow[];
+      .all(
+        options.includeRetired ? 1 : 0,
+      ) as unknown as ProviderConnectionRow[];
     return rows.map(toProviderConnection);
+  }
+
+  retireConnection(input: RetireProviderConnectionInput): void {
+    const connectionId = parseStableId(input.connectionId, "connectionId");
+    const retiredAt = parseIsoDateTime(input.retiredAt, "retiredAt");
+    const updatedAt = Date.parse(retiredAt);
+    const setting = input.applicationSetting
+      ? parseApplicationSetting(input.applicationSetting)
+      : undefined;
+
+    this.#transaction(() => {
+      this.#connection.sqlite
+        .prepare(
+          `UPDATE provider_hub_role_profiles
+           SET mode = 'no-ai',
+               connection_id = NULL,
+               model_id = NULL,
+               required_capabilities_json = '[]',
+               updated_at = ?
+           WHERE connection_id = ?`,
+        )
+        .run(updatedAt, connectionId);
+
+      const result = this.#connection.sqlite
+        .prepare(
+          `UPDATE provider_hub_connections
+           SET enabled = 0,
+               state = 'disabled',
+               credential_ref = NULL,
+               observed_capabilities_json = NULL,
+               retired_at = ?,
+               updated_at = ?
+           WHERE connection_id = ? AND retired_at IS NULL`,
+        )
+        .run(retiredAt, updatedAt, connectionId);
+      if (result.changes !== 1) {
+        throw new Error(
+          `Provider connection ${connectionId} was not found or is already retired`,
+        );
+      }
+
+      if (setting) {
+        this.#connection.sqlite
+          .prepare(
+            `INSERT INTO application_settings (key, value_json, updated_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET
+               value_json = excluded.value_json,
+               updated_at = excluded.updated_at`,
+          )
+          .run(setting.key, setting.valueJson, setting.updatedAt);
+      }
+    });
   }
 
   saveRoleProfile(input: RoleProfile): RoleProfile {
@@ -577,4 +657,58 @@ function toProviderConnection(row: ProviderConnectionRow): ProviderConnection {
     observedCapabilities: capabilities,
     lastCheckedAt: row.last_checked_at,
   });
+}
+
+function parseStableId(value: string, label: string): string {
+  const normalized = value.trim();
+  if (
+    normalized.length < 1 ||
+    normalized.length > 200 ||
+    !/^[a-z0-9][a-z0-9._:-]*$/u.test(normalized)
+  ) {
+    throw new Error(`${label} must be a valid stable ID`);
+  }
+  return normalized;
+}
+
+function parseIsoDateTime(value: string, label: string): string {
+  const timestamp = Date.parse(value);
+  if (
+    !Number.isFinite(timestamp) ||
+    new Date(timestamp).toISOString() !== value
+  ) {
+    throw new Error(`${label} must be a canonical ISO date-time`);
+  }
+  return value;
+}
+
+function parseApplicationSetting(
+  setting: NonNullable<RetireProviderConnectionInput["applicationSetting"]>,
+): NonNullable<RetireProviderConnectionInput["applicationSetting"]> {
+  const key = setting.key.trim();
+  if (key.length < 1 || key.length > 200) {
+    throw new Error("applicationSetting.key must contain 1 to 200 characters");
+  }
+  if (!Number.isSafeInteger(setting.updatedAt) || setting.updatedAt < 0) {
+    throw new Error(
+      "applicationSetting.updatedAt must be a non-negative integer",
+    );
+  }
+  if (
+    setting.valueJson.length < 1 ||
+    Buffer.byteLength(setting.valueJson, "utf8") >
+      maximumApplicationSettingBytes
+  ) {
+    throw new Error(
+      `applicationSetting.valueJson must contain at most ${maximumApplicationSettingBytes} bytes`,
+    );
+  }
+  try {
+    JSON.parse(setting.valueJson);
+  } catch (error) {
+    throw new Error("applicationSetting.valueJson must be valid JSON", {
+      cause: error,
+    });
+  }
+  return { ...setting, key };
 }

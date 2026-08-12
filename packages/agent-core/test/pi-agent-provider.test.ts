@@ -250,6 +250,43 @@ describe("PiAgentProvider", () => {
     ).not.toContain("custom-provider-secret");
   });
 
+  it("does not treat ambient provider environment variables as managed credentials", async () => {
+    const sentinel = "ambient-key-must-not-activate-managed-provider";
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = sentinel;
+    const readCredential = vi.fn(async () => undefined);
+    const credentials: CredentialStore = {
+      read: readCredential,
+      list: async () => [],
+      modify: async (_providerId, operation) => operation(undefined),
+      delete: async () => undefined,
+    };
+    try {
+      const provider = createCatalogPiAgentProvider({
+        catalogId: "openai-api",
+        connectionId: "conn:managed:without-credential",
+        credentials,
+      });
+
+      await expect(provider.getStatus()).resolves.toMatchObject({
+        state: "authentication-required",
+      });
+      await expect(provider.listModels()).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ available: false })]),
+      );
+      expect(
+        JSON.stringify({
+          status: await provider.getStatus(),
+          models: await provider.listModels(),
+        }),
+      ).not.toContain(sentinel);
+      expect(readCredential).toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
   it("rejects provider tools outside the Aptiloop role policy", async () => {
     const provider = new PiAgentProvider({
       models: fakeModels(),

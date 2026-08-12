@@ -8,10 +8,10 @@ import {
   createLearningRepository,
   migrateDatabase,
   openDatabase,
-  seedDatabase,
   type DatabaseConnection,
   type LearningRepository,
 } from "../src/index.js";
+import { seedDatabase } from "../src/development-fixtures.js";
 
 const cleanup: Array<() => void> = [];
 

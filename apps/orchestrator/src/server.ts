@@ -5,7 +5,10 @@ import { parseOrchestratorStartupConfig } from "./startup-boundary.js";
 
 const startupConfig = parseOrchestratorStartupConfig(process.env);
 const { hostname, port } = startupConfig;
-const runtime = createApp({ startupConfig });
+const runtime = createApp({
+  startupConfig,
+  developmentMode: false,
+});
 
 const server = serve(
   {
@@ -18,7 +21,11 @@ const server = serve(
   },
 );
 
+let shuttingDown = false;
 const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  runtime.beginShutdown();
   server.close(async () => {
     try {
       await runtime.close();

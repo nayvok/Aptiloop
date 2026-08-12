@@ -49,7 +49,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { type MessageKey, useI18n } from "@/lib/i18n";
 import {
   ProviderLoginStatusSchema,
@@ -138,6 +138,7 @@ export function ProviderConnectionManager({
   );
   const [promptAnswer, setPromptAnswer] = useState("");
   const [disableTarget, setDisableTarget] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const metadataByConnection = useMemo(
     () =>
       new Map(
@@ -230,6 +231,26 @@ export function ProviderConnectionManager({
       ),
     onSuccess: refreshSettings,
   });
+  const removeConnection = useMutation({
+    mutationFn: (connectionId: string) =>
+      api<{ removed: true }>(
+        `/settings/ai/connections/${encodeURIComponent(connectionId)}`,
+        { method: "DELETE", body: "{}" },
+      ),
+    onSuccess: async (_result, connectionId) => {
+      setRemoveTarget(null);
+      if (credentialEditor === connectionId) {
+        setCredentialEditor(null);
+        setReplacementKey("");
+      }
+      if (loginConnectionId === connectionId) {
+        setLoginConnectionId(null);
+        setLoginOperationId(null);
+        setPromptAnswer("");
+      }
+      await refreshSettings();
+    },
+  });
   const enableLocal = useMutation({
     mutationFn: (connectionId: string) =>
       api<{ enabled: true }>(
@@ -298,6 +319,7 @@ export function ProviderConnectionManager({
     createConnection.error ??
     setCredential.error ??
     disableConnection.error ??
+    removeConnection.error ??
     enableLocal.error ??
     startLogin.error ??
     answerLogin.error ??
@@ -915,6 +937,85 @@ export function ProviderConnectionManager({
                                 </AlertDialogContent>
                               </AlertDialog>
                             ) : null}
+                            <AlertDialog
+                              open={removeTarget === connection.connectionId}
+                              onOpenChange={(open) => {
+                                removeConnection.reset();
+                                setRemoveTarget(
+                                  open ? connection.connectionId : null,
+                                );
+                              }}
+                            >
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  className="w-full sm:w-auto"
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  aria-label={`${t("settings.connection.remove")}: ${connection.displayName}`}
+                                  disabled={removeConnection.isPending}
+                                >
+                                  {t("settings.connection.remove")}
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>
+                                    {t("settings.connection.removeTitle")}
+                                  </AlertDialogTitle>
+                                  <AlertDialogDescription className="min-w-0">
+                                    <span className="block break-words text-foreground">
+                                      {connection.displayName}
+                                    </span>
+                                    <span className="mt-2 block">
+                                      {t(
+                                        "settings.connection.removeDescription",
+                                      )}
+                                    </span>
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                {removeConnection.isError ? (
+                                  <Alert variant="destructive">
+                                    <AlertTitle>
+                                      {t("settings.connection.actionError")}
+                                    </AlertTitle>
+                                    <AlertDescription>
+                                      {apiErrorMessage(
+                                        removeConnection.error,
+                                        t("settings.connection.actionError"),
+                                        t(
+                                          "settings.connection.removeActiveRequest",
+                                        ),
+                                      )}
+                                    </AlertDescription>
+                                  </Alert>
+                                ) : null}
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>
+                                    {t("settings.connection.cancelAdd")}
+                                  </AlertDialogCancel>
+                                  <AlertDialogAction
+                                    variant="destructive"
+                                    disabled={removeConnection.isPending}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      removeConnection.mutate(
+                                        connection.connectionId,
+                                      );
+                                    }}
+                                  >
+                                    {removeConnection.isPending ? (
+                                      <Spinner data-icon="inline-start" />
+                                    ) : null}
+                                    {t(
+                                      removeConnection.isPending
+                                        ? "settings.connection.removing"
+                                        : "settings.connection.removeConfirm",
+                                    )}
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
                           </div>
 
                           {isActiveLogin ? (
@@ -1196,7 +1297,17 @@ function providerPromptOptionLabel(
     : "settings.connection.promptOptionDeviceCode";
 }
 
-function apiErrorMessage(error: unknown, fallback: string): string {
-  void error;
+function apiErrorMessage(
+  error: unknown,
+  fallback: string,
+  conflictMessage?: string,
+): string {
+  if (
+    conflictMessage !== undefined &&
+    error instanceof ApiError &&
+    error.status === 409
+  ) {
+    return conflictMessage;
+  }
   return fallback;
 }

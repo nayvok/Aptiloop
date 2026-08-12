@@ -13,7 +13,10 @@ export interface AgentProvider {
   readonly id: ProviderId;
   getStatus(signal?: AbortSignal): Promise<ProviderStatus>;
   listModels(signal?: AbortSignal): Promise<AgentModel[]>;
-  createSession(input: CreateAgentSessionInput): Promise<AgentSession>;
+  createSession(
+    input: CreateAgentSessionInput,
+    signal?: AbortSignal,
+  ): Promise<AgentSession>;
   streamMessage(input: StreamAgentMessageInput): AsyncIterable<AgentEvent>;
   cancelSession(sessionId: string): Promise<void>;
 }

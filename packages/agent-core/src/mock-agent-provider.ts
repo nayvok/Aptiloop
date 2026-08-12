@@ -131,7 +131,11 @@ export class MockAgentProvider implements AgentProvider {
     ];
   }
 
-  async createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
+  async createSession(
+    input: CreateAgentSessionInput,
+    signal?: AbortSignal,
+  ): Promise<AgentSession> {
+    signal?.throwIfAborted();
     if (input.modelId !== "mock-deterministic")
       throw new AgentProviderError(
         "model_unavailable",

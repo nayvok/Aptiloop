@@ -391,7 +391,7 @@ describe("UI foundation", () => {
     },
   );
 
-  it("gives an open lesson the immersive shell surface with mobile nav clearance", () => {
+  it("gives every mobile route safe-area-aware bottom navigation clearance", () => {
     apiMock.mockReturnValue(new Promise(() => {}));
     pathnameState.value = "/session";
 
@@ -406,11 +406,34 @@ describe("UI foundation", () => {
       "min-h-[calc(100dvh-var(--shell-bar-size))]",
       "px-0",
       "pt-0",
-      "pb-28",
+      "pb-[var(--shell-mobile-navigation-clearance)]",
       "md:pb-0",
     );
     expect(main).not.toHaveClass("max-w-[1440px]", "lg:py-8");
     expect(document.title).toBe("Урок · Aptiloop");
+
+    cleanup();
+    pathnameState.value = "/";
+    renderWithQuery(
+      <AppShell>
+        <p>Главная</p>
+      </AppShell>,
+    );
+
+    const regularMain = screen.getByRole("main");
+    expect(regularMain).toHaveClass(
+      "pt-8",
+      "pb-[var(--shell-mobile-navigation-clearance)]",
+      "sm:pt-10",
+      "md:pb-12",
+    );
+    expect(regularMain).not.toHaveClass("py-8", "sm:py-10");
+    expect(
+      screen.getByRole("navigation", { name: "Мобильная навигация" }),
+    ).toHaveClass(
+      "min-h-[var(--shell-mobile-navigation-height)]",
+      "pb-[max(0.25rem,env(safe-area-inset-bottom))]",
+    );
   });
 
   it.each([
@@ -713,7 +736,8 @@ describe("UI foundation", () => {
       modelId: "gpt-5.2",
       modelAvailable: true,
       expectedState: "degraded",
-      detail: "Нужна проверка",
+      detail: "Настроено · ещё не протестировано",
+      readyCount: 1,
     },
     {
       connectionState: "connected",
@@ -721,6 +745,7 @@ describe("UI foundation", () => {
       modelAvailable: true,
       expectedState: "problem",
       detail: "Модель не выбрана",
+      readyCount: 0,
     },
     {
       connectionState: "connected",
@@ -728,15 +753,17 @@ describe("UI foundation", () => {
       modelAvailable: false,
       expectedState: "problem",
       detail: "Недоступно",
+      readyCount: 0,
     },
   ])(
-    "keeps $connectionState with model $modelId out of the ready AI state",
+    "reports $connectionState with model $modelId without hiding hard failures",
     async ({
       connectionState,
       modelId,
       modelAvailable,
       expectedState,
       detail,
+      readyCount,
     }) => {
       apiMock.mockResolvedValue({
         ai: {
@@ -794,7 +821,9 @@ describe("UI foundation", () => {
         await screen.findByText(new RegExp(detail, "u")),
       ).toBeInTheDocument();
       expect(
-        screen.getByText(/Готово настроенных AI-ролей: 0 из 1/u),
+        screen.getByText(
+          new RegExp(`Готово настроенных AI-ролей: ${readyCount} из 1`, "u"),
+        ),
       ).toBeInTheDocument();
     },
   );

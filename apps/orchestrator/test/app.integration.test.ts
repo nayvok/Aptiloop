@@ -1,13 +1,17 @@
 import {
+  copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -16,7 +20,17 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, type TestContext } from "vitest";
 import { z } from "zod";
 
+import { MockAgentProvider } from "@aptiloop/agent-core/mock";
+import {
+  createApprovedM1Backup,
+  migrateDatabase,
+  openDatabase,
+} from "@aptiloop/database";
+
 import { createApp } from "../src/app.js";
+import { runM1MigrationCli } from "../../../packages/database/src/cli/migrate.js";
+import { seedDevelopmentDatabase } from "./development-database-fixture.js";
+import { testDevelopmentProviderFixture } from "./provider-development-fixture.js";
 
 const runtimes: Array<ReturnType<typeof createApp>> = [];
 const roots: string[] = [];
@@ -86,11 +100,96 @@ function runtime(options: Parameters<typeof createApp>[0] = {}) {
     projectRoot: path.resolve("../.."),
     databasePath: path.join(root, "test.sqlite"),
     databaseMode: "disposable",
+    developmentDatabaseInitializer: seedDevelopmentDatabase,
     ...options,
   });
   runtimes.push(created);
   return created;
 }
+
+function activeProjectRoot() {
+  const projectRoot = mkdtempSync(
+    path.join(tmpdir(), "aptiloop-active-runtime-"),
+  );
+  roots.push(projectRoot);
+  const databasePackageRoot = path.join(projectRoot, "packages", "database");
+  mkdirSync(databasePackageRoot, { recursive: true });
+  cpSync(
+    path.resolve("../..", "packages", "database", "migrations"),
+    path.join(databasePackageRoot, "migrations"),
+    { recursive: true },
+  );
+  return projectRoot;
+}
+
+async function createExact0018ActiveDatabase(projectRoot: string): Promise<{
+  backup: string;
+  backupSha256: string;
+}> {
+  const migrationDirectory = path.join(projectRoot, "migrations-through-0018");
+  mkdirSync(migrationDirectory);
+  const sourceMigrations = path.join(
+    projectRoot,
+    "packages",
+    "database",
+    "migrations",
+  );
+  for (const filename of readdirSync(sourceMigrations)) {
+    if (!/^(?:000\d|001[0-8])_.*\.sql$/u.test(filename)) continue;
+    copyFileSync(
+      path.join(sourceMigrations, filename),
+      path.join(migrationDirectory, filename),
+    );
+  }
+  const source = path.join(projectRoot, ".data", "dev-learning-harness.sqlite");
+  const connection = openDatabase(source);
+  try {
+    migrateDatabase(connection, migrationDirectory);
+  } finally {
+    connection.close();
+  }
+  const backup = path.join(
+    projectRoot,
+    ".data",
+    "approved-backups",
+    "approved-pre-retirement.sqlite",
+  );
+  await createApprovedM1Backup({
+    projectRoot,
+    sourcePath: source,
+    destinationPath: backup,
+  });
+  return {
+    backup,
+    backupSha256: createHash("sha256")
+      .update(readFileSync(backup))
+      .digest("hex"),
+  };
+}
+
+const providerSettingsSchema = z.object({
+  ai: z.object({
+    connections: z.array(
+      z.object({
+        connectionId: z.string(),
+        adapterId: z.string(),
+        enabled: z.boolean(),
+        state: z.string(),
+      }),
+    ),
+    roleProfiles: z.array(
+      z.object({
+        role: z.enum(["course-designer", "tutor", "evaluator", "reviewer"]),
+        mode: z.enum(["no-ai", "connection"]),
+        connectionId: z.string().nullable(),
+        modelId: z.string().nullable(),
+      }),
+    ),
+    management: z.object({
+      connections: z.array(z.object({ connectionId: z.string() })),
+    }),
+  }),
+});
 
 const request = (
   app: ReturnType<typeof createApp>["app"],
@@ -109,6 +208,251 @@ const request = (
   });
 
 describe("orchestrator vertical flow", () => {
+  it("rejects exact 0018 before provider startup and starts after the approved migration", async () => {
+    const projectRoot = activeProjectRoot();
+    const fixture = await createExact0018ActiveDatabase(projectRoot);
+
+    expect(() => createApp({ projectRoot })).toThrow(
+      "0018_learner_course_state_trigger_guard",
+    );
+    expect(() => createApp({ projectRoot })).toThrow(
+      "npm run db:migrate -- --authorize-current --approved-backup <path> --backup-sha256 <sha256>",
+    );
+
+    runM1MigrationCli({
+      argv: [
+        "--authorize-current",
+        "--approved-backup",
+        fixture.backup,
+        "--backup-sha256",
+        fixture.backupSha256,
+      ],
+      projectRoot,
+      writeStatus: () => undefined,
+    });
+
+    const created = createApp({ projectRoot });
+    runtimes.push(created);
+    expect(
+      created.state.connection.sqlite
+        .prepare(
+          `SELECT 1 AS present
+           FROM pragma_table_info('provider_hub_connections')
+           WHERE name = 'retired_at'`,
+        )
+        .get(),
+    ).toEqual({ present: 1 });
+  });
+
+  it("starts a fresh active production database without fixtures or provider defaults", async () => {
+    const projectRoot = activeProjectRoot();
+    const created = createApp({
+      projectRoot,
+      databasePath: path.join(
+        projectRoot,
+        ".data",
+        "dev-learning-harness.sqlite",
+      ),
+      databaseMode: "active",
+      developmentMode: false,
+    });
+    runtimes.push(created);
+
+    const { sqlite } = created.state.connection;
+    expect(
+      sqlite.prepare("SELECT count(*) AS count FROM curriculum_days").get(),
+    ).toEqual({ count: 0 });
+    expect(
+      sqlite.prepare("SELECT count(*) AS count FROM curricula").get(),
+    ).toEqual({ count: 0 });
+    expect(
+      sqlite.prepare("SELECT count(*) AS count FROM curriculum_versions").get(),
+    ).toEqual({ count: 0 });
+    expect(
+      sqlite.prepare("SELECT count(*) AS count FROM curriculum_days_v2").get(),
+    ).toEqual({ count: 0 });
+    expect(
+      sqlite
+        .prepare("SELECT count(*) AS count FROM provider_configurations")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      sqlite
+        .prepare("SELECT count(*) AS count FROM provider_hub_connections")
+        .get(),
+    ).toEqual({ count: 0 });
+
+    const response = await request(created.app, "/api/settings");
+    expect(response.status).toBe(200);
+    const settings = providerSettingsSchema.parse(await response.json());
+    expect(settings.ai.connections).toEqual([]);
+    expect(settings.ai.management.connections).toEqual([]);
+    expect(settings.ai.roleProfiles).toHaveLength(4);
+    expect(settings.ai.roleProfiles).toEqual(
+      expect.arrayContaining(
+        ["course-designer", "tutor", "evaluator", "reviewer"].map((role) =>
+          expect.objectContaining({
+            role,
+            mode: "no-ai",
+            connectionId: null,
+            modelId: null,
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("rejects development database fixtures in active production mode", () => {
+    const projectRoot = activeProjectRoot();
+    const databasePath = path.join(
+      projectRoot,
+      ".data",
+      "dev-learning-harness.sqlite",
+    );
+
+    expect(() =>
+      createApp({
+        projectRoot,
+        databasePath,
+        databaseMode: "active",
+        developmentMode: false,
+        developmentDatabaseInitializer: seedDevelopmentDatabase,
+      }),
+    ).toThrow(
+      "Development database fixtures require development or disposable test mode",
+    );
+    expect(existsSync(databasePath)).toBe(false);
+  });
+
+  it("isolates development fixtures and retires synthetic providers on production restart", async () => {
+    const projectRoot = activeProjectRoot();
+    const databasePath = path.join(
+      projectRoot,
+      ".data",
+      "dev-learning-harness.sqlite",
+    );
+    const development = createApp({
+      projectRoot,
+      databasePath,
+      databaseMode: "active",
+      developmentMode: true,
+      developmentDatabaseInitializer: seedDevelopmentDatabase,
+      providers: { mock: new MockAgentProvider() },
+      developmentProviderFixture: testDevelopmentProviderFixture,
+    });
+    runtimes.push(development);
+
+    const now = Date.now();
+    const insertLegacyConnection = development.state.connection.sqlite.prepare(`
+      INSERT INTO provider_hub_connections (
+        connection_id, adapter_id, provider_type, display_name,
+        credential_ref, endpoint_profile_id, enabled, external, state,
+        observed_capabilities_json, last_checked_at, created_at, updated_at
+      ) VALUES (?, 'pi', ?, ?, NULL, NULL, 1, 1, 'degraded', NULL, NULL, ?, ?)
+    `);
+    insertLegacyConnection.run(
+      "conn:pi:openai",
+      "openai",
+      "Legacy OpenAI via Pi",
+      now,
+      now,
+    );
+    insertLegacyConnection.run(
+      "conn:pi:opencode-zen",
+      "opencode-zen",
+      "Legacy OpenCode Zen via Pi",
+      now,
+      now,
+    );
+
+    const developmentResponse = await request(development.app, "/api/settings");
+    expect(developmentResponse.status).toBe(200);
+    const developmentSettings = providerSettingsSchema.parse(
+      await developmentResponse.json(),
+    );
+    expect(
+      developmentSettings.ai.connections.map(
+        ({ connectionId }) => connectionId,
+      ),
+    ).toEqual([testDevelopmentProviderFixture.connection.connectionId]);
+    expect(developmentSettings.ai.management.connections).toEqual([]);
+    expect(developmentSettings.ai.roleProfiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "course-designer",
+          mode: "no-ai",
+          connectionId: null,
+          modelId: null,
+        }),
+        ...testDevelopmentProviderFixture.assignedRoles.map((role) =>
+          expect.objectContaining({
+            role,
+            mode: "connection",
+            connectionId:
+              testDevelopmentProviderFixture.connection.connectionId,
+            modelId: testDevelopmentProviderFixture.modelId,
+          }),
+        ),
+      ]),
+    );
+
+    development.state.connection.sqlite
+      .prepare(
+        `UPDATE provider_hub_role_profiles
+         SET mode = 'connection',
+             connection_id = 'conn:pi:openai',
+             model_id = 'legacy-model',
+             required_capabilities_json = '["streaming"]',
+             updated_at = ?
+         WHERE role = 'course-designer'`,
+      )
+      .run(now);
+
+    const developmentIndex = runtimes.indexOf(development);
+    runtimes.splice(developmentIndex, 1);
+    await development.close();
+
+    const production = createApp({
+      projectRoot,
+      databasePath,
+      databaseMode: "active",
+      developmentMode: false,
+    });
+    runtimes.push(production);
+
+    const productionResponse = await request(production.app, "/api/settings");
+    expect(productionResponse.status).toBe(200);
+    const productionSettings = providerSettingsSchema.parse(
+      await productionResponse.json(),
+    );
+    expect(productionSettings.ai.connections).toEqual([]);
+    expect(productionSettings.ai.management.connections).toEqual([]);
+    expect(productionSettings.ai.roleProfiles).toHaveLength(4);
+    expect(
+      productionSettings.ai.roleProfiles.every(
+        ({ mode, connectionId, modelId }) =>
+          mode === "no-ai" && connectionId === null && modelId === null,
+      ),
+    ).toBe(true);
+    expect(
+      production.state.connection.sqlite
+        .prepare(
+          `SELECT connection_id AS connectionId, enabled, state
+           FROM provider_hub_connections
+           ORDER BY connection_id`,
+        )
+        .all(),
+    ).toEqual([
+      { connectionId: "conn:mock", enabled: 0, state: "disabled" },
+      { connectionId: "conn:pi:openai", enabled: 0, state: "disabled" },
+      {
+        connectionId: "conn:pi:opencode-zen",
+        enabled: 0,
+        state: "disabled",
+      },
+    ]);
+  });
+
   it("rejects an alternate database before changing its bytes", () => {
     const projectRoot = mkdtempSync(path.join(tmpdir(), "aptiloop-db-guard-"));
     roots.push(projectRoot);
@@ -284,8 +628,12 @@ describe("orchestrator vertical flow", () => {
     });
   });
 
-  it("streams normalized mock events", async () => {
-    const { app } = runtime();
+  it("streams normalized mock events only through explicit development composition", async () => {
+    const { app } = runtime({
+      developmentMode: true,
+      providers: { mock: new MockAgentProvider() },
+      developmentProviderFixture: testDevelopmentProviderFixture,
+    });
     const response = await request(app, "/api/agent/stream", {
       method: "POST",
       body: JSON.stringify({ role: "teacher", message: "Мой ответ" }),
@@ -306,31 +654,6 @@ describe("orchestrator vertical flow", () => {
       content: "Мой ответ",
     });
     expect(historyBody.messages[1]?.role).toBe("assistant");
-  });
-
-  it("registers the pinned OpenCode Zen Pi provider", async () => {
-    const previousApiKey = process.env.OPENCODE_API_KEY;
-    delete process.env.OPENCODE_API_KEY;
-    try {
-      const { state } = runtime();
-      const status = await state.providers.opencode.getStatus();
-      expect(status).toMatchObject({
-        providerId: "opencode",
-        state: "authentication-required",
-      });
-      await expect(
-        state.providers.opencode.listModels(),
-      ).resolves.toContainEqual(
-        expect.objectContaining({
-          id: "deepseek-v4-flash-free",
-          providerId: "opencode",
-          available: false,
-        }),
-      );
-    } finally {
-      if (previousApiKey === undefined) delete process.env.OPENCODE_API_KEY;
-      else process.env.OPENCODE_API_KEY = previousApiKey;
-    }
   });
 
   it("manages built-in, custom HTTPS, and loopback connections without exposing secrets", async () => {
@@ -496,6 +819,222 @@ describe("orchestrator vertical flow", () => {
       { method: "POST", body: "{}" },
     );
     expect(enabled.status).toBe(200);
+  });
+
+  it("removes a managed connection, clears its credential, and turns assigned roles off", async () => {
+    const { app, state } = runtime();
+    const sentinel = "sk-removal-test-secret";
+    const created = await request(app, "/api/settings/ai/connections", {
+      method: "POST",
+      body: JSON.stringify({
+        catalogId: "openai-api",
+        displayName: "Temporary OpenAI",
+        apiKey: sentinel,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const connectionId = z
+      .object({ connection: z.object({ connectionId: z.string() }) })
+      .parse(await created.json()).connection.connectionId;
+
+    const configuredResponse = await request(app, "/api/settings");
+    const configured = z
+      .object({
+        ai: z.object({
+          connections: z.array(
+            z.object({
+              connectionId: z.string(),
+              state: z.string(),
+              observedCapabilities: z
+                .object({
+                  models: z.array(
+                    z.object({ modelId: z.string(), available: z.boolean() }),
+                  ),
+                })
+                .nullable(),
+            }),
+          ),
+          roleProfiles: z.array(
+            z.object({
+              role: z.enum([
+                "course-designer",
+                "tutor",
+                "evaluator",
+                "reviewer",
+              ]),
+              mode: z.enum(["no-ai", "connection"]),
+              connectionId: z.string().nullable(),
+              modelId: z.string().nullable(),
+            }),
+          ),
+        }),
+      })
+      .parse(await configuredResponse.json());
+    const connection = configured.ai.connections.find(
+      (candidate) => candidate.connectionId === connectionId,
+    );
+    const modelId = connection?.observedCapabilities?.models.find(
+      (model) => model.available,
+    )?.modelId;
+    expect(connection?.state).toBe("degraded");
+    expect(modelId).toBeTruthy();
+
+    const assigned = await request(app, "/api/settings/ai", {
+      method: "PUT",
+      body: JSON.stringify({
+        roleProfiles: configured.ai.roleProfiles.map((profile) =>
+          profile.role === "tutor"
+            ? {
+                role: profile.role,
+                mode: "connection",
+                connectionId,
+                modelId,
+              }
+            : profile,
+        ),
+      }),
+    });
+    expect(assigned.status).toBe(200);
+
+    const payload = "Active removal test";
+    const disclosure = await state.providerRuntime.prepareDisclosure({
+      role: "teacher",
+      payload,
+      payloadCategories: ["learner-message"],
+      destinationPurpose: "active connection removal test",
+    });
+    expect(disclosure.required).toBe(true);
+    if (!disclosure.required) throw new Error("Expected external disclosure");
+    state.providerRuntime.approveDisclosure(disclosure.disclosure.operationId);
+    const activeDispatch = await state.providerRuntime.resolveDispatch({
+      role: "teacher",
+      payload,
+      disclosureOperationId: disclosure.disclosure.operationId,
+    });
+    try {
+      const rejectedRemoval = await request(
+        app,
+        `/api/settings/ai/connections/${encodeURIComponent(connectionId)}`,
+        { method: "DELETE", body: "{}" },
+      );
+      expect(rejectedRemoval.status).toBe(409);
+      expect(await rejectedRemoval.json()).toEqual({
+        error:
+          "This connection has an active AI request. Stop it before removing the connection.",
+      });
+
+      const afterRejection = z
+        .object({
+          ai: z.object({
+            connections: z.array(z.object({ connectionId: z.string() })),
+            roleProfiles: z.array(
+              z.object({
+                role: z.string(),
+                mode: z.string(),
+                connectionId: z.string().nullable(),
+                modelId: z.string().nullable(),
+              }),
+            ),
+            management: z.object({
+              connections: z.array(z.object({ connectionId: z.string() })),
+            }),
+          }),
+        })
+        .parse(await (await request(app, "/api/settings")).json());
+      expect(
+        afterRejection.ai.connections.some(
+          (candidate) => candidate.connectionId === connectionId,
+        ),
+      ).toBe(true);
+      expect(
+        afterRejection.ai.management.connections.some(
+          (candidate) => candidate.connectionId === connectionId,
+        ),
+      ).toBe(true);
+      expect(
+        afterRejection.ai.roleProfiles.find(({ role }) => role === "tutor"),
+      ).toEqual(
+        expect.objectContaining({
+          mode: "connection",
+          connectionId,
+          modelId,
+        }),
+      );
+      expect(
+        state.connection.sqlite
+          .prepare(
+            "SELECT retired_at AS retiredAt FROM provider_hub_connections WHERE connection_id = ?",
+          )
+          .get(connectionId),
+      ).toMatchObject({ retiredAt: null });
+    } finally {
+      state.providerRuntime.finishDispatch(activeDispatch, "cancelled");
+    }
+
+    const removed = await request(
+      app,
+      `/api/settings/ai/connections/${encodeURIComponent(connectionId)}`,
+      { method: "DELETE", body: "{}" },
+    );
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({ removed: true });
+
+    const afterText = await (await request(app, "/api/settings")).text();
+    expect(afterText).not.toContain(sentinel);
+    const after = z
+      .object({
+        ai: z.object({
+          connections: z.array(z.object({ connectionId: z.string() })),
+          roleProfiles: z.array(
+            z.object({
+              role: z.string(),
+              mode: z.string(),
+              connectionId: z.string().nullable(),
+              modelId: z.string().nullable(),
+            }),
+          ),
+          management: z.object({
+            connections: z.array(z.object({ connectionId: z.string() })),
+          }),
+        }),
+      })
+      .parse(JSON.parse(afterText));
+    expect(
+      after.ai.connections.some(
+        (candidate) => candidate.connectionId === connectionId,
+      ),
+    ).toBe(false);
+    expect(
+      after.ai.management.connections.some(
+        (candidate) => candidate.connectionId === connectionId,
+      ),
+    ).toBe(false);
+    expect(after.ai.roleProfiles.find(({ role }) => role === "tutor")).toEqual(
+      expect.objectContaining({
+        mode: "no-ai",
+        connectionId: null,
+        modelId: null,
+      }),
+    );
+    expect(
+      state.connection.sqlite
+        .prepare(
+          "SELECT retired_at AS retiredAt FROM provider_hub_connections WHERE connection_id = ?",
+        )
+        .get(connectionId),
+    ).toMatchObject({ retiredAt: expect.any(String) });
+
+    const databasePath = (
+      state.connection.sqlite.prepare("PRAGMA database_list").get() as {
+        file: string;
+      }
+    ).file;
+    const credentialPath = path.join(
+      path.dirname(databasePath),
+      ".data",
+      "provider-credentials.json",
+    );
+    expect(readFileSync(credentialPath, "utf8")).not.toContain(sentinel);
   });
 
   it("rejects a forged OpenCode endpoint without sending environment credentials", async () => {

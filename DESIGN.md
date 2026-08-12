@@ -279,9 +279,9 @@ The connected Designer and manual path converge on the same typed local Draft. T
 
 ### Review
 
-**Approved Core Alpha target**
+**Implemented baseline**
 
-Review exposes exactly **Due**, **Mistakes**, **Cards**, and **Interviews**. Desktop uses a semantic tab list; compact layouts use one labeled select. The selected destination is encoded in `?view=` except canonical Due, so Back, Forward, and reload preserve intent. Due work explains schedule and source provenance, but no Start action is rendered until a typed server-verified due-review executor exists. Empty review is positive but neutral, and repeated mistakes use text and icon in addition to color.
+Review exposes exactly **Due**, **Mistakes**, **Cards**, and **Interviews**. Desktop uses a semantic tab list; compact layouts use one labeled select. The selected destination is encoded in `?view=` except canonical Due, while `?item=` identifies one opaque server-owned Review execution, so Back, Forward, and reload preserve intent without exposing source-session authority. Due work explains schedule and source provenance. Executable items open the shared Activity Frame with authored immutable prompt content, bounded free response, visible loading/error/retry states, and a localized completion result; unsupported or stale identities fail closed. Empty review is positive but neutral, and repeated mistakes use text and icon in addition to color.
 
 ### Skills
 

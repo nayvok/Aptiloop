@@ -94,6 +94,7 @@ export interface ResolveProviderTurnInput {
   readonly role: AptiloopAiRole;
   readonly payloadSha256?: string;
   readonly disclosure?: AiDisclosure | null;
+  readonly signal?: AbortSignal;
 }
 
 export class ProviderHub {
@@ -130,10 +131,7 @@ export class ProviderHub {
       }),
       "tool policy",
     );
-    this.#developmentMode =
-      options.developmentMode === true ||
-      process.env.NODE_ENV === "development" ||
-      process.env.NODE_ENV === "test";
+    this.#developmentMode = options.developmentMode === true;
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -194,9 +192,9 @@ export class ProviderHub {
         "Mock is restricted to tests, CI, and explicit development mode",
       );
     }
-    const provider =
-      this.#providerForConnection?.(connection) ??
-      this.#providers[connection.adapterId];
+    const provider = this.#providerForConnection
+      ? this.#providerForConnection(connection)
+      : this.#providers[connection.adapterId];
     if (!provider || provider.id !== connection.adapterId) {
       throw new ProviderHubError(
         "provider_unavailable",
@@ -226,13 +224,15 @@ export class ProviderHub {
         `Role profile ${input.role} has no exact model`,
       );
     }
-    const status = await provider.getStatus().catch((error: unknown) => {
-      throw new ProviderHubError(
-        "provider_unavailable",
-        `Provider ${connection.providerType} status is unavailable`,
-        { retryable: true, cause: error },
-      );
-    });
+    const status = await provider
+      .getStatus(input.signal)
+      .catch((error: unknown) => {
+        throw new ProviderHubError(
+          "provider_unavailable",
+          `Provider ${connection.providerType} status is unavailable`,
+          { retryable: true, cause: error },
+        );
+      });
     if (status.state !== "connected" && status.state !== "degraded") {
       const code = failureCodeForState(status.state);
       throw new ProviderHubError(
@@ -256,13 +256,15 @@ export class ProviderHub {
         { recoveryAction: "open-ai-settings" },
       );
     }
-    const models = await provider.listModels().catch((error: unknown) => {
-      throw new ProviderHubError(
-        "provider_unavailable",
-        `Models are unavailable for ${connection.providerType}`,
-        { retryable: true, cause: error },
-      );
-    });
+    const models = await provider
+      .listModels(input.signal)
+      .catch((error: unknown) => {
+        throw new ProviderHubError(
+          "provider_unavailable",
+          `Models are unavailable for ${connection.providerType}`,
+          { retryable: true, cause: error },
+        );
+      });
     const model = models.find(
       (candidate) =>
         candidate.id === modelId &&

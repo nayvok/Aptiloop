@@ -1235,11 +1235,94 @@ export const LearningReviewQueueItemSchema = z
     isDue: z.boolean(),
     sessionId: CourseEntityIdSchema,
     activityId: CourseEntityIdSchema.nullable(),
-    nextActionHref: z.null(),
+    execution: z
+      .object({
+        id: CourseEntityIdSchema,
+        type: z.literal("free-response"),
+        schemaVersion: z.literal(1),
+        activitySnapshotHash: Sha256Schema,
+      })
+      .strict()
+      .nullable(),
   })
   .strict();
 export type LearningReviewQueueItem = z.infer<
   typeof LearningReviewQueueItemSchema
+>;
+
+export const LearningReviewActivitySchema = z
+  .object({
+    executionId: CourseEntityIdSchema,
+    schemaVersion: z.literal(1),
+    activitySnapshotHash: Sha256Schema,
+    executionContextHash: Sha256Schema,
+    title: ShortTextSchema,
+    description: TextSchema,
+    prompt: TextSchema,
+    dueAt: IsoDateTimeSchema,
+    sourceEvidenceAt: IsoDateTimeSchema,
+    sourceActivityType: UnitTypeSchema,
+    dimension: z.enum([
+      "understanding",
+      "explanation",
+      "codeReading",
+      "implementation",
+      "debugging",
+      "interview",
+    ]),
+    activityKind: z.enum(["recall", "correction"]),
+    reasonCode: z.enum(["mistake", "low_mastery"]),
+    response: z
+      .object({
+        type: z.literal("free-response"),
+        minimumLength: z.literal(1),
+        maximumLength: z.literal(50_000),
+      })
+      .strict(),
+  })
+  .strict();
+export type LearningReviewActivity = z.infer<
+  typeof LearningReviewActivitySchema
+>;
+
+export const LearningReviewActivityResponseSchema = z
+  .object({ activity: LearningReviewActivitySchema })
+  .strict();
+export type LearningReviewActivityResponse = z.infer<
+  typeof LearningReviewActivityResponseSchema
+>;
+
+export const LearningReviewSubmissionSchema = z
+  .object({
+    operationId: CourseOperationIdSchema,
+    executionContextHash: Sha256Schema,
+    response: z
+      .object({
+        type: z.literal("free-response"),
+        text: TextSchema,
+      })
+      .strict(),
+  })
+  .strict();
+export type LearningReviewSubmission = z.infer<
+  typeof LearningReviewSubmissionSchema
+>;
+
+export const LearningReviewSubmissionResponseSchema = z
+  .object({
+    idempotent: z.boolean(),
+    completedReviewItemId: CourseEntityIdSchema,
+    completionEvidenceId: CourseEntityIdSchema,
+    nextReview: z
+      .object({
+        id: CourseEntityIdSchema,
+        dueAt: IsoDateTimeSchema,
+      })
+      .strict(),
+  })
+  .strict();
+export type LearningReviewSubmissionResponse = z.infer<
+  typeof LearningReviewSubmissionResponseSchema
 >;
 
 export const LearningReviewsResponseSchema = z

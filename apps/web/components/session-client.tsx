@@ -9,7 +9,6 @@ import {
   ArrowRightIcon,
   CheckIcon,
   CircleIcon,
-  ClockIcon,
   ListIcon,
   PaperPlaneTiltIcon,
   StopIcon,
@@ -18,6 +17,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { ActivityFrame } from "@/components/activity-frame";
+import { EstimatedDuration } from "@/components/estimated-duration";
 import { usePageRouteContext } from "@/components/page-route-context";
 import { RouteOrientation } from "@/components/route-orientation";
 import { api, streamAgent } from "@/lib/api";
@@ -64,7 +64,7 @@ import {
   useLessonActivityDraft,
   type LessonActivityDraftIdentity,
 } from "@/lib/lesson-activity-drafts";
-import { formatDuration, formatMinutesShort } from "@/lib/time";
+import { formatMinutesShort } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 const protectedFields = new Set([
@@ -585,7 +585,7 @@ function operationId(): string {
 }
 
 export function SessionClient() {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const params = useSearchParams();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -903,10 +903,7 @@ export function SessionClient() {
                   >
                     {t(unitTypeMessageKeys[focusedUnit.type])}
                   </Badge>
-                  <span className="inline-flex items-center gap-1.5">
-                    <ClockIcon aria-hidden className="size-4" />
-                    {formatDuration(focusedUnit.estimatedMinutes, locale)}
-                  </span>
+                  <EstimatedDuration minutes={focusedUnit.estimatedMinutes} />
                 </div>
                 <div className="flex min-w-0 max-w-[72ch] flex-col gap-1.5">
                   <h2
@@ -1049,7 +1046,7 @@ function SessionProgressHeader({
   phaseTotal: number;
   onContinueLater: () => void;
 }) {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const { day } = session.snapshot;
   const total = session.snapshot.units.length;
   const lessonLabel = t("session.lessonTitle", {
@@ -1084,17 +1081,11 @@ function SessionProgressHeader({
                     : t("session.lessonComplete")}
                 </p>
                 {activeBlock ? (
-                  <span className="inline-flex min-w-0 items-center gap-1">
-                    <ClockIcon aria-hidden className="size-3.5 shrink-0" />
-                    <span className="break-words [overflow-wrap:anywhere]">
-                      {t("session.phaseRemaining", {
-                        duration: formatDuration(
-                          activeBlock.remainingMinutes,
-                          locale,
-                        ),
-                      })}
-                    </span>
-                  </span>
+                  <EstimatedDuration
+                    minutes={activeBlock.remainingMinutes}
+                    remaining
+                    className="h-auto min-h-6"
+                  />
                 ) : null}
               </div>
               <h1 className="break-words text-pretty text-lg font-semibold leading-6 tracking-[-0.015em] [overflow-wrap:anywhere]">
@@ -1164,7 +1155,7 @@ function BlockTransition({
   onContinue: () => void;
   onLater: () => void;
 }) {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const covered = previousBlocks.flatMap((previous) =>
     previous.units.map((unit) => unit.title),
   );
@@ -1210,13 +1201,20 @@ function BlockTransition({
       ) : null}
       <div className="flex flex-col gap-1.5 rounded-focus bg-surface-soft/55 px-4 py-4 sm:px-5 sm:py-5">
         <p className="text-sm font-semibold">{t("session.transition.next")}</p>
-        <p className="text-sm leading-6 text-muted-foreground">
-          {t("session.transition.meta", {
-            name: t(block.label),
-            count: block.totalCount,
-            duration: formatDuration(block.remainingMinutes, locale),
-          })}
-        </p>
+        <div className="flex flex-wrap items-center gap-2 text-sm leading-6 text-muted-foreground">
+          <span>
+            {t(
+              block.totalCount === 1
+                ? "session.transition.meta.one"
+                : "session.transition.meta.other",
+              {
+                name: t(block.label),
+                count: block.totalCount,
+              },
+            )}
+          </span>
+          <EstimatedDuration minutes={block.remainingMinutes} />
+        </div>
       </div>
       <div className="flex flex-col gap-2 sm:flex-row">
         <Button
@@ -1251,7 +1249,7 @@ function UnitShell({
   progress: UnitProgress;
   children: React.ReactNode;
 }) {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   return (
     <ActivityFrame
       activityId={unit.id}
@@ -1265,10 +1263,7 @@ function UnitShell({
             <Badge variant="outline" className={activityColorClass(unit.type)}>
               {t(unitTypeMessageKeys[unit.type])}
             </Badge>
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <ClockIcon aria-hidden />
-              {formatMinutesShort(unit.estimatedMinutes, locale)}
-            </span>
+            <EstimatedDuration minutes={unit.estimatedMinutes} />
           </div>
         ),
         status: (
@@ -1534,7 +1529,7 @@ function BriefingUnitImpl({
   pending,
   patchUnit,
 }: UnitBodyProps) {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const router = useRouter();
   const day = session.snapshot.day;
   const progressByUnit = new Map(
@@ -1622,14 +1617,16 @@ function BriefingUnitImpl({
                 <span className="min-w-0 break-words font-medium">
                   {t(block.label)}
                 </span>
-                <span className="text-xs leading-5 text-muted-foreground">
-                  {t("session.activitiesCount", {
-                    count: block.totalCount,
-                    duration: formatMinutesShort(
-                      block.estimatedMinutes,
-                      locale,
-                    ),
-                  })}
+                <span className="flex flex-wrap items-center gap-1.5 text-xs leading-5 text-muted-foreground">
+                  <span>
+                    {t(
+                      block.totalCount === 1
+                        ? "session.activitiesCount.one"
+                        : "session.activitiesCount.other",
+                      { count: block.totalCount },
+                    )}
+                  </span>
+                  <EstimatedDuration minutes={block.estimatedMinutes} />
                 </span>
               </li>
             ))}

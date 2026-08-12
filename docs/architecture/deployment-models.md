@@ -44,8 +44,8 @@ The committed Compose topology has two services:
 - `orchestrator`, published at `127.0.0.1:8787`;
 - a private service-to-service URL from web to orchestrator;
 - named `harness-data` and `harness-attempts` volumes;
-- a bind mount of the repository-controlled exercise templates;
-- non-root application users in both images and local health checks.
+- production-only runtime dependency/artifact closures with no mounted or copied fixture directories and no production Course seed;
+- non-root application users, read-only root filesystems, dropped capabilities, `no-new-privileges`, and local health checks.
 
 The services set explicit `ORCHESTRATOR_BIND_MODE=container-loopback-published`. Only that mode permits the orchestrator's internal `0.0.0.0` bind and exact `http://orchestrator:<port>` web rewrite; direct mode rejects both. The host publications above remain the unauthenticated network boundary.
 
@@ -53,7 +53,8 @@ This is a local packaging convenience, not an isolation or public-hosting claim.
 
 - there is no login, session identity, role authorization, CSRF/session system, public rate limiting, public audit log, trusted-proxy configuration, or TLS termination;
 - the browser trust headers are spoofable by any network client that can reach the service;
-- the orchestrator image contains a Node runtime, dependencies, templates, and native execution authority within its mounted volumes;
+- the orchestrator image contains Node, Git, Python 3, production dependencies, and native execution authority, but no repository fixture templates;
+- the web authoring route retains the exact Course Pack schema and a topic-neutral, deliberately non-installable structural scaffold, while concrete Course fixtures remain test-only;
 - container process/file isolation is not a vetted hostile-code sandbox, and current checks are not deny-network;
 - named volumes require separate operator backup/export handling; copying a live SQLite file directly is not the approved backup method;
 - a desktop editor on the host is not automatically available inside the container. The copy-path/open-in-editor experience is deployment-specific.

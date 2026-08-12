@@ -98,7 +98,11 @@ export class CodexProvider implements AgentProvider {
     }
   }
 
-  async createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
+  async createSession(
+    input: CreateAgentSessionInput,
+    signal?: AbortSignal,
+  ): Promise<AgentSession> {
+    throwIfAborted(signal);
     const cwd = stringMetadata(input.metadata, "cwd");
     const existingThreadId = stringMetadata(input.metadata, "codexThreadId");
     const reviewer = input.role === "reviewer";
@@ -117,6 +121,7 @@ export class CodexProvider implements AgentProvider {
             threadId: existingThreadId,
           })
         : await this.#transport.startThread(threadParams);
+      throwIfAborted(signal);
       const session: AgentSession = {
         id: result.thread.id,
         providerId: this.id,

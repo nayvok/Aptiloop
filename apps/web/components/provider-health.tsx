@@ -131,8 +131,9 @@ export function ProviderHealth({
     );
     if (
       !role.connection?.enabled ||
-      role.status !== "connected" ||
-      !observed?.connection.authenticated ||
+      (role.status !== "connected" && role.status !== "degraded") ||
+      (role.status === "connected" && !observed?.connection.authenticated) ||
+      !observed ||
       !model
     ) {
       return false;
@@ -155,14 +156,12 @@ export function ProviderHealth({
     });
   };
   const configuredRoles = roles.filter((role) => role.mode === "connection");
+  const roleIsDegraded = (role: (typeof roles)[number]) =>
+    role.status === "degraded" && roleIsReady(role);
   const ready =
     configuredRoles.length > 0 && configuredRoles.every(roleIsReady);
-  const hasDegraded = configuredRoles.some(
-    (role) => Boolean(role.modelId) && role.status === "degraded",
-  );
-  const hasProblem = configuredRoles.some(
-    (role) => role.status !== "degraded" && !roleIsReady(role),
-  );
+  const hasDegraded = configuredRoles.some(roleIsDegraded);
+  const hasProblem = configuredRoles.some((role) => !roleIsReady(role));
   const readyCount = configuredRoles.filter(roleIsReady).length;
 
   if (settingsQuery.isLoading) {
@@ -215,9 +214,11 @@ export function ProviderHealth({
           : "problem";
   const stateLabel = allOff
     ? t("provider.off")
-    : ready
+    : ready && !hasDegraded
       ? t("provider.ready")
-      : t("provider.needsAttention");
+      : hasDegraded && !hasProblem
+        ? t("provider.configured")
+        : t("provider.needsAttention");
 
   return (
     <PopoverRoot>
@@ -264,10 +265,10 @@ export function ProviderHealth({
                 data-status={
                   role.mode === "no-ai"
                     ? "off"
-                    : roleIsReady(role)
-                      ? "ready"
-                      : role.status === "degraded"
-                        ? "degraded"
+                    : roleIsDegraded(role)
+                      ? "degraded"
+                      : roleIsReady(role)
+                        ? "ready"
                         : "problem"
                 }
                 data-connection-status={role.status}
@@ -283,19 +284,21 @@ export function ProviderHealth({
                     data-state={
                       role.mode === "no-ai"
                         ? "off"
-                        : roleIsReady(role)
-                          ? "ready"
-                          : role.status === "degraded"
-                            ? "degraded"
+                        : roleIsDegraded(role)
+                          ? "degraded"
+                          : roleIsReady(role)
+                            ? "ready"
                             : "problem"
                     }
                     className={cn(
                       "size-1.5 shrink-0 rounded-full",
                       role.mode === "no-ai"
                         ? "bg-muted-foreground/55"
-                        : roleIsReady(role)
-                          ? "bg-success"
-                          : "bg-warning",
+                        : roleIsDegraded(role)
+                          ? "bg-warning"
+                          : roleIsReady(role)
+                            ? "bg-success"
+                            : "bg-warning",
                     )}
                   />
                   <span className="truncate">
@@ -308,7 +311,7 @@ export function ProviderHealth({
                         {" · "}
                         {role.modelId ?? t("provider.noModel")}
                         {role.connection && role.modelId
-                          ? role.status === "degraded"
+                          ? roleIsDegraded(role)
                             ? ` · ${t("settings.status.degraded")}`
                             : role.status === "starting"
                               ? ` · ${t("settings.status.starting")}`
@@ -323,13 +326,17 @@ export function ProviderHealth({
               </li>
             ))}
           </ul>
-          {hasProblem || hasDegraded ? (
+          {hasProblem ? (
             <p className="rounded-md bg-warning/10 p-2 text-xs leading-5 text-warning-foreground">
               {t("provider.problem")}
             </p>
+          ) : hasDegraded ? (
+            <p className="rounded-md bg-warning/10 p-2 text-xs leading-5 text-warning-foreground">
+              {t("provider.degradedNotice")}
+            </p>
           ) : null}
           <div className="border-t border-border pt-2">
-            {hasProblem || hasDegraded ? (
+            {hasProblem ? (
               <Link
                 href="/settings?section=connections&source=recovery"
                 data-slot="provider-recovery-link"

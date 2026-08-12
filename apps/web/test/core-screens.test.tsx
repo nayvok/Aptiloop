@@ -149,7 +149,7 @@ describe("core learning screens", () => {
     expect(screen.getByText(/Подтверждений: 3/u)).toBeVisible();
   });
 
-  it("keeps review tasks visible without session links and discloses history on request", async () => {
+  it("keeps review tasks visible without source-session details and discloses history on request", async () => {
     const reviews = [
       {
         id: "review-pending",
@@ -164,7 +164,12 @@ describe("core learning screens", () => {
         isDue: true,
         sessionId: "session-review",
         activityId: "activity-review",
-        nextActionHref: null,
+        execution: {
+          id: "review-execution",
+          type: "free-response",
+          schemaVersion: 1,
+          activitySnapshotHash: "a".repeat(64),
+        },
       },
       {
         id: "review-completed",
@@ -178,7 +183,7 @@ describe("core learning screens", () => {
         isDue: false,
         sessionId: "session-history",
         activityId: "activity-history",
-        nextActionHref: null,
+        execution: null,
       },
     ];
     apiMock.mockImplementation((path: string) => {
@@ -200,14 +205,12 @@ describe("core learning screens", () => {
       ),
     ).toBeVisible();
     expect(
-      screen.getByText(/Повторение назначено, но безопасная активность/u),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("link", { name: "Начать активность" }),
+      screen.queryByRole("link", { name: "Начать повторение" }),
     ).not.toBeInTheDocument();
     expect(
       document.querySelector('a[href^="/session?id="]'),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText("session-review")).not.toBeInTheDocument();
     expect(
       screen.queryByText("Completed review history"),
     ).not.toBeInTheDocument();
@@ -249,7 +252,7 @@ describe("core learning screens", () => {
     );
   });
 
-  it("does not turn Review provenance into a Start activity link", async () => {
+  it("starts only a typed due Review execution and never links its source session", async () => {
     apiMock.mockResolvedValue({
       asOf: "2026-01-02T00:00:00.000Z",
       reviews: [
@@ -265,7 +268,12 @@ describe("core learning screens", () => {
           isDue: true,
           sessionId: "completed-source-session",
           activityId: "source-activity",
-          nextActionHref: null,
+          execution: {
+            id: "execution/with-path",
+            type: "free-response",
+            schemaVersion: 1,
+            activitySnapshotHash: "b".repeat(64),
+          },
         },
       ],
     });
@@ -274,11 +282,11 @@ describe("core learning screens", () => {
 
     expect(await screen.findByText("Historical source session")).toBeVisible();
     expect(
-      screen.queryByRole("link", { name: "Начать активность" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/Повторение назначено, но безопасная активность/u),
-    ).toBeVisible();
+      screen.getByRole("link", { name: "Начать повторение" }),
+    ).toHaveAttribute("href", "/review?item=execution%2Fwith-path");
+    expect(document.querySelector('a[href^="/session"]')).toBeNull();
+    expect(screen.queryByText("completed-source-session")).toBeNull();
+    expect(screen.queryByText("source-activity")).toBeNull();
   });
 
   it("keeps the Review dismissal confirmation open when the mutation fails", async () => {
@@ -299,7 +307,7 @@ describe("core learning screens", () => {
               isDue: true,
               sessionId: "session-review",
               activityId: "activity-review",
-              nextActionHref: null,
+              execution: null,
             },
           ],
         });

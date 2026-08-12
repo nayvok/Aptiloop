@@ -7,9 +7,9 @@ import {
   createLearningRepository,
   migrateDatabase,
   openDatabase,
-  seedDatabase,
   type DatabaseConnection,
 } from "../src/index.js";
+import { seedDatabase } from "../src/development-fixtures.js";
 
 const cleanup: Array<() => void> = [];
 
@@ -66,6 +66,7 @@ describe("SQLite database", () => {
       "0016_course_designer_workflow",
       "0017_learner_course_state",
       "0018_learner_course_state_trigger_guard",
+      "0019_provider_connection_retirement",
     ]);
     expect(() =>
       connection.sqlite
@@ -87,7 +88,7 @@ describe("SQLite database", () => {
     expect(first.days).toBe(7);
     expect(count(connection, "curriculum_days")).toBe(7);
     expect(count(connection, "questions")).toBeGreaterThan(7);
-    expect(count(connection, "provider_configurations")).toBe(3);
+    expect(count(connection, "provider_configurations")).toBe(0);
   });
 
   it("runs start-answer-reveal-complete flow transactionally and idempotently", async () => {

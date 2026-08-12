@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./development-fixtures": "./src/development-fixtures.ts",
     "./schema": "./src/schema.ts",
     "./seed": "./src/seed.ts"
   },
@@ -20,12 +21,12 @@
   },
   "dependencies": {
     "@aptiloop/course-authoring-kit": "0.1.0",
-    "@aptiloop/curriculum": "0.1.0",
     "@aptiloop/learning-core": "0.1.0",
     "@aptiloop/shared": "0.1.0",
     "drizzle-orm": "1.0.0-rc.4"
   },
   "devDependencies": {
+    "@aptiloop/curriculum": "0.1.0",
     "drizzle-kit": "1.0.0-rc.4",
     "tsup": "^8.5.1"
   }

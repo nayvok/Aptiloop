@@ -152,6 +152,49 @@ async function createExactPreM6Fixture(): Promise<{
     backupSha256: sha256File(backup),
   };
 }
+
+async function createExactPreRetirementFixture(): Promise<{
+  projectRoot: string;
+  source: string;
+  backup: string;
+  backupSha256: string;
+}> {
+  const projectRoot = temporaryRoot();
+  const migrationDirectory = path.join(projectRoot, "migrations-through-0018");
+  mkdirSync(migrationDirectory);
+  for (const filename of readdirSync(migrationsSource).filter((entry) =>
+    /^(?:000\d|001[0-8])_.*\.sql$/u.test(entry),
+  )) {
+    copyFileSync(
+      path.join(migrationsSource, filename),
+      path.join(migrationDirectory, filename),
+    );
+  }
+  const source = path.join(projectRoot, ".data", "dev-learning-harness.sqlite");
+  const connection = openDatabase(source);
+  try {
+    migrateDatabase(connection, migrationDirectory);
+  } finally {
+    connection.close();
+  }
+  const backup = path.join(
+    projectRoot,
+    ".data",
+    "approved-backups",
+    "approved-pre-retirement.sqlite",
+  );
+  await createApprovedM1Backup({
+    projectRoot,
+    sourcePath: source,
+    destinationPath: backup,
+  });
+  return {
+    projectRoot,
+    source,
+    backup,
+    backupSha256: sha256File(backup),
+  };
+}
 function seedQuarantinedActiveSession(sqlite: DatabaseSync): void {
   const now = Date.UTC(2026, 7, 9);
   const activity = {
@@ -532,7 +575,7 @@ describe("authorized M2 active migration", () => {
     if (!candidate?.health.opened)
       throw new Error("Migrated fixture did not open");
     expect(candidate.health.migrations.ids.at(-1)).toBe(
-      "0018_learner_course_state_trigger_guard",
+      "0019_provider_connection_retirement",
     );
     expect(candidate.health.m2).toMatchObject({
       present: true,
@@ -615,10 +658,69 @@ describe("authorized M2 active migration", () => {
     expect(first).toContain("migrated with verified recovery backup");
     expect(second).toContain("already current; no migration performed");
     expect(migrated.health.migrations.ids.at(-1)).toBe(
-      "0018_learner_course_state_trigger_guard",
+      "0019_provider_connection_retirement",
     );
     expect(replayed.health.logicalSha256).toBe(logicalAfterFirst);
     expect(sha256File(fixture.backup)).toBe(fixture.backupSha256);
+  }, 15_000);
+
+  it("admits exact 0018 as a no-op until backup-authorized 0019", async () => {
+    const fixture = await createExactPreRetirementFixture();
+
+    const defaultStatus = runM1MigrationCli({
+      projectRoot: fixture.projectRoot,
+      writeStatus: () => undefined,
+    });
+    expect(defaultStatus).toContain(
+      "Legacy compatibility admitted; no migration performed",
+    );
+    const before = inventoryPrivateData({
+      databasePaths: [fixture.source],
+    }).candidates[0];
+    expect(before?.health.opened).toBe(true);
+    if (!before?.health.opened) {
+      throw new Error("Pre-retirement fixture did not open");
+    }
+    expect(before.health.migrations.ids.at(-1)).toBe(
+      "0018_learner_course_state_trigger_guard",
+    );
+
+    const migratedStatus = runM1MigrationCli({
+      argv: [
+        "--authorize-current",
+        "--approved-backup",
+        fixture.backup,
+        "--backup-sha256",
+        fixture.backupSha256,
+      ],
+      projectRoot: fixture.projectRoot,
+      writeStatus: () => undefined,
+    });
+    expect(migratedStatus).toContain("migrated with verified recovery backup");
+    const after = inventoryPrivateData({
+      databasePaths: [fixture.source],
+    }).candidates[0];
+    expect(after?.health.opened).toBe(true);
+    if (!after?.health.opened) {
+      throw new Error("Retirement-migrated fixture did not open");
+    }
+    expect(after.health.migrations.ids.at(-1)).toBe(
+      "0019_provider_connection_retirement",
+    );
+    const migrated = new DatabaseSync(fixture.source, { readOnly: true });
+    try {
+      expect(
+        migrated
+          .prepare(
+            `SELECT 1 AS present
+             FROM pragma_table_info('provider_hub_connections')
+             WHERE name = 'retired_at'`,
+          )
+          .get(),
+      ).toEqual({ present: 1 });
+    } finally {
+      migrated.close();
+    }
   }, 15_000);
 
   it("rejects wrong hashes, wrong paths, stale sources, and partial markers", async () => {
@@ -771,7 +873,7 @@ describe("authorized M2 active migration", () => {
       throw new Error("Hardened fixture did not open");
     }
     expect(candidate.health.migrations.ids.at(-1)).toBe(
-      "0018_learner_course_state_trigger_guard",
+      "0019_provider_connection_retirement",
     );
     expect(candidate.health.m2.runs).toMatchObject({
       m2V3Rows: 1,
@@ -819,7 +921,7 @@ describe("authorized M2 active migration", () => {
       throw new Error("Post-hardening fixture did not open");
     }
     expect(candidate.health.migrations.ids.at(-1)).toBe(
-      "0018_learner_course_state_trigger_guard",
+      "0019_provider_connection_retirement",
     );
     expect(candidate.health.m2.runs).toMatchObject({
       m2V4Rows: 1,

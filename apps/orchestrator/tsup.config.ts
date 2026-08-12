@@ -1,6 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
+  clean: true,
   entry: ["src/server.ts"],
   format: ["esm"],
   platform: "node",
@@ -12,7 +13,7 @@ export default defineConfig({
     "@opencode-ai/sdk",
   ],
   removeNodeProtocol: false,
-  sourcemap: true,
+  sourcemap: process.env.NODE_ENV !== "production",
   outDir: "dist",
   noExternal: [/^@aptiloop\//u],
 });

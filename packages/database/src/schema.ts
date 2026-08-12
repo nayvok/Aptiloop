@@ -1678,7 +1678,7 @@ export const learningKernelFacts = sqliteTable(
     lessonId: text("lesson_id").notNull(),
     activityId: text("activity_id").notNull(),
     bodyType: text("body_type")
-      .$type<"evidence" | "progress" | "correction">()
+      .$type<"evidence" | "progress" | "correction" | "review">()
       .notNull(),
     provenanceKind: text("provenance_kind")
       .$type<
@@ -1831,6 +1831,7 @@ export const providerHubConnections = sqliteTable(
       .notNull(),
     observedCapabilitiesJson: text("observed_capabilities_json"),
     lastCheckedAt: text("last_checked_at"),
+    retiredAt: text("retired_at"),
     ...timestamps,
   },
   (table) => [

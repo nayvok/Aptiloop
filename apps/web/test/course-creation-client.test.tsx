@@ -379,6 +379,12 @@ describe("Course creation brief", () => {
     expect(contents).toContain("/courses/import");
     expect(contents).toContain("Return the final Course Pack JSON only");
     expect(contents).toContain("@aptiloop/course-authoring-kit@0.1.0");
+    expect(contents).toContain("Course Pack V1 structural scaffold");
+    expect(contents).toContain('"ownership": "unresolved"');
+    expect(contents).toContain("deliberately not installable as provided");
+    expect(contents).not.toContain("development-course-pack");
+    expect(contents).not.toContain("development-kernel-basics");
+    expect(contents).not.toContain("Aptiloop development fixture");
   });
 
   it("rejects non-JSON and oversized instruction requests before parsing", async () => {

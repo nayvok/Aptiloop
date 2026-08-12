@@ -32,7 +32,7 @@ Current implementation evidence does not turn every target authoring field or mo
 5. **Immutable release.** Published revisions are read-only. Editing starts by cloning to a new draft revision.
 6. **Separate gates.** AI Apply modifies a draft only. Validate, Preview, Change review, and immutable Publish are separate actions.
 7. **Stable provenance.** Source Snapshots, Knowledge Capsules, locale variants, environment requirements, and check IDs remain attributable across revisions.
-8. **No production courses.** Core Alpha exercises the format and workflow with fixtures only; the product must not imply a production catalog.
+8. **No bundled Course.** A fresh profile intentionally starts empty and lets the learner create a personal Course or import a trusted Course Pack. Development fixtures never appear as user content; any future first-party/sample Course is separately gated.
 9. **Local-first privacy.** Packs, drafts, previews, validation reports, and learner data remain local. Any external model request presents its exact content scope before transmission.
 10. **Incremental migration.** Preserve current revision and CRUD seams while moving one authoring surface at a time; do not big-bang rewrite the domain.
 
@@ -477,7 +477,7 @@ Export never silently shares externally. Errors preserve the local target choice
 **Future**
 
 - Multi-user collaborative editing, comments, roles, remote sync, and conflict-free shared cursors.
-- Course marketplace or production Course content.
+- Course marketplace, built-in catalog, or an Aptiloop-supplied first-party/sample Course.
 - Arbitrary plugins, Pack-defined commands, package installation, shell, terminal, filesystem browser, or full code editor.
 - Generic prompt/chat authoring as the main workflow.
 - AI automatic translation, automatic Apply, automatic validation override, or automatic Publish.

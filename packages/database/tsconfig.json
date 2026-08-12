@@ -9,7 +9,9 @@
     "src/**/*.ts",
     "test/**/*.ts",
     "../../scripts/create-approved-backup.ts",
+    "../../scripts/export-local-data.ts",
     "../../scripts/private-data-inventory.ts",
+    "../../scripts/restore-local-data.ts",
     "vitest.config.ts",
     "drizzle.config.ts"
   ]

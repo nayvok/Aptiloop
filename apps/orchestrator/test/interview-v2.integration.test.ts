@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { MockAgentProvider, type AgentProvider } from "@aptiloop/agent-core";
+import type { AgentProvider } from "@aptiloop/agent-core";
+import { MockAgentProvider } from "@aptiloop/agent-core/mock";
 import {
   canonicalJson,
   hashCanonicalJson,
@@ -26,6 +27,7 @@ import {
   type InterviewV2State,
 } from "../src/interview-v2.js";
 import { ProviderRuntime } from "../src/provider-runtime.js";
+import { testDevelopmentProviderFixture } from "./provider-development-fixture.js";
 
 const roots: string[] = [];
 const connections: DatabaseConnection[] = [];
@@ -52,12 +54,17 @@ function createState(
     opencode: provider,
     pi: provider,
   };
+  const connectionProviders = new Map<string, AgentProvider>();
   const state: InterviewV2State = {
     connection,
     providerRuntime: new ProviderRuntime({
       connection,
       providers,
+      connectionProviders,
       developmentMode: process.env.NODE_ENV !== "production",
+      ...(process.env.NODE_ENV !== "production"
+        ? { developmentFixture: testDevelopmentProviderFixture }
+        : {}),
       ...(now ? { now } : {}),
     }),
     interviewReservations: {
@@ -65,7 +72,7 @@ function createState(
       interviewIds: new Set(),
     },
   };
-  return { state, root, providers };
+  return { state, root, providers, connectionProviders };
 }
 
 function createTestApp(state: InterviewV2State) {
@@ -84,9 +91,22 @@ function createTestApp(state: InterviewV2State) {
 async function configureExternalInterviewer(
   state: InterviewV2State,
   providers: Record<ProviderId, AgentProvider>,
+  connectionProviders: Map<string, AgentProvider>,
   provider: AgentProvider,
 ) {
+  const connectionId = "conn:external-interviewer-test";
+  state.connection.sqlite
+    .prepare(
+      `INSERT OR IGNORE INTO provider_hub_connections
+        (connection_id, adapter_id, provider_type, display_name,
+         credential_ref, endpoint_profile_id, enabled, external, state,
+         observed_capabilities_json, last_checked_at, created_at, updated_at)
+       VALUES (?, 'pi', 'openai', 'External interviewer test',
+               'credential:test', NULL, 1, 1, 'degraded', NULL, NULL, 1, 1)`,
+    )
+    .run(connectionId);
   providers.pi = provider;
+  connectionProviders.set(connectionId, provider);
   const settings = await state.providerRuntime.settings();
   await state.providerRuntime.saveRoleProfiles(
     settings.roleProfiles.map((profile) =>
@@ -94,7 +114,7 @@ async function configureExternalInterviewer(
         ? {
             role: profile.role,
             mode: "connection" as const,
-            connectionId: "conn:pi:openai",
+            connectionId,
             modelId: "pi-exact",
           }
         : {
@@ -1009,6 +1029,7 @@ describe("restart-safe interview v2", () => {
         connection: restartedConnection,
         providers: restartedProviders,
         developmentMode: true,
+        developmentFixture: testDevelopmentProviderFixture,
       }),
       interviewReservations: {
         start: false,
@@ -1202,8 +1223,13 @@ describe("restart-safe interview v2", () => {
   it("requires and consumes exact disclosure for an external interviewer", async () => {
     const mock = new TrackingInterviewer("mock", "mock-deterministic");
     const pi = new TrackingInterviewer("pi", "pi-exact");
-    const { state, providers, root } = createState(mock);
-    await configureExternalInterviewer(state, providers, pi);
+    const { state, providers, connectionProviders, root } = createState(mock);
+    await configureExternalInterviewer(
+      state,
+      providers,
+      connectionProviders,
+      pi,
+    );
     const app = createTestApp(state);
     const setup = {
       operationId: "external-interviewer-policy",
@@ -1234,7 +1260,8 @@ describe("restart-safe interview v2", () => {
       operationId: setup.operationId,
     });
     expect(previewBody.disclosure.scope).toEqual({
-      destination: "OpenAI via Pi: Generate one bounded interview question",
+      destination:
+        "External interviewer test: Generate one bounded interview question",
       payloadCategories: ["course-content"],
       byteCount: expect.any(Number),
       exclusions: expect.any(Array),
@@ -1266,12 +1293,17 @@ describe("restart-safe interview v2", () => {
       opencode: mock,
       pi,
     };
+    const restartedConnectionProviders = new Map<string, AgentProvider>([
+      ["conn:external-interviewer-test", pi],
+    ]);
     const restartedState: InterviewV2State = {
       connection: restartedConnection,
       providerRuntime: new ProviderRuntime({
         connection: restartedConnection,
         providers: restartedProviders,
+        connectionProviders: restartedConnectionProviders,
         developmentMode: true,
+        developmentFixture: testDevelopmentProviderFixture,
       }),
       interviewReservations: { start: false, interviewIds: new Set() },
     };
@@ -1323,8 +1355,13 @@ describe("restart-safe interview v2", () => {
   it("recovers only the exact pending answer disclosure scope", async () => {
     const mock = new TrackingInterviewer("mock", "mock-deterministic");
     const pi = new TrackingInterviewer("pi", "pi-exact");
-    const { state, providers } = createState(mock);
-    await configureExternalInterviewer(state, providers, pi);
+    const { state, providers, connectionProviders } = createState(mock);
+    await configureExternalInterviewer(
+      state,
+      providers,
+      connectionProviders,
+      pi,
+    );
     const app = createTestApp(state);
     const setup = {
       operationId: "external-answer-setup",
@@ -1461,8 +1498,16 @@ describe("restart-safe interview v2", () => {
     let now = new Date("2026-08-11T00:00:00.000Z");
     const mock = new TrackingInterviewer("mock", "mock-deterministic");
     const pi = new TrackingInterviewer("pi", "pi-exact");
-    const { state, providers } = createState(mock, () => now);
-    await configureExternalInterviewer(state, providers, pi);
+    const { state, providers, connectionProviders } = createState(
+      mock,
+      () => now,
+    );
+    await configureExternalInterviewer(
+      state,
+      providers,
+      connectionProviders,
+      pi,
+    );
     const app = createTestApp(state);
     const setup = {
       operationId: "expiring-start-operation",

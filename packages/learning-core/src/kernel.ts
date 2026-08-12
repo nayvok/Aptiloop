@@ -21,6 +21,9 @@ export const LEARNING_KERNEL_SCHEDULER_VERSION = "baseline-1" as const;
 
 const DAY_MILLISECONDS = 86_400_000;
 const MASTERY_REVIEW_INTERVAL_MILLISECONDS = 3 * DAY_MILLISECONDS;
+/** `baseline-1` schedules the next explicit Review cycle three days later. */
+const REVIEW_SUCCESSOR_INTERVAL_MILLISECONDS = 3 * DAY_MILLISECONDS;
+const MAX_REVIEW_RESPONSE_LENGTH = 50_000;
 
 export interface LearningKernelScope {
   readonly courseId: string;
@@ -77,12 +80,35 @@ export interface LearningKernelCorrectionBody {
   readonly replacement: LearningKernelEvidenceBody;
 }
 
-export interface LearningKernelReviewBody {
+export interface LearningKernelReviewDismissBody {
   readonly type: "review";
   readonly activityId: string;
   readonly reviewItemId: string;
   readonly transition: "dismiss";
 }
+
+export interface LearningKernelReviewSubmitBody {
+  readonly type: "review";
+  readonly activityId: string;
+  readonly reviewItemId: string;
+  readonly transition: "submit";
+  readonly response: string;
+  readonly activitySnapshotHash: string;
+  readonly executionContextHash: string;
+}
+
+export interface LearningKernelReviewCompleteBody {
+  readonly type: "review";
+  readonly activityId: string;
+  readonly reviewItemId: string;
+  readonly transition: "complete";
+  readonly completionEvidenceFactId: string;
+}
+
+export type LearningKernelReviewBody =
+  | LearningKernelReviewDismissBody
+  | LearningKernelReviewSubmitBody
+  | LearningKernelReviewCompleteBody;
 
 export type LearningKernelFactBody =
   | LearningKernelEvidenceBody
@@ -505,11 +531,6 @@ function validateFactBody(
       );
       return;
     case "review":
-      assertExactKeys(
-        body,
-        ["type", "activityId", "reviewItemId", "transition"],
-        "review body",
-      );
       if (
         !activityById.has(
           assertIdentifier(body.activityId, "review.activityId"),
@@ -520,15 +541,95 @@ function validateFactBody(
         );
       }
       assertIdentifier(body.reviewItemId, "review.reviewItemId");
-      if (body.transition !== "dismiss") {
-        throw new LearningKernelValidationError("Unknown review transition");
+      switch (body.transition) {
+        case "dismiss":
+          assertExactKeys(
+            body,
+            ["type", "activityId", "reviewItemId", "transition"],
+            "review dismiss body",
+          );
+          if (fact.provenance.kind !== "learner_submission") {
+            throw new LearningKernelValidationError(
+              "Only a learner submission may dismiss a review item",
+            );
+          }
+          return;
+        case "submit":
+          assertExactKeys(
+            body,
+            [
+              "type",
+              "activityId",
+              "reviewItemId",
+              "transition",
+              "response",
+              "activitySnapshotHash",
+              "executionContextHash",
+            ],
+            "review submit body",
+          );
+          if (fact.provenance.kind !== "learner_submission") {
+            throw new LearningKernelValidationError(
+              "Only a learner submission may submit a review response",
+            );
+          }
+          if (
+            typeof body.response !== "string" ||
+            body.response.trim() === "" ||
+            body.response.length > MAX_REVIEW_RESPONSE_LENGTH
+          ) {
+            throw new LearningKernelValidationError(
+              `review.response must be a non-blank string of at most ${MAX_REVIEW_RESPONSE_LENGTH} characters`,
+            );
+          }
+          assertHash(body.activitySnapshotHash, "review.activitySnapshotHash");
+          assertHash(body.executionContextHash, "review.executionContextHash");
+          return;
+        case "complete": {
+          assertExactKeys(
+            body,
+            [
+              "type",
+              "activityId",
+              "reviewItemId",
+              "transition",
+              "completionEvidenceFactId",
+            ],
+            "review complete body",
+          );
+          if (fact.provenance.kind !== "deterministic_evaluator") {
+            throw new LearningKernelValidationError(
+              "Only a deterministic evaluator may complete a review item",
+            );
+          }
+          assertIdentifier(
+            body.completionEvidenceFactId,
+            "review.completionEvidenceFactId",
+          );
+          const submission = priorFactById.get(body.completionEvidenceFactId);
+          if (
+            !submission ||
+            submission.body.type !== "review" ||
+            submission.body.transition !== "submit" ||
+            submission.provenance.kind !== "learner_submission"
+          ) {
+            throw new LearningKernelValidationError(
+              "Review completion must cite an earlier learner Review submission",
+            );
+          }
+          if (
+            submission.body.reviewItemId !== body.reviewItemId ||
+            submission.body.activityId !== body.activityId
+          ) {
+            throw new LearningKernelValidationError(
+              "Review completion submission must match the exact Review item and activity",
+            );
+          }
+          return;
+        }
+        default:
+          throw new LearningKernelValidationError("Unknown review transition");
       }
-      if (fact.provenance.kind !== "learner_submission") {
-        throw new LearningKernelValidationError(
-          "Only a learner submission may dismiss a review item",
-        );
-      }
-      return;
     default:
       throw new LearningKernelValidationError(
         `Unknown Learning Kernel fact type: ${String((body as { type?: unknown }).type)}`,
@@ -934,6 +1035,158 @@ function projectReviewItems(
   facts: readonly LearningKernelFact[],
   factById: ReadonlyMap<string, LearningKernelFact>,
 ): LearningKernelReviewItem[] {
+  const hasExecutableReviewFacts = facts.some(
+    (fact) =>
+      fact.body.type === "review" &&
+      (fact.body.transition === "submit" ||
+        fact.body.transition === "complete"),
+  );
+  if (!hasExecutableReviewFacts) {
+    return projectLegacyReviewItems(
+      scope,
+      masteryByKnowledgeNode,
+      evidence,
+      mistakes,
+      facts,
+      factById,
+    );
+  }
+
+  const nonReviewFacts = facts.filter((fact) => fact.body.type !== "review");
+  const baseItems = projectLegacyReviewItems(
+    scope,
+    masteryByKnowledgeNode,
+    evidence,
+    mistakes,
+    nonReviewFacts,
+    factById,
+  );
+  const byId = new Map(baseItems.map((item) => [item.id, item] as const));
+  const baseItemIds = new Set(byId.keys());
+  const seriesByItemId = new Map(
+    baseItems.map((item) => [item.id, item.id] as const),
+  );
+  const touchedSeries = new Set<string>();
+
+  for (const fact of facts) {
+    if (fact.body.type !== "review") continue;
+    const current = byId.get(fact.body.reviewItemId);
+    if (!current) {
+      throw new LearningKernelValidationError(
+        `Unknown review item: ${fact.body.reviewItemId}`,
+      );
+    }
+    const seriesId = seriesByItemId.get(current.id) ?? current.id;
+    let item = current;
+    if (baseItemIds.has(current.id) && !touchedSeries.has(seriesId)) {
+      const snapshot = projectReviewItemBeforeFact(
+        scope,
+        current.id,
+        facts,
+        fact,
+      );
+      if (!snapshot) {
+        throw new LearningKernelValidationError(
+          `Review item was unavailable at fact ${fact.id}`,
+        );
+      }
+      item = snapshot;
+      byId.set(item.id, item);
+    }
+
+    switch (fact.body.transition) {
+      case "dismiss":
+        if (item.state === "pending") {
+          byId.set(item.id, { ...item, state: "dismissed" });
+        }
+        touchedSeries.add(seriesId);
+        break;
+      case "submit":
+        assertReviewActivityMatches(item, fact.body.activityId, factById);
+        assertExecutableReviewCycle(item, fact.occurredAt, "submit");
+        touchedSeries.add(seriesId);
+        break;
+      case "complete": {
+        assertReviewActivityMatches(item, fact.body.activityId, factById);
+        assertExecutableReviewCycle(item, fact.occurredAt, "complete");
+        const submission = factById.get(fact.body.completionEvidenceFactId);
+        if (
+          !submission ||
+          submission.body.type !== "review" ||
+          submission.body.transition !== "submit" ||
+          submission.body.reviewItemId !== item.id
+        ) {
+          throw new LearningKernelValidationError(
+            "Review completion evidence belongs to another Review cycle",
+          );
+        }
+        const sourceFactIds = uniqueSorted([
+          ...item.sourceFactIds,
+          submission.id,
+          fact.id,
+        ]);
+        byId.set(item.id, {
+          ...item,
+          sourceFactIds,
+          state: "completed",
+          completionEvidenceId: submission.id,
+        });
+        const successorId = reviewSuccessorId(scope, item.id, fact.id);
+        if (byId.has(successorId)) {
+          throw new LearningKernelConflictError(
+            `Duplicate Review successor ID: ${successorId}`,
+          );
+        }
+        const successor: LearningKernelReviewItem = {
+          ...item,
+          id: successorId,
+          sourceFactIds,
+          dueAt: addMilliseconds(
+            fact.occurredAt,
+            REVIEW_SUCCESSOR_INTERVAL_MILLISECONDS,
+          ),
+          state: "pending",
+          completionEvidenceId: null,
+        };
+        byId.set(successor.id, successor);
+        seriesByItemId.set(successor.id, seriesId);
+        touchedSeries.add(seriesId);
+        break;
+      }
+    }
+  }
+
+  // Accepted non-Review evidence remains an independent completion route. If
+  // it resolved the legacy series after an explicit Review action, apply it to
+  // the newest surviving cycle without fabricating another interval.
+  for (const finalItem of baseItems) {
+    const seriesId = seriesByItemId.get(finalItem.id) ?? finalItem.id;
+    if (finalItem.state !== "completed" || !touchedSeries.has(seriesId)) {
+      continue;
+    }
+    const latest = latestReviewSeriesItem(byId, seriesByItemId, seriesId);
+    if (!latest || latest.state === "completed") continue;
+    byId.set(latest.id, {
+      ...latest,
+      state: "completed",
+      completionEvidenceId: finalItem.completionEvidenceId,
+    });
+  }
+
+  return [...byId.values()].sort(compareReviewItems);
+}
+
+/** Preserves the exact `baseline-1` projection for all pre-executor facts. */
+function projectLegacyReviewItems(
+  scope: LearningKernelScope,
+  masteryByKnowledgeNode: Readonly<
+    Record<string, LearningKernelMasteryProjection>
+  >,
+  evidence: readonly EffectiveEvidenceFact[],
+  mistakes: readonly LearningKernelMistake[],
+  facts: readonly LearningKernelFact[],
+  factById: ReadonlyMap<string, LearningKernelFact>,
+): LearningKernelReviewItem[] {
   const items: LearningKernelReviewItem[] = mistakes.map((mistake) => {
     const occurrenceCount = mistake.occurrenceFactIds.length;
     const delayDays = Math.max(1, 4 - Math.min(occurrenceCount, 3));
@@ -1042,11 +1295,134 @@ function projectReviewItems(
       });
     }
   }
-  return [...byId.values()].sort(
-    (left, right) =>
-      Date.parse(left.dueAt) - Date.parse(right.dueAt) ||
-      compareStrings(left.id, right.id),
+  return [...byId.values()].sort(compareReviewItems);
+}
+
+function projectReviewItemBeforeFact(
+  scope: LearningKernelScope,
+  reviewItemId: string,
+  facts: readonly LearningKernelFact[],
+  boundary: LearningKernelFact,
+): LearningKernelReviewItem | null {
+  const priorFacts = facts.filter(
+    (fact) => fact.body.type !== "review" && reviewFactPrecedes(fact, boundary),
   );
+  const priorFactById = new Map(priorFacts.map((fact) => [fact.id, fact]));
+  const priorEvidence = effectiveEvidenceFacts(priorFacts, priorFactById);
+  const priorMastery = projectMastery(
+    priorEvidence,
+    Date.parse(boundary.occurredAt),
+  );
+  const priorMistakes = projectMistakes(scope, priorEvidence);
+  return (
+    projectLegacyReviewItems(
+      scope,
+      priorMastery,
+      priorEvidence,
+      priorMistakes,
+      priorFacts,
+      priorFactById,
+    ).find((item) => item.id === reviewItemId) ?? null
+  );
+}
+
+function reviewFactPrecedes(
+  candidate: LearningKernelFact,
+  boundary: LearningKernelFact,
+): boolean {
+  return (
+    Date.parse(candidate.occurredAt) < Date.parse(boundary.occurredAt) ||
+    (candidate.occurredAt === boundary.occurredAt &&
+      compareStrings(candidate.id, boundary.id) < 0)
+  );
+}
+
+function reviewSuccessorId(
+  scope: LearningKernelScope,
+  predecessorReviewItemId: string,
+  completionFactId: string,
+): string {
+  return `review-${sha256Canonical({
+    scope,
+    predecessorReviewItemId,
+    completionFactId,
+    schedulerVersion: LEARNING_KERNEL_SCHEDULER_VERSION,
+  }).slice("sha256:".length)}`;
+}
+
+function assertReviewActivityMatches(
+  item: LearningKernelReviewItem,
+  activityId: string,
+  factById: ReadonlyMap<string, LearningKernelFact>,
+): void {
+  const latestSource = item.sourceFactIds
+    .map((id) => factById.get(id))
+    .filter((fact): fact is LearningKernelFact => fact !== undefined)
+    .sort(
+      (left, right) =>
+        compareStrings(right.occurredAt, left.occurredAt) ||
+        compareStrings(right.id, left.id),
+    )[0];
+  const sourceActivityId =
+    latestSource?.body.type === "correction"
+      ? latestSource.body.replacement.activityId
+      : latestSource?.body.type === "evidence" ||
+          latestSource?.body.type === "review"
+        ? latestSource.body.activityId
+        : null;
+  if (!sourceActivityId) {
+    throw new LearningKernelValidationError(
+      "Review item has no resolvable source activity",
+    );
+  }
+  if (sourceActivityId !== activityId) {
+    throw new LearningKernelValidationError(
+      "Review fact activity does not match the scheduled Review item",
+    );
+  }
+}
+
+function latestReviewSeriesItem(
+  items: ReadonlyMap<string, LearningKernelReviewItem>,
+  seriesByItemId: ReadonlyMap<string, string>,
+  seriesId: string,
+): LearningKernelReviewItem | null {
+  return (
+    [...items.values()]
+      .filter((item) => seriesByItemId.get(item.id) === seriesId)
+      .sort(
+        (left, right) =>
+          compareStrings(right.dueAt, left.dueAt) ||
+          compareStrings(right.id, left.id),
+      )[0] ?? null
+  );
+}
+
+function compareReviewItems(
+  left: LearningKernelReviewItem,
+  right: LearningKernelReviewItem,
+): number {
+  return (
+    Date.parse(left.dueAt) - Date.parse(right.dueAt) ||
+    compareStrings(left.id, right.id)
+  );
+}
+
+function assertExecutableReviewCycle(
+  item: LearningKernelReviewItem,
+  observedAt: string,
+  transition: "submit" | "complete",
+): void {
+  if (item.state !== "pending") {
+    throw new LearningKernelConflictError(
+      `Only a pending Review item may be ${transition === "submit" ? "submitted" : "completed"}`,
+    );
+  }
+  if (!isLearningKernelReviewDue(item, observedAt)) {
+    throw new LearningKernelValidationError(
+      `A Review item cannot be ${transition === "submit" ? "submitted" : "completed"} before it is due`,
+    );
+  }
 }
 
 function selectNextAction(

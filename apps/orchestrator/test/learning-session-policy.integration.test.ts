@@ -8,6 +8,7 @@ import { SessionSnapshotSchema, type SessionSnapshot } from "@aptiloop/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { seedDevelopmentDatabase } from "./development-database-fixture.js";
 import {
   assertCourseScopedSessionSideEffectAllowed,
   assertLearningSessionMutationAllowed,
@@ -32,6 +33,7 @@ function runtime() {
     projectRoot: path.resolve("../.."),
     databasePath: path.join(root, "test.sqlite"),
     databaseMode: "disposable",
+    developmentDatabaseInitializer: seedDevelopmentDatabase,
   });
   runtimes.push(created);
   return created;

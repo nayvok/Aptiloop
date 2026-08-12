@@ -1172,22 +1172,29 @@ async function runDesignerTurn(
   let completedContent: string | null = null;
   try {
     signal.throwIfAborted();
-    const session = await dispatch.provider.createSession({
-      role: "course-designer",
-      modelId: dispatch.modelId,
-      systemPrompt: promptDefinition.systemPrompt,
-      metadata: {
-        versionId: graph.version.id,
-        workflowId: workflow.id,
-        draftHash: authoringDraftHash(graph),
-        prompt,
-        authoringOperationId,
-        providerOperationId: dispatch.operationId,
-        approvedSources: JSON.parse(
-          JSON.stringify(workflow.request.sources),
-        ) as JsonValue,
-      },
-    });
+    const session = await state.providerRuntime.runSetup(
+      (setupSignal) =>
+        dispatch.provider.createSession(
+          {
+            role: "course-designer",
+            modelId: dispatch.modelId,
+            systemPrompt: promptDefinition.systemPrompt,
+            metadata: {
+              versionId: graph.version.id,
+              workflowId: workflow.id,
+              draftHash: authoringDraftHash(graph),
+              prompt,
+              authoringOperationId,
+              providerOperationId: dispatch.operationId,
+              approvedSources: JSON.parse(
+                JSON.stringify(workflow.request.sources),
+              ) as JsonValue,
+            },
+          },
+          setupSignal,
+        ),
+      signal,
+    );
     providerSessionId = session.id;
     signal.throwIfAborted();
     for await (const event of state.providerRuntime.stream(
@@ -1925,6 +1932,7 @@ export function registerCourseDesignerRoutes(
           const dispatch = await state.providerRuntime.resolveDispatch({
             role: "course-designer",
             payload,
+            signal: context.req.raw.signal,
             ...(input.disclosureOperationId
               ? { disclosureOperationId: input.disclosureOperationId }
               : {}),
@@ -1955,6 +1963,7 @@ export function registerCourseDesignerRoutes(
             const validation = validateProposal(graph, parsedProposal);
             state.connection.sqlite.exec("BEGIN IMMEDIATE");
             try {
+              state.providerRuntime.assertDispatchCommitAllowed(dispatch);
               context.req.raw.signal.throwIfAborted();
               persistAttribution(state.connection, {
                 proposal,
@@ -1974,6 +1983,7 @@ export function registerCourseDesignerRoutes(
                   warnings: validation.warnings,
                 },
               });
+              state.providerRuntime.assertDispatchCommitAllowed(dispatch);
               context.req.raw.signal.throwIfAborted();
               state.connection.sqlite.exec("COMMIT");
             } catch (error) {

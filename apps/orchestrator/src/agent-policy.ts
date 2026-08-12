@@ -23,12 +23,7 @@ export function m1LearningProviderBlockReason(
   if (providerId !== "mock") {
     return `Learning provider ${providerId} is blocked by M1 policy`;
   }
-  if (
-    policy.developmentMode !== true &&
-    policy.configurationOnly !== true &&
-    process.env.NODE_ENV !== "development" &&
-    process.env.NODE_ENV !== "test"
-  ) {
+  if (policy.developmentMode !== true && policy.configurationOnly !== true) {
     return "Mock learning provider is disabled outside explicit development or test mode";
   }
   return undefined;

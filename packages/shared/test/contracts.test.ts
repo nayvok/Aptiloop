@@ -124,7 +124,7 @@ describe("shared contracts", () => {
     ).toBe(false);
   });
 
-  it("binds Review due state to the server clock and withholds session actions", () => {
+  it("binds Review due state to the server clock and exposes only typed execution", () => {
     const response = {
       asOf: "2026-08-11T12:00:00.000Z",
       reviews: [
@@ -140,7 +140,12 @@ describe("shared contracts", () => {
           isDue: true,
           sessionId: "session-1",
           activityId: "activity-1",
-          nextActionHref: null,
+          execution: {
+            id: "review-execution-1",
+            type: "free-response",
+            schemaVersion: 1,
+            activitySnapshotHash: "a".repeat(64),
+          },
         },
       ],
     } as const;
@@ -157,7 +162,10 @@ describe("shared contracts", () => {
         reviews: [
           {
             ...response.reviews[0],
-            nextActionHref: "/session?id=session-1",
+            execution: {
+              ...response.reviews[0].execution,
+              href: "/session?id=session-1",
+            },
           },
         ],
       }).success,

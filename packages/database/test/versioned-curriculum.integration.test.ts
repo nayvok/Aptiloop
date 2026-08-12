@@ -21,10 +21,12 @@ import {
   discoverDatabaseCandidates,
   publicationContent,
   resolveDatabaseProjectRoot,
-  seedDatabase,
-  seedVersionedCurriculum,
   type DatabaseConnection,
 } from "../src/index.js";
+import {
+  seedDatabase,
+  seedVersionedCurriculum,
+} from "../src/development-fixtures.js";
 
 const cleanup: Array<() => void> = [];
 const migrationsDirectory = fileURLToPath(

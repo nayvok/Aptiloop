@@ -162,23 +162,6 @@ export function seedCurriculum(
       }
     }
 
-    const provider = connection.sqlite.prepare(
-      `INSERT OR IGNORE INTO provider_configurations
-       (provider_id, enabled, endpoint, teacher_model_id, reviewer_model_id,
-        interviewer_model_id, options_json, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, '{}', ?)`,
-    );
-    provider.run(
-      "mock",
-      1,
-      null,
-      "mock-teacher",
-      "mock-reviewer",
-      "mock-interviewer",
-      now,
-    );
-    provider.run("codex", 0, null, null, null, null, now);
-    provider.run("opencode", 0, "http://127.0.0.1:4096", null, null, null, now);
     connection.sqlite
       .prepare(
         `INSERT OR IGNORE INTO application_settings (key, value_json, updated_at)

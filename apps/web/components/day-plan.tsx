@@ -19,8 +19,8 @@ import {
 } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { EstimatedDuration } from "@/components/estimated-duration";
 import { groupDayIntoBlocks } from "@/lib/learning-blocks";
-import { formatMinutesShort } from "@/lib/time";
 import { type MessageKey, useI18n } from "@/lib/i18n";
 import {
   depthMessageKey,
@@ -75,7 +75,7 @@ function DayPlanContent({
   session: LearnerSession;
   variant: "sheet" | "rail";
 }) {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const { day } = session.snapshot;
   const progressByUnit = new Map(
     session.unitProgress.map((item) => [item.unitId, item]),
@@ -118,13 +118,15 @@ function DayPlanContent({
             <span className="block font-medium text-foreground">
               {t("dayPlan.title", { order: day.order, title: day.title })}
             </span>
-            <span className="mt-0.5 block">
-              {t("dayPlan.meta", {
-                duration: formatMinutesShort(day.estimatedMinutes, locale),
-                depth: depthMessageKey(day.depthLevel)
-                  ? t(depthMessageKey(day.depthLevel)!)
-                  : day.depthLevel,
-              })}
+            <span className="mt-2 flex flex-wrap items-center gap-2">
+              <EstimatedDuration minutes={day.estimatedMinutes} />
+              <span>
+                {t("dayPlan.depth", {
+                  depth: depthMessageKey(day.depthLevel)
+                    ? t(depthMessageKey(day.depthLevel)!)
+                    : day.depthLevel,
+                })}
+              </span>
             </span>
           </SheetDescription>
         </SheetHeader>
@@ -136,14 +138,16 @@ function DayPlanContent({
           <p className="mt-2.5 break-words text-pretty text-sm font-semibold leading-5 [overflow-wrap:anywhere]">
             {t("dayPlan.title", { order: day.order, title: day.title })}
           </p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {t("dayPlan.meta", {
-              duration: formatMinutesShort(day.estimatedMinutes, locale),
-              depth: depthMessageKey(day.depthLevel)
-                ? t(depthMessageKey(day.depthLevel)!)
-                : day.depthLevel,
-            })}
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs leading-5 text-muted-foreground">
+            <EstimatedDuration minutes={day.estimatedMinutes} />
+            <span>
+              {t("dayPlan.depth", {
+                depth: depthMessageKey(day.depthLevel)
+                  ? t(depthMessageKey(day.depthLevel)!)
+                  : day.depthLevel,
+              })}
+            </span>
+          </div>
         </header>
       )}
 
@@ -232,15 +236,17 @@ function DayPlanContent({
                           <span className="text-muted-foreground"> · </span>
                           {t(phaseMessageKeys[block.id])}
                         </p>
-                        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                          {t("session.activitiesCount", {
-                            count: block.totalCount,
-                            duration: formatMinutesShort(
-                              block.estimatedMinutes,
-                              locale,
-                            ),
-                          })}
-                        </p>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs leading-5 text-muted-foreground">
+                          <span>
+                            {t(
+                              block.totalCount === 1
+                                ? "session.activitiesCount.one"
+                                : "session.activitiesCount.other",
+                              { count: block.totalCount },
+                            )}
+                          </span>
+                          <EstimatedDuration minutes={block.estimatedMinutes} />
+                        </div>
                       </div>
                       <span className="max-w-24 shrink-0 break-words pt-0.5 text-right text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
                         {t(unitStatusMessageKeys[block.status])}
@@ -259,7 +265,7 @@ function DayPlanContent({
                             data-status={status}
                             aria-current={current ? "step" : undefined}
                             className={cn(
-                              "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-2.5 rounded-control px-2.5 py-2 text-sm",
+                              "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-start gap-2.5 rounded-control px-2.5 py-2 text-sm min-[24rem]:grid-cols-[1rem_minmax(0,1fr)_auto]",
                               current
                                 ? "bg-background shadow-sm"
                                 : "bg-transparent",
@@ -297,15 +303,14 @@ function DayPlanContent({
                               <span className="block break-words font-medium [overflow-wrap:anywhere]">
                                 {unit.title}
                               </span>
-                              <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                                {t(unitTypeMessageKeys[unit.type])} ·{" "}
-                                {formatMinutesShort(
-                                  unit.estimatedMinutes,
-                                  locale,
-                                )}
+                              <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs leading-5 text-muted-foreground">
+                                <span>{t(unitTypeMessageKeys[unit.type])}</span>
+                                <EstimatedDuration
+                                  minutes={unit.estimatedMinutes}
+                                />
                               </span>
                             </span>
-                            <span className="max-w-24 shrink-0 break-words pt-0.5 text-right text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+                            <span className="col-start-2 max-w-full break-words text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere] min-[24rem]:col-start-3 min-[24rem]:max-w-24 min-[24rem]:shrink-0 min-[24rem]:pt-0.5 min-[24rem]:text-right">
                               {t(unitStatusMessageKeys[status])}
                             </span>
                           </li>

@@ -691,8 +691,10 @@ function getInterviewAiReadiness(
   if (
     !connection ||
     !connection.enabled ||
-    connection.state !== "connected" ||
-    !connection.observedCapabilities?.connection.authenticated
+    (connection.state !== "connected" && connection.state !== "degraded") ||
+    (connection.state === "connected" &&
+      !connection.observedCapabilities?.connection.authenticated) ||
+    !connection.observedCapabilities
   ) {
     return {
       kind: "unavailable",

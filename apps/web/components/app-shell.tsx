@@ -535,10 +535,10 @@ export function AppShell({
             id="main-content"
             tabIndex={-1}
             className={cn(
-              "w-full pb-28 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              "w-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               immersiveSession
-                ? "min-h-[calc(100dvh-var(--shell-bar-size))] px-0 pt-0 md:pb-0"
-                : "px-4 py-8 sm:px-6 sm:py-10 md:pb-12 lg:px-6 lg:py-8",
+                ? "min-h-[calc(100dvh-var(--shell-bar-size))] px-0 pt-0 pb-[var(--shell-mobile-navigation-clearance)] md:pb-0"
+                : "px-4 pt-8 pb-[var(--shell-mobile-navigation-clearance)] sm:px-6 sm:pt-10 md:pb-12 lg:px-6 lg:py-8",
             )}
           >
             {children}
@@ -548,7 +548,7 @@ export function AppShell({
         <nav
           data-slot="mobile-navigation"
           aria-label={t("a11y.mobileNavigation")}
-          className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-border/70 bg-background/95 px-1 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] backdrop-blur md:hidden"
+          className="fixed inset-x-0 bottom-0 z-30 grid min-h-[var(--shell-mobile-navigation-height)] grid-cols-5 border-t border-border/70 bg-background/95 px-1 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] backdrop-blur md:hidden"
         >
           {nav.map((item) => {
             const active = routeContext.sectionHref === item.href;

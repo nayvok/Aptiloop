@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   canonicalCoursePackJson,
-  createDevelopmentCoursePackFixture,
   finalizeCoursePack,
   validateCoursePackBytes,
   type CoursePackV1,
 } from "@aptiloop/course-authoring-kit";
+import { createDevelopmentCoursePackFixture } from "../../course-authoring-kit/test/fixture.js";
 
 import {
   coursePackSourceBytesHash,

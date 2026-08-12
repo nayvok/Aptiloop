@@ -1,11 +1,11 @@
 # Course Pack V1
 
-**Document status:** Course Pack V1 validation, local intake/lifecycle, Authoring Kit, and Adaptive Studio import/export/open-as-draft surfaces are an **Implemented baseline**. Production Course approval, registries/signatures, and archive transport retain their labels below.
+**Document status:** Course Pack V1 validation, local intake/lifecycle, Authoring Kit, and Adaptive Studio import/export/open-as-draft surfaces are an **Implemented baseline**. Approval for any future first-party/sample Course, registries/signatures, and archive transport retain their labels below.
 **Scope:** declarative Course interchange, validation, publication, and migration. A Course Pack is not an execution, deployment, provider, or credential format.
 
 ## Purpose and invariants
 
-**Approved Core Alpha target.** `Course` is the top entity. A Course owns an ordered lineage of immutable `CourseRevision` records. A Course Pack transports exactly one self-contained Course revision plus its declared, non-secret dependencies. Core Alpha ships no production Courses; bundled legacy curriculum and exercise fixtures are migration/test inputs only.
+**Approved Core Alpha target.** `Course` is the top entity. A Course owns an ordered lineage of immutable `CourseRevision` records. A Course Pack transports exactly one self-contained Course revision plus its declared, non-secret dependencies. Aptiloop intentionally ships without bundled Courses: a fresh profile begins empty and exposes Create Course / Import Course Pack. Legacy curriculum and exercise fixtures are migration/test inputs only.
 
 A valid V1 pack is:
 
@@ -25,7 +25,7 @@ A valid V1 pack is:
 
 **Implemented baseline.** Migration `0011_course_pack_lifecycle` stores immutable canonical manifests/localizations/knowledge nodes plus append-only lifecycle events and bounded quarantine records; it does not store pre-commit staging handles or files. Same-action re-import is idempotent; cross-action, key/hash, occupied-branch, and existing-Course primary-locale conflicts fail closed. Uninstall preserves learner facts and is rejected while an active learning session pins the revision. The Courses UI exposes one accessible file-selection control, validation report/Preview/provenance/requirements/hash, explicit Install/Open-as-draft, canonical source export, and confirmed uninstall.
 
-**Implemented baseline limitation.** V1 is one local JSON document. It never fetches content and cannot define commands, processes, providers, plugins, credentials, arbitrary files, or execution environments. No production Course is bundled or approved.
+**Implemented baseline limitation.** V1 is one local JSON document. It never fetches content and cannot define commands, processes, providers, plugins, credentials, arbitrary files, or execution environments. No Course is bundled by design; this is normal first-run behavior rather than a missing content approval.
 
 ### Intake lifecycle and recovery
 
@@ -212,7 +212,7 @@ A pack cannot define a new capability, environment, check, renderer, plugin, or 
 
 `Validate` is not `Publish` and is not end-to-end runtime readiness. Publication requires an explicit user action after a zero-error report and a change summary. Publishing atomically stores immutable content, hash, lineage, validation report version, and timestamp. A model may propose changes only to a draft; it cannot validate as authority, apply without user action, or publish.
 
-**Implemented baseline limitation.** `spaced-review` is a recognized schema/renderer type, so a Pack may pass structural validation, while the due-Review projection still has no typed server-verified executor and exposes no next action. Validation must not be cited as evidence that executable spaced Review exists; the UI remains fail-closed until the **Approved Core Alpha target** executor is implemented.
+**Implemented baseline.** `spaced-review` is a recognized schema/renderer type, and due Review Items have a typed participation executor. Runtime execution still is not implied by schema acceptance alone: the server must resolve the exact immutable Course/revision/session snapshot, verify the authored learner-safe prompt and source activity, and fail closed when that content or scope cannot be resolved. Protected evaluation material is never required or exposed because participation completion does not claim correctness or mastery.
 
 ### Import transaction
 
@@ -231,4 +231,4 @@ Course Pack V1 is a JSON document, not an archive format. **Future.** If an arch
 
 Legacy authored source objects remain SourceReference/capture candidates rather than silently becoming approved snapshots or licensing proof. Protected answers remain server-only, and existing session snapshots/evidence stay pinned to their original revision. New imports, Drafts, and publications never rewrite those historical bytes.
 
-**Future.** Public Course registries, signing, trust stores, delta packs, executable exercises from third parties, and production Course distribution are outside Core Alpha.
+**Future.** Public Course registries, signing, trust stores, delta packs, executable exercises from third parties, public Course distribution services, and any Aptiloop-supplied first-party/sample Course are outside Core Alpha.

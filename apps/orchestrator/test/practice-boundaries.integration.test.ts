@@ -11,6 +11,11 @@ import {
 import path from "node:path";
 
 import type { AgentProvider } from "@aptiloop/agent-core";
+import { MockAgentProvider } from "@aptiloop/agent-core/mock";
+import {
+  createCoreExecutionFabric,
+  LEGACY_NODE_TEST_CHECK_ID,
+} from "@aptiloop/exercise-core";
 
 import {
   ReviewResultSchema,
@@ -22,6 +27,8 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp, type AppOptions } from "../src/app.js";
+import { seedDevelopmentDatabase } from "./development-database-fixture.js";
+import { testDevelopmentProviderFixture } from "./provider-development-fixture.js";
 
 const projectRoot = path.resolve("../..");
 const cleanupRoots: string[] = [];
@@ -54,6 +61,8 @@ class FencedReviewProvider implements AgentProvider {
   readonly id: "mock" | "pi";
   readonly createInputs: CreateAgentSessionInput[] = [];
   readonly cancelCalls: string[] = [];
+  readonly createSignals: AbortSignal[] = [];
+  readonly activeSessionIds = new Set<string>();
   response = `\`\`\`json\n${JSON.stringify(fencedReviewResult)}\n\`\`\``;
   script?: ReviewerEventScript;
   createSessionGate?: Promise<void>;
@@ -88,10 +97,15 @@ class FencedReviewProvider implements AgentProvider {
     ];
   }
 
-  async createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
+  async createSession(
+    input: CreateAgentSessionInput,
+    signal?: AbortSignal,
+  ): Promise<AgentSession> {
     this.createInputs.push(input);
+    if (signal) this.createSignals.push(signal);
     await this.createSessionGate;
-    return {
+    signal?.throwIfAborted();
+    const session: AgentSession = {
       id: "private-review-provider-handle",
       providerId: this.id,
       role: input.role,
@@ -100,6 +114,8 @@ class FencedReviewProvider implements AgentProvider {
       createdAt: new Date().toISOString(),
       metadata: { privateProviderMetadata: "review-metadata-must-not-persist" },
     };
+    this.activeSessionIds.add(session.id);
+    return session;
   }
 
   async *streamMessage(): AsyncIterable<AgentEvent> {
@@ -128,6 +144,7 @@ class FencedReviewProvider implements AgentProvider {
 
   async cancelSession(sessionId: string) {
     this.cancelCalls.push(sessionId);
+    this.activeSessionIds.delete(sessionId);
   }
 }
 
@@ -177,6 +194,8 @@ const reviewerCommitBoundaryCases: Array<[string, ReviewerEventScript]> = [
 function runtime(
   providers?: AppOptions["providers"],
   cancellationTestHooks?: AppOptions["cancellationTestHooks"],
+  connectionProviders?: ReadonlyMap<string, AgentProvider>,
+  executionFabric?: AppOptions["executionFabric"],
 ) {
   const databaseRoot = mkdtempSync(
     path.join(process.env.TEMP ?? projectRoot, "aptiloop-practice-db-"),
@@ -191,9 +210,14 @@ function runtime(
     projectRoot,
     databasePath: path.join(databaseRoot, "test.sqlite"),
     databaseMode: "disposable",
+    developmentDatabaseInitializer: seedDevelopmentDatabase,
     exerciseAttemptsRoot: attemptsRoot,
-    ...(providers ? { providers } : {}),
+    developmentMode: true,
+    developmentProviderFixture: testDevelopmentProviderFixture,
+    providers: { mock: new MockAgentProvider(), ...providers },
+    ...(connectionProviders ? { connectionProviders } : {}),
     ...(cancellationTestHooks ? { cancellationTestHooks } : {}),
+    ...(executionFabric ? { executionFabric } : {}),
   });
   runtimes.push(created);
   return created;
@@ -440,6 +464,48 @@ describe("practice execution and reviewer boundaries", () => {
         )
         .get("cancel-trusted-check"),
     ).toEqual({ status: "cancelled", completedAt: expect.any(Number) });
+  }, 30_000);
+
+  it("cancels and drains a hanging trusted check before runtime shutdown closes SQLite", async () => {
+    const executionFabric = createCoreExecutionFabric({
+      legacyNodeTestPlan: {
+        executable: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+        timeoutMs: 60_000,
+        maxOutputBytes: 1_000,
+      },
+    });
+    const current = runtime(undefined, undefined, undefined, executionFabric);
+    const { attemptId } = await createAttempt(current);
+    const responsePromise = request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/checks`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          operationId: "shutdown-trusted-check",
+          checkIds: [LEGACY_NODE_TEST_CHECK_ID],
+        }),
+      },
+    );
+    await expect
+      .poll(() =>
+        current.state.connection.sqlite
+          .prepare("SELECT status FROM test_runs WHERE operation_id = ?")
+          .get("shutdown-trusted-check"),
+      )
+      .toEqual({ status: "running" });
+
+    current.beginShutdown();
+    await current.close();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      operationId: "shutdown-trusted-check",
+      status: "cancelled",
+    });
+    runtimes.splice(runtimes.indexOf(current), 1);
   }, 30_000);
 
   it("rejects a trusted-check result aborted after execution but before persistence", async () => {
@@ -1096,7 +1162,10 @@ describe("practice execution and reviewer boundaries", () => {
 
     expect(await response.json()).toEqual({ error: safeAgentCancellation });
     expect(provider.streamCalls).toBe(0);
-    expect(provider.cancelCalls).toEqual(["private-review-provider-handle"]);
+    expect(provider.createSignals).toHaveLength(1);
+    expect(provider.createSignals[0]?.aborted).toBe(true);
+    expect(provider.activeSessionIds.size).toBe(0);
+    expect(provider.cancelCalls).toEqual([]);
     expect(
       current.state.connection.sqlite
         .prepare("SELECT count(*) AS count FROM reviews")
@@ -1307,7 +1376,22 @@ describe("practice execution and reviewer boundaries", () => {
 
   it("requires exact disclosure approval before an external reviewer request", async () => {
     const provider = new FencedReviewProvider("pi");
-    const current = runtime({ pi: provider });
+    const connectionId = "conn:practice-external-reviewer";
+    const current = runtime(
+      { pi: provider },
+      undefined,
+      new Map([[connectionId, provider]]),
+    );
+    current.state.connection.sqlite
+      .prepare(
+        `INSERT INTO provider_hub_connections
+         (connection_id, adapter_id, provider_type, display_name,
+          credential_ref, endpoint_profile_id, enabled, external, state,
+          observed_capabilities_json, last_checked_at, created_at, updated_at)
+         VALUES (?, 'pi', 'openai', 'External practice reviewer',
+                 'credential:test', NULL, 1, 1, 'degraded', NULL, NULL, 1, 1)`,
+      )
+      .run(connectionId);
     const settingsResponse = await request(current.app, "/api/settings");
     const settings = (await settingsResponse.json()) as {
       ai: {
@@ -1333,7 +1417,7 @@ describe("practice execution and reviewer boundaries", () => {
       mode:
         profile.role === "reviewer" ? ("connection" as const) : profile.mode,
       connectionId:
-        profile.role === "reviewer" ? "conn:pi:openai" : profile.connectionId,
+        profile.role === "reviewer" ? connectionId : profile.connectionId,
       modelId:
         profile.role === "reviewer" ? "mock-deterministic" : profile.modelId,
     }));

@@ -13,13 +13,15 @@ import {
   LearningMistakesResponseSchema,
   LearningPathNextActionSchema,
   LearningReviewsResponseSchema,
+  LearningReviewSubmissionResponseSchema,
   SessionSnapshotSchema,
 } from "@aptiloop/shared";
 import type { Hono } from "hono";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createApp } from "../src/app.js";
+import { seedDevelopmentDatabase } from "./development-database-fixture.js";
 
 const runtimes: Array<ReturnType<typeof createApp>> = [];
 const roots: string[] = [];
@@ -86,6 +88,7 @@ function createRuntime(databasePath?: string) {
     projectRoot: path.resolve("../.."),
     databasePath: databasePath ?? path.join(root, "test.sqlite"),
     databaseMode: "disposable",
+    developmentDatabaseInitializer: seedDevelopmentDatabase,
   });
   runtimes.push(created);
   return {
@@ -737,7 +740,10 @@ describe("versioned learning API", () => {
         activityId: activity.id,
         state: "pending",
         isDue: true,
-        nextActionHref: null,
+        execution: expect.objectContaining({
+          type: "free-response",
+          schemaVersion: 1,
+        }),
       }),
     );
 
@@ -755,8 +761,271 @@ describe("versioned learning API", () => {
     expect(
       historicalReviews.reviews.find(
         (review) => review.reasonCode === "mistake",
-      )?.nextActionHref,
-    ).toBeNull();
+      )?.execution,
+    ).toEqual(expect.objectContaining({ type: "free-response" }));
+
+    const dueReview = historicalReviews.reviews.find(
+      (review) => review.reasonCode === "mistake",
+    );
+    if (!dueReview?.execution) {
+      throw new Error("Expected an executable due Review item");
+    }
+    const detail = await request(
+      runtime.app,
+      `/api/learning/reviews/executions/${dueReview.execution.id}`,
+    );
+    expect(detail.status).toBe(200);
+    const reviewActivity = (await detail.json()) as {
+      activity: {
+        executionId: string;
+        prompt: string;
+        activitySnapshotHash: string;
+        executionContextHash: string;
+      };
+    };
+    expect(reviewActivity.activity).toMatchObject({
+      executionId: dueReview.execution.id,
+      activitySnapshotHash: dueReview.execution.activitySnapshotHash,
+    });
+    expect(reviewActivity.activity.prompt).not.toEqual("");
+    expect(JSON.stringify(reviewActivity)).not.toContain("correctOptionIds");
+    expect(JSON.stringify(reviewActivity)).not.toContain("referenceAnswer");
+
+    const staleAttemptFactId = "kernel-views-stale-attempt-fact";
+    const staleActivity = kernel.listActivities(scope)[1];
+    if (!staleActivity)
+      throw new Error("Second kernel activity is unavailable");
+    kernel.accept(scope, {
+      operationId: "kernel-views-stale-attempt",
+      factId: staleAttemptFactId,
+      observedAt: "2020-08-10T10:00:02.000Z",
+      provenance: {
+        kind: "learner_submission",
+        sourceId: "kernel-views-stale-attempt",
+        sourceHash: learningKernelSha256({
+          sourceId: "kernel-views-stale-attempt",
+        }),
+      },
+      body: {
+        type: "evidence",
+        activityId: staleActivity.id,
+        knowledgeNodeIds: [knowledgeNodeId],
+        dimension: "understanding",
+        evidenceType: "recall",
+        outcome: "unverified",
+        hintLevel: 0,
+        basisFactIds: [],
+      },
+    });
+    kernel.accept(scope, {
+      operationId: "kernel-views-stale-evaluation",
+      factId: "kernel-views-stale-evaluation-fact",
+      observedAt: "2020-08-10T10:00:03.000Z",
+      provenance: {
+        kind: "deterministic_evaluator",
+        sourceId: "kernel-views-stale-evaluation",
+        sourceHash: learningKernelSha256({
+          sourceId: "kernel-views-stale-evaluation",
+        }),
+        evaluatorVersion: "kernel-views-test-v1",
+      },
+      body: {
+        type: "evidence",
+        activityId: staleActivity.id,
+        knowledgeNodeIds: [knowledgeNodeId],
+        dimension: "understanding",
+        evidenceType: "recall",
+        outcome: "incorrect",
+        hintLevel: 0,
+        basisFactIds: [staleAttemptFactId],
+        errorFamily: "kernel-views-error",
+      },
+    });
+
+    const staleSubmissionPath = `/api/learning/reviews/executions/${dueReview.execution.id}/submissions`;
+    const staleSubmission = await request(runtime.app, staleSubmissionPath, {
+      method: "POST",
+      body: JSON.stringify({
+        operationId: "stale-review-context",
+        executionContextHash: reviewActivity.activity.executionContextHash,
+        response: { type: "free-response", text: "Answer for the old prompt" },
+      }),
+    });
+    expect(staleSubmission.status).toBe(400);
+    expect(await staleSubmission.json()).toEqual({
+      error: "Review execution context is stale or mismatched",
+    });
+    expect(
+      runtime.state.connection.sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM learning_kernel_facts
+           WHERE body_type = 'review'`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+
+    const refreshedReviews = LearningReviewsResponseSchema.parse(
+      await (await request(runtime.app, "/api/learning/reviews")).json(),
+    );
+    const refreshedReview = refreshedReviews.reviews.find(
+      (review) => review.id === dueReview.id,
+    );
+    if (!refreshedReview?.execution) {
+      throw new Error("Expected refreshed executable Review item");
+    }
+    expect(refreshedReview.activityId).toBe(staleActivity.id);
+    const refreshedDetail = (await (
+      await request(
+        runtime.app,
+        `/api/learning/reviews/executions/${refreshedReview.execution.id}`,
+      )
+    ).json()) as typeof reviewActivity;
+    expect(refreshedDetail.activity.executionContextHash).not.toBe(
+      reviewActivity.activity.executionContextHash,
+    );
+
+    const submissionPath = `/api/learning/reviews/executions/${dueReview.execution.id}/submissions`;
+    const submitBody = {
+      operationId: "r".repeat(200),
+      executionContextHash: refreshedDetail.activity.executionContextHash,
+      response: {
+        type: "free-response",
+        text: "I recalled the concept and explained the earlier gap.",
+      },
+    };
+    const responseParse = vi
+      .spyOn(LearningReviewSubmissionResponseSchema, "parse")
+      .mockImplementationOnce(() => {
+        throw new Error("forced Review response validation failure");
+      });
+    const rejected = await request(runtime.app, submissionPath, {
+      method: "POST",
+      body: JSON.stringify(submitBody),
+    });
+    expect(rejected.status).toBe(400);
+    expect(
+      runtime.state.connection.sqlite
+        .prepare(
+          `SELECT COUNT(*) AS count FROM learning_kernel_facts
+           WHERE body_type = 'review'`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    responseParse.mockRestore();
+
+    const submitted = await request(runtime.app, submissionPath, {
+      method: "POST",
+      body: JSON.stringify(submitBody),
+    });
+    expect(submitted.status).toBe(201);
+    const submission = (await submitted.json()) as {
+      idempotent: boolean;
+      completedReviewItemId: string;
+      completionEvidenceId: string;
+      nextReview: { id: string; dueAt: string };
+    };
+    expect(submission).toMatchObject({
+      idempotent: false,
+      completedReviewItemId: dueReview.id,
+    });
+    expect(submission.completionEvidenceId.length).toBeLessThanOrEqual(200);
+    expect(submission.completionEvidenceId).toMatch(
+      /^kernel-fact:review:1-submit:[0-9a-f]{64}$/u,
+    );
+    expect(submission.nextReview.id).not.toBe(dueReview.id);
+    expect(Date.parse(submission.nextReview.dueAt)).toBeGreaterThan(
+      Date.parse(historicalReviews.asOf),
+    );
+    const facts = kernel.readFacts(scope);
+    expect(
+      facts.find((fact) => fact.id === submission.completionEvidenceId),
+    ).toMatchObject({
+      provenance: { kind: "learner_submission" },
+      body: {
+        type: "review",
+        transition: "submit",
+        response: submitBody.response.text,
+      },
+    });
+    const masteryBefore = kernel.reproject(
+      scope,
+      submission.nextReview.dueAt,
+    ).masteryByKnowledgeNode;
+
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    kernel.accept(scope, {
+      operationId: "kernel-views-after-review",
+      factId: "kernel-views-after-review-fact",
+      observedAt: new Date().toISOString(),
+      provenance: {
+        kind: "learner_submission",
+        sourceId: "kernel-views-after-review",
+        sourceHash: learningKernelSha256({
+          sourceId: "kernel-views-after-review",
+        }),
+      },
+      body: {
+        type: "progress",
+        activityId: activity.id,
+        transition: "start",
+      },
+    });
+
+    await runtime.close();
+    const closedRuntimeIndex = runtimes.findIndex(
+      (candidate) => candidate.app === runtime.app,
+    );
+    if (closedRuntimeIndex >= 0) runtimes.splice(closedRuntimeIndex, 1);
+    const restartedRuntime = createRuntime(runtime.databasePath);
+
+    const replay = await request(restartedRuntime.app, submissionPath, {
+      method: "POST",
+      body: JSON.stringify(submitBody),
+    });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      idempotent: true,
+      completedReviewItemId: dueReview.id,
+      nextReview: { id: submission.nextReview.id },
+    });
+    expect(
+      createLearningKernelRepository(
+        restartedRuntime.state.connection,
+      ).reproject(scope, new Date().toISOString()).masteryByKnowledgeNode,
+    ).toEqual(masteryBefore);
+
+    const changedReplay = await request(restartedRuntime.app, submissionPath, {
+      method: "POST",
+      body: JSON.stringify({
+        ...submitBody,
+        response: { ...submitBody.response, text: "Changed response" },
+      }),
+    });
+    expect(changedReplay.status).toBe(400);
+    expect(JSON.stringify(await changedReplay.json())).toMatch(
+      /different input/iu,
+    );
+
+    const after = LearningReviewsResponseSchema.parse(
+      await (
+        await request(restartedRuntime.app, "/api/learning/reviews")
+      ).json(),
+    );
+    expect(after.reviews).toContainEqual(
+      expect.objectContaining({
+        id: dueReview.id,
+        state: "completed",
+        execution: null,
+      }),
+    );
+    expect(after.reviews).toContainEqual(
+      expect.objectContaining({
+        id: submission.nextReview.id,
+        state: "pending",
+        isDue: false,
+        execution: null,
+      }),
+    );
   });
 
   it("completes the interview unit only with three persisted answers and a report", async () => {

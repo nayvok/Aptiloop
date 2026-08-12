@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 
 import { createApp, type AppOptions } from "../src/app.js";
+import { seedDevelopmentDatabase } from "./development-database-fixture.js";
 
 interface TestRuntime {
   app: Hono;
@@ -64,6 +65,7 @@ function productionRuntime(
       projectRoot: path.resolve("../.."),
       databasePath: path.join(root, "test.sqlite"),
       databaseMode: "disposable",
+      developmentDatabaseInitializer: seedDevelopmentDatabase,
       webOrigin,
       startupConfig,
     });

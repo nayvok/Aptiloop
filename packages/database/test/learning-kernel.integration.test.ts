@@ -13,10 +13,10 @@ import {
   createLearningRepository,
   migrateDatabase,
   openDatabase,
-  seedDatabase,
   type DatabaseConnection,
 } from "../src/index.js";
 import { backfillLearningKernel } from "../src/learning-kernel-backfill.js";
+import { seedDatabase } from "../src/development-fixtures.js";
 
 const connections: DatabaseConnection[] = [];
 const hash = (character: string) => `sha256:${character.repeat(64)}`;

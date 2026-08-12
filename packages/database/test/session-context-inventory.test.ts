@@ -13,9 +13,9 @@ import {
   hashCanonicalJson,
   migrateDatabase,
   openDatabase,
-  seedVersionedCurriculum,
   type M2SessionContextInventory,
 } from "../src/index.js";
+import { seedVersionedCurriculum } from "../src/development-fixtures.js";
 import { inventoryPrivateData } from "../src/private-data-inventory.js";
 
 const cleanup: Array<() => void> = [];

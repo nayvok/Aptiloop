@@ -386,22 +386,34 @@ describe("AgentChat", () => {
     expect(view.container.querySelector("form")).toHaveClass("shrink-0");
   });
 
-  it.each([
-    { state: "degraded", authenticated: true },
-    { state: "connected", authenticated: false },
-  ])(
-    "routes $state connection recovery to Connections",
-    async ({ state, authenticated }) => {
-      mockAgentState.connectionState = state;
-      mockAgentState.authenticated = authenticated;
-      renderAgentChat();
+  it("uses a configured, not-yet-tested connection when its assigned model is available", async () => {
+    mockAgentState.connectionState = "degraded";
+    mockAgentState.authenticated = false;
+    renderAgentChat();
 
-      expect(
-        await screen.findByRole("link", { name: "Настроить AI" }),
-      ).toHaveAttribute("href", "/settings?section=connections");
-      expect(screen.getByLabelText("Сообщение агенту")).toBeDisabled();
-    },
-  );
+    const composer = await screen.findByLabelText("Сообщение агенту");
+    await waitFor(() => expect(composer).toBeEnabled());
+    fireEvent.change(composer, { target: { value: "Проверь подключение" } });
+    fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+
+    await waitFor(() =>
+      expect(mockAgentState.streamInputs).toContainEqual({
+        role: "teacher",
+        message: "Проверь подключение",
+      }),
+    );
+  });
+
+  it("routes an explicit authentication failure to Connections", async () => {
+    mockAgentState.connectionState = "connected";
+    mockAgentState.authenticated = false;
+    renderAgentChat();
+
+    expect(
+      await screen.findByRole("link", { name: "Настроить AI" }),
+    ).toHaveAttribute("href", "/settings?section=connections");
+    expect(screen.getByLabelText("Сообщение агенту")).toBeDisabled();
+  });
 
   it("routes a missing assigned model to AI roles", async () => {
     mockAgentState.assignedModelId = "missing-model";

@@ -1,6 +1,6 @@
 # Untrusted Course Packs
 
-**Document status:** The M3 single-document Course Pack V1 importer and lifecycle are an **Implemented baseline**. Archive/directory transport, registries/signatures, untrusted executable content, and production Course distribution remain **Future**.
+**Document status:** The M3 single-document Course Pack V1 importer and lifecycle are an **Implemented baseline**. Archive/directory transport, registries/signatures, untrusted executable content, public Course distribution services, and any future Aptiloop-supplied first-party/sample Course remain **Future**.
 
 ## 1. Security objective
 
@@ -32,7 +32,7 @@ Prohibited anywhere, including extensions and unknown fields:
 - absolute/local filesystem paths or handles, host mounts, home-directory references, registry/device/UNC/traversal values, link/special-file metadata, or any field that asks Aptiloop to resolve a pack-provided path;
 - arbitrary network requests, webhooks, embedded active HTML, resource images, or non-HTTP(S) source URLs;
 - AI role prompts that grant tools, provider/model credentials, or a route around app-owned typed tools;
-- production courses bundled as product fixtures. Core Alpha ships pack tooling/contracts, not production courses.
+- product-distributed development fixtures masquerading as user Courses. Aptiloop intentionally starts with an empty Course library; any future first-party/sample Course requires separate approval.
 
 UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. A translation cannot change graph semantics, answers, check IDs, or evidence contracts.
 
@@ -82,7 +82,7 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 - **Attack path:** a pack supplies cycles, missing prerequisites, duplicate IDs, mutable revisions, protected answers in learner fields, or its own mastery/state transitions.
 - **Impact:** deadlocked activities, answer disclosure, overwritten history, or nondeterministic/forged adaptation.
 - **Existing mitigation:** M3 validates finite referentially complete graphs, stable identities, learner/protected separation, and immutable collision behavior before transactional install. M4 routes accepted facts through the deterministic kernel; pack content cannot carry progression/mastery state, and the same fact frontier replays to the same canonical projection hash.
-- **Residual:** legacy rows without complete fact meaning stay compatibility history or immutable quarantine; production Course quality/correctness remains an independent gate.
+- **Residual:** legacy rows without complete fact meaning stay compatibility history or immutable quarantine; Course Pack validation cannot certify the instructional quality or correctness of user-selected content. Any future first-party/sample Course requires a separate quality gate.
 - **Test:** cycle/unreachable/duplicate/dangling tests; protected-field DTO tests; immutable revision and idempotent import tests; deterministic replay from imported content; rejection of mastery/state fields.
 
 ### PACK-CTRL-005 — Source and Markdown privacy
@@ -98,7 +98,7 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 - **Attack path:** a modified pack reuses a trusted identity/version, omits origin/license data, overwrites a revision, or exploits nondeterministic canonicalization.
 - **Impact:** content substitution, loss of auditability, licensing ambiguity, and corrupted historical evidence.
 - **Existing mitigation:** M3 requires author/provenance/terms claims, canonicalizes and hashes one finalized document, rejects hash/identity collisions, stores immutable validation/provenance records, and never overwrites an installed revision. Validation confirms presence/shape; it does not certify legal truth.
-- **Residual:** there is no approved production Course, publisher signature/trust service, or completed legal review.
+- **Residual:** there is no publisher signature/trust service or completed legal review. Aptiloop intentionally bundles no Course; if it later supplies a first-party/sample Course, that artifact requires separate provenance and licensing approval.
 - **Test:** golden canonical hashes; changed-content/same-identity rejection; missing provenance/terms validation; immutable revision and deterministic re-import tests.
 
 ## 5. Installation and publication gates

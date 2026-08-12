@@ -15,6 +15,7 @@ import {
 } from "@aptiloop/database";
 import {
   applyMasteryEvidenceBatch,
+  canonicalLearningKernelJson,
   createUnitProgression,
   createEmptyMasteryProfile,
   learningKernelSha256,
@@ -25,7 +26,9 @@ import {
   resolveExplicitUnitDefinitions,
   selectLessonNextAction,
   transitionUnitProgression,
+  LearningKernelConflictError,
   type LearningKernelEvidenceBody,
+  type LearningKernelFact,
   type LearningKernelFactProvenance,
   type LearningKernelScope,
   type DaySummary,
@@ -44,7 +47,10 @@ import {
   LearningKnowledgeNodeIdSchema,
   LearningMistakesResponseSchema,
   LearningPathNextActionSchema,
+  LearningReviewActivityResponseSchema,
   LearningReviewsResponseSchema,
+  LearningReviewSubmissionResponseSchema,
+  LearningReviewSubmissionSchema,
   UnitUnlockRuleSchema,
   CurriculumUnitSchema,
   SessionSnapshotSchema,
@@ -52,6 +58,8 @@ import {
   UnitStatusSchema,
   type CurriculumUnit,
   type LearningPathNextAction,
+  type LearningReviewSubmission,
+  type LearningReviewSubmissionResponse,
   type SessionSnapshot,
   type UnitProgress,
   type UnitProgressPayload,
@@ -156,11 +164,6 @@ const kernelReviewDismissSchema = z
   .object({ operationId: operationIdSchema })
   .strict();
 
-const kernelFactActivitySchema = z
-  .object({
-    body: z.object({ activityId: CourseEntityIdSchema }).passthrough(),
-  })
-  .passthrough();
 const summaryMasteryEvidenceSchema = z
   .object({
     id: z.string().min(1),
@@ -278,6 +281,120 @@ export function registerVersionedLearningRoutes(
       }),
     );
   });
+
+  app.get("/api/learning/reviews/executions/:executionId", async (context) => {
+    const asOf = observedAt();
+    const execution = await requireReviewExecution(
+      state,
+      kernelRepository,
+      CourseEntityIdSchema.parse(context.req.param("executionId")),
+      asOf,
+    );
+    assertReviewExecutionAvailable(execution, asOf);
+    return context.json(
+      LearningReviewActivityResponseSchema.parse({
+        activity: toLearningReviewActivity(state, execution),
+      }),
+    );
+  });
+
+  app.post(
+    "/api/learning/reviews/executions/:executionId/submissions",
+    async (context) => {
+      const executionId = CourseEntityIdSchema.parse(
+        context.req.param("executionId"),
+      );
+      const body = LearningReviewSubmissionSchema.parse(
+        await context.req.json(),
+      );
+      const at = observedAt();
+      const replay = await readExistingReviewSubmission(
+        state,
+        kernelRepository,
+        executionId,
+        body,
+        at,
+      );
+      if (replay) return context.json(replay, 200);
+      const execution = await requireReviewExecution(
+        state,
+        kernelRepository,
+        executionId,
+        at,
+      );
+      assertReviewExecutionAvailable(execution, at);
+      if (body.executionContextHash !== execution.executionContextHash) {
+        throw new LearningKernelConflictError(
+          "Review execution context is stale or mismatched",
+        );
+      }
+
+      const result = withTransaction(state.connection, () => {
+        const submitFactId = reviewSubmitFactId(body.operationId);
+        const submit = kernelRepository.accept(execution.scope, {
+          operationId: reviewSubmitOperationId(body.operationId),
+          factId: submitFactId,
+          observedAt: at,
+          provenance: learnerKernelProvenance(executionId, {
+            executionId,
+            operationId: body.operationId,
+            activitySnapshotHash: execution.snapshot.contentHash,
+            response: body.response,
+          }),
+          body: {
+            type: "review",
+            activityId: execution.activity.id,
+            reviewItemId: execution.review.id,
+            transition: "submit",
+            response: body.response.text,
+            activitySnapshotHash: kernelHash(execution.snapshot.contentHash),
+            executionContextHash: body.executionContextHash,
+          },
+        });
+        const complete = kernelRepository.accept(execution.scope, {
+          operationId: reviewCompleteOperationId(body.operationId),
+          factId: reviewCompleteFactId(body.operationId),
+          observedAt: at,
+          provenance: {
+            kind: "deterministic_evaluator",
+            sourceId: executionId,
+            sourceHash: learningKernelSha256({
+              executionId,
+              submitFactId,
+              activitySnapshotHash: execution.snapshot.contentHash,
+              evaluatorVersion: "review-participation-v1",
+            }),
+            evaluatorVersion: "review-participation-v1",
+          },
+          body: {
+            type: "review",
+            activityId: execution.activity.id,
+            reviewItemId: execution.review.id,
+            transition: "complete",
+            completionEvidenceFactId: submitFactId,
+          },
+        });
+        const result = {
+          idempotent: submit.idempotent && complete.idempotent,
+          projection: complete.projection,
+          submitFactId,
+          completeFactId: reviewCompleteFactId(body.operationId),
+        };
+        return {
+          idempotent: result.idempotent,
+          response: buildReviewSubmissionResponse(
+            result.projection,
+            execution.review.id,
+            result.submitFactId,
+            result.completeFactId,
+            result.idempotent,
+            true,
+          ),
+        };
+      });
+      return context.json(result.response, result.idempotent ? 200 : 201);
+    },
+  );
 
   app.get("/api/learning/courses", async (context) => {
     return context.json({ courses: await readCourseCollection(state) });
@@ -1318,15 +1435,20 @@ async function readKernelReviews(
   if (!target) return [];
   const latest = new Map<
     string,
-    { review: LearningKernelReviewItem; sessionId: string; observedAt: string }
+    {
+      review: LearningKernelReviewItem;
+      scope: LearningKernelScope;
+      observedAt: string;
+    }
   >();
   for (const { scope, projection } of records) {
     for (const review of projection.reviewItems) {
-      const current = latest.get(review.id);
+      const key = reviewScopeKey(scope, review.id);
+      const current = latest.get(key);
       if (!current || current.observedAt <= projection.observedAt) {
-        latest.set(review.id, {
+        latest.set(key, {
           review,
-          sessionId: scope.sessionId,
+          scope,
           observedAt: projection.observedAt,
         });
       }
@@ -1338,26 +1460,13 @@ async function readKernelReviews(
         left.review.dueAt.localeCompare(right.review.dueAt) ||
         left.review.id.localeCompare(right.review.id),
     )
-    .map(({ review, sessionId }) => {
-      let activityId: string | null = null;
-      for (const sourceFactId of review.sourceFactIds) {
-        const row = state.connection.sqlite
-          .prepare(
-            `SELECT canonical_json FROM learning_kernel_facts
-             WHERE id = ? AND session_id = ?`,
-          )
-          .get(sourceFactId, sessionId) as
-          { canonical_json: string } | undefined;
-        if (!row) continue;
-        const parsed = kernelFactActivitySchema.safeParse(
-          JSON.parse(row.canonical_json),
-        );
-        if (parsed.success) {
-          activityId = parsed.data.body.activityId;
-          break;
-        }
-      }
+    .map(({ review, scope }) => {
+      const source = readReviewSource(state.connection, scope, review);
+      const activityId = source?.activityId ?? null;
       const isDue = isLearningKernelReviewDue(review, asOf);
+      const snapshot = activityId
+        ? readVerifiedReviewSnapshot(state, scope, activityId)
+        : null;
       return {
         id: review.id,
         topic: readKnowledgeNode(
@@ -1372,11 +1481,529 @@ async function readKernelReviews(
         dueAt: review.dueAt,
         state: review.state,
         isDue,
-        sessionId,
+        sessionId: scope.sessionId,
         activityId,
-        nextActionHref: null,
+        execution:
+          isDue && activityId && snapshot
+            ? {
+                id: reviewExecutionId(scope, review.id),
+                type: "free-response" as const,
+                schemaVersion: 1 as const,
+                activitySnapshotHash: snapshot.snapshot.contentHash,
+              }
+            : null,
       };
     });
+}
+
+interface ReviewExecution {
+  readonly scope: LearningKernelScope;
+  readonly review: LearningKernelReviewItem;
+  readonly activity: CurriculumUnit;
+  readonly snapshot: SessionSnapshot;
+  readonly sourceEvidenceAt: string;
+  readonly executionContextHash: string;
+}
+
+async function requireReviewExecution(
+  state: VersionedLearningState,
+  kernelRepository: LearningKernelRepository,
+  executionId: string,
+  asOf: string,
+): Promise<ReviewExecution> {
+  const records = await readSelectedKernelProjections(state, kernelRepository);
+  const matches: ReviewExecution[] = [];
+  for (const { scope } of records) {
+    const projection = kernelRepository.reproject(scope, asOf);
+    for (const review of projection.reviewItems) {
+      if (reviewExecutionId(scope, review.id) !== executionId) continue;
+      const source = readReviewSource(state.connection, scope, review);
+      if (!source) throw new Error("Review source activity is unavailable");
+      const verified = readVerifiedReviewSnapshot(
+        state,
+        scope,
+        source.activityId,
+      );
+      if (!verified) throw new Error("Review activity snapshot is unavailable");
+      matches.push({
+        scope,
+        review,
+        activity: verified.activity,
+        snapshot: verified.snapshot,
+        sourceEvidenceAt: source.occurredAt,
+        executionContextHash: reviewExecutionContextHash({
+          executionId,
+          scope,
+          reviewItemId: review.id,
+          source,
+          activityId: verified.activity.id,
+          activitySnapshotHash: verified.snapshot.contentHash,
+        }),
+      });
+    }
+  }
+  if (matches.length !== 1) {
+    throw new Error(
+      matches.length === 0
+        ? "Unknown Review execution"
+        : "Review execution identity is ambiguous",
+    );
+  }
+  return matches[0]!;
+}
+
+function assertReviewExecutionAvailable(
+  execution: ReviewExecution,
+  asOf: string,
+): void {
+  if (!isLearningKernelReviewDue(execution.review, asOf)) {
+    throw new Error("Review execution is no longer pending and due");
+  }
+}
+
+function toLearningReviewActivity(
+  state: VersionedLearningState,
+  execution: ReviewExecution,
+) {
+  const node = readKnowledgeNode(
+    state,
+    execution.scope.revisionId,
+    execution.review.knowledgeNodeId,
+  );
+  return {
+    executionId: reviewExecutionId(execution.scope, execution.review.id),
+    schemaVersion: 1 as const,
+    activitySnapshotHash: execution.snapshot.contentHash,
+    executionContextHash: execution.executionContextHash,
+    title: node.title,
+    description: execution.activity.description,
+    prompt:
+      execution.activity.type === "recall" &&
+      execution.activity.payload.type === "recall"
+        ? execution.activity.payload.prompt
+        : (execution.activity.questions[0]?.prompt ??
+          execution.activity.description),
+    dueAt: execution.review.dueAt,
+    sourceEvidenceAt: execution.sourceEvidenceAt,
+    sourceActivityType: execution.activity.type,
+    dimension: execution.review.dimension,
+    activityKind: execution.review.activityKind,
+    reasonCode: execution.review.reasonCode,
+    response: {
+      type: "free-response" as const,
+      minimumLength: 1 as const,
+      maximumLength: 50_000 as const,
+    },
+  };
+}
+
+async function readExistingReviewSubmission(
+  state: VersionedLearningState,
+  kernelRepository: LearningKernelRepository,
+  executionId: string,
+  submission: LearningReviewSubmission,
+  asOf: string,
+): Promise<LearningReviewSubmissionResponse | null> {
+  const submitOperationId = reviewSubmitOperationId(submission.operationId);
+  const completeOperationId = reviewCompleteOperationId(submission.operationId);
+  const submitFactId = reviewSubmitFactId(submission.operationId);
+  const completeFactId = reviewCompleteFactId(submission.operationId);
+  const rows = state.connection.sqlite
+    .prepare(
+      `SELECT id, operation_id, session_id, course_id, revision_id, branch_id
+       FROM learning_kernel_facts
+       WHERE id IN (?, ?) OR operation_id IN (?, ?)
+       ORDER BY id`,
+    )
+    .all(
+      submitFactId,
+      completeFactId,
+      submitOperationId,
+      completeOperationId,
+    ) as Array<{
+    id: string;
+    operation_id: string;
+    session_id: string;
+    course_id: string;
+    revision_id: string;
+    branch_id: string;
+  }>;
+  if (rows.length === 0) return null;
+
+  const submitRow = rows.find(
+    (row) => row.id === submitFactId && row.operation_id === submitOperationId,
+  );
+  const completeRow = rows.find(
+    (row) =>
+      row.id === completeFactId && row.operation_id === completeOperationId,
+  );
+  if (!submitRow || !completeRow || rows.length !== 2) {
+    throw reviewSubmissionConflict();
+  }
+  const scope = {
+    courseId: submitRow.course_id,
+    revisionId: submitRow.revision_id,
+    branchId: submitRow.branch_id,
+    sessionId: submitRow.session_id,
+  } satisfies LearningKernelScope;
+  if (
+    completeRow.course_id !== scope.courseId ||
+    completeRow.revision_id !== scope.revisionId ||
+    completeRow.branch_id !== scope.branchId ||
+    completeRow.session_id !== scope.sessionId
+  ) {
+    throw reviewSubmissionConflict();
+  }
+  const selected = await readSelectedKernelProjections(state, kernelRepository);
+  if (!selected.some((record) => sameKernelScope(record.scope, scope))) {
+    throw new Error("Unknown Review execution");
+  }
+
+  const facts = kernelRepository.readFacts(scope);
+  const submit = facts.find((fact) => fact.id === submitFactId);
+  const complete = facts.find((fact) => fact.id === completeFactId);
+  if (
+    !submit ||
+    !complete ||
+    submit.operationId !== submitOperationId ||
+    complete.operationId !== completeOperationId ||
+    submit.body.type !== "review" ||
+    submit.body.transition !== "submit" ||
+    submit.body.executionContextHash !== submission.executionContextHash ||
+    complete.body.type !== "review" ||
+    complete.body.transition !== "complete" ||
+    complete.body.reviewItemId !== submit.body.reviewItemId ||
+    complete.body.activityId !== submit.body.activityId ||
+    complete.body.completionEvidenceFactId !== submit.id ||
+    complete.occurredAt !== submit.occurredAt ||
+    reviewExecutionId(scope, submit.body.reviewItemId) !== executionId
+  ) {
+    throw reviewSubmissionConflict();
+  }
+  const verified = readVerifiedReviewSnapshot(
+    state,
+    scope,
+    submit.body.activityId,
+  );
+  if (!verified) throw new Error("Review activity snapshot is unavailable");
+
+  const expectedSubmit: LearningKernelFact = {
+    schemaVersion: 1,
+    ...scope,
+    id: submitFactId,
+    operationId: submitOperationId,
+    occurredAt: submit.occurredAt,
+    provenance: learnerKernelProvenance(executionId, {
+      executionId,
+      operationId: submission.operationId,
+      activitySnapshotHash: verified.snapshot.contentHash,
+      response: submission.response,
+    }),
+    body: {
+      type: "review",
+      activityId: verified.activity.id,
+      reviewItemId: submit.body.reviewItemId,
+      transition: "submit",
+      response: submission.response.text,
+      activitySnapshotHash: kernelHash(verified.snapshot.contentHash),
+      executionContextHash: submission.executionContextHash,
+    },
+  };
+  const expectedComplete: LearningKernelFact = {
+    schemaVersion: 1,
+    ...scope,
+    id: completeFactId,
+    operationId: completeOperationId,
+    occurredAt: submit.occurredAt,
+    provenance: {
+      kind: "deterministic_evaluator",
+      sourceId: executionId,
+      sourceHash: learningKernelSha256({
+        executionId,
+        submitFactId,
+        activitySnapshotHash: verified.snapshot.contentHash,
+        evaluatorVersion: "review-participation-v1",
+      }),
+      evaluatorVersion: "review-participation-v1",
+    },
+    body: {
+      type: "review",
+      activityId: verified.activity.id,
+      reviewItemId: submit.body.reviewItemId,
+      transition: "complete",
+      completionEvidenceFactId: submitFactId,
+    },
+  };
+  if (
+    canonicalLearningKernelJson(submit) !==
+    canonicalLearningKernelJson(expectedSubmit)
+  ) {
+    throw reviewSubmissionConflict();
+  }
+  if (
+    canonicalLearningKernelJson(complete) !==
+    canonicalLearningKernelJson(expectedComplete)
+  ) {
+    throw reviewSubmissionConflict();
+  }
+  return buildReviewSubmissionResponse(
+    kernelRepository.reproject(scope, asOf),
+    submit.body.reviewItemId,
+    submitFactId,
+    completeFactId,
+    true,
+    false,
+  );
+}
+
+function buildReviewSubmissionResponse(
+  projection: LearningKernelProjection,
+  completedReviewItemId: string,
+  submitFactId: string,
+  completeFactId: string,
+  idempotent: boolean,
+  requirePendingSuccessor: boolean,
+): LearningReviewSubmissionResponse {
+  const completed = projection.reviewItems.find(
+    (review) => review.id === completedReviewItemId,
+  );
+  const nextReview = projection.reviewItems
+    .filter(
+      (review) =>
+        review.id !== completedReviewItemId &&
+        (!requirePendingSuccessor || review.state === "pending") &&
+        review.sourceFactIds.includes(completeFactId),
+    )
+    .sort(
+      (left, right) =>
+        left.dueAt.localeCompare(right.dueAt) ||
+        left.id.localeCompare(right.id),
+    )[0];
+  if (
+    completed?.state !== "completed" ||
+    completed.completionEvidenceId !== submitFactId ||
+    !nextReview
+  ) {
+    throw new Error(
+      "Review submission did not produce a completed cycle and successor",
+    );
+  }
+  return LearningReviewSubmissionResponseSchema.parse({
+    idempotent,
+    completedReviewItemId: completed.id,
+    completionEvidenceId: submitFactId,
+    nextReview: { id: nextReview.id, dueAt: nextReview.dueAt },
+  });
+}
+
+function sameKernelScope(
+  left: LearningKernelScope,
+  right: LearningKernelScope,
+): boolean {
+  return (
+    left.courseId === right.courseId &&
+    left.revisionId === right.revisionId &&
+    left.branchId === right.branchId &&
+    left.sessionId === right.sessionId
+  );
+}
+
+function reviewSubmissionConflict(): LearningKernelConflictError {
+  return new LearningKernelConflictError(
+    "Learning Kernel operation ID is already bound to different input",
+  );
+}
+
+function readVerifiedReviewSnapshot(
+  state: VersionedLearningState,
+  scope: LearningKernelScope,
+  activityId: string,
+): { snapshot: SessionSnapshot; activity: CurriculumUnit } | null {
+  const row = state.connection.sqlite
+    .prepare(
+      `SELECT context.course_id, context.revision_id, context.lesson_id,
+              context.snapshot_hash, snapshot.content_hash,
+              snapshot.snapshot_json
+       FROM session_course_contexts context
+       JOIN session_snapshots snapshot ON snapshot.session_id = context.session_id
+       WHERE context.session_id = ?`,
+    )
+    .get(scope.sessionId) as
+    | {
+        course_id: string;
+        revision_id: string;
+        lesson_id: string;
+        snapshot_hash: string;
+        content_hash: string;
+        snapshot_json: string;
+      }
+    | undefined;
+  if (
+    !row ||
+    row.course_id !== scope.courseId ||
+    row.revision_id !== scope.revisionId ||
+    row.snapshot_hash !== row.content_hash
+  ) {
+    return null;
+  }
+  const snapshot = SessionSnapshotSchema.parse(JSON.parse(row.snapshot_json));
+  const { contentHash: embeddedHash, ...snapshotCore } = snapshot;
+  if (
+    embeddedHash !== row.snapshot_hash ||
+    hashCanonicalJson(snapshotCore) !== row.snapshot_hash ||
+    snapshot.curriculumId !== scope.courseId ||
+    snapshot.curriculumVersionId !== scope.revisionId ||
+    snapshot.day.id !== row.lesson_id
+  ) {
+    return null;
+  }
+  const activity = snapshot.units.find((unit) => unit.id === activityId);
+  if (!activity) return null;
+  const target = state.connection.sqlite
+    .prepare(
+      `SELECT activity_type, stable_id FROM course_activities
+       WHERE course_id = ? AND revision_id = ? AND lesson_id = ? AND id = ?`,
+    )
+    .get(scope.courseId, scope.revisionId, row.lesson_id, activityId) as
+    { activity_type: string; stable_id: string } | undefined;
+  return target &&
+    target.activity_type === activity.type &&
+    target.stable_id === activity.stableId
+    ? { snapshot, activity }
+    : null;
+}
+
+function readReviewSource(
+  connection: DatabaseConnection,
+  scope: LearningKernelScope,
+  review: LearningKernelReviewItem,
+): {
+  readonly factId: string;
+  readonly factHash: string;
+  readonly activityId: string;
+  readonly occurredAt: string;
+} | null {
+  if (review.sourceFactIds.length === 0) return null;
+  const rows = connection.sqlite
+    .prepare(
+      `SELECT canonical_json, fact_hash, occurred_at FROM learning_kernel_facts
+       WHERE session_id = ? AND course_id = ? AND revision_id = ?
+         AND branch_id = ?
+         AND id IN (${review.sourceFactIds.map(() => "?").join(", ")})
+       ORDER BY occurred_at DESC, id DESC`,
+    )
+    .all(
+      scope.sessionId,
+      scope.courseId,
+      scope.revisionId,
+      scope.branchId,
+      ...review.sourceFactIds,
+    ) as Array<{
+    canonical_json: string;
+    fact_hash: string;
+    occurred_at: number;
+  }>;
+  const row = rows[0];
+  if (!row) return null;
+  const fact = JSON.parse(row.canonical_json) as LearningKernelFact;
+  if (
+    canonicalLearningKernelJson(fact) !== row.canonical_json ||
+    learningKernelSha256(fact) !== row.fact_hash ||
+    Date.parse(fact.occurredAt) !== row.occurred_at
+  ) {
+    throw new Error("Stored Learning Kernel fact is inconsistent");
+  }
+  const activityId =
+    fact.body.type === "correction"
+      ? fact.body.replacement.activityId
+      : fact.body.type === "evidence" || fact.body.type === "review"
+        ? fact.body.activityId
+        : null;
+  return activityId
+    ? {
+        factId: fact.id,
+        factHash: row.fact_hash,
+        activityId,
+        occurredAt: fact.occurredAt,
+      }
+    : null;
+}
+
+function reviewExecutionContextHash(input: {
+  readonly executionId: string;
+  readonly scope: LearningKernelScope;
+  readonly reviewItemId: string;
+  readonly source: {
+    readonly factId: string;
+    readonly factHash: string;
+    readonly activityId: string;
+    readonly occurredAt: string;
+  };
+  readonly activityId: string;
+  readonly activitySnapshotHash: string;
+}): string {
+  return learningKernelSha256({
+    schemaVersion: 1,
+    executionId: input.executionId,
+    scope: {
+      courseId: input.scope.courseId,
+      revisionId: input.scope.revisionId,
+      branchId: input.scope.branchId,
+      sessionId: input.scope.sessionId,
+    },
+    reviewItemId: input.reviewItemId,
+    sourceFactId: input.source.factId,
+    sourceFactHash: input.source.factHash,
+    sourceOccurredAt: input.source.occurredAt,
+    activityId: input.activityId,
+    activitySnapshotHash: input.activitySnapshotHash,
+  });
+}
+
+function reviewScopeKey(scope: LearningKernelScope, reviewItemId: string) {
+  return `${scope.courseId}\0${scope.revisionId}\0${scope.branchId}\0${scope.sessionId}\0${reviewItemId}`;
+}
+
+function reviewExecutionId(
+  scope: LearningKernelScope,
+  reviewItemId: string,
+): string {
+  return `review-execution-${createHash("sha256")
+    .update(
+      JSON.stringify({
+        schemaVersion: 1,
+        scope: {
+          courseId: scope.courseId,
+          revisionId: scope.revisionId,
+          branchId: scope.branchId,
+          sessionId: scope.sessionId,
+        },
+        reviewItemId,
+        schedulerVersion: "baseline-1",
+      }),
+    )
+    .digest("hex")}`;
+}
+
+function reviewSubmitOperationId(operationId: string) {
+  return `kernel:review:submit:${reviewOperationDigest(operationId)}`;
+}
+function reviewCompleteOperationId(operationId: string) {
+  return `kernel:review:complete:${reviewOperationDigest(operationId)}`;
+}
+function reviewSubmitFactId(operationId: string) {
+  return `kernel-fact:review:1-submit:${reviewOperationDigest(operationId)}`;
+}
+function reviewCompleteFactId(operationId: string) {
+  return `kernel-fact:review:2-complete:${reviewOperationDigest(operationId)}`;
+}
+
+function reviewOperationDigest(operationId: string) {
+  return createHash("sha256").update(operationId).digest("hex");
+}
+
+function kernelHash(value: string): string {
+  return value.startsWith("sha256:") ? value : `sha256:${value}`;
 }
 async function requireOwnedCourseRevision(
   state: VersionedLearningState,

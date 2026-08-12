@@ -94,6 +94,14 @@
   --sidebar: oklch(0.982 0.002 260);
   --overlay: oklch(0.14 0.01 260 / 0.44);
   --shell-bar-size: 4.5rem;
+  --shell-mobile-navigation-content-height: 4.25rem;
+  --shell-mobile-navigation-height: calc(
+    var(--shell-mobile-navigation-content-height) +
+      max(0.25rem, env(safe-area-inset-bottom))
+  );
+  --shell-mobile-navigation-clearance: calc(
+    var(--shell-mobile-navigation-height) + 1rem
+  );
   --shell-rail-collapsed: var(--shell-bar-size);
   --shell-rail-expanded: 15.5rem;
   --shape-control: 0.5rem;

@@ -1,6 +1,6 @@
 import authoringKitPackage from "../../../../../../packages/course-authoring-kit/package.json";
 import coursePackV1Schema from "../../../../../../packages/course-authoring-kit/schema/course-pack-v1.schema.json";
-import developmentCoursePackTemplate from "../../../../../../packages/course-authoring-kit/templates/development-course-pack.json";
+import coursePackV1AuthoringTemplate from "../../../../../../packages/course-authoring-kit/templates/course-pack-v1-authoring-template.json";
 
 import { AuthoringBriefSchema, type AuthoringBrief } from "../authoring-brief";
 
@@ -16,7 +16,7 @@ export function createCourseAuthoringInstruction(
 ): string {
   const brief = AuthoringBriefSchema.parse(input);
   const schema = prettyJson(coursePackV1Schema);
-  const template = prettyJson(developmentCoursePackTemplate);
+  const template = prettyJson(coursePackV1AuthoringTemplate);
 
   return `---
 name: aptiloop-course-pack-v1-author
@@ -42,10 +42,11 @@ Create one complete, declarative UTF-8 JSON document that conforms to the embedd
 - Keep learner-visible content separate from protected evaluation material.
 - Include honest provenance and source attribution. Do not invent licenses, ownership, citations, retrieval dates, or source content.
 - Do not include commands, scripts, plugins, credentials, secrets, executable content, provider configuration, learner history, or absolute local paths.
-- Use only requirements declared by the embedded schema/template. If a trusted environment or check is not known, omit activities that require it instead of inventing authority.
-- Produce a personal Course Pack, not a production-approved Aptiloop Course.
+- Use only requirements declared by the embedded schema/scaffold. If a trusted environment or check is not known, omit activities that require it instead of inventing authority.
+- Produce the user's personal Course Pack. Aptiloop ships no Courses and does not certify user-authored content.
 - Calculate \`revision.contentHash\` over canonical JSON with that field omitted, using lowercase SHA-256 and the \`sha256:<64 hex>\` form. Canonical JSON sorts object keys recursively, preserves array order, and uses compact JSON encoding. Recalculate the hash after every content change.
-- Treat the template as structural guidance. Replace fixture-specific identities, prose, provenance, timestamps, hashes, and content with values justified by the brief.
+- Treat the scaffold as structural guidance, not Course content. Replace every \`replace-with-*\` identity and every \`Replace with *\` value, choose honest provenance, resolve ownership and content terms, set the real creation time, and recalculate the content hash.
+- The scaffold is deliberately not installable as provided: unresolved ownership, missing content terms, placeholder values, and its zero hash must fail local validation until replaced.
 
 The returned file is not trusted automatically. The user will upload it at \`/courses/import\`, validate it locally, review Preview and provenance, and explicitly choose Install or Open as draft. Generating the file never publishes a Course.
 
@@ -61,9 +62,9 @@ This is the exact generated schema artifact bundled with the matching Aptiloop A
 \`\`\`json
 ${schema}\`\`\`
 
-## Course Pack V1 template
+## Course Pack V1 structural scaffold
 
-This is the exact generated development template bundled with the matching Aptiloop Authoring Kit. Adapt its structure; do not present fixture content or development provenance as authored truth.
+This is the exact generated topic-neutral authoring scaffold bundled with the matching Aptiloop Authoring Kit. It contains no sample Course or learner content and must not be returned unchanged.
 
 \`\`\`json
 ${template}\`\`\`

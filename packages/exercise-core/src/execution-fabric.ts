@@ -130,6 +130,9 @@ export const CORE_PYTHON_TEST_CHECK_ID = "apt.core.python3.unittest.v1";
 
 export class TrustedExecutionFabric {
   readonly #environments: ReadonlyMap<string, InstalledEnvironmentPack>;
+  readonly #shutdownController = new AbortController();
+  readonly #activeRuns = new Set<Promise<ExecutionResult>>();
+  #closing: Promise<void> | null = null;
 
   constructor(environments: readonly InstalledEnvironmentPack[]) {
     const byId = new Map<string, InstalledEnvironmentPack>();
@@ -158,7 +161,47 @@ export class TrustedExecutionFabric {
     return this.#requireEnvironment(environmentId).descriptor;
   }
 
-  async run(request: ExecutionRequest): Promise<ExecutionResult> {
+  run(request: ExecutionRequest): Promise<ExecutionResult> {
+    if (this.#shutdownController.signal.aborted) {
+      return Promise.reject(new Error("Execution Fabric is shutting down"));
+    }
+    const signal = request.signal
+      ? AbortSignal.any([request.signal, this.#shutdownController.signal])
+      : this.#shutdownController.signal;
+    const active = this.#run({ ...request, signal });
+    this.#activeRuns.add(active);
+    void active
+      .finally(() => this.#activeRuns.delete(active))
+      .catch(() => undefined);
+    return active;
+  }
+
+  close(): Promise<void> {
+    this.#closing ??= this.#close();
+    return this.#closing;
+  }
+
+  beginShutdown(): void {
+    this.#shutdownController.abort();
+  }
+
+  async #close(): Promise<void> {
+    this.beginShutdown();
+    const active = [...this.#activeRuns];
+    if (active.length === 0) return;
+    const drained = Promise.allSettled(active).then(() => undefined);
+    const timeout = new Promise<never>((_, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("Execution Fabric shutdown timed out")),
+        5_000,
+      );
+      timer.unref();
+      void drained.finally(() => clearTimeout(timer));
+    });
+    await Promise.race([drained, timeout]);
+  }
+
+  async #run(request: ExecutionRequest): Promise<ExecutionResult> {
     assertId(request.operationId, "Operation");
     assertId(request.attemptId, "Attempt");
     assertId(request.courseRevisionId, "Course revision");

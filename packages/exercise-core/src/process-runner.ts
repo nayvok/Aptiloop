@@ -38,6 +38,17 @@ export interface ProcessRunnerOptions {
   readonly defaultMaxOutputBytes?: number;
   /** Source environment to sanitize. Defaults to process.env. */
   readonly baseEnv?: Readonly<NodeJS.ProcessEnv>;
+  /** @internal Deterministic platform seam for process-tree cleanup tests. */
+  readonly platform?: NodeJS.Platform;
+  /** @internal Deterministic Windows taskkill seam. */
+  readonly spawnProcess?: typeof spawn;
+  /** @internal Process-tree cleanup diagnostics seam. */
+  readonly logger?: Pick<Console, "error">;
+  /** @internal Deterministic process-tree cleanup seam. */
+  readonly terminateProcessTree?: (
+    child: ChildProcess,
+    signal: NodeJS.Signals,
+  ) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -48,6 +59,11 @@ export class AllowedProcessRunner {
   readonly #defaultTimeoutMs: number;
   readonly #defaultMaxOutputBytes: number;
   readonly #baseEnv: Readonly<NodeJS.ProcessEnv>;
+  readonly #platform: NodeJS.Platform;
+  readonly #terminateProcessTree: (
+    child: ChildProcess,
+    signal: NodeJS.Signals,
+  ) => void;
 
   constructor(
     commands: Readonly<Record<string, AllowedProcessDefinition>>,
@@ -66,6 +82,19 @@ export class AllowedProcessRunner {
         options.baseEnv === undefined ? {} : { source: options.baseEnv },
       ),
     );
+    this.#platform = options.platform ?? process.platform;
+    const spawnProcess = options.spawnProcess ?? spawn;
+    const logger = options.logger ?? console;
+    this.#terminateProcessTree =
+      options.terminateProcessTree ??
+      ((child, signal) =>
+        terminateProcessTree(
+          child,
+          signal,
+          this.#platform,
+          spawnProcess,
+          logger,
+        ));
 
     const entries = Object.entries(commands).map(([id, command]) => {
       if (!/^[a-z][a-z0-9:_.-]*$/u.test(id))
@@ -177,10 +206,10 @@ export class AllowedProcessRunner {
       ): void => {
         if (settled || terminationReason !== "exit") return;
         terminationReason = reason;
-        terminateProcessTree(child, "SIGTERM");
+        this.#terminateProcessTree(child, "SIGTERM");
         // taskkill /F is already forceful on Windows. Scheduling a second PID-
         // based taskkill would create an avoidable PID-reuse race.
-        if (process.platform !== "win32" && child.pid !== undefined) {
+        if (this.#platform !== "win32" && child.pid !== undefined) {
           forceKillTimer = setTimeout(() => {
             forceKillTimer = undefined;
             // The exit listener clears this timer as soon as the original
@@ -188,7 +217,7 @@ export class AllowedProcessRunner {
             // gone because the numeric PID may already have been reused.
             if (settled || child.exitCode !== null || child.signalCode !== null)
               return;
-            terminateProcessTree(child, "SIGKILL");
+            this.#terminateProcessTree(child, "SIGKILL");
           }, 1_000);
           forceKillTimer.unref();
         }
@@ -212,7 +241,7 @@ export class AllowedProcessRunner {
         child = spawn(command.executable, [...command.args], {
           cwd: options.cwd,
           env: { ...this.#baseEnv, ...command.env },
-          detached: process.platform !== "win32",
+          detached: this.#platform !== "win32",
           shell: false,
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],
@@ -263,16 +292,74 @@ function validateProcessToken(value: string, label: string): void {
 function terminateProcessTree(
   child: ChildProcess,
   signal: NodeJS.Signals,
+  platform: NodeJS.Platform,
+  spawnProcess: typeof spawn,
+  logger: Pick<Console, "error">,
 ): void {
   if (child.pid === undefined) return;
-  if (process.platform === "win32") {
-    const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-      shell: false,
-      stdio: "ignore",
-      windowsHide: true,
+  if (platform === "win32") {
+    const pid = child.pid;
+    let cleanupFinished = false;
+    let cleanupTimeout: NodeJS.Timeout | undefined;
+    const clearCleanupTimeout = (): void => {
+      if (cleanupTimeout === undefined) return;
+      clearTimeout(cleanupTimeout);
+      cleanupTimeout = undefined;
+    };
+    const fallback = (reason: string): void => {
+      if (cleanupFinished) return;
+      cleanupFinished = true;
+      clearCleanupTimeout();
+      logger.error(
+        `[exercise] Windows process-tree cleanup failed for PID ${pid}: ${reason}. Descendant cleanup could not be verified; force-stopping the tracked process.`,
+      );
+      try {
+        if (
+          child.exitCode === null &&
+          child.signalCode === null &&
+          !child.kill("SIGKILL")
+        ) {
+          logger.error(
+            `[exercise] Failed to force-stop tracked process PID ${pid}.`,
+          );
+        }
+      } catch (error) {
+        logger.error(
+          `[exercise] Failed to force-stop tracked process PID ${pid}: ${String(error)}`,
+        );
+      }
+    };
+
+    let killer: ChildProcess;
+    try {
+      killer = spawnProcess("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        shell: false,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    } catch (error) {
+      fallback(`could not start taskkill (${String(error)})`);
+      return;
+    }
+    child.once("exit", () => {
+      cleanupFinished = true;
+      clearCleanupTimeout();
     });
-    // A race where the child already exited is expected and harmless.
-    killer.on("error", () => undefined);
+    killer.once("error", (error) => fallback(error.message));
+    killer.once("exit", (code, exitSignal) => {
+      if (code === 0 || cleanupFinished) return;
+      fallback(
+        exitSignal === null
+          ? `taskkill exited with code ${code ?? 1}`
+          : `taskkill stopped after signal ${exitSignal}`,
+      );
+    });
+    cleanupTimeout = setTimeout(
+      () =>
+        fallback("taskkill did not stop the tracked process within 1 second"),
+      1_000,
+    );
+    cleanupTimeout.unref();
     return;
   }
   try {

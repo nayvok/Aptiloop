@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { seedDevelopmentDatabase } from "./development-database-fixture.js";
 import z from "zod";
 import { createLearningKernelRepository } from "@aptiloop/database";
 import { learningKernelSha256 } from "@aptiloop/learning-core";
@@ -29,6 +30,7 @@ function createRuntime(databasePath?: string) {
     projectRoot: path.resolve("../.."),
     databasePath: resolvedDatabasePath,
     databaseMode: "disposable",
+    developmentDatabaseInitializer: seedDevelopmentDatabase,
   });
   const result = Object.assign(runtime, { databasePath: resolvedDatabasePath });
   runtimes.push(result);

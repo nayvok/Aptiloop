@@ -1,3 +1,5 @@
+import type { ChildProcess, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -131,6 +133,74 @@ describe("AllowedProcessRunner", () => {
     });
   });
 
+  it("force-kills a trusted process group that ignores graceful cancellation", async () => {
+    const signals: NodeJS.Signals[] = [];
+    const runner = new AllowedProcessRunner(
+      {
+        stubborn: {
+          executable: process.execPath,
+          args: [
+            "-e",
+            "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)",
+          ],
+          timeoutMs: 60_000,
+        },
+      },
+      {
+        platform: "linux",
+        terminateProcessTree: (child, signal) => {
+          signals.push(signal);
+          if (signal === "SIGKILL") child.kill(signal);
+        },
+      },
+    );
+    const controller = new AbortController();
+    const pending = runner.run("stubborn", {
+      cwd,
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      signal: "SIGKILL",
+      terminationReason: "cancelled",
+    });
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  }, 5_000);
+
+  it("fails closed when Windows taskkill emits an error", async () => {
+    const result = await runWithFailedWindowsTaskkill((killer) => {
+      killer.emit("error", new Error("taskkill missing"));
+    });
+
+    expect(result.messages).toEqual([
+      expect.stringContaining("taskkill missing"),
+    ]);
+    expect(result.messages[0]).toContain(
+      "Descendant cleanup could not be verified",
+    );
+    expect(result.spawnProcess).toHaveBeenCalledWith(
+      "taskkill",
+      expect.arrayContaining(["/T", "/F"]),
+      expect.objectContaining({ shell: false }),
+    );
+  });
+
+  it("fails closed when Windows taskkill exits nonzero", async () => {
+    const result = await runWithFailedWindowsTaskkill((killer) => {
+      killer.emit("exit", 5, null);
+    });
+
+    expect(result.messages).toEqual([
+      expect.stringContaining("taskkill exited with code 5"),
+    ]);
+    expect(result.messages[0]).toContain(
+      "Descendant cleanup could not be verified",
+    );
+  });
+
   it("does not spawn a command for an already-aborted signal", async () => {
     const marker = path.join(cwd, `pre-aborted-${crypto.randomUUID()}`);
     const runner = new AllowedProcessRunner({
@@ -173,13 +243,46 @@ describe("AllowedProcessRunner", () => {
     const forceKillCallIndex = setTimeoutSpy.mock.calls.findIndex(
       ([, delay]) => delay === 1_000,
     );
-    if (process.platform === "win32") {
-      expect(forceKillCallIndex).toBe(-1);
-    } else {
-      expect(forceKillCallIndex).toBeGreaterThanOrEqual(0);
-      const forceKillTimer = setTimeoutSpy.mock.results[forceKillCallIndex]
-        ?.value as NodeJS.Timeout;
-      expect(clearTimeoutSpy).toHaveBeenCalledWith(forceKillTimer);
-    }
+    expect(forceKillCallIndex).toBeGreaterThanOrEqual(0);
+    const forceKillTimer = setTimeoutSpy.mock.results[forceKillCallIndex]
+      ?.value as NodeJS.Timeout;
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(forceKillTimer);
   });
 });
+
+async function runWithFailedWindowsTaskkill(
+  fail: (killer: EventEmitter) => void,
+): Promise<{
+  readonly messages: string[];
+  readonly spawnProcess: ReturnType<typeof vi.fn>;
+}> {
+  const killer = new EventEmitter();
+  const messages: string[] = [];
+  const spawnProcess = vi.fn(() => {
+    queueMicrotask(() => fail(killer));
+    return killer as unknown as ChildProcess;
+  });
+  const runner = new AllowedProcessRunner(
+    {
+      hanging: {
+        executable: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+      },
+    },
+    {
+      platform: "win32",
+      spawnProcess: spawnProcess as unknown as typeof spawn,
+      logger: { error: (message) => messages.push(String(message)) },
+    },
+  );
+  const controller = new AbortController();
+  const pending = runner.run("hanging", { cwd, signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  controller.abort();
+
+  await expect(pending).resolves.toMatchObject({
+    terminationReason: "cancelled",
+  });
+  return { messages, spawnProcess };
+}

@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsup",
-    "dev": "tsx watch src/server.ts",
+    "build": "tsup && node ../../scripts/verify-orchestrator-production-artifact.mjs",
+    "dev": "tsx watch src/development-server.ts",
     "lint": "eslint src test --max-warnings=0",
     "start": "node dist/server.js",
     "test": "vitest run",
@@ -15,7 +15,6 @@
     "@aptiloop/agent-core": "0.1.0",
     "@aptiloop/course-authoring-kit": "0.1.0",
     "@aptiloop/codex-provider": "0.1.0",
-    "@aptiloop/curriculum": "0.1.0",
     "@aptiloop/database": "0.1.0",
     "@aptiloop/exercise-core": "0.1.0",
     "@aptiloop/learning-core": "0.1.0",
@@ -28,6 +27,7 @@
     "zod": "^4.4.0"
   },
   "devDependencies": {
+    "@aptiloop/curriculum": "0.1.0",
     "tsup": "^8.5.0"
   }
 }

@@ -1052,6 +1052,11 @@ describe("Course library", () => {
       await screen.findByText("Локальных курсов пока нет"),
     ).toBeInTheDocument();
     expect(
+      screen.getByText(
+        "Aptiloop специально устанавливается без готовых курсов. Создайте собственный курс локально или импортируйте JSON Course Pack, которому доверяете.",
+      ),
+    ).toBeVisible();
+    expect(
       screen.queryByText("Текущий курс не выбран"),
     ).not.toBeInTheDocument();
     expect(document.querySelectorAll('[data-slot="empty-state"]')).toHaveLength(

@@ -5,7 +5,7 @@
 
 ## Implemented baseline
 
-**Implemented baseline.** M2 stores immutable Course-owned Source Snapshots and Knowledge Capsules with hashes, provenance/rights metadata, claims/citations, and protected-material separation. M3 Course Pack V1 validates and transactionally imports declarative snapshot/capsule records and their references; the repository development fixture is not approved production content.
+**Implemented baseline.** M2 stores immutable Course-owned Source Snapshots and Knowledge Capsules with hashes, provenance/rights metadata, claims/citations, and protected-material separation. M3 Course Pack V1 validates and transactionally imports declarative snapshot/capsule records and their references. Repository fixtures remain development-only and are not seeded into a fresh production profile; any future first-party/sample Course requires separate content approval.
 
 **Implemented baseline.** Versioned sessions pin their exact Course revision and learner-safe snapshot. M4 accepted facts are scoped to Course/revision/personal branch/session/activity/knowledge node and deterministically project mastery, mistake families, review items, and summary from a canonical fact frontier. Learner/model narrative alone remains unverified, and protected evaluator material remains server-only.
 

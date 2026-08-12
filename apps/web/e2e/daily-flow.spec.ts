@@ -910,6 +910,10 @@ test("keeps the seeded daily flow usable across the responsive accessibility mat
 
         if (scenario.viewport.width < 768) {
           await expectMobileTouchTargets(page);
+          await expectMobileContentTailAboveNavigation(page);
+          if (scenario.path === "session") {
+            await expectMobileLessonDurations(page);
+          }
         }
         if ("reducedMotion" in scenario && scenario.reducedMotion) {
           await expectReducedMotion(page);
@@ -1035,6 +1039,57 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
       bodyFits: true,
       documentFits: true,
     });
+}
+
+async function expectMobileContentTailAboveNavigation(
+  page: Page,
+): Promise<void> {
+  await page.evaluate(() =>
+    window.scrollTo({ top: document.documentElement.scrollHeight }),
+  );
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const main = document.querySelector("main");
+        const content = main?.lastElementChild;
+        const navigation = document.querySelector(
+          '[data-slot="mobile-navigation"]',
+        );
+        if (!content || !navigation) return null;
+        return Math.floor(
+          navigation.getBoundingClientRect().top -
+            content.getBoundingClientRect().bottom,
+        );
+      }),
+    )
+    .toBeGreaterThanOrEqual(8);
+}
+
+async function expectMobileLessonDurations(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Шаги урока" }).click();
+  const plan = page.getByRole("dialog", { name: "Шаги урока" });
+  await expect(plan).toBeVisible();
+  const durations = plan.locator('[data-slot="estimated-duration"]');
+  expect(await durations.count()).toBeGreaterThan(0);
+  for (let index = 0; index < (await durations.count()); index += 1) {
+    const duration = durations.nth(index);
+    await expect(duration).toContainText("Примерно");
+    const layout = await duration.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const parentBox = element.parentElement?.getBoundingClientRect();
+      return {
+        parentRight: parentBox?.right ?? 0,
+        rectCount: element.getClientRects().length,
+        right: box.right,
+        whiteSpace: getComputedStyle(element).whiteSpace,
+      };
+    });
+    expect(layout.whiteSpace).toBe("nowrap");
+    expect(layout.rectCount).toBe(1);
+    expect(layout.right).toBeLessThanOrEqual(layout.parentRight + 1);
+  }
+  await page.keyboard.press("Escape");
+  await expect(plan).toBeHidden();
 }
 
 async function expectPrimaryActionIsUsable(

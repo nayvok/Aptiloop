@@ -230,9 +230,10 @@ export function AgentChat({
   const connectionReady =
     hasCompleteAssignment &&
     connection?.enabled === true &&
-    connection.state === "connected" &&
-    connection.observedCapabilities?.connection.authenticated === true &&
-    connection.observedCapabilities.connection.streaming === true;
+    (connection.state === "connected" || connection.state === "degraded") &&
+    (connection.state === "degraded" ||
+      connection.observedCapabilities?.connection.authenticated === true) &&
+    connection.observedCapabilities?.connection.streaming === true;
   const modelAvailable =
     assignedModel !== null &&
     assignedModel !== undefined &&

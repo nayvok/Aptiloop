@@ -2,7 +2,7 @@
 
 > **Mixed-status migration strategy.** Current invariants and remaining compatibility-removal gates are normative. The staged M2–M11 plan and its exact artifacts are dated **Implemented baseline** history, not current operator instructions. Use [Current Database Operations](current-database-operations.md) for executable commands.
 
-**Document status:** M2 additive Course foundations through M11 per-Course learner-state/session cutover were an **Implemented baseline** by 2026-08-10. Destructive compatibility-table removal and PostgreSQL remain an **Approved Core Alpha target**.
+**Document status:** M2 additive Course foundations through M11 per-Course learner-state/session cutover were an **Implemented baseline** by 2026-08-10. The current additive ledger extends through `0019_provider_connection_retirement`; destructive compatibility-table removal and PostgreSQL remain an **Approved Core Alpha target**.
 
 ## Objective
 
@@ -36,7 +36,7 @@ There is no down migration. Whole-file recovery from one of the four named appro
 
 `0013_execution_fabric` adds immutable Environment Pack and trusted-check descriptors, exact environment/check IDs on attempts and test runs, snapshot-bound structured artifacts, immutable review evidence bundles, and execution migration quarantine. Existing `commandId: "test"` maps to the finite app-owned compatibility contract; no attempt or source row is rewritten or deleted.
 
-These migrations use the same explicit inventory, approved non-overwriting backup, exact-ledger admission, transaction rollback, and whole-file recovery discipline established for M2. M11 extends the exact schema through `0018_learner_course_state_trigger_guard`; ordinary startup rejects predecessor ledgers, while only the backup-bound migration CLI may advance an admitted exact predecessor.
+These migrations use the same explicit inventory, approved non-overwriting backup, exact-ledger admission, transaction rollback, and whole-file recovery discipline established for M2. M11 extended the exact schema through `0018_learner_course_state_trigger_guard`; additive `0019_provider_connection_retirement` later added managed-provider retirement while preserving historical provenance. Ordinary startup rejects predecessor ledgers, while only the backup-bound migration CLI may advance an admitted exact predecessor. Use the current operations guide for the authoritative ledger and schema digest.
 
 ## M11 Course/session cutover record
 

@@ -48,6 +48,7 @@ import {
   openDatabase,
   learningKernelMigrationContract,
   learnerCourseStateMigrationContract,
+  learnerCourseStateTriggerGuardMigrationContract,
   providerHubMigrationContract,
   type CurrentDatabaseMigrationContract,
 } from "./database.js";
@@ -559,6 +560,7 @@ export function verifyApprovedM2MigrationBackup(
       adaptiveStudioMigrationContract,
       courseDesignerWorkflowMigrationContract,
       learnerCourseStateMigrationContract,
+      learnerCourseStateTriggerGuardMigrationContract,
     ].some((contract) => sameMigrationContract(sourceContract, contract));
   const correctionPending =
     sourceAdmission.kind === "legacy-compatible" &&
@@ -638,6 +640,7 @@ export function verifyApprovedM2MigrationBackup(
                 adaptiveStudioMigrationContract,
                 courseDesignerWorkflowMigrationContract,
                 learnerCourseStateMigrationContract,
+                learnerCourseStateTriggerGuardMigrationContract,
               ]
             : [preMigrationContract];
   const inspectedBackup = inspectApprovedCandidateForContracts(

@@ -101,6 +101,8 @@ Open **Settings → AI connections**. A role is ready only when its connection i
 
 For a metadata-less legacy connection, use **Add managed connection** instead of trying to edit read-only diagnostics. API keys are submitted only by the explicit loopback mutation and stored connection-scoped in `.data/provider-credentials.json`; they are not returned to the browser or stored in SQLite.
 
+On Windows, `provider-credentials.json` is protected with current-user DPAPI through the built-in Windows PowerShell 5.1 runtime. Enterprise AppLocker, Constrained Language Mode, a disabled PowerShell installation, another Windows account, or copying ciphertext from another computer can prevent decryption. Aptiloop then leaves the store untouched and reports the provider unavailable; it never falls back to plaintext. Restore the original Windows user context or reconnect providers after moving only the sanitized learning-data export. Do not delete or overwrite an undecryptable store unless you have intentionally accepted loss of every saved provider login.
+
 Catalog presence and health metadata do not prove a model request. Use the displayed recovery action and record an external-provider smoke only after an observed authenticated request.
 
 ## Course Designer or Interview disclosure did not resume

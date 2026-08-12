@@ -290,7 +290,7 @@ Checkpoint composes supported assessment/acknowledgement elements and states the
 
 Spaced review names why the item is due and shows the prior evidence date without revealing protected material. It may use recall, quiz, explanation, or practice subpatterns registered by schema. Completion returns evidence to the kernel; the renderer never schedules its own next date.
 
-**Implemented baseline limitation.** The kernel and Review UI expose due scheduling and provenance, but no typed server-verified due-review executor currently completes or reschedules a due item. The UI therefore withholds a false Start action rather than reopening an ordinary source session.
+**Implemented baseline.** The Review UI starts a typed free-response activity only from a server-issued opaque execution identity. It shows authored immutable Course content plus due/source-evidence context, preserves the learner response on failure, and submits only an operation ID and bounded text. The server persists participation without claiming correctness/mastery, completes the exact due cycle, and returns the deterministic successor date. The renderer never reopens the source session or schedules locally.
 
 ## Source context pattern
 
@@ -425,4 +425,4 @@ Preview is labeled and cannot create real evidence. Protected answer material is
 
 **Approved Core Alpha target**
 
-Automated tests provide implementation evidence for the common frame, closed type registry, supported renderers, local draft recovery, protected-answer separation, deterministic kernel ownership, trusted check IDs, explicit provider failure, and read-only Reviewer. Focused browser checks separately cover exercised responsive, theme, and interaction paths. Remaining target items—especially executable due review, complete 320px reflow, and unexercised assistive-technology/state combinations—do not become accessibility or release evidence through this document.
+Automated tests provide implementation evidence for the common frame, closed type registry, supported renderers, local draft recovery, protected-answer separation, deterministic kernel ownership, typed due Review execution, trusted check IDs, explicit provider failure, and read-only Reviewer. Focused browser checks separately cover exercised responsive, theme, and interaction paths. Complete 320px reflow and unexercised assistive-technology/state combinations do not become accessibility or release evidence through this document.

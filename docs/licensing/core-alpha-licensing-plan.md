@@ -19,11 +19,11 @@ The absence of a license grant is stated as repository fact, not a conclusion ab
 | Course/curriculum prose     | Russian authored prompts, answers, misconceptions, examples, source links                                                      | Determine original/adapted/copied status, authors, translations, attribution, and separate content terms.         |
 | Exercise templates/fixtures | `workspaces/exercises/**`                                                                                                      | Distinguish product-controlled teaching fixtures from user attempts and executable content; establish provenance. |
 | Documentation               | root/docs historical and Core Alpha specifications                                                                             | Confirm authors/contributors and whether docs follow code terms or separate terms.                                |
-| Screenshots/branding        | `docs/screenshots/**`, product/provider names                                                                                  | Confirm ownership, depicted third-party marks, privacy, and permitted release scope.                              |
+| Screenshots/branding        | Git history and future reviewed Aptiloop captures; product/provider names                                                      | Confirm ownership, depicted third-party marks, privacy, and permitted release scope.                              |
 | Font assets                 | Geist via the web application/generated output                                                                                 | Preserve the SIL Open Font License terms for distributed font files.                                              |
 | Runtime/private artifacts   | `.data`, SQLite/WAL/backups, learner attempts, generated acceptance captures                                                   | Must not enter a source/content release; ownership/privacy differs from project code.                             |
 
-Core Alpha has no production courses. Fixture/content distribution terms must be decided separately from application/SDK code.
+The Core Alpha application distribution intentionally contains no bundled Course. A fresh user creates a personal Course or explicitly imports a trusted Course Pack. Fixture/content distribution terms remain separate from application/SDK code, and any future first-party/sample Course needs its own approved terms and provenance; its absence does not block the course-free application artifact.
 
 ## 3. Dependency inventory
 
@@ -118,7 +118,7 @@ Implementation remains stopped before step 8. The M12 technical preflight genera
 
 - Are curriculum prose/code/examples original, adapted, quoted, or copied from MDN, TypeScript, React, TanStack, or other sources?
 - What terms apply to Course Packs, sample content, exercise templates, tests, translations, screenshots, and generated documentation?
-- May third parties redistribute/modify course content, or should Core Alpha ship no production/sample course until provenance is complete?
+- If Aptiloop later supplies a first-party/sample Course, under what terms may third parties redistribute or modify that separate content artifact?
 - How are private sources, learner attempts, databases, backups, and generated exports excluded from releases?
 
 ### Dependencies, distribution, and marks
@@ -134,12 +134,12 @@ The owner approved Option B as the engineering direction and explicitly kept eve
 
 1. **Ownership and contributors:** no public release or license grant until every included code, content, document, translation, fixture, screenshot, font/asset, and contribution has verified ownership/provenance and an approved contributor policy.
 2. **Code license and boundary:** retain no-license status until counsel approves the exact AGPL-3.0-only integrated path matrix; Apache-2.0 remains limited to future genuinely separated SDKs after separate proof. No dual licensing is authorized.
-3. **Content and fixtures:** ship no production or redistributable sample Course, Course Pack, curriculum, exercise fixture, translation, screenshot, or generated documentation until its terms and provenance are approved. Repository fixtures remain development evidence only.
-4. **Distribution scope:** no new public source archive, npm, standalone/desktop, container, or hosted distribution channel is authorized by M0.
+3. **Content and fixtures:** keep development curriculum and exercise fixtures out of the normal fresh production profile. Ship no first-party/redistributable sample Course or Course Pack until its separate terms and provenance are approved. Other included translations, screenshots, and generated documentation retain their own applicable review requirements. Repository fixtures remain development evidence only.
+4. **Distribution scope:** the owner authorized publication of the current source branch on 2026-08-13. That action does not authorize npm, standalone/desktop, tagged container, hosted distribution, or a license grant.
 5. **Dependencies and notices:** no artifact ships until its exact dependencies, font/assets, license texts, notices, reciprocal obligations, and SBOM are reviewed and approved.
 6. **Marks and contribution policy:** no public contribution launch, trademark policy, or marketing use of Aptiloop/provider/project marks is authorized until reviewed and approved.
 
-These deferrals allow implementation through the approved roadmap but remain release-blocking. They do not authorize license text or public distribution.
+The legal and artifact-distribution deferrals above remain release-blocking and do not authorize license text. Public visibility of the source branch grants no reuse rights. Absence of a bundled Course is the intended product boundary, not an additional release blocker.
 
 ## 9. Approval gates
 
@@ -154,4 +154,4 @@ No license is applied until all gates are signed off by owner and professional c
 - approved contribution and trademark policies; and
 - a separate implementation change adding the actual texts and metadata.
 
-Until those gates close, the accurate public statement is: **the repository currently has no license grant; the engineering direction is owner-approved, but license application and public distribution remain deferred pending professional legal review.**
+Until those gates close, the accurate public statement is: **the source repository is public, but it currently grants no project license; the engineering direction is owner-approved, while license application and tagged artifact distribution remain deferred pending professional legal review.**

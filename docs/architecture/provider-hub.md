@@ -11,7 +11,7 @@
 
 **Implemented baseline.** Course Designer, active learning chat, interview, and evidence-only review resolve through persisted `RoleProfile` records and `ProviderHub`; flattened browser role selections and the legacy provider-status route are retired. The UI previews exact external disclosure scope and consumes an immutable approval once. The common runner enforces cumulative input/output/event/tool/deadline budgets, explicit cancellation, minimized persistence, and structured failures without fallback. Private environment/context sentinels and all four finite role matrices are covered. The exact authenticated OpenCode Zen `deepseek-v4-flash-free` smoke completed through constrained Pi with synthetic text in a disposable database, exact disclosure consumption, persisted minimal provenance, and observed cancellation. This closes M6 acceptance without asserting general production provider readiness.
 
-**Implemented baseline.** Settings exposes a server-owned connection-management API and localized UI for the reviewed catalog. API-key and subscription credentials are connection-scoped in `.data/provider-credentials.json` and never returned to the browser or stored in SQLite. Built-in providers own endpoint/model discovery; Ollama and LM Studio accept only loopback `/v1` URLs plus exact model IDs; the advanced custom compatible adapter accepts only explicit public HTTPS `/v1` endpoints plus exact model IDs. Connection disable/enable, key replacement, subscription sign-in/sign-out, observed model status, and exact per-role model switching are explicit mutations.
+**Implemented baseline.** Settings exposes a server-owned connection-management API and localized UI for the reviewed catalog. API-key and subscription credentials are connection-scoped in `.data/provider-credentials.json` and never returned to the browser or stored in SQLite. Windows persists a strict whole-file current-user DPAPI envelope, migrates validated legacy plaintext through atomic replacement, and fails closed without plaintext fallback; POSIX/Linux retains plaintext owner-mode storage. Built-in providers own endpoint/model discovery; Ollama and LM Studio accept only loopback `/v1` URLs plus exact model IDs; the advanced custom compatible adapter accepts only explicit public HTTPS `/v1` endpoints plus exact model IDs. Connection disable/enable, key replacement, subscription sign-in, managed connection retirement, observed model status, and exact per-role model switching are explicit mutations. Retirement removes local credentials and active configuration, resets dependent current roles to no-AI, and preserves historical provider evidence; it does not assert upstream token revocation.
 
 ## Separate concepts
 
@@ -43,7 +43,7 @@ type RoleProfile = {
 };
 ```
 
-A connection can serve zero or several roles. Each role independently references a connection/model after validation. Deleting/disabling a connection does not rewrite role history; affected profiles become explicitly unresolved. A model/provider is provenance for a turn, never the durable lesson identity.
+A connection can serve zero or several roles. Each role independently references a connection/model after validation. Disabling a connection leaves affected current profiles explicitly unavailable. Retiring a managed connection resets affected current profiles to no-AI but does not rewrite immutable disclosure or turn history. A model/provider is provenance for a turn, never the durable lesson identity.
 
 Credentials live in an app-owned credential store or approved provider auth store. The Hub stores only references and safe metadata. Course Packs, role prompts, browser payloads, SQLite learner records, logs, and tool results never contain credentials.
 
@@ -125,7 +125,7 @@ Connection state is a closed application projection:
 - `misconfigured` — missing/invalid endpoint/auth/config;
 - `authentication-required` — explicit login/key action needed;
 - `unavailable` — executable/service/network/provider absent;
-- `degraded` — connected but one or more optional capabilities/models unavailable;
+- `degraded` — locally configured and catalog-visible, but no authenticated model request has completed yet, or one or more optional capabilities/models are unavailable;
 - `error` — bounded unexpected adapter failure.
 
 Readiness is time-scoped evidence, not a permanent assertion. Provider health/model discovery and an authenticated model/tool canary are distinct observations. UI reports the layer, time, safe diagnostic, and recovery action without secrets.

@@ -198,6 +198,30 @@ describe("ProviderHub", () => {
       expect((error as ProviderHubError).failure.code).toBe("ai_disabled");
     }
   });
+
+  it("does not fall back to an adapter-global provider when exact connection resolution fails", () => {
+    const globalProvider = provider();
+    const target = new ProviderHub({
+      providers: { codex: globalProvider },
+      providerForConnection: () => undefined,
+      connections: [connection()],
+      roleProfiles: [profile()],
+      toolPolicies: CORE_TOOL_POLICIES,
+      now: () => new Date(now),
+    });
+
+    expect(() => target.inspect("reviewer")).toThrow(ProviderHubError);
+    try {
+      target.inspect("reviewer");
+    } catch (error) {
+      expect((error as ProviderHubError).failure.code).toBe(
+        "provider_unavailable",
+      );
+    }
+    expect(globalProvider.getStatus).not.toHaveBeenCalled();
+    expect(globalProvider.listModels).not.toHaveBeenCalled();
+    expect(globalProvider.createSession).not.toHaveBeenCalled();
+  });
 });
 
 describe("AptiloopTypedToolHost", () => {

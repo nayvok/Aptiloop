@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nayvok/Aptiloop.git"
+  },
+  "homepage": "https://github.com/nayvok/Aptiloop#readme",
+  "bugs": {
+    "url": "https://github.com/nayvok/Aptiloop/issues"
+  },
   "packageManager": "npm@11.12.1",
   "workspaces": [
     "apps/*",
@@ -14,28 +22,31 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "node scripts/dev-local.mjs",
-    "start": "node scripts/dev-local.mjs",
+    "start": "node scripts/start-local.mjs",
     "audit:policy": "node scripts/npm-audit-policy.mjs",
+    "check:production-content": "node scripts/production-course-content-policy.mjs",
     "ci:provenance": "node scripts/github-actions-policy.mjs",
     "format": "prettier --write .",
-    "smoke:provider:opencode": "tsx scripts/opencode-zen-smoke.ts",
     "sbom": "node scripts/generate-sbom.mjs",
     "format:check": "prettier --check .",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "npm run test:fast && npm run test:e2e",
-    "test:fast": "npm run test:ci-policy && npm run test:audit-policy && npm run test:local-launch && npm run test:e2e-lock && turbo run test",
-    "test:local-launch": "node --test scripts/dev-local.test.mjs",
+    "test:fast": "npm run test:ci-policy && npm run test:audit-policy && npm run test:production-content-policy && npm run test:local-launch && npm run test:e2e-lock && turbo run test",
+    "test:local-launch": "node --test scripts/dev-local.test.mjs scripts/start-local.test.mjs scripts/verify-orchestrator-production-artifact.test.mjs",
     "test:audit-policy": "node --test scripts/npm-audit-policy.test.mjs",
     "test:e2e-lock": "node --test scripts/e2e-environment.test.mjs scripts/e2e-next-env-lock.test.mjs",
     "test:ci-policy": "node --test scripts/github-actions-policy.test.mjs",
+    "test:production-content-policy": "node --test scripts/production-course-content-policy.test.mjs",
     "test:e2e": "node scripts/test-e2e.mjs",
     "db:generate": "npm run db:generate --workspace=@aptiloop/database",
     "db:backup": "tsx scripts/create-approved-backup.ts",
     "db:inventory": "tsx scripts/private-data-inventory.ts",
     "db:migrate": "npm run db:migrate --workspace=@aptiloop/database --",
     "db:seed": "npm run db:seed --workspace=@aptiloop/database",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:fast && npm run build"
+    "data:export": "tsx scripts/export-local-data.ts",
+    "data:restore": "tsx scripts/restore-local-data.ts",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:fast && npm run build && npm run check:production-content"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

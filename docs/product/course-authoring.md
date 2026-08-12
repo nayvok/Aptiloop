@@ -4,7 +4,7 @@
 
 **Approved Core Alpha target**
 
-This document defines the complete authoring contract. The implemented mechanisms operate on development content; no production Course content, legal approval, or distribution authorization is implied.
+This document defines the complete authoring contract. The implemented mechanisms support local user-authored and explicitly imported Courses, while repository fixtures remain development-only. Aptiloop intentionally distributes no bundled Course; any future first-party/sample Course, legal approval, and public distribution authorization remain separate decisions.
 
 ## Implemented baseline
 
@@ -12,7 +12,7 @@ The current Aptiloop application has an Adaptive Studio workflow backed by versi
 
 Manual and assisted Course creation require an explicit primary Course locale. Common valid BCP 47 locales are presented with interface-localized display names, while a validated custom-locale path preserves the broader Course schema. The choice is persisted as Draft/Course metadata and remains independent from the local `en-US`/`ru-RU` interface preference.
 
-The active curriculum and Authoring Kit fixture are development content, not production Courses. Source Snapshot/Capsule tables contain no approved production material. Complete production Course locale resources remain **Approved Core Alpha target** work. Existing Russian Course fixture content and retained legacy authoring routes are compatibility surfaces, not production Course localization evidence.
+The active curriculum and test fixtures are development content and are not seeded into or bundled with a fresh production profile. Source Snapshot/Capsule tables contain no Aptiloop-supplied release content. Existing Russian Course fixture content and retained legacy authoring routes are compatibility surfaces, not bundled Course or localization evidence. A user creates a personal Course or explicitly imports a trusted Course Pack; any future first-party/sample Course would require its own locale, provenance, safety, licensing, and ownership evidence.
 
 ## Authoring principles
 
@@ -26,7 +26,7 @@ The active curriculum and Authoring Kit fixture are development content, not pro
 6. Content cannot grant execution, filesystem, network, credential, provider, or plugin authority.
 7. Stable IDs survive reordering and translation; they are not silently reused for different meaning.
 8. Learner-visible material, protected evaluation material, learner evidence, and model output remain separate.
-9. No production Course is bundled until provenance, quality, safety, licensing, and ownership are approved.
+9. Aptiloop bundles no Course. A fresh profile starts with Create Course and Import Course Pack; any future first-party/sample Course requires separate provenance, quality, safety, licensing, and ownership approval.
 10. Creation presents two assisted starts—external-model Pack generation and the connected Course Designer—while keeping manual no-AI creation as a quiet, complete fallback.
 11. Capability state is truthful: technical readiness follows the selected role, provider, exact model, and current observed evidence; model strength remains a user judgment, and unknown evidence is labeled rather than guessed.
 12. Course Pack bytes are selected only on `/courses/import`; `/courses/new` never embeds an importer.
@@ -87,7 +87,7 @@ The first two are the primary assisted starts. All three converge only after a l
 
 ### Embedded: Adaptive Studio
 
-**Implemented baseline** for the M9 manual editorial/Personal Adaptation workflows and M10 guided Course Designer; **Approved Core Alpha target** for production Course authoring gates.
+**Implemented baseline** for the M9 manual editorial/Personal Adaptation workflows and M10 guided Course Designer. Any future first-party/sample Course release is outside this implemented user-authoring path and requires separate approval.
 
 Adaptive Studio is 70% editorial workspace and 30% developer instrument. It is not an IDE and must not expose a general terminal.
 
@@ -107,7 +107,7 @@ Published revisions are read-only. Editing begins by cloning to a new Draft or c
 
 #### Guided Course Designer
 
-**Implemented baseline** for the persisted M10 workflow against a selected local Draft; production Course content remains an **Approved Core Alpha target**.
+**Implemented baseline** for the persisted M10 workflow against a selected local Draft. This user-owned workflow does not depend on Aptiloop supplying Course content.
 
 Before enabling guided creation, Aptiloop reports the selected Course Designer role, connection, exact model, and available capability evidence. `connected` and `degraded` are eligible server states; AI Off and unavailable selections remain distinct, while missing/stale evidence is an honest advisory and the server remains authoritative for the attempted operation. Aptiloop does not automatically classify a model as weak or strong. If the connected model has limited context, search, or reasoning, the external instruction-file path and complete manual editor remain available. Provider failure preserves the Draft/brief and never silently selects another provider or Mock.
 
@@ -156,11 +156,11 @@ Staged validation is intentionally process-local, size/count bounded, LRU-capped
 
 **Implemented baseline** for the version-matched V1 kit.
 
-Aptiloop provides a version-matched downloadable Course Pack V1 instruction for a capable external model or text editor without granting that tool access to Aptiloop. The instruction embeds the user-approved brief, exact generated schema, and exact generated development template, requires one UTF-8 Course Pack JSON document rather than prose or executable content, and directs the user back to `/courses/import`. It is not a runtime plugin, provider connection, or substitute for the complete Node-based Authoring Kit validator. Aptiloop cannot verify the external model's readiness or output quality; uploaded bytes remain untrusted until local validation succeeds. The full Kit contains:
+Aptiloop provides a version-matched downloadable Course Pack V1 instruction for a capable external model or text editor without granting that tool access to Aptiloop. The instruction embeds the user-approved brief, exact generated schema, and a topic-neutral structural scaffold, requires one UTF-8 Course Pack JSON document rather than prose or executable content, and directs the user back to `/courses/import`. The scaffold is deliberately not installable unchanged: it declares unresolved ownership, omits content terms, uses explicit placeholders, and carries a zero hash. It contains no sample Course or development curriculum. The instruction is not a runtime plugin, provider connection, or substitute for the complete Node-based Authoring Kit validator. Aptiloop cannot verify the external model's readiness or output quality; uploaded bytes remain untrusted until local validation succeeds. The full Kit contains:
 
 - the exact Course Pack JSON Schema plus generated read-only type definitions;
 - the closed catalog of allowed Activity types, payload schemas, evidence/completion contracts, limits, and examples;
-- minimal and representative development-only templates/fixtures, clearly labeled as non-production content;
+- one topic-neutral, deliberately non-installable authoring scaffold; concrete Course fixtures remain test-only;
 - the same deterministic local validator, canonicalizer, and hash implementation used by import, exposed by the `aptiloop-course-pack` binary and the repository commands shown below;
 - validation-code reference, primary-locale, Source Snapshot/Knowledge Capsule, protected-material, environment/check-ID, provenance, privacy, and no-execution requirements;
 - single-file JSON packaging, import, Preview, Install/Open-as-draft, and export instructions;
@@ -179,7 +179,7 @@ node packages/course-authoring-kit/dist/cli.js canonicalize pack.json
 node packages/course-authoring-kit/dist/cli.js finalize pack.json
 ```
 
-`validate` prints the stable report and exits non-zero on a blocker. `hash` prints the content hash over the canonical hash payload. `canonicalize` requires a valid finalized pack and prints canonical JSON. `finalize` computes/replaces the declared revision content hash and prints canonical JSON. The generated schema is `packages/course-authoring-kit/schema/course-pack-v1.schema.json`; the non-production template is `packages/course-authoring-kit/templates/development-course-pack.json`. Aptiloop imports one finalized JSON file through Courses → Import Course Pack, shows Preview and diagnostics, then requires a separate Install/Open-as-draft action.
+`validate` prints the stable report and exits non-zero on a blocker. `hash` prints the content hash over the canonical hash payload. `canonicalize` requires a valid finalized pack and prints canonical JSON. `finalize` computes/replaces the declared revision content hash and prints canonical JSON. The generated schema is `packages/course-authoring-kit/schema/course-pack-v1.schema.json`; the non-installable structural scaffold is `packages/course-authoring-kit/templates/course-pack-v1-authoring-template.json`. Concrete Course fixtures remain under test-only paths. Aptiloop imports one finalized JSON file through Courses → Import Course Pack, shows Preview and diagnostics, then requires a separate Install/Open-as-draft action.
 
 Reference external workflow:
 
@@ -244,11 +244,11 @@ The learner Activity Frame owns common context, state, accessibility, runtime/AI
 
 **Implemented baseline**
 
-External Course Pack runtime references and the finite M5 local registry are implemented for development content.
+External Course Pack runtime references and the finite M5 local registry are implemented for local user-authored/imported content and development fixtures.
 
 **Approved Core Alpha target**
 
-Production Course runtime approval and distribution remain separately gated.
+Any future Aptiloop-supplied first-party/sample Course would require separate runtime, content, and distribution approval. It is not required for the empty-library product release.
 
 Course authoring selects declarative environment requirements and trusted IDs. It never authors commands.
 
@@ -263,7 +263,7 @@ A pack with an unknown or incompatible environment/check ID may be inspected but
 
 ## Optional AI proposals
 
-**Implemented baseline** for M10 Draft proposals; production source acquisition and Course approval remain an **Approved Core Alpha target**.
+**Implemented baseline** for M10 Draft proposals. Broader source-acquisition and provenance workflows remain an **Approved Core Alpha target**; user-owned Draft creation does not wait for Aptiloop-supplied Course approval.
 
 Course Designer may use Pi runtime through narrowly scoped Aptiloop typed tools such as proposing metadata, capsule text, activity fields, graph edges, or translations. Tool inputs/outputs are strict, bounded, and validated.
 
@@ -283,11 +283,11 @@ AI has no filesystem, shell, network, credential, general edit, install, environ
 
 **Implemented baseline**
 
-Course Pack V1 validation/install, M9 Adaptive Studio manual validation/publication, and M10 deterministic validation after an explicitly applied AI proposal are implemented for development content.
+Course Pack V1 validation/install, M9 Adaptive Studio manual validation/publication, and M10 deterministic validation after an explicitly applied AI proposal are implemented for local user-authored/imported content and development fixtures.
 
 **Approved Core Alpha target**
 
-Production Course approval remains separately gated.
+Any future first-party/sample Course supplied by Aptiloop remains separately gated. The product's normal user-authored/imported Course flow does not require one.
 
 Publication and installation require zero errors across:
 
@@ -331,7 +331,7 @@ Authors record origin, authorship/ownership claim, license/terms claim, acquisit
 
 **Approved Core Alpha target**
 
-Project licensing uses the owner-approved engineering direction of AGPL-3.0-only for the integrated app/server and Apache-2.0 only for newly separated reusable SDK packages after boundaries/ownership are verified. Content/fixtures require separate terms, and third-party notices/SBOM/trademark policy require professional legal review. No license text or production Course is authorized by this target alone.
+Project licensing uses the owner-approved engineering direction of AGPL-3.0-only for the integrated app/server and Apache-2.0 only for newly separated reusable SDK packages after boundaries/ownership are verified. Content/fixtures require separate terms, and third-party notices/SBOM/trademark policy require professional legal review. This target alone authorizes neither license text nor any future Aptiloop-supplied first-party/sample Course.
 
 ## Baseline migration
 
@@ -345,7 +345,7 @@ Migration is incremental:
 4. map legacy curriculum and evidence with provenance, quarantining unmatched/ambiguous rows;
 5. dual-read/compare, then cut callers over only after reconciliation evidence;
 6. retain legacy rows until rollback and approval gates close;
-7. treat current seeded curriculum and exercise templates as development fixtures, not production Courses;
+7. keep current seeded curriculum and exercise templates in explicit development-only paths and out of fresh production profiles;
 8. retire legacy writes only after every caller and stored-data path is migrated.
 
 No big-bang table rename, destructive reset, silent reclassification, or published-content mutation is acceptable.

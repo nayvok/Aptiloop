@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { MockAgentProvider, type AgentProvider } from "@aptiloop/agent-core";
+import type { AgentProvider } from "@aptiloop/agent-core";
+import { MockAgentProvider } from "@aptiloop/agent-core/mock";
 import {
   AptiloopToolNameSchema,
   type AgentEvent,
@@ -18,6 +19,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createApp, type AppOptions } from "../src/app.js";
+import { seedDevelopmentDatabase } from "./development-database-fixture.js";
+import { testDevelopmentProviderFixture } from "./provider-development-fixture.js";
 
 const safeFailure = "The agent response was rejected by safety policy.";
 const safeCancellation = "The agent turn was cancelled.";
@@ -74,7 +77,9 @@ interface ScriptedProviderOptions {
   modelId?: string;
   sessionId?: string;
   script?: EventScript;
-  beforeCreate?: () => Promise<void>;
+  beforeCreate?: (signal?: AbortSignal) => Promise<void>;
+  beforeStatus?: (signal?: AbortSignal) => Promise<void>;
+  onCancel?: (sessionId: string) => Promise<void> | void;
 }
 
 class ScriptedProvider implements AgentProvider {
@@ -87,7 +92,9 @@ class ScriptedProvider implements AgentProvider {
   listCalls = 0;
   statusCalls = 0;
   readonly #script: EventScript;
-  readonly #beforeCreate: (() => Promise<void>) | undefined;
+  readonly #beforeCreate: ((signal?: AbortSignal) => Promise<void>) | undefined;
+  readonly #beforeStatus: ((signal?: AbortSignal) => Promise<void>) | undefined;
+  readonly #onCancel: ((sessionId: string) => Promise<void> | void) | undefined;
 
   constructor(options: ScriptedProviderOptions = {}) {
     this.id = options.id ?? "mock";
@@ -95,10 +102,14 @@ class ScriptedProvider implements AgentProvider {
     this.sessionId = options.sessionId ?? providerHandle;
     this.#script = options.script ?? completedScript;
     this.#beforeCreate = options.beforeCreate;
+    this.#beforeStatus = options.beforeStatus;
+    this.#onCancel = options.onCancel;
   }
 
-  async getStatus(): Promise<ProviderStatus> {
+  async getStatus(signal?: AbortSignal): Promise<ProviderStatus> {
     this.statusCalls += 1;
+    await this.#beforeStatus?.(signal);
+    signal?.throwIfAborted();
     return {
       providerId: this.id,
       state: "connected",
@@ -120,10 +131,13 @@ class ScriptedProvider implements AgentProvider {
     ];
   }
 
-  async createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
+  async createSession(
+    input: CreateAgentSessionInput,
+    signal?: AbortSignal,
+  ): Promise<AgentSession> {
     this.createInputs.push(input);
-    await this.#beforeCreate?.();
-    return {
+    await this.#beforeCreate?.(signal);
+    const session: AgentSession = {
       id: this.sessionId,
       providerId: this.id,
       role: input.role,
@@ -132,6 +146,11 @@ class ScriptedProvider implements AgentProvider {
       createdAt: timestamp,
       metadata: { privateProviderMetadata: providerMetadata },
     };
+    if (signal?.aborted) {
+      await this.cancelSession(session.id);
+      signal.throwIfAborted();
+    }
+    return session;
   }
 
   streamMessage(input: StreamAgentMessageInput): AsyncIterable<AgentEvent> {
@@ -141,6 +160,7 @@ class ScriptedProvider implements AgentProvider {
 
   async cancelSession(sessionId: string): Promise<void> {
     this.cancelCalls.push(sessionId);
+    await this.#onCancel?.(sessionId);
   }
 }
 
@@ -457,11 +477,17 @@ afterEach(async () => {
 function runtime(options: AppOptions = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "aptiloop-agent-policy-"));
   roots.push(root);
+  const developmentMode = options.developmentMode ?? true;
   const created = createApp({
     projectRoot: path.resolve("../.."),
     databasePath: path.join(root, "test.sqlite"),
     databaseMode: "disposable",
+    developmentDatabaseInitializer: seedDevelopmentDatabase,
     ...options,
+    developmentMode,
+    ...(developmentMode
+      ? { developmentProviderFixture: testDevelopmentProviderFixture }
+      : {}),
   });
   runtimes.push(created);
   return created;
@@ -755,6 +781,186 @@ describe("M1 agent policy boundary", () => {
         )
         .get(),
     ).toEqual({ learningSessionId: sessionId });
+  });
+
+  it("cancels and drains a hanging provider stream before closing SQLite", async () => {
+    let markStreamStarted!: () => void;
+    const streamStarted = new Promise<void>((resolve) => {
+      markStreamStarted = resolve;
+    });
+    let releaseStream!: () => void;
+    const streamRelease = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    const lifecycle: string[] = [];
+    const mock = new ScriptedProvider({
+      script: async function* (sessionId) {
+        lifecycle.push("stream-started");
+        markStreamStarted();
+        await streamRelease;
+        yield {
+          type: "message.delta",
+          sessionId,
+          sequence: 0,
+          timestamp,
+          delta: "cancelled stream must not reach the client",
+        };
+      },
+      onCancel: () => {
+        lifecycle.push("provider-cancelled");
+        releaseStream();
+      },
+    });
+    const current = runtime({ providers: { mock } });
+    const closeDatabase = current.state.connection.close.bind(
+      current.state.connection,
+    );
+    vi.spyOn(current.state.connection, "close").mockImplementation(() => {
+      lifecycle.push("database-closed");
+      closeDatabase();
+    });
+    const sessionId = await startActiveVersionedSession(
+      current,
+      "agent-policy-shutdown-stream",
+    );
+    const responsePromise = request(current.app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({
+        role: "teacher",
+        sessionId,
+        message: "Wait until shutdown",
+      }),
+    });
+    await streamStarted;
+
+    current.beginShutdown();
+    await current.close();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('"reason":"cancelled"');
+    expect(mock.cancelCalls).toEqual([providerHandle]);
+    expect(lifecycle).toEqual([
+      "stream-started",
+      "provider-cancelled",
+      "database-closed",
+    ]);
+    runtimes.splice(runtimes.indexOf(current), 1);
+  });
+
+  it("aborts and drains hanging provider session setup before closing SQLite", async () => {
+    let markSetupStarted!: () => void;
+    const setupStarted = new Promise<void>((resolve) => {
+      markSetupStarted = resolve;
+    });
+    const lifecycle: string[] = [];
+    const mock = new ScriptedProvider({
+      beforeCreate: (signal) =>
+        new Promise<void>((_resolve, reject) => {
+          lifecycle.push("setup-started");
+          markSetupStarted();
+          signal?.addEventListener(
+            "abort",
+            () => {
+              lifecycle.push("setup-aborted");
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    });
+    const current = runtime({ providers: { mock } });
+    const closeDatabase = current.state.connection.close.bind(
+      current.state.connection,
+    );
+    vi.spyOn(current.state.connection, "close").mockImplementation(() => {
+      lifecycle.push("database-closed");
+      closeDatabase();
+    });
+    const sessionId = await startActiveVersionedSession(
+      current,
+      "agent-policy-shutdown-setup",
+    );
+    const responsePromise = request(current.app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({
+        role: "teacher",
+        sessionId,
+        message: "Wait during setup",
+      }),
+    });
+    await setupStarted;
+
+    current.beginShutdown();
+    await current.close();
+    await expect(responsePromise).resolves.toMatchObject({ status: 400 });
+
+    expect(current.state.providerSessions.size).toBe(0);
+    expect(current.state.activeProviderTurnReservations.size).toBe(0);
+    expect(lifecycle).toEqual([
+      "setup-started",
+      "setup-aborted",
+      "database-closed",
+    ]);
+    runtimes.splice(runtimes.indexOf(current), 1);
+  });
+
+  it("aborts and drains initial provider inspection before closing SQLite", async () => {
+    let markInspectionStarted!: () => void;
+    const inspectionStarted = new Promise<void>((resolve) => {
+      markInspectionStarted = resolve;
+    });
+    const lifecycle: string[] = [];
+    const mock = new ScriptedProvider({
+      beforeStatus: (signal) =>
+        new Promise<void>((_resolve, reject) => {
+          lifecycle.push("inspection-started");
+          markInspectionStarted();
+          signal?.addEventListener(
+            "abort",
+            () => {
+              lifecycle.push("inspection-aborted");
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    });
+    const current = runtime({ providers: { mock } });
+    const closeDatabase = current.state.connection.close.bind(
+      current.state.connection,
+    );
+    vi.spyOn(current.state.connection, "close").mockImplementation(() => {
+      lifecycle.push("database-closed");
+      closeDatabase();
+    });
+    const sessionId = await startActiveVersionedSession(
+      current,
+      "agent-policy-shutdown-inspection",
+    );
+    const responsePromise = request(current.app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({
+        role: "teacher",
+        sessionId,
+        message: "Wait during inspection",
+      }),
+    });
+    await inspectionStarted;
+
+    current.beginShutdown();
+    await current.close();
+    await expect(responsePromise).resolves.toMatchObject({ status: 400 });
+
+    expect(mock.createInputs).toHaveLength(0);
+    expect(current.state.providerSessions.size).toBe(0);
+    expect(current.state.activeProviderTurnReservations.size).toBe(0);
+    expect(lifecycle).toEqual([
+      "inspection-started",
+      "inspection-aborted",
+      "database-closed",
+    ]);
+    runtimes.splice(runtimes.indexOf(current), 1);
   });
 
   it.each(["createConversation", "addMessage"] as const)(
@@ -1238,8 +1444,12 @@ describe("M1 agent policy boundary", () => {
 
   it("requires one-time disclosure for an exact external role", async () => {
     const mock = new ScriptedProvider();
-    const pi = new ScriptedProvider({ id: "pi", modelId: "pi-exact" });
-    const { app, state } = runtime({ providers: { mock, pi } });
+    const { app, state } = runtime({ providers: { mock } });
+    state.connection.sqlite
+      .prepare(
+        "UPDATE provider_hub_connections SET external = 1 WHERE connection_id = 'conn:mock'",
+      )
+      .run();
     const settings = await state.providerRuntime.settings();
     await state.providerRuntime.saveRoleProfiles(
       settings.roleProfiles.map((profile) =>
@@ -1247,8 +1457,8 @@ describe("M1 agent policy boundary", () => {
           ? {
               role: profile.role,
               mode: "connection" as const,
-              connectionId: "conn:pi:openai",
-              modelId: "pi-exact",
+              connectionId: "conn:mock",
+              modelId: "mock-deterministic",
             }
           : {
               role: profile.role,
@@ -1268,7 +1478,6 @@ describe("M1 agent policy boundary", () => {
     expect(await response.json()).toMatchObject({
       failure: { code: "disclosure_required", retryable: false },
     });
-    expect(pi.createInputs).toHaveLength(0);
     expect(mock.createInputs).toHaveLength(0);
   });
 
@@ -1304,7 +1513,10 @@ describe("M1 agent policy boundary", () => {
     process.env.NODE_ENV = "production";
     try {
       const blockedMock = new ScriptedProvider();
-      const blocked = runtime({ providers: { mock: blockedMock } });
+      const blocked = runtime({
+        providers: { mock: blockedMock },
+        developmentMode: false,
+      });
       const savedSettings = await request(blocked.app, "/api/settings", {
         method: "PUT",
         body: JSON.stringify(themeMutation),

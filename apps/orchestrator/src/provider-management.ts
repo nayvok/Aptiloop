@@ -105,6 +105,10 @@ interface ProviderManagementOptions {
   readonly toolsForRole?: Parameters<
     typeof createCatalogPiAgentProvider
   >[0]["toolsForRole"];
+  /** @internal Deterministic provider seam for boundary tests. */
+  readonly createProvider?: typeof createCatalogPiAgentProvider;
+  /** @internal Deterministic credential-store seam for boundary tests. */
+  readonly credentialStore?: LocalPiCredentialStore;
   readonly now?: () => Date;
 }
 
@@ -127,6 +131,7 @@ interface LoginOperation {
   status: "running" | "completed" | "failed" | "cancelled";
   error: "provider-sign-in-failed" | null;
   prompt: PendingLoginPrompt | null;
+  completion: Promise<void>;
 }
 
 const SETTINGS_KEY = "providerHubManagedConnections";
@@ -138,19 +143,29 @@ export class ProviderManagementService {
   readonly #credentials: LocalPiCredentialStore;
   readonly #connectionProviders: Map<string, AgentProvider>;
   readonly #toolsForRole: ProviderManagementOptions["toolsForRole"];
+  readonly #createProvider: typeof createCatalogPiAgentProvider;
   readonly #now: () => Date;
   readonly #configs = new Map<string, ManagedProviderConnection>();
   readonly #piProviders = new Map<string, PiAgentProvider>();
   readonly #blockedLegacyCredentialIds = new Set<string>();
+  readonly #blockedConnectionIdentityIds = new Set<string>();
   readonly #loginOperations = new Map<string, LoginOperation>();
+  readonly #connectionMutationTails = new Map<string, Promise<void>>();
+  readonly #retiringConnectionIds = new Set<string>();
   #loading: Promise<void> | null = null;
+  #closing: Promise<void> | null = null;
+  #shuttingDown = false;
 
   constructor(options: ProviderManagementOptions) {
     this.#repository = options.repository;
     this.#hubRepository = new ProviderHubRepository(options.connection);
-    this.#credentials = new LocalPiCredentialStore(options.projectRoot);
+    this.#credentials =
+      options.credentialStore ??
+      new LocalPiCredentialStore(options.projectRoot);
     this.#connectionProviders = options.connectionProviders;
     this.#toolsForRole = options.toolsForRole;
+    this.#createProvider =
+      options.createProvider ?? createCatalogPiAgentProvider;
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -231,155 +246,290 @@ export class ProviderManagementService {
       modelIds,
     });
 
-    if (input.apiKey)
-      await this.#credentials.setApiKey(connectionId, input.apiKey);
-    this.#configs.set(connectionId, config);
-    try {
-      await this.#persistConfigs();
-      const provider = this.#registerProvider(config);
-      const now = this.#now().toISOString();
-      const connection = this.#hubRepository.saveConnection({
-        connectionId,
-        adapterId: "pi",
-        providerType: entry.providerType,
-        displayName: config.displayName,
-        credentialRef:
-          entry.authKind === "local" ? null : `credential:${connectionId}`,
-        endpointProfileId: baseUrl ? `endpoint:${connectionId}` : null,
-        enabled: true,
-        external: entry.external,
-        state:
-          entry.authKind === "subscription"
-            ? "authentication-required"
-            : "degraded",
-        observedCapabilities: null,
-        lastCheckedAt: now,
-      });
-      this.#connectionProviders.set(connectionId, provider);
-      return connection;
-    } catch (error) {
-      this.#configs.delete(connectionId);
-      this.#piProviders.delete(connectionId);
-      this.#connectionProviders.delete(connectionId);
-      await this.#credentials.delete(connectionId).catch(() => undefined);
-      await this.#persistConfigs().catch(() => undefined);
-      throw error;
+    return this.#withConnectionMutation(connectionId, async () => {
+      this.#assertConnectionWritable(connectionId);
+      if (input.apiKey)
+        await this.#credentials.setApiKey(connectionId, input.apiKey);
+      this.#configs.set(connectionId, config);
+      try {
+        await this.#persistConfigs();
+        const provider = this.#registerProvider(config);
+        const now = this.#now().toISOString();
+        const connection = this.#hubRepository.saveConnection({
+          connectionId,
+          adapterId: "pi",
+          providerType: entry.providerType,
+          displayName: config.displayName,
+          credentialRef:
+            entry.authKind === "local" ? null : `credential:${connectionId}`,
+          endpointProfileId: baseUrl ? `endpoint:${connectionId}` : null,
+          enabled: true,
+          external: entry.external,
+          state:
+            entry.authKind === "subscription"
+              ? "authentication-required"
+              : "degraded",
+          observedCapabilities: null,
+          lastCheckedAt: now,
+        });
+        this.#connectionProviders.set(connectionId, provider);
+        return connection;
+      } catch (error) {
+        this.#configs.delete(connectionId);
+        this.#piProviders.delete(connectionId);
+        this.#connectionProviders.delete(connectionId);
+        await this.#credentials.delete(connectionId).catch(() => undefined);
+        await this.#persistConfigs().catch(() => undefined);
+        throw error;
+      }
+    });
+  }
+
+  beginShutdown(): void {
+    if (this.#shuttingDown) return;
+    this.#shuttingDown = true;
+    for (const operation of this.#loginOperations.values()) {
+      if (operation.status !== "running") continue;
+      operation.status = "cancelled";
+      operation.abortController.abort();
+      operation.prompt?.reject(new Error("Provider sign-in stopped"));
+      operation.prompt = null;
     }
+  }
+
+  close(): Promise<void> {
+    this.#closing ??= this.#close();
+    return this.#closing;
+  }
+
+  async #close(): Promise<void> {
+    this.beginShutdown();
+    await Promise.allSettled(
+      [...this.#loginOperations.values()].map(
+        (operation) => operation.completion,
+      ),
+    );
   }
 
   async setApiKey(connectionId: string, apiKey: string): Promise<void> {
     await this.ensureLoaded();
-    const config = this.#requiredConfig(connectionId);
-    const entry = getPiProviderCatalogEntry(config.catalogId);
-    if (entry.authKind !== "api-key") {
-      throw new Error(
-        `${entry.displayName} does not use API-key authentication`,
+    await this.#withConnectionMutation(connectionId, async () => {
+      this.#assertConnectionWritable(connectionId);
+      const config = this.#requiredConfig(connectionId);
+      const entry = getPiProviderCatalogEntry(config.catalogId);
+      if (entry.authKind !== "api-key") {
+        throw new Error(
+          `${entry.displayName} does not use API-key authentication`,
+        );
+      }
+      this.#assertConnectionIdentity(
+        config,
+        this.#requiredConnection(connectionId),
       );
-    }
-    await this.#credentials.setApiKey(connectionId, apiKey);
-    const provider = this.#registerProvider(config);
-    this.#connectionProviders.set(connectionId, provider);
-    this.#enableConnection(config, entry.authKind);
+      await this.#credentials.setApiKey(connectionId, apiKey);
+      this.#assertConnectionWritable(connectionId);
+      const provider = this.#registerProvider(config);
+      this.#connectionProviders.set(connectionId, provider);
+      this.#enableConnection(config, entry.authKind);
+    });
   }
 
   async enableLocal(connectionId: string): Promise<void> {
     await this.ensureLoaded();
-    const config = this.#requiredConfig(connectionId);
-    const entry = getPiProviderCatalogEntry(config.catalogId);
-    if (entry.authKind !== "local") {
-      throw new Error(`${entry.displayName} requires credentials to reconnect`);
-    }
-    const provider = this.#registerProvider(config);
-    this.#connectionProviders.set(connectionId, provider);
-    this.#enableConnection(config, entry.authKind);
+    await this.#withConnectionMutation(connectionId, async () => {
+      this.#assertConnectionWritable(connectionId);
+      const config = this.#requiredConfig(connectionId);
+      const entry = getPiProviderCatalogEntry(config.catalogId);
+      if (entry.authKind !== "local") {
+        throw new Error(
+          `${entry.displayName} requires credentials to reconnect`,
+        );
+      }
+      this.#assertConnectionIdentity(
+        config,
+        this.#requiredConnection(connectionId),
+      );
+      const provider = this.#registerProvider(config);
+      this.#connectionProviders.set(connectionId, provider);
+      this.#enableConnection(config, entry.authKind);
+    });
   }
 
   async disable(connectionId: string): Promise<void> {
     await this.ensureLoaded();
-    const config = this.#requiredConfig(connectionId);
-    const current = this.#requiredConnection(connectionId);
-    await this.#credentials.delete(connectionId);
-    this.#blockedLegacyCredentialIds.delete(connectionId);
-    this.#connectionProviders.delete(connectionId);
-    this.#piProviders.delete(connectionId);
-    this.#hubRepository.saveConnection({
-      ...current,
-      enabled: false,
-      state: "disabled",
-      observedCapabilities: null,
-      lastCheckedAt: this.#now().toISOString(),
-      credentialRef: null,
+    await this.#withConnectionMutation(connectionId, async () => {
+      this.#assertConnectionWritable(connectionId);
+      const config = this.#requiredConfig(connectionId);
+      const current = this.#requiredConnection(connectionId);
+      this.#assertConnectionIdentity(config, current);
+      await this.#abortAndAwaitLogins(connectionId, false);
+      await this.#credentials.delete(connectionId);
+      this.#blockedLegacyCredentialIds.delete(connectionId);
+      this.#connectionProviders.delete(connectionId);
+      this.#piProviders.delete(connectionId);
+      this.#hubRepository.saveConnection({
+        ...this.#catalogConnectionIdentity(config),
+        enabled: false,
+        state: "disabled",
+        credentialRef: null,
+        observedCapabilities: null,
+        lastCheckedAt: this.#now().toISOString(),
+      });
     });
-    const operation = [...this.#loginOperations.values()].find(
-      (candidate) =>
-        candidate.connectionId === config.connectionId &&
-        candidate.status === "running",
-    );
-    operation?.abortController.abort();
+  }
+
+  async remove(connectionId: string): Promise<void> {
+    await this.ensureLoaded();
+    const parsedConnectionId = StableConnectionIdSchema.parse(connectionId);
+    if (this.#retiringConnectionIds.has(parsedConnectionId)) {
+      throw new Error("Provider connection is being removed");
+    }
+    this.#retiringConnectionIds.add(parsedConnectionId);
+    try {
+      await this.#withConnectionMutation(parsedConnectionId, async () => {
+        const config = this.#requiredConfig(parsedConnectionId);
+        const nextConfigs = new Map(this.#configs);
+        nextConfigs.delete(parsedConnectionId);
+        const persistedSettings = ManagedProviderSettingsSchema.parse({
+          version: 1,
+          connections: [...nextConfigs.values()],
+        });
+
+        await this.#abortAndAwaitLogins(parsedConnectionId, true);
+        await this.#credentials.delete(parsedConnectionId);
+        if (await this.#credentials.has(parsedConnectionId)) {
+          throw new Error("Provider credential removal could not be verified");
+        }
+        try {
+          const now = this.#now();
+          this.#hubRepository.retireConnection({
+            connectionId: parsedConnectionId,
+            retiredAt: now.toISOString(),
+            applicationSetting: {
+              key: SETTINGS_KEY,
+              valueJson: JSON.stringify(persistedSettings),
+              updatedAt: now.getTime(),
+            },
+          });
+        } catch (error) {
+          // The connection stays active when its database transition fails. For
+          // non-local providers it is now explicitly unauthenticated because its
+          // local credential has already been erased.
+          const entry = getPiProviderCatalogEntry(config.catalogId);
+          const current = this.#requiredConnection(parsedConnectionId);
+          this.#connectionProviders.delete(parsedConnectionId);
+          this.#piProviders.delete(parsedConnectionId);
+          if (entry.authKind !== "local") {
+            this.#hubRepository.saveConnection({
+              ...this.#catalogConnectionIdentity(config),
+              enabled: current.enabled,
+              credentialRef: null,
+              state: "authentication-required",
+              observedCapabilities: null,
+              lastCheckedAt: this.#now().toISOString(),
+            });
+          }
+          throw error;
+        }
+
+        this.#configs.delete(parsedConnectionId);
+        this.#blockedLegacyCredentialIds.delete(parsedConnectionId);
+        this.#blockedConnectionIdentityIds.delete(parsedConnectionId);
+        this.#connectionProviders.delete(parsedConnectionId);
+        this.#piProviders.delete(parsedConnectionId);
+      });
+    } finally {
+      this.#retiringConnectionIds.delete(parsedConnectionId);
+    }
   }
 
   async startLogin(connectionId: string): Promise<string> {
     await this.ensureLoaded();
-    this.#pruneLoginOperations();
-    const config = this.#requiredConfig(connectionId);
-    const entry = getPiProviderCatalogEntry(config.catalogId);
-    if (entry.authKind !== "subscription") {
-      throw new Error(`${entry.displayName} does not use subscription sign-in`);
-    }
-    if (
-      [...this.#loginOperations.values()].some(
-        (candidate) =>
-          candidate.connectionId === connectionId &&
-          candidate.status === "running",
-      )
-    ) {
-      throw new Error(
-        "A sign-in operation is already running for this connection",
-      );
-    }
-    const provider = this.#registerProvider(config);
-    this.#connectionProviders.set(connectionId, provider);
-    const operationId = randomUUID();
-    const operation: LoginOperation = {
-      operationId,
-      connectionId,
-      createdAt: this.#now().getTime(),
-      abortController: new AbortController(),
-      events: [],
-      status: "running",
-      error: null,
-      prompt: null,
-    };
-    this.#loginOperations.set(operationId, operation);
-    const interaction: PiAuthInteraction = {
-      signal: operation.abortController.signal,
-      notify: (event) => {
-        operation.events.push(
-          normalizeProviderLoginEvent(config.catalogId, event),
+    return this.#withConnectionMutation(connectionId, async () => {
+      this.#assertConnectionWritable(connectionId);
+      this.#pruneLoginOperations();
+      const config = this.#requiredConfig(connectionId);
+      const entry = getPiProviderCatalogEntry(config.catalogId);
+      if (entry.authKind !== "subscription") {
+        throw new Error(
+          `${entry.displayName} does not use subscription sign-in`,
         );
-        if (operation.events.length > 50) operation.events.shift();
-      },
-      prompt: (prompt) => this.#waitForPrompt(operation, prompt),
-    };
-    void provider
-      .login("oauth", interaction)
-      .then(() => {
-        operation.status = "completed";
-        operation.prompt = null;
-        this.#blockedLegacyCredentialIds.delete(config.connectionId);
-        this.#enableConnection(config, entry.authKind);
-      })
-      .catch((error: unknown) => {
-        operation.prompt?.reject(new Error("Sign-in stopped"));
-        operation.prompt = null;
-        operation.status = operation.abortController.signal.aborted
-          ? "cancelled"
-          : "failed";
-        operation.error =
-          operation.status === "failed" ? "provider-sign-in-failed" : null;
-        void error;
-      });
-    return operationId;
+      }
+      this.#assertConnectionIdentity(
+        config,
+        this.#requiredConnection(connectionId),
+      );
+      if (
+        [...this.#loginOperations.values()].some(
+          (candidate) =>
+            candidate.connectionId === connectionId &&
+            candidate.status === "running",
+        )
+      ) {
+        throw new Error(
+          "A sign-in operation is already running for this connection",
+        );
+      }
+      const provider = this.#registerProvider(config);
+      this.#connectionProviders.set(connectionId, provider);
+      const operationId = randomUUID();
+      const operation: LoginOperation = {
+        operationId,
+        connectionId,
+        createdAt: this.#now().getTime(),
+        abortController: new AbortController(),
+        events: [],
+        status: "running",
+        error: null,
+        prompt: null,
+        completion: Promise.resolve(),
+      };
+      this.#loginOperations.set(operationId, operation);
+      const interaction: PiAuthInteraction = {
+        signal: operation.abortController.signal,
+        notify: (event) => {
+          operation.events.push(
+            normalizeProviderLoginEvent(config.catalogId, event),
+          );
+          if (operation.events.length > 50) operation.events.shift();
+        },
+        prompt: (prompt) => this.#waitForPrompt(operation, prompt),
+      };
+      const login = provider.login("oauth", interaction);
+      operation.completion = login.then(
+        () => undefined,
+        () => undefined,
+      );
+      void login
+        .then(() =>
+          this.#withConnectionMutation(connectionId, async () => {
+            this.#assertConnectionWritable(connectionId);
+            if (
+              operation.status !== "running" ||
+              this.#loginOperations.get(operationId) !== operation
+            ) {
+              throw new Error("Provider sign-in is no longer active");
+            }
+            operation.status = "completed";
+            operation.prompt = null;
+            this.#blockedLegacyCredentialIds.delete(config.connectionId);
+            this.#enableConnection(config, entry.authKind);
+          }),
+        )
+        .catch((error: unknown) => {
+          operation.prompt?.reject(new Error("Sign-in stopped"));
+          operation.prompt = null;
+          operation.status =
+            operation.abortController.signal.aborted ||
+            this.#retiringConnectionIds.has(connectionId)
+              ? "cancelled"
+              : "failed";
+          operation.error =
+            operation.status === "failed" ? "provider-sign-in-failed" : null;
+          void error;
+        });
+      return operationId;
+    });
   }
 
   loginStatus(operationId: string): ProviderLoginStatus {
@@ -424,11 +574,25 @@ export class ProviderManagementService {
     const settings = raw
       ? ManagedProviderSettingsSchema.parse(raw)
       : { version: 1 as const, connections: [] };
+    const connections = new Map(
+      this.#hubRepository
+        .listConnections()
+        .map((connection) => [connection.connectionId, connection] as const),
+    );
     for (const config of settings.connections) {
       this.#configs.set(config.connectionId, config);
-      const connection = this.#hubRepository
-        .listConnections()
-        .find((candidate) => candidate.connectionId === config.connectionId);
+      const connection = connections.get(config.connectionId);
+      if (!hasValidPersistedProviderConfig(config)) {
+        this.#quarantineManagedConnection(config.connectionId, connection);
+        continue;
+      }
+      if (
+        connection &&
+        !this.#hasExpectedConnectionIdentity(config, connection)
+      ) {
+        this.#quarantineManagedConnection(config.connectionId, connection);
+        continue;
+      }
       const credential = await this.#credentials.read(config.connectionId);
       if (hasUnsupportedLegacyGitHubCredential(config, credential)) {
         this.#blockedLegacyCredentialIds.add(config.connectionId);
@@ -452,9 +616,10 @@ export class ProviderManagementService {
   }
 
   #registerProvider(config: ManagedProviderConnection): PiAgentProvider {
+    this.#assertConnectionWritable(config.connectionId);
     const existing = this.#piProviders.get(config.connectionId);
     if (existing) return existing;
-    const provider = createCatalogPiAgentProvider({
+    const provider = this.#createProvider({
       catalogId: config.catalogId,
       connectionId: config.connectionId,
       credentials: this.#credentials.scope(config.connectionId),
@@ -470,9 +635,11 @@ export class ProviderManagementService {
     config: ManagedProviderConnection,
     authKind: PiProviderAuthKind,
   ): void {
+    this.#assertConnectionWritable(config.connectionId);
     const current = this.#requiredConnection(config.connectionId);
+    this.#assertConnectionIdentity(config, current);
     this.#hubRepository.saveConnection({
-      ...current,
+      ...this.#catalogConnectionIdentity(config),
       enabled: true,
       state: "degraded",
       credentialRef:
@@ -480,6 +647,136 @@ export class ProviderManagementService {
       observedCapabilities: null,
       lastCheckedAt: this.#now().toISOString(),
     });
+  }
+
+  #catalogConnectionIdentity(
+    config: ManagedProviderConnection,
+  ): ProviderConnection {
+    const entry = getPiProviderCatalogEntry(config.catalogId);
+    return {
+      connectionId: config.connectionId,
+      adapterId: "pi",
+      providerType: entry.providerType,
+      displayName: config.displayName,
+      credentialRef:
+        entry.authKind === "local" ? null : `credential:${config.connectionId}`,
+      endpointProfileId: config.baseUrl
+        ? `endpoint:${config.connectionId}`
+        : null,
+      enabled: false,
+      external: entry.external,
+      state: "disabled",
+      observedCapabilities: null,
+      lastCheckedAt: null,
+    };
+  }
+
+  #hasExpectedConnectionIdentity(
+    config: ManagedProviderConnection,
+    connection: ProviderConnection,
+  ): boolean {
+    const expected = this.#catalogConnectionIdentity(config);
+    return (
+      connection.connectionId === expected.connectionId &&
+      connection.adapterId === expected.adapterId &&
+      connection.providerType === expected.providerType &&
+      connection.displayName === expected.displayName &&
+      connection.external === expected.external &&
+      connection.endpointProfileId === expected.endpointProfileId
+    );
+  }
+
+  #assertConnectionIdentity(
+    config: ManagedProviderConnection,
+    connection: ProviderConnection,
+  ): void {
+    if (
+      this.#blockedConnectionIdentityIds.has(config.connectionId) ||
+      !this.#hasExpectedConnectionIdentity(config, connection)
+    ) {
+      throw new Error(
+        "Managed provider connection metadata does not match the reviewed catalog",
+      );
+    }
+  }
+
+  #assertConnectionWritable(connectionId: string): void {
+    if (this.#shuttingDown) {
+      throw new Error("Provider management is shutting down");
+    }
+    if (this.#retiringConnectionIds.has(connectionId)) {
+      throw new Error("Provider connection is being removed");
+    }
+    if (this.#blockedConnectionIdentityIds.has(connectionId)) {
+      throw new Error(
+        "Managed provider connection metadata does not match the reviewed catalog",
+      );
+    }
+  }
+
+  #quarantineManagedConnection(
+    connectionId: string,
+    connection: ProviderConnection | undefined,
+  ): void {
+    this.#blockedConnectionIdentityIds.add(connectionId);
+    this.#piProviders.delete(connectionId);
+    this.#connectionProviders.delete(connectionId);
+    if (!connection) return;
+    this.#hubRepository.saveConnection({
+      ...connection,
+      enabled: false,
+      state: "misconfigured",
+      credentialRef: null,
+      observedCapabilities: null,
+      lastCheckedAt: this.#now().toISOString(),
+    });
+  }
+
+  async #abortAndAwaitLogins(
+    connectionId: string,
+    removeOperations: boolean,
+  ): Promise<void> {
+    const matches = [...this.#loginOperations.entries()].filter(
+      ([, operation]) => operation.connectionId === connectionId,
+    );
+    for (const [, operation] of matches) {
+      if (operation.status === "running") {
+        operation.status = "cancelled";
+        operation.abortController.abort();
+        operation.prompt?.reject(new Error("Connection removed"));
+        operation.prompt = null;
+      }
+    }
+    await Promise.allSettled(
+      matches.map(([, operation]) => operation.completion),
+    );
+    if (removeOperations) {
+      for (const [operationId] of matches) {
+        this.#loginOperations.delete(operationId);
+      }
+    }
+  }
+
+  async #withConnectionMutation<T>(
+    connectionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.#connectionMutationTails.get(connectionId);
+    const waitForPrevious = previous ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.#connectionMutationTails.set(connectionId, current);
+    await waitForPrevious;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.#connectionMutationTails.get(connectionId) === current) {
+        this.#connectionMutationTails.delete(connectionId);
+      }
+    }
   }
 
   #requiredConfig(connectionId: string): ManagedProviderConnection {
@@ -566,6 +863,28 @@ function hasUnsupportedLegacyGitHubCredential(
     typeof credential.enterpriseUrl === "string" &&
     credential.enterpriseUrl.trim().length > 0
   );
+}
+
+function hasValidPersistedProviderConfig(
+  config: ManagedProviderConnection,
+): boolean {
+  const entry = getPiProviderCatalogEntry(config.catalogId);
+  const endpointKind = "endpointKind" in entry ? entry.endpointKind : undefined;
+  try {
+    if (!endpointKind) {
+      return config.baseUrl === null && config.modelIds.length === 0;
+    }
+    if (config.baseUrl === null || config.modelIds.length === 0) return false;
+    if (uniqueModelIds(config.modelIds).length !== config.modelIds.length) {
+      return false;
+    }
+    if (endpointKind === "loopback") {
+      return validateLoopbackOpenAiBaseUrl(config.baseUrl) === config.baseUrl;
+    }
+    return validateExternalOpenAiBaseUrl(config.baseUrl) === config.baseUrl;
+  } catch {
+    return false;
+  }
 }
 
 function uniqueModelIds(modelIds: readonly string[]): string[] {

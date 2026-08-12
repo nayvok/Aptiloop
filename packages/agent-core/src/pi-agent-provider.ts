@@ -161,8 +161,16 @@ export class PiAgentProvider implements AgentProvider {
     }));
   }
 
-  async createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
-    const available = await this.#models.getAvailable(this.providerType);
+  async createSession(
+    input: CreateAgentSessionInput,
+    signal?: AbortSignal,
+  ): Promise<AgentSession> {
+    signal?.throwIfAborted();
+    const available = await this.#models.getAvailable(
+      this.providerType,
+      signal ? { signal } : undefined,
+    );
+    signal?.throwIfAborted();
     const model = available.find((candidate) => candidate.id === input.modelId);
     if (!model) {
       throw new AgentProviderError(

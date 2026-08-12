@@ -2,7 +2,7 @@
 
 ## Document status
 
-**Approved Core Alpha target** overall. Complete `en-US` and `ru-RU` application catalogs, explicit UI locale persistence, root document language, and locale-independent browser state are an **Implemented baseline**. Production Course translations, publication completeness, and full assistive-technology conformance remain gated separately.
+**Approved Core Alpha target** overall. Complete `en-US` and `ru-RU` application catalogs, explicit UI locale persistence, root document language, and locale-independent browser state are an **Implemented baseline**. Authored-resource publication completeness and full assistive-technology conformance remain gated separately. Aptiloop intentionally bundles no Course; any future first-party/sample Course would require its own translation and provenance evidence.
 
 ## Principles
 
@@ -146,7 +146,7 @@ The M7 application-shell migration moved application-owned navigation, state, va
 
 **Approved Core Alpha target**
 
-Remaining locale work is production Course translation content and provenance, complete visible fallback behavior across every authored resource, publication evidence for primary-locale completeness, full assistive-technology and formatting verification in both UI locales, and any later additive migration required for retained legacy data. These gates are not closed merely by catalog parity.
+Remaining locale work is complete visible fallback behavior across every authored resource, publication evidence for primary-locale completeness, full assistive-technology and formatting verification in both UI locales, and any later additive migration required for retained legacy data. A future Aptiloop-supplied first-party/sample Course would additionally require translation-content and provenance evidence. These gates are not closed merely by catalog parity.
 
 ## Acceptance
 

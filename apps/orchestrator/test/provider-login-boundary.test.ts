@@ -460,7 +460,13 @@ describe("provider login boundary", () => {
       await management.ensureLoaded();
 
       expect(connectionProviders.has(connectionId)).toBe(false);
-      expect(readFileSync(credentialPath, "utf8")).toBe(storedCredential);
+      const migratedCredential = readFileSync(credentialPath, "utf8");
+      expect(migratedCredential).not.toContain("retained-refresh-secret");
+      expect(migratedCredential).not.toContain("retained-access-secret");
+      expect(JSON.parse(migratedCredential)).toMatchObject({
+        version: 2,
+        protection: "windows-dpapi-current-user",
+      });
       expect(
         new ProviderHubRepository(restartedConnection)
           .listConnections()
@@ -549,11 +555,270 @@ describe("provider login boundary", () => {
           .prepare("SELECT COUNT(*) AS count FROM provider_turn_provenance")
           .get(),
       ).toEqual({ count: 0 });
-      expect(readFileSync(credentialPath, "utf8")).toBe(storedCredential);
+      expect(readFileSync(credentialPath, "utf8")).toBe(migratedCredential);
     } finally {
       initialConnection?.close();
       restartedConnection?.close();
       fetchSpy.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("quarantines persisted endpoint and model policy violations before credential loading or provider registration", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "aptiloop-provider-policy-"));
+    const databasePath = path.join(root, "restart.sqlite");
+    const credentialPath = path.join(
+      root,
+      ".data",
+      "provider-credentials.json",
+    );
+    const connections = [
+      {
+        connectionId: "conn:pi:openai-api:invalid-endpoint",
+        catalogId: "openai-api",
+        displayName: "Invalid built-in endpoint",
+        baseUrl: "https://untrusted.example/v1",
+        modelIds: ["unreviewed-model"],
+        providerType: "openai",
+        endpointProfileId: "endpoint:conn:pi:openai-api:invalid-endpoint",
+      },
+      {
+        connectionId: "conn:pi:custom:missing-model",
+        catalogId: "custom-openai-compatible",
+        displayName: "Invalid custom model policy",
+        baseUrl: "https://reviewed.example/v1",
+        modelIds: [],
+        providerType: "openai-compatible",
+        endpointProfileId: "endpoint:conn:pi:custom:missing-model",
+      },
+    ] as const;
+    let connection: DatabaseConnection | null = null;
+
+    try {
+      connection = openDatabase(databasePath);
+      migrateDatabase(connection);
+      const repository = createLearningRepository(connection);
+      await repository.setSetting("providerHubManagedConnections", {
+        version: 1,
+        connections: connections.map(
+          ({
+            providerType: _providerType,
+            endpointProfileId: _endpointProfileId,
+            ...config
+          }) => config,
+        ),
+      });
+      const hub = new ProviderHubRepository(connection);
+      for (const candidate of connections) {
+        hub.saveConnection({
+          connectionId: candidate.connectionId,
+          adapterId: "pi",
+          providerType: candidate.providerType,
+          displayName: candidate.displayName,
+          credentialRef: `credential:${candidate.connectionId}`,
+          endpointProfileId: candidate.endpointProfileId,
+          enabled: true,
+          external: true,
+          state: "degraded",
+          observedCapabilities: null,
+          lastCheckedAt: "2026-08-12T12:00:00.000Z",
+        });
+      }
+      connection.close();
+      connection = null;
+
+      mkdirSync(path.dirname(credentialPath), { recursive: true });
+      writeFileSync(credentialPath, "not a credential store", "utf8");
+
+      connection = openDatabase(databasePath, { fileMustExist: true });
+      const connectionProviders = new Map<string, AgentProvider>();
+      const management = new ProviderManagementService({
+        connection,
+        repository: createLearningRepository(connection),
+        projectRoot: root,
+        connectionProviders,
+      });
+
+      await expect(management.ensureLoaded()).resolves.toBeUndefined();
+      expect(connectionProviders).toEqual(new Map());
+      expect(new ProviderHubRepository(connection).listConnections()).toEqual(
+        expect.arrayContaining(
+          connections.map((candidate) =>
+            expect.objectContaining({
+              connectionId: candidate.connectionId,
+              enabled: false,
+              state: "misconfigured",
+              credentialRef: null,
+              observedCapabilities: null,
+            }),
+          ),
+        ),
+      );
+    } finally {
+      connection?.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("quarantines an external catalog connection whose persisted hub identity would suppress disclosure", async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "aptiloop-provider-identity-"),
+    );
+    const databasePath = path.join(root, "restart.sqlite");
+    const credentialPath = path.join(
+      root,
+      ".data",
+      "provider-credentials.json",
+    );
+    const connectionId = "conn:pi:custom:identity-mismatch";
+    let connection: DatabaseConnection | null = null;
+
+    try {
+      connection = openDatabase(databasePath);
+      migrateDatabase(connection);
+      const repository = createLearningRepository(connection);
+      await repository.setSetting("providerHubManagedConnections", {
+        version: 1,
+        connections: [
+          {
+            connectionId,
+            catalogId: "custom-openai-compatible",
+            displayName: "Reviewed external endpoint",
+            baseUrl: "https://reviewed.example/v1",
+            modelIds: ["reviewed-model"],
+          },
+        ],
+      });
+      const hub = new ProviderHubRepository(connection);
+      hub.saveConnection({
+        connectionId,
+        adapterId: "pi",
+        providerType: "ollama",
+        displayName: "Reviewed external endpoint",
+        credentialRef: `credential:${connectionId}`,
+        endpointProfileId: `endpoint:${connectionId}`,
+        enabled: true,
+        external: false,
+        state: "degraded",
+        observedCapabilities: {
+          providerType: "ollama",
+          adapterVersion: "0.84.1",
+          observedAt: "2026-08-12T12:00:00.000Z",
+          models: [
+            {
+              modelId: "reviewed-model",
+              available: true,
+              contextTokens: 128_000,
+              outputTokens: 16_000,
+              typedToolCalls: "schema-constrained",
+              parallelToolCalls: false,
+              attachments: ["text"],
+            },
+          ],
+          connection: {
+            authenticated: true,
+            streaming: true,
+            cancellation: true,
+          },
+        },
+        lastCheckedAt: "2026-08-12T12:00:00.000Z",
+      });
+      hub.saveRoleProfile({
+        role: "course-designer",
+        mode: "connection",
+        connectionId,
+        modelId: "reviewed-model",
+        requiredCapabilities: ["streaming", "models", "cancellation"],
+        toolPolicyId: "apt.role.course-designer.v2",
+        budgets: {
+          maxInputBytes: 128_000,
+          maxOutputBytes: 64_000,
+          maxEvents: 100,
+          maxToolCalls: 4,
+          deadlineMs: 60_000,
+        },
+      });
+      connection.close();
+      connection = null;
+
+      mkdirSync(path.dirname(credentialPath), { recursive: true });
+      writeFileSync(credentialPath, "not a credential store", "utf8");
+
+      connection = openDatabase(databasePath, { fileMustExist: true });
+      const connectionProviders = new Map<string, AgentProvider>();
+      const management = new ProviderManagementService({
+        connection,
+        repository: createLearningRepository(connection),
+        projectRoot: root,
+        connectionProviders,
+      });
+      const blockedProvider: AgentProvider = {
+        id: "pi",
+        getStatus: vi.fn(),
+        listModels: vi.fn(),
+        async createSession() {
+          throw new Error("Quarantined provider session must not be created");
+        },
+        streamMessage() {
+          throw new Error("Quarantined provider stream must not start");
+        },
+        async cancelSession() {},
+      };
+      const providers = Object.fromEntries(
+        (["mock", "codex", "opencode", "pi"] as const).map((id) => [
+          id,
+          blockedProvider,
+        ]),
+      ) as Record<ProviderId, AgentProvider>;
+      const runtime = new ProviderRuntime({
+        connection,
+        providers,
+        connectionProviders,
+        ensureProviders: () => management.ensureLoaded(),
+        developmentMode: false,
+      });
+
+      await expect(management.ensureLoaded()).resolves.toBeUndefined();
+      expect(connectionProviders).toEqual(new Map());
+      expect(
+        new ProviderHubRepository(connection)
+          .listConnections()
+          .find((candidate) => candidate.connectionId === connectionId),
+      ).toMatchObject({
+        providerType: "ollama",
+        external: false,
+        enabled: false,
+        state: "misconfigured",
+        credentialRef: null,
+        observedCapabilities: null,
+      });
+
+      await expect(
+        runtime.prepareDisclosure({
+          role: "course-designer",
+          payload: "This external payload must require disclosure.",
+          payloadCategories: ["course-content"],
+          destinationPurpose: "course design",
+        }),
+      ).rejects.toMatchObject({ failure: { code: "connection_disabled" } });
+      await expect(
+        runtime.resolveDispatch({
+          role: "course-designer",
+          payload: "This external payload must never dispatch.",
+        }),
+      ).rejects.toMatchObject({ failure: { code: "connection_disabled" } });
+      expect(
+        connection.sqlite
+          .prepare("SELECT COUNT(*) AS count FROM ai_disclosure_operations")
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(
+        connection.sqlite
+          .prepare("SELECT COUNT(*) AS count FROM provider_turn_provenance")
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      connection?.close();
       rmSync(root, { recursive: true, force: true });
     }
   });

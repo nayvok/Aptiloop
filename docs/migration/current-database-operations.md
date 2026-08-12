@@ -108,4 +108,4 @@ If a Compose database has a predecessor ledger, keep the services stopped and fa
 
 Stop without mutation when any source/backup path, identity, or hash changes; a destination exists; a schema/ledger is a near miss; integrity or foreign keys fail; private-payload inspection is incomplete; source and backup diverge logically; provenance/session/orphan accounting fails; the recovery copy cannot be verified or cleaned safely; or another writer may be active.
 
-SQLite, WAL, backups, attempts, and the local credential file are plaintext local data. Integrity verification does not provide confidentiality or secure deletion.
+SQLite, WAL, backups, attempts, and POSIX/Linux provider credential files are plaintext local data. Windows provider credentials use current-user DPAPI, but integrity verification still does not provide confidentiality or secure deletion for the other data classes, and migration cannot prove historical plaintext bytes are absent from filesystem history or snapshots.

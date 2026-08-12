@@ -15,6 +15,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { seedDevelopmentDatabase } from "./development-database-fixture.js";
 
 const projectRoot = path.resolve("../..");
 const roots: string[] = [];
@@ -47,6 +48,7 @@ function runtime(databasePath?: string, attemptsRoot?: string) {
     projectRoot,
     databasePath: resolvedDatabasePath,
     databaseMode: "disposable",
+    developmentDatabaseInitializer: seedDevelopmentDatabase,
     exerciseAttemptsRoot: resolvedAttemptsRoot,
   });
   runtimes.push(created);

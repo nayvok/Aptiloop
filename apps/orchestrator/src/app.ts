@@ -4,25 +4,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  createOpenAiPiAgentProvider,
-  createOpenCodeZenPiAgentProvider,
-  MockAgentProvider,
   parseReviewResult,
   ProviderHubError,
   type AgentProvider,
 } from "@aptiloop/agent-core";
-import { CodexProvider } from "@aptiloop/codex-provider";
 import {
   assertM1E2EDatabaseTarget,
   assertM1WritableDatabaseTarget,
   createCoursePackRepository,
   createCourseFoundationRepository,
   createLearningRepository,
+  learnerCourseStateTriggerGuardMigrationContract,
   migrateDatabase,
   openDatabase,
   openM1WritableDatabase,
   withAsyncTransaction,
-  seedCurriculum,
   type CourseFoundationRepository,
   type DatabaseConnection,
   type DatabaseMigrationAdmissionCapability,
@@ -87,6 +83,7 @@ import {
   ProviderRuntime,
   providerFailureCode,
   providerFailurePayload,
+  type ProviderConnectionRetirement,
   type ProviderDispatch,
 } from "./provider-runtime.js";
 import {
@@ -95,6 +92,7 @@ import {
   ProviderManagementService,
   SetProviderApiKeySchema,
 } from "./provider-management.js";
+import { loadRootDevelopmentEnvironment } from "./root-environment.js";
 
 const sourceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const defaultOpenCodeEndpoint = "http://127.0.0.1:4096";
@@ -104,6 +102,8 @@ const safeAgentFailureMessage =
 const safeAgentCancellationMessage = "The agent turn was cancelled.";
 const activeAgentTurnConflictMessage =
   "An agent turn is already active for this session, role, provider, and model.";
+const exact0018StartupMigrationMessage =
+  "Database is exactly at migration 0018_learner_course_state_trigger_guard and cannot start until migration 0019_provider_connection_retirement is explicitly authorized. Keep the application stopped, use an approved backup, then run `npm run db:migrate -- --authorize-current --approved-backup <path> --backup-sha256 <sha256>` from the repository root.";
 const mutationMethods: Readonly<Record<string, true>> = {
   DELETE: true,
   PATCH: true,
@@ -137,6 +137,16 @@ export interface AppOptions {
   providers?: Partial<Record<ProviderId, AgentProvider>>;
   webOrigin?: string;
   developmentMode?: boolean;
+  /** @internal Explicit development/test provider fixture. */
+  developmentProviderFixture?: ConstructorParameters<
+    typeof ProviderRuntime
+  >[0]["developmentFixture"];
+  /** @internal Explicit development/test database fixture initializer. */
+  developmentDatabaseInitializer?: (connection: DatabaseConnection) => void;
+  /** @internal Exact provider instances for disposable integration tests. */
+  connectionProviders?: ReadonlyMap<string, AgentProvider>;
+  /** @internal Trusted execution lifecycle seam for integration tests. */
+  executionFabric?: TrustedExecutionFabric;
   exerciseAttemptsRoot?: string;
   startupConfig?: OrchestratorStartupConfig;
   /** @internal Deterministic cancellation fence seams. */
@@ -221,7 +231,7 @@ interface AppState {
   exerciseAttemptsRoot: string;
   executionFabric: TrustedExecutionFabric;
   developmentMode: boolean;
-  providers: Record<ProviderId, AgentProvider>;
+  providers: Partial<Record<ProviderId, AgentProvider>>;
   providerRuntime: ProviderRuntime;
   providerManagement: ProviderManagementService;
   providerSessions: Map<string, ProviderSessionRecord>;
@@ -234,6 +244,8 @@ interface AppState {
     start: boolean;
     interviewIds: Set<string>;
   };
+  activeExecutionOperations: Set<Promise<void>>;
+  shuttingDown: boolean;
 }
 type BrowserAgentEvent =
   | { type: "message.delta"; turnId: string; content: string }
@@ -326,7 +338,7 @@ const disclosureRequestSchema = chatSchema.omit({
 });
 export function createApp(options: AppOptions = {}) {
   const projectRoot = path.resolve(options.projectRoot ?? sourceRoot);
-  loadRootEnvironment(projectRoot);
+  loadRootDevelopmentEnvironment(projectRoot);
   const startupConfig =
     options.startupConfig ?? parseOrchestratorStartupConfig({});
   const databasePath =
@@ -342,6 +354,16 @@ export function createApp(options: AppOptions = {}) {
       : null;
   const databaseMode =
     options.databaseMode ?? (launcherOwnedE2E ? "disposable" : "active");
+  const developmentMode = options.developmentMode === true;
+  if (
+    options.developmentDatabaseInitializer &&
+    !developmentMode &&
+    databaseMode !== "disposable"
+  ) {
+    throw new Error(
+      "Development database fixtures require development or disposable test mode",
+    );
+  }
   const revalidateDatabaseTarget = ():
     M1DatabaseTargetValidation | undefined => {
     if (launcherOwnedE2E) {
@@ -383,6 +405,20 @@ export function createApp(options: AppOptions = {}) {
     if (writableConnection.migrationAdmission?.kind === "legacy-compatible") {
       migrationCapability =
         writableConnection.migrationAdmission.migrationCapability;
+      if (
+        writableConnection.migrationAdmission.contract.schemaSha256 ===
+          learnerCourseStateTriggerGuardMigrationContract.schemaSha256 &&
+        writableConnection.migrationAdmission.contract.migrationIds.length ===
+          learnerCourseStateTriggerGuardMigrationContract.migrationIds.length &&
+        writableConnection.migrationAdmission.contract.migrationIds.every(
+          (id, index) =>
+            id ===
+            learnerCourseStateTriggerGuardMigrationContract.migrationIds[index],
+        )
+      ) {
+        writableConnection.close();
+        throw new Error(exact0018StartupMigrationMessage);
+      }
     }
   } else {
     if (databaseMode !== "disposable" || launcherOwnedE2E) {
@@ -395,7 +431,7 @@ export function createApp(options: AppOptions = {}) {
     path.join(projectRoot, "packages", "database", "migrations"),
     migrationCapability,
   );
-  seedCurriculum(connection);
+  options.developmentDatabaseInitializer?.(connection);
 
   const repository = createLearningRepository(connection);
   const courseFoundationRepository =
@@ -408,16 +444,10 @@ export function createApp(options: AppOptions = {}) {
     allowedWebOrigin,
   );
   const courseDesignerTools = createCourseDesignerTools(connection);
-  const defaultProviders: Record<ProviderId, AgentProvider> = {
-    mock: new MockAgentProvider(),
-    codex: new CodexProvider({ cwd: projectRoot }),
-    opencode: createOpenCodeZenPiAgentProvider({
-      toolsForRole: courseDesignerTools,
-    }),
-    pi: createOpenAiPiAgentProvider({ toolsForRole: courseDesignerTools }),
-  };
-  const providers = { ...defaultProviders, ...options.providers };
-  const connectionProviders = new Map<string, AgentProvider>();
+  const providers = { ...options.providers };
+  const connectionProviders = new Map<string, AgentProvider>(
+    options.connectionProviders,
+  );
   const providerManagement = new ProviderManagementService({
     connection,
     repository,
@@ -431,17 +461,22 @@ export function createApp(options: AppOptions = {}) {
     providers,
     connectionProviders,
     ensureProviders: () => providerManagement.ensureLoaded(),
-    developmentMode: options.developmentMode === true,
+    developmentMode,
+    ...(options.developmentProviderFixture
+      ? { developmentFixture: options.developmentProviderFixture }
+      : {}),
   });
   const npmTest = npmTestCommand();
-  const executionFabric = createCoreExecutionFabric({
-    legacyNodeTestPlan: {
-      executable: npmTest.executable,
-      args: npmTest.args,
-      timeoutMs: 120_000,
-      maxOutputBytes: 1_000_000,
-    },
-  });
+  const executionFabric =
+    options.executionFabric ??
+    createCoreExecutionFabric({
+      legacyNodeTestPlan: {
+        executable: npmTest.executable,
+        args: npmTest.args,
+        timeoutMs: 120_000,
+        maxOutputBytes: 1_000_000,
+      },
+    });
   const state: AppState = {
     connection,
     repository,
@@ -458,7 +493,7 @@ export function createApp(options: AppOptions = {}) {
         process.env.EXERCISE_ATTEMPTS_ROOT ??
         path.join(".data", "exercise-attempts"),
     ),
-    developmentMode: options.developmentMode === true,
+    developmentMode,
     providers,
     providerRuntime,
     providerManagement,
@@ -469,6 +504,8 @@ export function createApp(options: AppOptions = {}) {
       start: false,
       interviewIds: new Set(),
     },
+    activeExecutionOperations: new Set(),
+    shuttingDown: false,
   };
   const app = new Hono();
 
@@ -497,6 +534,9 @@ export function createApp(options: AppOptions = {}) {
 
   app.use("/api/*", async (context, next) => {
     context.header("Cache-Control", "no-store");
+    if (state.shuttingDown) {
+      return context.json({ error: "Orchestrator is shutting down" }, 503);
+    }
     const boundaryError = apiRequestBoundaryError(
       context.req.raw,
       apiRequestBoundary,
@@ -521,7 +561,9 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.get("/health/ready", (context) =>
-    context.json({ status: "ready", database: "connected" }),
+    state.shuttingDown
+      ? context.json({ status: "stopping", database: "connected" }, 503)
+      : context.json({ status: "ready", database: "connected" }),
   );
 
   app.post("/api/ai/disclosures", async (context) => {
@@ -623,7 +665,10 @@ export function createApp(options: AppOptions = {}) {
     if (setupAborted) {
       return context.json({ error: safeAgentCancellationMessage }, 409);
     }
-    const inspection = await state.providerRuntime.inspectRole(body.role);
+    const inspection = await state.providerRuntime.inspectRole(
+      body.role,
+      requestSignal,
+    );
     const providerId = inspection.connection.adapterId;
     const modelId = inspection.modelId;
     const key = JSON.stringify([
@@ -654,8 +699,8 @@ export function createApp(options: AppOptions = {}) {
       failureCode: ReturnType<typeof providerFailureCode> | null,
     ) => {
       if (!dispatch || dispatchFinished) return;
-      state.providerRuntime.finishDispatch(dispatch, status, failureCode);
       dispatchFinished = true;
+      state.providerRuntime.finishDispatch(dispatch, status, failureCode);
     };
     const hasPersistedSetupMessage = (input: {
       conversationId: string;
@@ -804,6 +849,7 @@ export function createApp(options: AppOptions = {}) {
       dispatch = await state.providerRuntime.resolveDispatch({
         role: body.role,
         payload: body.message,
+        signal: requestSignal,
         ...(body.disclosureOperationId
           ? { disclosureOperationId: body.disclosureOperationId }
           : {}),
@@ -827,15 +873,22 @@ export function createApp(options: AppOptions = {}) {
         storedSession = existingSession;
         reusedSessionRecord = existingSession;
       } else {
-        const session = await provider
-          .createSession({
-            role: body.role,
-            modelId,
-            systemPrompt: getLatestPrompt(body.role).systemPrompt,
-            metadata: body.sessionId
-              ? { learningSessionId: body.sessionId }
-              : {},
-          })
+        const session = await state.providerRuntime
+          .runSetup(
+            (signal) =>
+              provider.createSession(
+                {
+                  role: body.role,
+                  modelId,
+                  systemPrompt: getLatestPrompt(body.role).systemPrompt,
+                  metadata: body.sessionId
+                    ? { learningSessionId: body.sessionId }
+                    : {},
+                },
+                signal,
+              ),
+            requestSignal,
+          )
           .catch(() => {
             throw new Error(safeAgentFailureMessage);
           });
@@ -1054,6 +1107,7 @@ export function createApp(options: AppOptions = {}) {
             throw new Error(safeAgentFailureMessage);
           }
 
+          state.providerRuntime.assertDispatchCommitAllowed(activeDispatch);
           await persistResponse();
           finishDispatch(status, status === "completed" ? null : "cancelled");
           if (status === "completed" && completedClientEvent) {
@@ -1396,197 +1450,209 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.post("/api/exercise-attempts/:id/checks", async (context) => {
-    const attempt = await requireAttempt(state, context.req.param("id"), true);
-    const body = z
-      .object({
-        operationId: z.string().trim().min(1).max(200),
-        checkIds: z.array(z.literal(LEGACY_NODE_TEST_CHECK_ID)).length(1),
-      })
-      .strict()
-      .parse(await context.req.json());
-    const checkId = body.checkIds[0]!;
-    const inputSnapshot = await snapshotCompleteWorkspace(
-      attempt.workspacePath,
-    );
-    const previousRun = findTestRunByOperation(
-      state.connection,
-      body.operationId,
-    );
-    if (previousRun) {
-      if (
-        previousRun.exerciseAttemptId !== attempt.id ||
-        previousRun.environmentId !== attempt.environmentId ||
-        previousRun.checkId !== checkId ||
-        previousRun.inputSnapshotHash !== inputSnapshot.contentHash
-      ) {
-        return context.json(
-          {
-            error:
-              "Operation ID has already been used for another check request",
-          },
-          409,
-        );
-      }
-      return context.json(toTestRunResponse(previousRun));
+    if (state.shuttingDown) {
+      return context.json({ error: "Orchestrator is shutting down" }, 503);
     }
-    const environment = state.executionFabric.describeEnvironment(
-      attempt.environmentId,
-    );
-    const testRunId = randomUUID();
-    const startedAt = Date.now();
-    const runningResult = {
-      schemaVersion: 1,
-      operationId: body.operationId,
-      status: "running",
-      environmentId: environment.id,
-      environmentPackDigest: environment.digest,
-      inputSnapshotHash: inputSnapshot.contentHash,
-    };
-    state.connection.sqlite
-      .prepare(
-        `INSERT INTO test_runs
+    const finishExecutionOperation = beginActiveExecutionOperation(state);
+    try {
+      const attempt = await requireAttempt(
+        state,
+        context.req.param("id"),
+        true,
+      );
+      const body = z
+        .object({
+          operationId: z.string().trim().min(1).max(200),
+          checkIds: z.array(z.literal(LEGACY_NODE_TEST_CHECK_ID)).length(1),
+        })
+        .strict()
+        .parse(await context.req.json());
+      const checkId = body.checkIds[0]!;
+      const inputSnapshot = await snapshotCompleteWorkspace(
+        attempt.workspacePath,
+      );
+      const previousRun = findTestRunByOperation(
+        state.connection,
+        body.operationId,
+      );
+      if (previousRun) {
+        if (
+          previousRun.exerciseAttemptId !== attempt.id ||
+          previousRun.environmentId !== attempt.environmentId ||
+          previousRun.checkId !== checkId ||
+          previousRun.inputSnapshotHash !== inputSnapshot.contentHash
+        ) {
+          return context.json(
+            {
+              error:
+                "Operation ID has already been used for another check request",
+            },
+            409,
+          );
+        }
+        return context.json(toTestRunResponse(previousRun));
+      }
+      const environment = state.executionFabric.describeEnvironment(
+        attempt.environmentId,
+      );
+      const testRunId = randomUUID();
+      const startedAt = Date.now();
+      const runningResult = {
+        schemaVersion: 1,
+        operationId: body.operationId,
+        status: "running",
+        environmentId: environment.id,
+        environmentPackDigest: environment.digest,
+        inputSnapshotHash: inputSnapshot.contentHash,
+      };
+      state.connection.sqlite
+        .prepare(
+          `INSERT INTO test_runs
          (id, exercise_attempt_id, operation_id, status, exit_code, stdout,
           stderr, duration_ms, diff_fingerprint, diff_truncated, started_at,
           completed_at, check_id, environment_id, environment_pack_digest,
           backend_id, input_snapshot_hash, result_json)
          VALUES (?, ?, ?, 'running', NULL, '', '', NULL, NULL, 0, ?, NULL,
                  ?, ?, ?, 'local-native', ?, ?)`,
-      )
-      .run(
-        testRunId,
-        attempt.id,
-        body.operationId,
-        startedAt,
-        checkId,
-        environment.id,
-        environment.digest,
-        inputSnapshot.contentHash,
-        JSON.stringify(runningResult),
-      );
-    try {
-      const result = await state.executionFabric.run({
-        operationId: body.operationId,
-        attemptId: attempt.id,
-        courseRevisionId: requireAttemptCourseRevisionId(
-          state.connection,
-          attempt.sessionId,
-        ),
-        activityId: attempt.exerciseId,
-        workspacePath: attempt.workspacePath,
-        environmentId: attempt.environmentId,
-        checkIds: body.checkIds,
-        expectedInputSnapshotHash: inputSnapshot.contentHash,
-        signal: context.req.raw.signal,
-      });
-      await options.cancellationTestHooks?.afterTrustedCheckRun?.();
-      context.req.raw.signal.throwIfAborted();
-      const testedDiff = await getExerciseDiff(attempt.workspacePath, {
-        expectedBaselineHash: attempt.baselineHash,
-      });
-      const diffFingerprint = fingerprintExerciseDiff(testedDiff);
-      const publicResult = publicExecutionResult(result);
-      const stdout = result.artifacts
-        .map((artifact) => artifact.content)
-        .join("\n");
-      const stderr = result.diagnostics
-        .filter((diagnostic) => diagnostic.severity === "error")
-        .map((diagnostic) => diagnostic.message)
-        .join("\n");
-      const now = Date.now();
-      await withAsyncTransaction(state.connection, async () => {
+        )
+        .run(
+          testRunId,
+          attempt.id,
+          body.operationId,
+          startedAt,
+          checkId,
+          environment.id,
+          environment.digest,
+          inputSnapshot.contentHash,
+          JSON.stringify(runningResult),
+        );
+      try {
+        const result = await state.executionFabric.run({
+          operationId: body.operationId,
+          attemptId: attempt.id,
+          courseRevisionId: requireAttemptCourseRevisionId(
+            state.connection,
+            attempt.sessionId,
+          ),
+          activityId: attempt.exerciseId,
+          workspacePath: attempt.workspacePath,
+          environmentId: attempt.environmentId,
+          checkIds: body.checkIds,
+          expectedInputSnapshotHash: inputSnapshot.contentHash,
+          signal: context.req.raw.signal,
+        });
+        await options.cancellationTestHooks?.afterTrustedCheckRun?.();
         context.req.raw.signal.throwIfAborted();
-        state.connection.sqlite
-          .prepare(
-            `UPDATE test_runs
+        const testedDiff = await getExerciseDiff(attempt.workspacePath, {
+          expectedBaselineHash: attempt.baselineHash,
+        });
+        const diffFingerprint = fingerprintExerciseDiff(testedDiff);
+        const publicResult = publicExecutionResult(result);
+        const stdout = result.artifacts
+          .map((artifact) => artifact.content)
+          .join("\n");
+        const stderr = result.diagnostics
+          .filter((diagnostic) => diagnostic.severity === "error")
+          .map((diagnostic) => diagnostic.message)
+          .join("\n");
+        const now = Date.now();
+        await withAsyncTransaction(state.connection, async () => {
+          context.req.raw.signal.throwIfAborted();
+          state.connection.sqlite
+            .prepare(
+              `UPDATE test_runs
              SET status = ?, exit_code = ?, stdout = ?, stderr = ?,
                  duration_ms = ?, diff_fingerprint = ?, diff_truncated = ?,
                  result_json = ?, completed_at = ?
              WHERE id = ? AND status = 'running'`,
-          )
-          .run(
-            result.status,
-            result.status === "passed" ? 0 : 1,
-            stdout,
-            stderr,
-            result.durationMs,
-            diffFingerprint,
-            testedDiff.truncated || result.truncated ? 1 : 0,
-            JSON.stringify(publicResult),
-            now,
-            testRunId,
-          );
-        const insertArtifact = state.connection.sqlite.prepare(
-          `INSERT INTO execution_artifacts
+            )
+            .run(
+              result.status,
+              result.status === "passed" ? 0 : 1,
+              stdout,
+              stderr,
+              result.durationMs,
+              diffFingerprint,
+              testedDiff.truncated || result.truncated ? 1 : 0,
+              JSON.stringify(publicResult),
+              now,
+              testRunId,
+            );
+          const insertArtifact = state.connection.sqlite.prepare(
+            `INSERT INTO execution_artifacts
            (id, test_run_id, artifact_type, media_type, digest, size_bytes,
             retention, truncated, content, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        );
-        for (const artifact of result.artifacts) {
-          insertArtifact.run(
-            artifact.id,
-            testRunId,
-            artifact.type,
-            artifact.mediaType,
-            artifact.digest,
-            artifact.sizeBytes,
-            artifact.retention,
-            artifact.truncated ? 1 : 0,
-            artifact.content,
-            now,
           );
-        }
-      });
-      return context.json({
-        id: testRunId,
-        output: [stdout, stderr].filter(Boolean).join("\n"),
-        exitCode: result.status === "passed" ? 0 : 1,
-        status: result.status,
-        operationId: body.operationId,
-        result: publicResult,
-      });
-    } catch (error) {
-      const cancelled = context.req.raw.signal.aborted;
-      const message = cancelled
-        ? "Trusted check was cancelled"
-        : error instanceof Error
-          ? error.message
-          : "Trusted check runner failed";
-      state.connection.sqlite
-        .prepare(
-          `UPDATE test_runs
+          for (const artifact of result.artifacts) {
+            insertArtifact.run(
+              artifact.id,
+              testRunId,
+              artifact.type,
+              artifact.mediaType,
+              artifact.digest,
+              artifact.sizeBytes,
+              artifact.retention,
+              artifact.truncated ? 1 : 0,
+              artifact.content,
+              now,
+            );
+          }
+        });
+        return context.json({
+          id: testRunId,
+          output: [stdout, stderr].filter(Boolean).join("\n"),
+          exitCode: result.status === "passed" ? 0 : 1,
+          status: result.status,
+          operationId: body.operationId,
+          result: publicResult,
+        });
+      } catch (error) {
+        const cancelled = context.req.raw.signal.aborted;
+        const message = cancelled
+          ? "Trusted check was cancelled"
+          : error instanceof Error
+            ? error.message
+            : "Trusted check runner failed";
+        state.connection.sqlite
+          .prepare(
+            `UPDATE test_runs
            SET status = ?, stderr = ?, result_json = ?,
                completed_at = ?
            WHERE id = ? AND status = 'running'`,
-        )
-        .run(
-          cancelled ? "cancelled" : "backend_error",
-          message,
-          JSON.stringify({
-            ...runningResult,
-            status: cancelled ? "cancelled" : "backend_error",
-            error: message,
-          }),
-          Date.now(),
-          testRunId,
-        );
-      if (cancelled) {
-        return context.json(
-          {
-            id: testRunId,
-            output: message,
-            exitCode: 1,
-            status: "cancelled",
-            operationId: body.operationId,
-            result: {
+          )
+          .run(
+            cancelled ? "cancelled" : "backend_error",
+            message,
+            JSON.stringify({
               ...runningResult,
-              status: "cancelled",
+              status: cancelled ? "cancelled" : "backend_error",
               error: message,
+            }),
+            Date.now(),
+            testRunId,
+          );
+        if (cancelled) {
+          return context.json(
+            {
+              id: testRunId,
+              output: message,
+              exitCode: 1,
+              status: "cancelled",
+              operationId: body.operationId,
+              result: {
+                ...runningResult,
+                status: "cancelled",
+                error: message,
+              },
             },
-          },
-          400,
-        );
+            400,
+          );
+        }
+        throw error;
       }
-      throw error;
+    } finally {
+      finishExecutionOperation();
     }
   });
 
@@ -1767,8 +1833,8 @@ export function createApp(options: AppOptions = {}) {
             now,
           );
         context.req.raw.signal.throwIfAborted();
-        review.finishCompleted();
       });
+      review.finishCompleted();
       return context.json({
         id: reviewId,
         ...review.result,
@@ -2020,6 +2086,31 @@ export function createApp(options: AppOptions = {}) {
       }
     },
   );
+  app.delete("/api/settings/ai/connections/:connectionId", async (context) => {
+    const connectionId = context.req.param("connectionId");
+    let retirement: ProviderConnectionRetirement | undefined;
+    try {
+      retirement =
+        state.providerRuntime.beginConnectionRetirement(connectionId);
+      await state.providerManagement.remove(connectionId);
+      retirement.commit();
+      retirement = undefined;
+      await cancelProviderSessionsForConnection(state, connectionId);
+      return context.json({ removed: true });
+    } catch (error) {
+      const status =
+        error instanceof ProviderHubError &&
+        error.failure.code === "connection_disabled"
+          ? 409
+          : 400;
+      return context.json(
+        { error: safeProviderManagementMessage(error) },
+        status,
+      );
+    } finally {
+      retirement?.rollback();
+    }
+  });
   app.post(
     "/api/settings/ai/connections/:connectionId/enable",
     async (context) => {
@@ -2079,20 +2170,77 @@ export function createApp(options: AppOptions = {}) {
     return context.json({ cancelled: true });
   });
 
+  let closePromise: Promise<void> | null = null;
+  const beginShutdown = () => {
+    if (state.shuttingDown) return;
+    state.shuttingDown = true;
+    state.executionFabric.beginShutdown();
+    state.providerRuntime.beginShutdown();
+    state.providerManagement.beginShutdown();
+  };
   return {
     app,
     state,
-    close: async () => {
-      const providers = Object.values(state.providers);
-      await Promise.allSettled(
-        providers.map((provider) =>
-          "shutdown" in provider && typeof provider.shutdown === "function"
-            ? provider.shutdown()
-            : Promise.resolve(),
-        ),
-      );
-      connection.close();
+    beginShutdown,
+    close: () => {
+      closePromise ??= (async () => {
+        beginShutdown();
+        await Promise.all([
+          state.executionFabric.close(),
+          state.providerRuntime.close(),
+          state.providerManagement.close(),
+        ]);
+        await drainActiveExecutionOperations(state);
+        await cancelAndEvictProviderSessions(state);
+        const providers = Object.values(state.providers);
+        await Promise.allSettled(
+          providers.map((provider) =>
+            "shutdown" in provider && typeof provider.shutdown === "function"
+              ? provider.shutdown()
+              : Promise.resolve(),
+          ),
+        );
+        connection.close();
+      })();
+      return closePromise;
     },
+  };
+}
+
+async function drainActiveExecutionOperations(state: AppState): Promise<void> {
+  const active = [...state.activeExecutionOperations];
+  if (active.length === 0) return;
+  const drained = Promise.allSettled(active).then(() => undefined);
+  const timeout = new Promise<never>((_, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("Active trusted execution shutdown timed out")),
+      5_000,
+    );
+    timer.unref();
+    void drained.finally(() => clearTimeout(timer));
+  });
+  await Promise.race([drained, timeout]);
+}
+
+async function cancelAndEvictProviderSessions(state: AppState): Promise<void> {
+  const sessions = [...state.providerSessions.entries()];
+  if (sessions.length === 0) return;
+  await Promise.allSettled(
+    sessions.map(([key, session]) =>
+      cancelAndEvictProviderSession(state, key, session),
+    ),
+  );
+}
+
+function beginActiveExecutionOperation(state: AppState): () => void {
+  let finish!: () => void;
+  const operation = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  state.activeExecutionOperations.add(operation);
+  return () => {
+    if (!state.activeExecutionOperations.delete(operation)) return;
+    finish();
   };
 }
 
@@ -2184,6 +2332,31 @@ function evictProviderSession(
     if (activeTurn.session === session) {
       state.activeProviderTurns.delete(turnId);
     }
+  }
+}
+
+async function cancelProviderSessionsForConnection(
+  state: AppState,
+  connectionId: string,
+): Promise<void> {
+  const matches = [...state.providerSessions.entries()].filter(
+    ([key]) => providerSessionKeyConnectionId(key) === connectionId,
+  );
+  await Promise.allSettled(
+    matches.map(([key, session]) =>
+      cancelAndEvictProviderSession(state, key, session),
+    ),
+  );
+}
+
+function providerSessionKeyConnectionId(key: string): string | null {
+  try {
+    const parsed = JSON.parse(key) as unknown;
+    return Array.isArray(parsed) && typeof parsed[2] === "string"
+      ? parsed[2]
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -2747,6 +2920,7 @@ async function requestExerciseReview(
   const dispatch = await state.providerRuntime.resolveDispatch({
     role: "reviewer",
     payload: reviewPrompt,
+    signal: input.signal,
     ...(input.disclosureOperationId
       ? { disclosureOperationId: input.disclosureOperationId }
       : {}),
@@ -2775,8 +2949,8 @@ async function requestExerciseReview(
     failureCode: ReturnType<typeof providerFailureCode> | null,
   ) => {
     if (dispatchFinished) return;
-    state.providerRuntime.finishDispatch(dispatch, status, failureCode);
     dispatchFinished = true;
+    state.providerRuntime.finishDispatch(dispatch, status, failureCode);
   };
   const cancelTurn = async () => {
     if (storedSession) {
@@ -2827,15 +3001,22 @@ async function requestExerciseReview(
   try {
     throwIfCancelled();
     if (!storedSession) {
-      const session = await provider.createSession({
-        role: "reviewer",
-        modelId,
-        systemPrompt: getLatestPrompt("reviewer").systemPrompt,
-        metadata: {
-          learningSessionId: input.attempt.sessionId,
-          exerciseAttemptId: input.attempt.id,
-        },
-      });
+      const session = await state.providerRuntime.runSetup(
+        (signal) =>
+          provider.createSession(
+            {
+              role: "reviewer",
+              modelId,
+              systemPrompt: getLatestPrompt("reviewer").systemPrompt,
+              metadata: {
+                learningSessionId: input.attempt.sessionId,
+                exerciseAttemptId: input.attempt.id,
+              },
+            },
+            signal,
+          ),
+        input.signal,
+      );
       if (input.signal.aborted) {
         await provider.cancelSession(session.id).catch(() => undefined);
         throwIfCancelled();
@@ -2924,12 +3105,14 @@ async function requestExerciseReview(
       result,
       evidenceBundleJson: reviewPrompt,
       persistCompletedAssistant: async () => {
+        state.providerRuntime.assertDispatchCommitAllowed(dispatch);
         throwIfCancelled();
         await persistAgentResponse(state, {
           conversationId,
           content: JSON.stringify(result),
           status: "completed",
         });
+        state.providerRuntime.assertDispatchCommitAllowed(dispatch);
         throwIfCancelled();
       },
       finishCompleted: () => finishDispatch("completed", null),
@@ -2966,21 +3149,6 @@ async function persistAgentResponse(
       : { idempotencyKey: input.idempotencyKey }),
   });
   return message.id;
-}
-
-function loadRootEnvironment(projectRoot: string): void {
-  if (process.env.NODE_ENV === "test") return;
-  try {
-    process.loadEnvFile(path.join(projectRoot, ".env"));
-  } catch (error) {
-    if (!(
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )) {
-      throw error;
-    }
-  }
 }
 
 function resolveDatabasePath(

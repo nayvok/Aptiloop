@@ -445,10 +445,12 @@ export class OpenCodeAgentProvider implements AgentProvider {
 
   public async createSession(
     input: CreateAgentSessionInput,
+    signal?: AbortSignal,
   ): Promise<AgentSession> {
     this.#assertRunning();
+    signal?.throwIfAborted();
     const selected = parseModelId(input.modelId);
-    const providers = await this.listProviders();
+    const providers = await this.listProviders(signal);
     this.#assertRunnableModel(
       providers,
       selected.providerID,
@@ -457,17 +459,20 @@ export class OpenCodeAgentProvider implements AgentProvider {
     this.#assertRunning();
 
     try {
-      const remote = await this.#request("session creation", (signal) =>
-        this.#requireTransport().createSession(
-          {
-            directory: this.#directory,
-            title: `Aptiloop · ${input.role}`,
-            ...(input.role === "reviewer"
-              ? { permission: REVIEWER_PERMISSION }
-              : {}),
-          },
-          signal,
-        ),
+      const remote = await this.#request(
+        "session creation",
+        (requestSignal) =>
+          this.#requireTransport().createSession(
+            {
+              directory: this.#directory,
+              title: `Aptiloop · ${input.role}`,
+              ...(input.role === "reviewer"
+                ? { permission: REVIEWER_PERMISSION }
+                : {}),
+            },
+            requestSignal,
+          ),
+        signal,
       );
       if (this.#shuttingDown) {
         await this.#abortRemoteSession(remote.id);

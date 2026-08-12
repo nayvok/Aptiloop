@@ -1137,6 +1137,22 @@ describe("versioned interview workflow", () => {
     },
   );
 
+  it("keeps a configured, not-yet-tested evaluator usable when its exact model and capabilities are available", async () => {
+    installApi({
+      ...interviewRoutes(),
+      "/settings": interviewAiSettings({ state: "degraded" }),
+    });
+    renderWithQuery(<InterviewClient />);
+
+    const start = await screen.findByRole("button", {
+      name: "Начать интервью",
+    });
+    await waitFor(() => expect(start).toBeEnabled());
+    expect(
+      document.querySelector('[data-slot="interview-ai-recovery"]'),
+    ).toBeNull();
+  });
+
   it("explains an empty studied scope and offers manual topics", async () => {
     const path = learningPathFixture();
     const firstDay = path.curriculum.weeks[0]?.days[0];

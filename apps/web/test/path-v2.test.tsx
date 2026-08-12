@@ -846,7 +846,68 @@ describe("Aptiloop Home", () => {
       Promise.resolve(
         path === "/settings"
           ? mockSettings()
-          : { courseContext: null, curriculum: null, nextAction: null },
+          : path === "/learning/courses"
+            ? { courses: [] }
+            : { courseContext: null, curriculum: null, nextAction: null },
+      ),
+    );
+    renderWithQuery(<HomeClient />);
+
+    expect(await screen.findByText("Create your first Course")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Aptiloop starts without bundled Courses. Create your own Course locally, or import a Course Pack you trust.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Create Course" })).toHaveAttribute(
+      "href",
+      "/courses/new",
+    );
+    expect(
+      screen.getByRole("link", { name: "Import Course Pack" }),
+    ).toHaveAttribute("href", "/courses/import");
+    expect(
+      screen.queryByRole("link", { name: "Choose a Course" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers Course selection when local Courses exist but none is active", async () => {
+    apiMock.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "/settings"
+          ? mockSettings()
+          : path === "/learning/courses"
+            ? {
+                courses: [
+                  {
+                    id: "course-1",
+                    stableId: "course-1",
+                    title: "Local foundations",
+                    description: null,
+                    primaryLocale: "en-US",
+                    selected: false,
+                    activeRevisionId: "revision-1",
+                    currentSessionId: null,
+                    revisions: [
+                      {
+                        id: "revision-1",
+                        revisionNumber: 1,
+                        status: "published",
+                        branchKind: "upstream",
+                        contentHash: `sha256:${"a".repeat(64)}`,
+                        learningSummary: {
+                          state: "not-started",
+                          completedLessons: 0,
+                          totalLessons: 1,
+                          progressPercent: 0,
+                          lastActivityAt: null,
+                        },
+                      },
+                    ],
+                  },
+                ],
+              }
+            : { courseContext: null, curriculum: null, nextAction: null },
       ),
     );
     renderWithQuery(<HomeClient />);

@@ -77,6 +77,26 @@ describe("UI locale contract", () => {
     }
   });
 
+  it("labels learner duration estimates explicitly in both locales", () => {
+    expect(catalogs["en-US"]["time.estimated"]).toBe("About {duration}");
+    expect(catalogs["ru-RU"]["time.estimated"]).toBe("Примерно {duration}");
+    expect(catalogs["en-US"]["time.estimatedRemaining"]).toBe(
+      "About {duration} remaining",
+    );
+    expect(catalogs["ru-RU"]["time.estimatedRemaining"]).toBe(
+      "Осталось примерно {duration}",
+    );
+  });
+
+  it("provides localized recovery for active-request removal conflicts", () => {
+    expect(catalogs["en-US"]["settings.connection.removeActiveRequest"]).toBe(
+      "An AI request is still using this connection. Stop the active request, then try removing the connection again.",
+    );
+    expect(catalogs["ru-RU"]["settings.connection.removeActiveRequest"]).toBe(
+      "Это подключение используется активным AI-запросом. Остановите запрос и повторите удаление.",
+    );
+  });
+
   it("uses observation terminology for interview reports in both locales", () => {
     const englishInterviewCopy = [
       catalogs["en-US"]["review.viewDescription.interviews"],

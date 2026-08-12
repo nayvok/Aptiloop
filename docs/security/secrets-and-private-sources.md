@@ -25,7 +25,7 @@ A Source Snapshot captures stable local evidence and provenance. It is not a liv
 
 Positive controls observed: loopback/single-user defaults; `.data`, SQLite, and `.env` Git exclusions; no secret-value SQLite columns; exact Provider Hub connection/model resolution; API-wide `no-store`; browser event allowlisting; raw provider/tool payload exclusion; exercise child environment allowlisting; non-root containers; active-source-only approved backups; and Course Pack exports that exclude private learner/runtime state. Settings accepts a secret only in the explicit mutation, stores it connection-scoped in `.data/provider-credentials.json`, and returns only safe metadata/opaque references. Disclosure metadata binds provider, model, destination, entity IDs, payload categories, byte count, payload SHA-256, expiry, and lifecycle without copying the disclosed payload.
 
-Remaining gaps: learner/AI/private operational data and the credential file are plaintext; logical SQL inventory cannot prove byte absence from free pages, WAL/SHM, storage snapshots, or external copies; no complete retention/export/delete or owner-only cross-platform permission enforcement exists; and Markdown can trigger external resource fetches. Integrity checks do not provide confidentiality.
+Remaining gaps: learner/AI/private operational data and POSIX/Linux credential storage are plaintext; Windows current-user DPAPI does not protect against same-user processes and legacy migration cannot prove historical plaintext bytes were erased; logical SQL inventory cannot prove byte absence from free pages, WAL/SHM, storage snapshots, or external copies; no complete retention/export/delete or owner-only cross-platform permission enforcement exists; and Markdown can trigger external resource fetches. Integrity checks do not provide confidentiality.
 
 **Historical observation (2026-08-08):** the inventory found six database families and eleven existing backups with zero logical non-empty raw/tool rows. One family was selected as active; the other five and all old backups were preserved and excluded from automatic runtime, restore, and approved-backup selection. M2 later completed without authorizing their deletion or automatic promotion. See the [dated M1 inventory](../audits/2026-08-08-m1-safety-boundary-inventory.md). Current valuable-data operations still require an explicit active-source inventory and a fresh destination under `.data/approved-backups/`.
 
@@ -75,13 +75,13 @@ Remaining gaps: learner/AI/private operational data and the credential file are 
 - **Source fix:** no automatic external resource rendering; safe URL schemes; explicit user-initiated fetch naming URL/provider; fetch through a bounded policy component if introduced; snapshot bytes/hash/provenance locally; never fetch `file:`, loopback, link-local, private-network, or credential-bearing URLs by default.
 - **Test:** remote/loopback/private-IP/IPv6/DNS-rebind/redirect/credential URL and Markdown image fixtures; no request before approval; prohibited targets remain blocked; accepted snapshot hash is stable.
 
-### DATA-CTRL-005 — Plaintext storage permissions and cache
+### DATA-CTRL-005 — Local storage permissions, protection, and cache
 
 - **Attack path:** local account, shared/synced directory, backup agent, or HTTP cache reads SQLite/WAL/backups/private API responses.
 - **Impact:** learner/source/path/code/provider-history disclosure.
-- **Existing mitigation:** Implemented baseline local single-user scope, Git ignores, non-root containers, API-wide `Cache-Control: no-store`, explicit candidate inventory, and private named volumes reduce exposure; files remain plaintext and OS-default permissions are not a confidentiality policy.
-- **Source fix:** POSIX 0700 data/backup directories and 0600 DB/WAL/backups; Windows owner-only ACL guidance/enforcement; private API `Cache-Control: no-store`; reject unsafe shared profile roots; decide encryption requirements before portable/shared use.
-- **Test:** mode/ACL integration checks, unsafe-root rejection, no-store headers, sync/export fixture, and proof that integrity checks are not represented as encryption.
+- **Existing mitigation:** **Implemented baseline.** Local single-user scope, Git ignores, non-root containers, API-wide `Cache-Control: no-store`, explicit candidate inventory, and private named volumes reduce exposure. Windows provider credentials use current-user DPAPI with strict fail-closed parsing and no plaintext fallback; POSIX systems request owner-only file modes. SQLite, backups, attempts, and POSIX/Linux credential storage remain plaintext, and OS-default directory permissions are not a complete confidentiality policy.
+- **Source fix:** POSIX 0700 data/backup directories and 0600 DB/WAL/backups; Windows owner-only ACL guidance/enforcement for remaining private files; private API `Cache-Control: no-store`; reject unsafe shared profile roots; decide database encryption requirements before portable/shared use.
+- **Test:** DPAPI real/fake round-trip and tamper rejection, atomic legacy migration and failure preservation, mode/ACL integration checks, unsafe-root rejection, no-store headers, sync/export fixture, and proof that integrity checks are not represented as encryption.
 
 ### DATA-CTRL-006 — Retention, export, and deletion
 

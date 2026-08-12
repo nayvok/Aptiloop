@@ -485,7 +485,7 @@ describe("Settings v2", () => {
     });
   });
 
-  it("searches a bounded model list and explains unavailable selections", async () => {
+  it("searches a bounded model list, blocks hard failures, and keeps an untested configured model selectable", async () => {
     const response = structuredClone(settingsResponse);
     response.ai.connections[0]!.observedCapabilities!.connection.authenticated = false;
     response.ai.connections[1]!.state = "degraded";
@@ -522,10 +522,17 @@ describe("Settings v2", () => {
 
     fireEvent.change(search, { target: { value: "pi-catalog-59" } });
     const degradedModel = await within(listbox).findByRole("option", {
-      name: /pi-catalog-59.*Needs canary/u,
+      name: /pi-catalog-59.*Configured · not yet tested/u,
     });
-    expect(degradedModel).toBeDisabled();
+    expect(degradedModel).toBeEnabled();
+    expect(degradedModel).not.toHaveAttribute("aria-disabled");
     expect(within(listbox).getAllByRole("option")).toHaveLength(1);
+
+    fireEvent.click(degradedModel);
+    expect(screen.getByLabelText("Default model")).toHaveTextContent(
+      "OpenAI via Pi · pi-catalog-59",
+    );
+    expect(screen.getByText("Configured · not yet tested")).toBeVisible();
   });
 
   it("keeps a failed provider explicit instead of switching the default to Off", async () => {

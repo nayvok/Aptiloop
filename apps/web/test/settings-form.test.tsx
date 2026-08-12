@@ -20,51 +20,63 @@ import { LocaleProvider } from "@/lib/i18n";
 
 import { SettingsForm } from "@/components/settings-form";
 
-const { apiMock, navigationState, setThemeMock } = vi.hoisted(() => {
-  let search = "";
-  let history = [""];
-  let historyIndex = 0;
-  const listeners = new Set<() => void>();
-  const notify = () => listeners.forEach((listener) => listener());
-  return {
-    apiMock: vi.fn(),
-    setThemeMock: vi.fn(),
-    navigationState: {
-      getSnapshot: () => search,
-      subscribe: (listener: () => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
+const { ApiErrorMock, apiMock, navigationState, setThemeMock } = vi.hoisted(
+  () => {
+    class ApiErrorMock extends Error {
+      constructor(
+        message: string,
+        readonly status: number,
+      ) {
+        super(message);
+        this.name = "ApiError";
+      }
+    }
+    let search = "";
+    let history = [""];
+    let historyIndex = 0;
+    const listeners = new Set<() => void>();
+    const notify = () => listeners.forEach((listener) => listener());
+    return {
+      ApiErrorMock,
+      apiMock: vi.fn(),
+      setThemeMock: vi.fn(),
+      navigationState: {
+        getSnapshot: () => search,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        push: vi.fn((href: string) => {
+          search = new URL(href, "http://localhost").search;
+          history = [...history.slice(0, historyIndex + 1), search];
+          historyIndex += 1;
+          notify();
+        }),
+        setSearch: (next: string) => {
+          search = next;
+          history = [next];
+          historyIndex = 0;
+          notify();
+        },
+        back: () => {
+          if (historyIndex === 0) return;
+          historyIndex -= 1;
+          search = history[historyIndex]!;
+          notify();
+        },
+        forward: () => {
+          if (historyIndex >= history.length - 1) return;
+          historyIndex += 1;
+          search = history[historyIndex]!;
+          notify();
+        },
       },
-      push: vi.fn((href: string) => {
-        search = new URL(href, "http://localhost").search;
-        history = [...history.slice(0, historyIndex + 1), search];
-        historyIndex += 1;
-        notify();
-      }),
-      setSearch: (next: string) => {
-        search = next;
-        history = [next];
-        historyIndex = 0;
-        notify();
-      },
-      back: () => {
-        if (historyIndex === 0) return;
-        historyIndex -= 1;
-        search = history[historyIndex]!;
-        notify();
-      },
-      forward: () => {
-        if (historyIndex >= history.length - 1) return;
-        historyIndex += 1;
-        search = history[historyIndex]!;
-        notify();
-      },
-    },
-  };
-});
+    };
+  },
+);
 
 vi.mock("@/lib/api", () => ({
-  ApiError: class ApiError extends Error {},
+  ApiError: ApiErrorMock,
   api: apiMock,
 }));
 vi.mock("next-themes", () => ({
@@ -843,5 +855,104 @@ describe("SettingsForm", () => {
         { method: "POST", body: "{}" },
       );
     });
+  });
+
+  it("requires confirmation before removing a managed connection", async () => {
+    apiMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (
+        path === "/settings/ai/connections/conn%3Amock" &&
+        init?.method === "DELETE"
+      ) {
+        return Promise.resolve({ removed: true });
+      }
+      if (path === "/settings") return Promise.resolve(settingsResponse);
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+    renderForm();
+    await screen.findByRole("tab", { name: "Connections" });
+    openTab("Connections");
+
+    const row = (await screen.findByText("Deterministic Mock")).closest("li");
+    expect(row).not.toBeNull();
+    fireEvent.click(within(row!).getByRole("button", { name: "Configure AI" }));
+    fireEvent.click(
+      within(row!).getByRole("button", {
+        name: "Remove connection: Deterministic Mock",
+      }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Remove this connection?",
+    });
+    expect(
+      within(dialog).getByText(/Assigned AI roles will turn off/u),
+    ).toBeVisible();
+    expect(within(dialog).getByText(/history is retained/u)).toBeVisible();
+    expect(
+      apiMock.mock.calls.some(
+        ([path, init]) =>
+          path === "/settings/ai/connections/conn%3Amock" &&
+          (init as RequestInit | undefined)?.method === "DELETE",
+      ),
+    ).toBe(false);
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Remove connection" }),
+    );
+    await waitFor(() => {
+      expect(apiMock).toHaveBeenCalledWith(
+        "/settings/ai/connections/conn%3Amock",
+        { method: "DELETE", body: "{}" },
+      );
+    });
+  });
+
+  it("keeps active-request removal conflicts safe and retryable", async () => {
+    const privateServerMessage = "provider.internal.active-turn-detail";
+    let removalAttempts = 0;
+    apiMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (
+        path === "/settings/ai/connections/conn%3Amock" &&
+        init?.method === "DELETE"
+      ) {
+        removalAttempts += 1;
+        return Promise.reject(new ApiErrorMock(privateServerMessage, 409));
+      }
+      if (path === "/settings") return Promise.resolve(settingsResponse);
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+    renderForm();
+    await screen.findByRole("tab", { name: "Connections" });
+    openTab("Connections");
+
+    const row = (await screen.findByText("Deterministic Mock")).closest("li");
+    expect(row).not.toBeNull();
+    fireEvent.click(within(row!).getByRole("button", { name: "Configure AI" }));
+    fireEvent.click(
+      within(row!).getByRole("button", {
+        name: "Remove connection: Deterministic Mock",
+      }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Remove this connection?",
+    });
+    const confirm = within(dialog).getByRole("button", {
+      name: "Remove connection",
+    });
+    fireEvent.click(confirm);
+
+    expect(
+      await within(dialog).findByText(
+        "An AI request is still using this connection. Stop the active request, then try removing the connection again.",
+      ),
+    ).toBeVisible();
+    expect(within(dialog).queryByText(privateServerMessage)).toBeNull();
+    expect(screen.getByRole("alertdialog")).toBe(dialog);
+    expect(confirm).toBeEnabled();
+
+    fireEvent.click(confirm);
+    await waitFor(() => expect(removalAttempts).toBe(2));
+    expect(screen.getByRole("alertdialog")).toBe(dialog);
   });
 });

@@ -1,6 +1,5 @@
 export * from "@aptiloop/shared";
 export * from "./event-normalizer.js";
-export * from "./mock-agent-provider.js";
 export * from "./provider.js";
 export * from "./pi-agent-provider.js";
 export * from "./pi-provider-catalog.js";

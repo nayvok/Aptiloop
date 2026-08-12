@@ -69,10 +69,12 @@ function ReviewRow({
   review,
   dismissing,
   onDismiss,
+  dueOnly,
 }: {
   review: ReviewItem;
   dismissing: boolean;
   onDismiss: (review: ReviewItem, onSuccess: () => void) => void;
+  dueOnly: boolean;
 }) {
   const { formatDate, t } = useI18n();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -139,13 +141,23 @@ function ReviewRow({
             <p className="mt-1 break-words text-sm leading-6 [overflow-wrap:anywhere]">
               {activityLabel ? t(activityLabel) : review.activityKind}
             </p>
-            <p className="mt-1 break-all font-mono text-xs leading-5 text-muted-foreground">
-              {t("cards.sourceSession", { session: review.sessionId })}
-            </p>
           </div>
         </div>
 
-        <div className="flex min-w-0 items-start justify-end">
+        <div className="flex min-w-0 flex-wrap items-start justify-end gap-2">
+          {dueOnly && review.execution ? (
+            <Button asChild>
+              <Link
+                href={`/review?item=${encodeURIComponent(review.execution.id)}`}
+              >
+                {t("review.activity.start")}
+              </Link>
+            </Button>
+          ) : dueOnly && review.isDue ? (
+            <span className="max-w-48 text-right text-xs leading-5 text-muted-foreground">
+              {t("review.activity.unavailableShort")}
+            </span>
+          ) : null}
           {canDismiss ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -320,7 +332,6 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
     }),
     {} as Partial<Record<ReviewItem["state"], number>>,
   );
-  const hasDueReview = visibleReviews.some((review) => review.isDue);
   const dismissingId = dismiss.isPending ? dismiss.variables?.id : undefined;
 
   return (
@@ -344,15 +355,6 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
         </p>
       </div>
 
-      {hasDueReview ? (
-        <p
-          data-slot="review-action-unavailable"
-          className="max-w-[70ch] border-l-2 border-border pl-3 text-sm leading-6 text-muted-foreground"
-        >
-          {t("review.actionUnavailable")}
-        </p>
-      ) : null}
-
       {visibleReviews.length ? (
         <div data-slot="review-list" className="grid gap-3">
           {visibleReviews.map((review) => (
@@ -363,6 +365,7 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
               onDismiss={(item, onSuccess) =>
                 dismiss.mutate(item, { onSuccess })
               }
+              dueOnly={dueOnly}
             />
           ))}
         </div>
@@ -413,6 +416,7 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
                   onDismiss={(item, onSuccess) =>
                     dismiss.mutate(item, { onSuccess })
                   }
+                  dueOnly={false}
                 />
               ))}
             </div>

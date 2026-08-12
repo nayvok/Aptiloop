@@ -34,6 +34,7 @@ import {
   remainingDayMinutes,
   type LearningBlock,
 } from "@/lib/learning-blocks";
+import { learningCourseCollectionSchema } from "@/lib/learning-courses";
 import { type MessageKey, useI18n } from "@/lib/i18n";
 import type { RouteContext } from "@/lib/route-context";
 import {
@@ -94,6 +95,16 @@ export function HomeClient({
     queryFn: async () => learningPathSchema.parse(await api(pathEndpoint)),
   });
   const isRevisionPreview = surface === "revision";
+  const courseCollection = useQuery({
+    queryKey: ["learning-courses"],
+    queryFn: async () =>
+      learningCourseCollectionSchema.parse(
+        await api<unknown>("/learning/courses"),
+      ),
+    enabled:
+      !isRevisionPreview && query.isSuccess && query.data.curriculum === null,
+    retry: false,
+  });
   const routeCourse = query.data?.curriculum ?? null;
   const pageRouteContext = useMemo<RouteContext | null>(
     () =>
@@ -227,20 +238,55 @@ export function HomeClient({
     if (isRevisionPreview) {
       return <RevisionMissingState retry={() => void query.refetch()} />;
     }
+    if (courseCollection.isLoading) {
+      return (
+        <div data-slot="home" className="flex flex-col gap-6 lg:gap-8">
+          <HomePageHeader />
+          <LoadingState label="home.loadingCourses" variant="page" />
+        </div>
+      );
+    }
+    if (courseCollection.isError || !courseCollection.data) {
+      return (
+        <div data-slot="home" className="flex flex-col gap-6 lg:gap-8">
+          <HomePageHeader />
+          <QueryError
+            message={t("home.coursesUnavailable")}
+            {...(courseCollection.error instanceof Error
+              ? { diagnostic: courseCollection.error.message }
+              : {})}
+            retry={() => void courseCollection.refetch()}
+          />
+        </div>
+      );
+    }
+    const hasLocalCourses = courseCollection.data.courses.length > 0;
     return (
       <div className="flex flex-col gap-6">
         <HomePageHeader />
         <EmptyState
-          title={t("home.noCourse.title")}
-          description={t("home.noCourse.description")}
+          title={t(
+            hasLocalCourses ? "home.noCourse.title" : "home.noCourses.title",
+          )}
+          description={t(
+            hasLocalCourses
+              ? "home.noCourse.description"
+              : "home.noCourses.description",
+          )}
           action={
             <div className="flex w-full flex-col justify-center gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
-              <Button asChild className="w-full sm:w-auto">
-                <Link href="/courses#course-library-title">
-                  {t("home.chooseCourse")}
-                </Link>
-              </Button>
-              <Button asChild variant="secondary" className="w-full sm:w-auto">
+              {hasLocalCourses ? (
+                <Button asChild className="w-full sm:w-auto">
+                  <Link href="/courses#course-library-title">
+                    {t("home.chooseCourse")}
+                  </Link>
+                </Button>
+              ) : null}
+              <Button
+                asChild
+                variant={hasLocalCourses ? "secondary" : "default"}
+                className="w-full sm:w-auto"
+              >
                 <Link href="/courses/new">{t("home.createCourse")}</Link>
               </Button>
               <Button asChild variant="outline" className="w-full sm:w-auto">

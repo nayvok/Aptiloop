@@ -82,7 +82,7 @@ Required invariants:
 | Source/Capsule use         | Provenance/context evidence, not proof of learner mastery.                                                                                                      |
 | Migrated legacy row        | Retained with migration provenance and confidence limits; never silently upgraded to stronger evidence.                                                         |
 
-A provider/tool failure emits no learning success fact. A malformed or oversized result is a typed failure, not partial credit. Course Pack V1 validation rejects unknown requirements and required AI-only terminal paths under its installed registry. Adaptive Studio's current publication gate validates its current Unit schemas, completion-criterion presence, finite graph, validation hash, Preview hash, and Change-review hash; that does not by itself prove the broader production Course, provenance, licensing, or future registry-closure gates.
+A provider/tool failure emits no learning success fact. A malformed or oversized result is a typed failure, not partial credit. Course Pack V1 validation rejects unknown requirements and required AI-only terminal paths under its installed registry. Adaptive Studio's current publication gate validates its current Unit schemas, completion-criterion presence, finite graph, validation hash, Preview hash, and Change-review hash; it does not by itself certify broader content quality, provenance, licensing, or future registry closure. Any future Aptiloop-supplied first-party/sample Course requires those separate gates; the application intentionally bundles none.
 
 ## Mastery model
 
@@ -132,7 +132,7 @@ Current weights/hint penalties may be retained as kernel model version `baseline
 
 Scheduling is deterministic from facts plus an explicit observed clock. A model may suggest wording/content, but not set due dates, dismiss an item, or mark it complete.
 
-**Implemented baseline.** The kernel schedules due Review Items and preserves source fact/session provenance, but it does not infer an executable activity from that provenance. Later accepted evidence may already complete or supersede an item, and a learner review fact may dismiss one. The current Review surface has no typed server-verified executor, so its application DTO has `nextActionHref: null` and never reopens an originating lesson session. A future executor would add a verified Review-surface completion path; it is not the only way the kernel can transition an item.
+**Implemented baseline.** The kernel schedules due Review Items and preserves source fact/session provenance without treating that provenance as executable authority. The Review-surface executor resolves an opaque execution identity to the exact immutable scope and snapshot, accepts a bounded learner free response, and appends learner `submit` plus deterministic `complete` facts atomically. Participation does not assert correctness or mastery. Completion retains the exact completed cycle and derives a distinct successor due three days later under scheduler `baseline-1`. Later accepted evidence may independently complete or supersede an item, and learner intent may dismiss one; an originating lesson session is never reopened.
 
 ## Summary contract
 

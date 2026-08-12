@@ -160,7 +160,7 @@ type ModelOption = {
   value: string;
   label: string;
   disabled?: boolean;
-  disabledReason?: string;
+  description?: string;
 };
 
 const readinessStateKeys: Readonly<
@@ -195,12 +195,13 @@ function assignmentReadiness(
   if (connection.state === "authentication-required") {
     return { state: "authentication" };
   }
-  if (connection.state === "degraded") return { state: "degraded" };
-  if (connection.state !== "connected") return { state: "unavailable" };
+  if (connection.state !== "connected" && connection.state !== "degraded") {
+    return { state: "unavailable" };
+  }
 
   const observed = connection.observedCapabilities;
   if (!observed) return { state: "unknown" };
-  if (!observed.connection.authenticated) {
+  if (connection.state === "connected" && !observed.connection.authenticated) {
     return { state: "authentication" };
   }
   const model = observed.models.find(
@@ -241,7 +242,9 @@ function assignmentReadiness(
   if (unknownCapability) {
     return { state: "unknown", capability: unknownCapability };
   }
-  return { state: "ready" };
+  return {
+    state: connection.state === "degraded" ? "degraded" : "ready",
+  };
 }
 
 function aggregateReadiness(
@@ -253,10 +256,10 @@ function aggregateReadiness(
   );
   for (const state of [
     "authentication",
-    "degraded",
     "unavailable",
     "unsupported",
     "unknown",
+    "degraded",
   ] as const) {
     const match = readiness.find((candidate) => candidate.state === state);
     if (match) return match;
@@ -291,12 +294,16 @@ function modelDisabledReason(
   if (connection.state === "authentication-required") {
     return "settings.status.authentication";
   }
-  if (connection.state === "degraded") return "settings.status.degraded";
-  if (connection.state !== "connected") return "settings.status.unavailable";
+  if (connection.state !== "connected" && connection.state !== "degraded") {
+    return "settings.status.unavailable";
+  }
   if (!connection.observedCapabilities) {
     return "authoring.connected.state.unknown";
   }
-  if (!connection.observedCapabilities.connection.authenticated) {
+  if (
+    connection.state === "connected" &&
+    !connection.observedCapabilities.connection.authenticated
+  ) {
     return "settings.status.authentication";
   }
   if (!modelAvailable) return "settings.status.unavailable";
@@ -402,7 +409,7 @@ function ModelCombobox({
       normalizedQuery
         ? options.filter((option) =>
             normalizeTechnicalModelSearch(
-              `${option.label} ${option.disabledReason ?? ""}`,
+              `${option.label} ${option.description ?? ""}`,
             ).includes(normalizedQuery),
           )
         : options,
@@ -531,9 +538,9 @@ function ModelCombobox({
                   />
                   <span className="min-w-0 [overflow-wrap:anywhere]">
                     <span className="block">{option.label}</span>
-                    {option.disabledReason ? (
+                    {option.description ? (
                       <span className="mt-0.5 block text-xs text-muted-foreground">
-                        {option.disabledReason}
+                        {option.description}
                       </span>
                     ) : null}
                   </span>
@@ -1084,11 +1091,14 @@ export function SettingsForm() {
     (connection) =>
       (connection.observedCapabilities?.models ?? []).map((model) => {
         const reasonKey = modelDisabledReason(connection, model.available);
+        const descriptionKey =
+          reasonKey ??
+          (connection.state === "degraded" ? "settings.status.degraded" : null);
         return {
           value: exactSelectionValue(connection.connectionId, model.modelId),
           label: `${connection.displayName} · ${model.modelId}`,
           disabled: reasonKey !== null,
-          ...(reasonKey ? { disabledReason: t(reasonKey) } : {}),
+          ...(descriptionKey ? { description: t(descriptionKey) } : {}),
         };
       }),
   );

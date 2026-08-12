@@ -1,6 +1,6 @@
 # Lesson Engine
 
-**Document status:** **Implemented baseline** for current finite lesson adapters and kernel-owned progression; remaining intent-command and Review-executor work is an **Approved Core Alpha target**.
+**Document status:** **Implemented baseline** for current finite lesson adapters, kernel-owned progression, and typed due-Review execution; remaining intent-command work is an **Approved Core Alpha target**.
 **Purpose:** execute a finite Course activity graph while keeping transition authority out of the browser and model runtime.
 
 ## Implemented baseline
@@ -9,7 +9,7 @@
 
 **Implemented baseline.** Versioned lesson routes load the immutable Course/session snapshot, reject inactive or mismatched operations, persist typed learner/evaluator/check/reviewer facts, and apply the kernel projection transactionally. Recall, Teacher, quiz, code-reading, exercise, evidence-only Reviewer, interview, summary, and checkpoint paths retain their explicit completion criteria and provenance.
 
-**Implemented baseline.** Limitation: the kernel projects due Review Items and their source provenance, but no typed server-verified due-review executor is exposed. Aptiloop intentionally does not reopen an ordinary source session as a substitute; executable spaced review remains an **Approved Core Alpha target**.
+**Implemented baseline.** The Review surface resolves an opaque execution identity to the exact due Review Item, Course/revision/branch/session scope, source activity, and immutable authored snapshot. A bounded learner response and deterministic completion are appended atomically; the kernel retains the completed cycle and schedules a unique successor three days later. Participation changes no correctness or mastery. Source session/fact IDs remain provenance and never reopen an ordinary lesson session.
 
 **Implemented baseline.** Limitation: the compatibility unit PATCH still carries a requested target status, but it cannot set stored state directly: server-side completion criteria and the kernel transition table accept or reject the resulting event. Legacy rows remain readable; new target authority is not inferred from ambiguous historical state.
 
@@ -50,7 +50,7 @@ Publication validation requires:
 
 Unknown activity types or capabilities block publication. Preserving unknown JSON for a future version is not permission to execute or publish it.
 
-This paragraph is the **Approved Core Alpha target** closure rule. The **Implemented baseline** is narrower: Course Pack V1 validates its closed activity/requirement registry, while Adaptive Studio publication validates current Unit schemas, completion criteria, graph structure, and matching release hashes. Neither gate alone constitutes production Course content, provenance, safety, licensing, or every future renderer/capability approval.
+This paragraph is the **Approved Core Alpha target** closure rule. The **Implemented baseline** is narrower: Course Pack V1 validates its closed activity/requirement registry, while Adaptive Studio publication validates current Unit schemas, completion criteria, graph structure, and matching release hashes. Neither gate alone certifies the quality, provenance, safety, or licensing of user-selected content, nor every future renderer/capability. Any future Aptiloop-supplied first-party/sample Course requires its own content approval; the application itself intentionally bundles none.
 
 ## Activity Registry
 
@@ -149,9 +149,7 @@ Reviewer remains evidence-only and has no patch/apply route. Review requires a n
 
 ## Due Review execution boundary
 
-**Implemented baseline.** The Review surface may list due items, deterministic schedule state, and source provenance. Its boundary DTO fixes `nextActionHref` to `null`: the server never fabricates `/session`, and a source session ID is provenance rather than an executable Review target. The UI therefore exposes an unavailable-executor state instead of a Start/Open action.
-
-**Approved Core Alpha target.** Executable spaced review requires a typed server-owned executor that resolves the exact Course revision, Review Item, activity/content snapshot, and submitted completion evidence. That executor may expose a Review-surface action and append verified facts. It is not the kernel's only completion route: later accepted correction/mastery evidence may already complete or supersede an item, and learner intent may dismiss one.
+**Implemented baseline.** The Review surface lists due items, deterministic schedule state, and source provenance. A typed server-owned executor resolves an opaque execution ID to the exact Course revision, branch, Review Item, immutable activity/content snapshot, and source evidence. Its strict submission accepts only an operation ID and bounded free response, atomically appends participation and completion facts, and returns the server-derived successor date. Participation alone establishes neither correctness nor mastery. The server never fabricates `/session`; a source session ID remains provenance rather than browser authority. Later accepted correction/mastery evidence may independently complete or supersede an item, and learner intent may dismiss one.
 
 ## Snapshots, resume, and adaptation
 
@@ -169,7 +167,7 @@ Personal adaptation creates a new `personal` CourseRevision derived from the ups
 
 ## Failure behavior
 
-- Missing/unknown activity, capability, renderer, environment, check, source snapshot, or schema version: fail closed in the validator that owns that closed registry; fail session start if discovered in an unvalidated legacy snapshot. Current Studio publication covers its implemented Unit/graph/release-hash validators, not every production Course approval gate.
+- Missing/unknown activity, capability, renderer, environment, check, source snapshot, or schema version: fail closed in the validator that owns that closed registry; fail session start if discovered in an unvalidated legacy snapshot. Current Studio publication covers its implemented Unit/graph/release-hash validators, not every content-quality/provenance/licensing gate that would apply to a future first-party/sample Course.
 - Provider unavailable: preserve lesson state and return a typed blocked/retry/manual-alternative state. Never mark completion and never silently use Mock.
 - No-AI mode: registered manual paths remain usable. An AI-required activity without a validated manual alternative is visibly blocked, not auto-completed.
 - Duplicate operation with identical payload: return the prior result. Same operation ID with different payload: conflict.

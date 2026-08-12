@@ -336,7 +336,7 @@ Required states: activity loading, locked, ready, in progress, saving, validatio
 
 **Approved Core Alpha target**
 
-Desktop wireframe: URL-backed destinations **Due**, **Mistakes**, **Cards**, and **Interviews** sit above the main field; an optional detail rail may accompany the active destination. Each row exposes the persisted type, topic, reason, source evidence/date, and due state. Due rows do not render an executable Start action until the typed server-owned review executor exists.
+Desktop wireframe: URL-backed destinations **Due**, **Mistakes**, **Cards**, and **Interviews** sit above the main field; an optional detail rail may accompany the active destination. Each row exposes the persisted type, topic, reason, source evidence/date, and due state. Executable Due rows open the typed server-owned participation Activity by opaque execution identity; stale or unresolvable items fail closed and source-session provenance is never navigation authority.
 
 Mobile wireframe: the same four destinations use one labeled Select; compact rows open their supported detail or action without losing `?view=` state. Controls remain reachable above bottom navigation.
 

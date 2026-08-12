@@ -107,6 +107,201 @@ describe("ProviderHubRepository", () => {
     ]);
   });
 
+  it("retires a connection atomically while preserving its audit history", () => {
+    const { connection, repository } = fixture();
+    seedConfiguration(repository);
+    repository.createDisclosure({
+      operationId: "disclosure:retirement",
+      scope: {
+        role: "reviewer",
+        connectionId: "conn:pi:openai",
+        providerType: "openai",
+        modelId: "gpt-5.4",
+        destination: "OpenAI API",
+        payloadCategories: ["review-bundle"],
+        entityIds: { bundle: "bundle:retirement" },
+        exclusions: ["credentials"],
+        byteCount: 1024,
+        payloadSha256,
+      },
+      status: "pending",
+      createdAt: "2026-08-10T12:01:00.000Z",
+      approvedAt: null,
+      consumedAt: null,
+      expiresAt: "2026-08-10T12:11:00.000Z",
+    });
+    repository.recordProviderTurnStarted(
+      {
+        operationId: "turn:retirement",
+        connectionId: "conn:pi:openai",
+        providerType: "openai",
+        adapterId: "pi",
+        modelId: "gpt-5.4",
+        role: "reviewer",
+        toolPolicyId: "apt.role.reviewer.v1",
+        capabilityObservedAt: "2026-08-10T12:00:00.000Z",
+        disclosureOperationId: "disclosure:retirement",
+      },
+      "2026-08-10T12:02:00.000Z",
+    );
+
+    const retiredAt = "2026-08-10T12:03:00.000Z";
+    repository.retireConnection({
+      connectionId: "conn:pi:openai",
+      retiredAt,
+      applicationSetting: {
+        key: "providerHubManagedConnections",
+        valueJson: '{"version":1,"connections":[]}',
+        updatedAt: Date.parse(retiredAt),
+      },
+    });
+
+    expect(repository.listConnections()).toEqual([]);
+    expect(repository.listConnections({ includeRetired: true })).toEqual([
+      expect.objectContaining({
+        connectionId: "conn:pi:openai",
+        credentialRef: null,
+        enabled: false,
+        observedCapabilities: null,
+        state: "disabled",
+      }),
+    ]);
+    expect(repository.listRoleProfiles()).toEqual([
+      expect.objectContaining({
+        role: "reviewer",
+        mode: "no-ai",
+        connectionId: null,
+        modelId: null,
+        requiredCapabilities: [],
+        toolPolicyId: "apt.role.reviewer.v1",
+        budgets: {
+          maxInputBytes: 2_500_000,
+          maxOutputBytes: 100_000,
+          maxEvents: 1_000,
+          maxToolCalls: 2,
+          deadlineMs: 60_000,
+        },
+      }),
+    ]);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT retired_at, credential_ref, observed_capabilities_json
+           FROM provider_hub_connections WHERE connection_id = ?`,
+        )
+        .get("conn:pi:openai"),
+    ).toEqual({
+      retired_at: retiredAt,
+      credential_ref: null,
+      observed_capabilities_json: null,
+    });
+    expect(repository.getDisclosure("disclosure:retirement")).toMatchObject({
+      operationId: "disclosure:retirement",
+      scope: { connectionId: "conn:pi:openai" },
+    });
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT connection_id, status
+           FROM provider_turn_provenance WHERE operation_id = ?`,
+        )
+        .get("turn:retirement"),
+    ).toEqual({ connection_id: "conn:pi:openai", status: "started" });
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT value_json, updated_at
+           FROM application_settings WHERE key = ?`,
+        )
+        .get("providerHubManagedConnections"),
+    ).toEqual({
+      value_json: '{"version":1,"connections":[]}',
+      updated_at: Date.parse(retiredAt),
+    });
+    expect(() =>
+      repository.saveConnection({
+        ...repository.listConnections({ includeRetired: true })[0]!,
+        enabled: true,
+        state: "degraded",
+      }),
+    ).toThrow(/retired/u);
+  });
+
+  it("rolls back role reset and retirement when setting persistence fails", () => {
+    const { connection, repository } = fixture();
+    seedConfiguration(repository);
+    connection.sqlite
+      .prepare(
+        `INSERT INTO application_settings (key, value_json, updated_at)
+         VALUES (?, ?, ?)`,
+      )
+      .run("providerHubManagedConnections", '{"version":1}', 1);
+    connection.sqlite.exec(`
+      CREATE TRIGGER application_settings_retirement_test_guard
+      BEFORE UPDATE ON application_settings
+      BEGIN SELECT RAISE(ABORT, 'setting write failed'); END;
+    `);
+
+    expect(() =>
+      repository.retireConnection({
+        connectionId: "conn:pi:openai",
+        retiredAt: "2026-08-10T12:03:00.000Z",
+        applicationSetting: {
+          key: "providerHubManagedConnections",
+          valueJson: '{"version":1,"connections":[]}',
+          updatedAt: 2,
+        },
+      }),
+    ).toThrow(/setting write failed/u);
+
+    expect(repository.listConnections()).toEqual([
+      expect.objectContaining({
+        connectionId: "conn:pi:openai",
+        enabled: true,
+        state: "degraded",
+      }),
+    ]);
+    expect(repository.listRoleProfiles()).toEqual([
+      expect.objectContaining({
+        mode: "connection",
+        connectionId: "conn:pi:openai",
+        modelId: "gpt-5.4",
+      }),
+    ]);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT value_json, updated_at
+           FROM application_settings WHERE key = ?`,
+        )
+        .get("providerHubManagedConnections"),
+    ).toEqual({ value_json: '{"version":1}', updated_at: 1 });
+  });
+
+  it("validates retirement metadata before starting its transaction", () => {
+    const { repository } = fixture();
+    seedConfiguration(repository);
+
+    expect(() =>
+      repository.retireConnection({
+        connectionId: "conn:pi:openai",
+        retiredAt: "not-a-date",
+      }),
+    ).toThrow(/canonical ISO date-time/u);
+    expect(() =>
+      repository.retireConnection({
+        connectionId: "conn:pi:openai",
+        retiredAt: "2026-08-10T12:03:00.000Z",
+        applicationSetting: {
+          key: "providerHubManagedConnections",
+          valueJson: "not-json",
+          updatedAt: 1,
+        },
+      }),
+    ).toThrow(/valid JSON/u);
+    expect(repository.listConnections()).toHaveLength(1);
+  });
+
   it("persists an append-only disclosure approval and one-time consumption", () => {
     const { connection, repository } = fixture();
     seedConfiguration(repository);

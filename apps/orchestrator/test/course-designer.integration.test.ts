@@ -26,6 +26,7 @@ import {
 import { authoringDraftHash } from "../src/authoring-draft-hash.js";
 import { registerCurriculumEditorRoutes } from "../src/curriculum-editor.js";
 import { ProviderRuntime } from "../src/provider-runtime.js";
+import { testDevelopmentProviderFixture } from "./provider-development-fixture.js";
 
 const timestamp = "2026-08-10T00:00:00.000Z";
 const connections: DatabaseConnection[] = [];
@@ -100,6 +101,8 @@ class ProposalProvider implements AgentProvider {
   readonly createInputs: CreateAgentSessionInput[] = [];
   readonly streamInputs: StreamAgentMessageInput[] = [];
   readonly cancelCalls: string[] = [];
+  readonly createSignals: AbortSignal[] = [];
+  readonly activeSessionIds = new Set<string>();
   readonly #proposal: string;
   createSessionGate?: Promise<void>;
 
@@ -131,10 +134,15 @@ class ProposalProvider implements AgentProvider {
     }));
   }
 
-  async createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
+  async createSession(
+    input: CreateAgentSessionInput,
+    signal?: AbortSignal,
+  ): Promise<AgentSession> {
     this.createInputs.push(input);
+    if (signal) this.createSignals.push(signal);
     await this.createSessionGate;
-    return {
+    signal?.throwIfAborted();
+    const session: AgentSession = {
       id: `session:${this.createInputs.length}`,
       providerId: this.id,
       role: input.role,
@@ -143,6 +151,8 @@ class ProposalProvider implements AgentProvider {
       createdAt: timestamp,
       metadata: input.metadata,
     };
+    this.activeSessionIds.add(session.id);
+    return session;
   }
 
   async *streamMessage(
@@ -167,6 +177,7 @@ class ProposalProvider implements AgentProvider {
 
   async cancelSession(sessionId: string): Promise<void> {
     this.cancelCalls.push(sessionId);
+    this.activeSessionIds.delete(sessionId);
   }
 }
 
@@ -188,6 +199,7 @@ async function createRuntime(
     connection,
     providers,
     developmentMode: true,
+    developmentFixture: testDevelopmentProviderFixture,
   });
   const settings = await providerRuntime.settings();
   await providerRuntime.saveRoleProfiles(
@@ -302,7 +314,10 @@ describe("Course Designer", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "cancelled" });
     expect(runtime.mock.streamInputs).toHaveLength(0);
-    expect(runtime.mock.cancelCalls).toEqual(["session:1"]);
+    expect(runtime.mock.createSignals).toHaveLength(1);
+    expect(runtime.mock.createSignals[0]?.aborted).toBe(true);
+    expect(runtime.mock.activeSessionIds.size).toBe(0);
+    expect(runtime.mock.cancelCalls).toEqual([]);
     expect(
       runtime.connection.sqlite
         .prepare(

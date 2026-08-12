@@ -42,6 +42,45 @@ function fabric() {
 }
 
 describe("trusted Execution Fabric", () => {
+  it("cancels and drains a hanging trusted check during shutdown", async () => {
+    const current = createCoreExecutionFabric({
+      legacyNodeTestPlan: {
+        executable: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+        timeoutMs: 60_000,
+        maxOutputBytes: 1_000,
+      },
+    });
+    const root = await workspace();
+    const pending = current.run({
+      operationId: "operation-shutdown",
+      attemptId: "attempt-shutdown",
+      courseRevisionId: "revision-1",
+      activityId: "activity-shutdown",
+      workspacePath: root,
+      environmentId: LEGACY_NODE_ENVIRONMENT_ID,
+      checkIds: [LEGACY_NODE_TEST_CHECK_ID],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const firstClose = current.close();
+    const repeatedClose = current.close();
+    expect(repeatedClose).toBe(firstClose);
+    await expect(firstClose).resolves.toBeUndefined();
+    await expect(pending).resolves.toMatchObject({ status: "cancelled" });
+    await expect(
+      current.run({
+        operationId: "operation-after-shutdown",
+        attemptId: "attempt-shutdown",
+        courseRevisionId: "revision-1",
+        activityId: "activity-shutdown",
+        workspacePath: root,
+        environmentId: LEGACY_NODE_ENVIRONMENT_ID,
+        checkIds: [LEGACY_NODE_TEST_CHECK_ID],
+      }),
+    ).rejects.toThrow("Execution Fabric is shutting down");
+  });
+
   it("resolves only installed environment and check IDs", async () => {
     const current = fabric();
     const descriptors = current.listEnvironments();

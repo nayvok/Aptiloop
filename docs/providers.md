@@ -17,7 +17,7 @@ The Settings → Connections catalog exposes only reviewed Pi-backed adapters:
 | Anthropic API                  | API key                                      | Built-in endpoint and model catalog.                                                                                      |
 | Claude subscription            | Provider-owned subscription sign-in          | Uses the reviewed Anthropic auth flow.                                                                                    |
 | NVIDIA NIM                     | `NVIDIA_API_KEY`                             | Built-in NVIDIA model catalog; account limits and pricing remain provider-owned.                                          |
-| OpenCode Zen                   | `OPENCODE_API_KEY`                           | Recommended free starting point because the reviewed catalog includes free model IDs; availability and limits may change. |
+| OpenCode Zen                   | API key entered in Settings                  | Recommended free starting point because the reviewed catalog includes free model IDs; availability and limits may change. |
 | Google Gemini                  | `GEMINI_API_KEY`                             | Built-in endpoint and model catalog.                                                                                      |
 | OpenRouter                     | `OPENROUTER_API_KEY`                         | Built-in endpoint and model catalog.                                                                                      |
 | DeepSeek                       | `DEEPSEEK_API_KEY`                           | Built-in endpoint and model catalog.                                                                                      |
@@ -35,10 +35,10 @@ The Settings → Connections catalog exposes only reviewed Pi-backed adapters:
 1. Open **Settings → Connections → Add connection**.
 2. Choose one server-owned catalog entry and give the connection a local display name.
 3. For an API-key provider, enter the key. For a subscription provider, create the connection and complete the provider-owned sign-in prompts. For Ollama or LM Studio, enter the loopback URL and the exact installed model IDs.
-4. Verify the connection state and observed models. `connected` means an authenticated request was observed; configured credentials alone remain `degraded` until that observation.
+4. Review the connection state and observed models. **Configured · not yet tested** means the local credential is stored and the catalog is available, but no authenticated model request has completed yet. Its observed available models can be selected; the first real request may still fail explicitly. **Connected** means an authenticated request was observed.
 5. In **AI role profiles**, select the connection and one exact available model independently for Course Designer, Tutor, Evaluator, and Reviewer, then save all four profiles.
 
-A connection can serve several roles. Disabling a connection preserves history but makes dependent roles explicitly unavailable. Switching a role creates a new server-owned profile decision; it never rewrites prior turn provenance.
+A connection can serve several roles. Disabling a connection preserves history but makes dependent roles explicitly unavailable. Removing a managed connection erases Aptiloop's local credential and active configuration, turns dependent current roles to AI Off, and hides the connection from active Settings while retaining immutable disclosure and turn provenance. Removal does not claim to revoke a token at the provider; use the provider's account controls when upstream revocation is required. Switching a role creates a new server-owned profile decision; it never rewrites prior turn provenance.
 
 ## Custom OpenAI-compatible HTTPS boundary
 
@@ -56,7 +56,9 @@ Use Ollama or LM Studio for loopback endpoints. Do not expose a local model serv
 
 ## Credentials and privacy
 
-API keys and subscription tokens are stored in the app-owned local `.data/provider-credentials.json` credential file, scoped by connection ID, written atomically, and requested with owner-only POSIX file permissions where the platform supports them. They are never stored in SQLite, returned by settings APIs, included in Course Packs, prompts, role profiles, logs, model output, or browser-readable payloads. Replacing or signing out a credential is an explicit settings mutation.
+API keys and subscription tokens are stored connection-scoped in the app-owned `.data/provider-credentials.json` file and written atomically. On Windows, the file is a strict whole-file envelope protected with DPAPI `CurrentUser`; it can be decrypted only in the same Windows user context. A valid legacy plaintext file is migrated in memory and replaced only after encryption and durable temporary-file persistence succeed. If PowerShell 5.1, DPAPI, migration, or decryption is unavailable, provider credential loading fails explicitly and the original file is not overwritten; there is no plaintext fallback. On POSIX systems and in the Linux Compose profile, the file remains plaintext and Aptiloop requests owner-only modes where supported.
+
+DPAPI does not protect credentials from malware or another process already running as the same Windows user, and the ciphertext is intentionally not portable to another OS user or computer. A Windows password reset or profile corruption can also make it unrecoverable. The learning-data export excludes provider credentials, so reconnect providers after moving a profile. Migrating a legacy file cannot prove old plaintext bytes are absent from filesystem history, snapshots, sync services, or backups; rotate credentials when that assurance matters. Credentials are never stored in SQLite, returned by settings APIs, included in Course Packs, prompts, role profiles, logs, model output, or browser-readable payloads. Replacing or removing a local credential is an explicit settings mutation.
 
 External provider turns remain blocked until the UI shows the exact destination and data categories and the user approves the operation-scoped disclosure that is consumed once. The Provider Hub persists only bounded final content when product behavior requires it plus secret-free terminal provenance. General provider tool arguments/results and raw provider events are not persistence or browser contracts.
 
@@ -73,4 +75,4 @@ External provider turns remain blocked until the UI shows the exact destination 
 
 The Codex app-server and old OpenCode sidecar adapters remain historical migration boundaries and are blocked from learning roles. `npm start` launches Aptiloop only. Installed CLIs, sidecar health, or ambient credentials do not authorize a learning turn. The active OpenCode Zen connection uses the constrained pinned Pi adapter, not the legacy sidecar.
 
-Current provider evidence ownership is defined by the [Provider Hub architecture](architecture/provider-hub.md) and recorded by dated audits. The [2026-08-12 hardening audit](audits/2026-08-12-ui-ux-runtime-hardening.md) distinguishes the historical 2026-08-10 authenticated OpenCode Zen smoke from the absence of a fresh smoke for implementation `b542b32`.
+Current provider evidence ownership is defined by the [Provider Hub architecture](architecture/provider-hub.md) and recorded by dated audits. The [2026-08-12 hardening audit](audits/2026-08-12-ui-ux-runtime-hardening.md) preserves its historical cutoff. The later [production-readiness polish evidence](audits/2026-08-13-production-readiness-polish.md) records one fresh authenticated OpenCode Zen Tutor request on the working tree; it is not evidence for commit `b542b32`, every role, or every recovery path.

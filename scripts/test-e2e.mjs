@@ -598,7 +598,7 @@ function serviceLaunch(serviceName, port) {
         ownerWatchdog,
         "--import",
         "tsx",
-        path.join(root, "apps", "orchestrator", "src", "server.ts"),
+        path.join(root, "apps", "orchestrator", "test", "e2e-server.ts"),
       ],
       cwd: root,
     };

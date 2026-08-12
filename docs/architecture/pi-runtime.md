@@ -24,7 +24,7 @@
 
 ## What is actually available upstream
 
-**Pinned upstream evidence.** Upstream `pi-ai` exposes provider/model collections, explicit provider auth, streaming/completion, typed tool-call messages, TypeBox tool schemas, and runtime argument conversion/validation ([provider/model types](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai/src/models.ts#L60-L160), [tool types](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai/src/types.ts#L394-L454), [validation](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai/src/validation.ts)).
+**Pinned upstream evidence.** Upstream `pi-ai` exposes provider/model collections, explicit provider auth, streaming/completion, typed tool-call messages, TypeBox tool schemas, and runtime argument conversion/validation ([provider/model types](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai/src/models.ts#L60-L160), [tool types](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai/src/types.ts#L394-L454), [validation](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/packages/ai/src/utils/validation.ts)).
 
 **Pinned upstream evidence.** Upstream Pi has no built-in permission system for filesystem, process, network, or credentials and otherwise runs with launcher permissions ([official README](https://github.com/earendil-works/pi/blob/9dd90a49711d088b86fdd9b4aea575913a8328/README.md#L35-L41)). Therefore importing Pi or setting a prompt is not a security boundary.
 

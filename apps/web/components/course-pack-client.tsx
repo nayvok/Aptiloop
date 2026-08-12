@@ -85,12 +85,14 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { type MessageKey, useI18n } from "@/lib/i18n";
+import {
+  type LearningCourse,
+  type LearningCourseRevision,
+  learningCourseCollectionSchema,
+} from "@/lib/learning-courses";
 import { cn } from "@/lib/utils";
 
 const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-const courseRevisionHashSchema = z
-  .string()
-  .regex(/^(?:sha256:)?[0-9a-f]{64}$/u);
 const diagnosticSchema = z
   .object({
     code: z.string(),
@@ -186,44 +188,6 @@ const librarySchema = z
     packs: z.array(libraryItemSchema),
   })
   .strict();
-const learningCourseCollectionSchema = z
-  .object({
-    courses: z.array(
-      z
-        .object({
-          id: z.string(),
-          stableId: z.string(),
-          title: z.string(),
-          description: z.string().nullable(),
-          primaryLocale: z.string(),
-          selected: z.boolean(),
-          activeRevisionId: z.string().nullable(),
-          currentSessionId: z.string().nullable(),
-          revisions: z.array(
-            z
-              .object({
-                id: z.string(),
-                revisionNumber: z.number().int().positive(),
-                status: z.enum(["draft", "published", "archived"]),
-                branchKind: z.enum(["upstream", "personal"]),
-                contentHash: courseRevisionHashSchema.nullable(),
-                learningSummary: z
-                  .object({
-                    state: z.enum(["not-started", "in-progress", "completed"]),
-                    completedLessons: z.number().int().nonnegative(),
-                    totalLessons: z.number().int().nonnegative(),
-                    progressPercent: z.number().int().min(0).max(100),
-                    lastActivityAt: z.string().datetime().nullable(),
-                  })
-                  .strict(),
-              })
-              .strict(),
-          ),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
 const selectCourseResponseSchema = z
   .object({
     selected: z.literal(true),
@@ -259,9 +223,6 @@ type ValidationRequest = {
   selected: File;
   generation: number;
 };
-type LearningCourseCollection = z.infer<typeof learningCourseCollectionSchema>;
-type LearningCourse = LearningCourseCollection["courses"][number];
-type LearningCourseRevision = LearningCourse["revisions"][number];
 
 const statusLabels: Readonly<
   Record<CoursePackLibraryItem["revisionStatus"], MessageKey>
@@ -1444,7 +1405,7 @@ function CoursePackClient({
         courseItems.length === 0 ? (
           <EmptyState
             title={t("courses.library.empty.title")}
-            description={t("courses.current.noneDescription")}
+            description={t("courses.library.empty.description")}
             action={
               <div className="flex w-full flex-col justify-center gap-2 sm:w-auto sm:flex-row">
                 <Button asChild className="w-full sm:w-auto">

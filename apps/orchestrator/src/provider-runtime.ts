@@ -71,12 +71,24 @@ const TOOL_POLICY_BY_ROLE: Readonly<Record<AptiloopAiRole, string>> = {
   reviewer: "apt.role.reviewer.v1",
 };
 
+const LEGACY_SYNTHETIC_CONNECTION_IDS = [
+  "conn:pi:openai",
+  "conn:pi:opencode-zen",
+] as const;
+
+export interface DevelopmentProviderFixture {
+  readonly connection: ProviderConnection;
+  readonly modelId: string;
+  readonly assignedRoles: readonly AptiloopAiRole[];
+}
+
 export interface ProviderRuntimeOptions {
   readonly connection: DatabaseConnection;
-  readonly providers: Record<ProviderId, AgentProvider>;
+  readonly providers: Partial<Record<ProviderId, AgentProvider>>;
   readonly connectionProviders?: ReadonlyMap<string, AgentProvider>;
   readonly ensureProviders?: () => Promise<void>;
   readonly developmentMode: boolean;
+  readonly developmentFixture?: DevelopmentProviderFixture;
   readonly now?: () => Date;
 }
 
@@ -104,12 +116,24 @@ export interface ResolveProviderDispatchInput {
   readonly payload: string;
   readonly disclosureOperationId?: string;
   readonly metadata?: Readonly<Record<string, JsonValue>>;
+  readonly signal?: AbortSignal;
 }
 
 export interface ProviderDispatch extends ResolvedProviderTurn {
   readonly operationId: string;
   readonly agentRole: AgentRole;
   readonly payload: string;
+}
+
+interface ProviderConnectionLifecycle {
+  activeOperations: number;
+  retiring: boolean;
+  retired: boolean;
+}
+
+export interface ProviderConnectionRetirement {
+  readonly commit: () => void;
+  readonly rollback: () => void;
 }
 
 export interface ProviderRuntimeSettings {
@@ -126,12 +150,24 @@ interface ProviderSessionBudgetUsage {
 
 export class ProviderRuntime {
   readonly #repository: ProviderHubRepository;
-  readonly #providers: Record<ProviderId, AgentProvider>;
+  readonly #providers: Partial<Record<ProviderId, AgentProvider>>;
   readonly #connectionProviders: ReadonlyMap<string, AgentProvider>;
   readonly #ensureProviders: () => Promise<void>;
   readonly #developmentMode: boolean;
+  readonly #developmentFixture: DevelopmentProviderFixture | undefined;
   readonly #now: () => Date;
   readonly #sessionBudgetUsage = new Map<string, ProviderSessionBudgetUsage>();
+  readonly #connectionLifecycles = new Map<
+    string,
+    ProviderConnectionLifecycle
+  >();
+  readonly #activeDispatchConnections = new Map<string, string>();
+  readonly #activeStreamControllers = new Map<string, AbortController>();
+  readonly #activeStreams = new Set<Promise<void>>();
+  readonly #activeSetups = new Set<Promise<void>>();
+  readonly #shutdownController = new AbortController();
+  #closing: Promise<void> | null = null;
+  #shuttingDown = false;
 
   constructor(options: ProviderRuntimeOptions) {
     this.#repository = new ProviderHubRepository(options.connection);
@@ -139,10 +175,11 @@ export class ProviderRuntime {
     this.#connectionProviders = options.connectionProviders ?? new Map();
     this.#ensureProviders =
       options.ensureProviders ?? (() => Promise.resolve());
-    this.#developmentMode =
-      options.developmentMode ||
-      process.env.NODE_ENV === "development" ||
-      process.env.NODE_ENV === "test";
+    this.#developmentMode = options.developmentMode;
+    this.#developmentFixture = options.developmentFixture;
+    if (this.#developmentFixture && !this.#developmentMode) {
+      throw new Error("Development provider fixtures require development mode");
+    }
     this.#now = options.now ?? (() => new Date());
     this.#seedConfiguration();
   }
@@ -151,21 +188,35 @@ export class ProviderRuntime {
     await this.#refreshConnections();
     const hub = this.#hub();
     return {
-      connections: hub.listConnections(),
+      connections: hub
+        .listConnections()
+        .filter(
+          (connection) =>
+            !LEGACY_SYNTHETIC_CONNECTION_IDS.includes(
+              connection.connectionId as (typeof LEGACY_SYNTHETIC_CONNECTION_IDS)[number],
+            ) &&
+            (this.#developmentMode || connection.adapterId !== "mock"),
+        ),
       roleProfiles: hub.listRoleProfiles(),
     };
   }
-  async inspectRole(role: AgentRole): Promise<ResolvedProviderTurn> {
-    await this.#refreshConnections();
-    const inspected = this.#hub().inspect(toAptiloopAiRole(role));
-    const modelId = inspected.profile.modelId;
-    if (!modelId) {
-      throw new ProviderHubError(
-        "misconfigured",
-        `Role profile ${inspected.role} has no exact model`,
-      );
-    }
-    return { ...inspected, modelId, disclosure: null };
+  async inspectRole(
+    role: AgentRole,
+    signal?: AbortSignal,
+  ): Promise<ResolvedProviderTurn> {
+    return this.runSetup(async (combined) => {
+      await this.#refreshConnections(combined);
+      combined.throwIfAborted();
+      const inspected = this.#hub().inspect(toAptiloopAiRole(role));
+      const modelId = inspected.profile.modelId;
+      if (!modelId) {
+        throw new ProviderHubError(
+          "misconfigured",
+          `Role profile ${inspected.role} has no exact model`,
+        );
+      }
+      return { ...inspected, modelId, disclosure: null };
+    }, signal);
   }
 
   async saveRoleProfiles(
@@ -349,48 +400,88 @@ export class ProviderRuntime {
   async resolveDispatch(
     input: ResolveProviderDispatchInput,
   ): Promise<ProviderDispatch> {
-    await this.#refreshConnections();
-    const role = toAptiloopAiRole(input.role);
-    const profile = this.#hub().profileFor(role);
-    const payloadBytes = Buffer.byteLength(input.payload, "utf8");
-    if (payloadBytes > profile.budgets.maxInputBytes) {
+    if (this.#shuttingDown) {
       throw new ProviderHubError(
-        "budget_exceeded",
-        "Provider input exceeds the configured role budget",
+        "provider_unavailable",
+        "Provider runtime is shutting down",
       );
     }
-    const disclosure = input.disclosureOperationId
-      ? this.#repository.getDisclosure(input.disclosureOperationId)
-      : null;
-    const resolved = await this.#hub().resolveTurn({
-      role,
-      payloadSha256: sha256(input.payload),
-      disclosure,
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, this.#shutdownController.signal])
+      : this.#shutdownController.signal;
+    return this.#trackSetup(async () => {
+      await this.#refreshConnections(signal);
+      signal.throwIfAborted();
+      const role = toAptiloopAiRole(input.role);
+      const profile = this.#hub().profileFor(role);
+      if (profile.mode === "no-ai") {
+        throw new ProviderHubError(
+          "ai_disabled",
+          `AI is disabled for ${role}`,
+          { recoveryAction: "open-ai-settings" },
+        );
+      }
+      const payloadBytes = Buffer.byteLength(input.payload, "utf8");
+      if (payloadBytes > profile.budgets.maxInputBytes) {
+        throw new ProviderHubError(
+          "budget_exceeded",
+          "Provider input exceeds the configured role budget",
+        );
+      }
+      const disclosure = input.disclosureOperationId
+        ? this.#repository.getDisclosure(input.disclosureOperationId)
+        : null;
+      const connectionId = profile.connectionId;
+      if (!connectionId) {
+        throw new ProviderHubError(
+          "misconfigured",
+          `Role profile ${role} has no exact connection`,
+        );
+      }
+      const operationId = `provider-turn:${randomUUID()}`;
+      this.#reserveConnectionOperation(connectionId, operationId);
+      const now = this.#now().toISOString();
+      try {
+        const resolved = await this.#hub().resolveTurn({
+          role,
+          payloadSha256: sha256(input.payload),
+          disclosure,
+          signal,
+        });
+        signal.throwIfAborted();
+        if (resolved.connection.connectionId !== connectionId) {
+          throw new ProviderHubError(
+            "misconfigured",
+            "Provider connection changed while the turn was starting",
+          );
+        }
+        this.#repository.dispatchProviderTurn(
+          {
+            operationId,
+            connectionId: resolved.connection.connectionId,
+            providerType: resolved.connection.providerType,
+            adapterId: resolved.connection.adapterId,
+            modelId: resolved.modelId,
+            role,
+            toolPolicyId: resolved.toolPolicy.toolPolicyId,
+            capabilityObservedAt:
+              resolved.connection.observedCapabilities?.observedAt ?? null,
+            disclosureOperationId: resolved.disclosure?.operationId ?? null,
+            metadata: input.metadata ? { ...input.metadata } : undefined,
+          },
+          now,
+        );
+        return {
+          ...resolved,
+          operationId,
+          agentRole: input.role,
+          payload: input.payload,
+        };
+      } catch (error) {
+        this.#releaseConnectionOperation(operationId);
+        throw error;
+      }
     });
-    const operationId = `provider-turn:${randomUUID()}`;
-    const now = this.#now().toISOString();
-    this.#repository.dispatchProviderTurn(
-      {
-        operationId,
-        connectionId: resolved.connection.connectionId,
-        providerType: resolved.connection.providerType,
-        adapterId: resolved.connection.adapterId,
-        modelId: resolved.modelId,
-        role,
-        toolPolicyId: resolved.toolPolicy.toolPolicyId,
-        capabilityObservedAt:
-          resolved.connection.observedCapabilities?.observedAt ?? null,
-        disclosureOperationId: resolved.disclosure?.operationId ?? null,
-        metadata: input.metadata ? { ...input.metadata } : undefined,
-      },
-      now,
-    );
-    return {
-      ...resolved,
-      operationId,
-      agentRole: input.role,
-      payload: input.payload,
-    };
   }
 
   finishDispatch(
@@ -398,16 +489,177 @@ export class ProviderRuntime {
     status: "completed" | "failed" | "cancelled",
     failureCode: ProviderHubFailureCode | null = null,
   ): void {
-    this.#repository.recordProviderTurnFinished(
-      dispatch.operationId,
-      status,
-      this.#now().toISOString(),
-      failureCode,
+    try {
+      this.#repository.recordProviderTurnFinished(
+        dispatch.operationId,
+        status,
+        this.#now().toISOString(),
+        failureCode,
+      );
+    } finally {
+      this.#releaseConnectionOperation(dispatch.operationId);
+    }
+  }
+
+  beginConnectionRetirement(
+    connectionId: string,
+  ): ProviderConnectionRetirement {
+    const lifecycle = this.#connectionLifecycle(connectionId);
+    if (lifecycle.retiring || lifecycle.retired) {
+      throw new ProviderHubError(
+        "connection_disabled",
+        "Provider connection removal is already in progress or complete",
+      );
+    }
+    lifecycle.retiring = true;
+    if (lifecycle.activeOperations > 0) {
+      lifecycle.retiring = false;
+      throw new ProviderHubError(
+        "connection_disabled",
+        "This connection has an active AI request. Stop it before removing the connection.",
+      );
+    }
+    let settled = false;
+    const settle = (retired: boolean) => {
+      if (settled) return;
+      settled = true;
+      const current = this.#connectionLifecycles.get(connectionId);
+      if (current !== lifecycle) return;
+      current.retiring = false;
+      current.retired = retired;
+      if (!retired && current.activeOperations === 0) {
+        this.#connectionLifecycles.delete(connectionId);
+      }
+    };
+    return {
+      commit: () => settle(true),
+      rollback: () => settle(false),
+    };
+  }
+
+  assertDispatchCommitAllowed(
+    dispatch: Pick<ProviderDispatch, "connection" | "operationId">,
+  ): void {
+    const lifecycle = this.#connectionLifecycles.get(
+      dispatch.connection.connectionId,
     );
+    if (lifecycle?.retiring || lifecycle?.retired) {
+      throw new ProviderHubError(
+        "connection_disabled",
+        "Provider connection was removed before the operation committed",
+      );
+    }
+    if (!this.#activeDispatchConnections.has(dispatch.operationId)) {
+      throw new ProviderHubError(
+        "provider_error",
+        "Provider operation is no longer active",
+      );
+    }
+  }
+
+  #connectionLifecycle(connectionId: string): ProviderConnectionLifecycle {
+    const existing = this.#connectionLifecycles.get(connectionId);
+    if (existing) return existing;
+    const lifecycle: ProviderConnectionLifecycle = {
+      activeOperations: 0,
+      retiring: false,
+      retired: false,
+    };
+    this.#connectionLifecycles.set(connectionId, lifecycle);
+    return lifecycle;
+  }
+
+  #reserveConnectionOperation(
+    connectionId: string,
+    operationId: string,
+  ): ProviderConnectionLifecycle {
+    if (this.#shuttingDown) {
+      throw new ProviderHubError(
+        "provider_unavailable",
+        "Provider runtime is shutting down",
+      );
+    }
+    const lifecycle = this.#connectionLifecycle(connectionId);
+    if (lifecycle.retiring || lifecycle.retired) {
+      throw new ProviderHubError(
+        "connection_disabled",
+        "Provider connection removal is in progress or complete",
+        { recoveryAction: "open-ai-settings" },
+      );
+    }
+    lifecycle.activeOperations += 1;
+    this.#activeDispatchConnections.set(operationId, connectionId);
+    return lifecycle;
+  }
+
+  #releaseConnectionOperation(operationId: string): void {
+    const connectionId = this.#activeDispatchConnections.get(operationId);
+    if (!connectionId) return;
+    this.#activeDispatchConnections.delete(operationId);
+    const lifecycle = this.#connectionLifecycles.get(connectionId);
+    if (!lifecycle) return;
+    lifecycle.activeOperations = Math.max(0, lifecycle.activeOperations - 1);
+    if (lifecycle.activeOperations === 0 && !lifecycle.retiring) {
+      this.#connectionLifecycles.delete(connectionId);
+    }
   }
 
   releaseSession(providerSessionId: string): void {
     this.#sessionBudgetUsage.delete(providerSessionId);
+  }
+
+  beginShutdown(): void {
+    if (this.#shuttingDown) return;
+    this.#shuttingDown = true;
+    this.#shutdownController.abort(
+      new DOMException("Provider runtime is shutting down", "AbortError"),
+    );
+    for (const controller of this.#activeStreamControllers.values()) {
+      controller.abort(
+        new DOMException("Provider runtime is shutting down", "AbortError"),
+      );
+    }
+  }
+
+  close(): Promise<void> {
+    this.#closing ??= this.#close();
+    return this.#closing;
+  }
+
+  async #close(): Promise<void> {
+    this.beginShutdown();
+    const active = [...this.#activeSetups, ...this.#activeStreams];
+    if (active.length === 0) return;
+    await Promise.allSettled(active);
+  }
+
+  async runSetup<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const combined = signal
+      ? AbortSignal.any([signal, this.#shutdownController.signal])
+      : this.#shutdownController.signal;
+    return this.#trackSetup(async () => {
+      combined.throwIfAborted();
+      const result = await operation(combined);
+      combined.throwIfAborted();
+      return result;
+    });
+  }
+
+  async #trackSetup<T>(operation: () => Promise<T>): Promise<T> {
+    let finish!: () => void;
+    const active = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    this.#activeSetups.add(active);
+    try {
+      return await operation();
+    } finally {
+      this.#activeSetups.delete(active);
+      finish();
+    }
   }
 
   async *stream(
@@ -419,7 +671,13 @@ export class ProviderRuntime {
     const { budgets } = dispatch.profile;
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), budgets.deadlineMs);
-    const combined = AbortSignal.any([signal, deadline.signal]);
+    const streamController = new AbortController();
+    const combined = AbortSignal.any([
+      signal,
+      deadline.signal,
+      streamController.signal,
+      this.#shutdownController.signal,
+    ]);
     const usage = this.#sessionBudgetUsage.get(providerSessionId) ?? {
       inputBytes: 0,
       outputBytes: 0,
@@ -435,6 +693,12 @@ export class ProviderRuntime {
     let terminalReason: "completed" | "failed" | "cancelled" | null = null;
     let completedNormally = false;
     let cancellation: Promise<void> | null = null;
+    let finishActiveStream!: () => void;
+    const activeStream = new Promise<void>((resolve) => {
+      finishActiveStream = resolve;
+    });
+    this.#activeStreams.add(activeStream);
+    this.#activeStreamControllers.set(dispatch.operationId, streamController);
     const cancel = () => {
       cancellation ??= dispatch.provider
         .cancelSession(providerSessionId)
@@ -578,6 +842,14 @@ export class ProviderRuntime {
       clearTimeout(timer);
       combined.removeEventListener("abort", onAbort);
       if (!completedNormally) await cancel();
+      if (
+        this.#activeStreamControllers.get(dispatch.operationId) ===
+        streamController
+      ) {
+        this.#activeStreamControllers.delete(dispatch.operationId);
+      }
+      this.#activeStreams.delete(activeStream);
+      finishActiveStream();
     }
   }
 
@@ -600,84 +872,108 @@ export class ProviderRuntime {
     }
     const existingConnections = this.#repository.listConnections();
     if (
+      this.#developmentFixture &&
       !existingConnections.some(
-        ({ connectionId }) => connectionId === "conn:mock",
+        ({ connectionId }) =>
+          connectionId === this.#developmentFixture?.connection.connectionId,
       )
     ) {
-      this.#repository.saveConnection({
-        connectionId: "conn:mock",
-        adapterId: "mock",
-        providerType: "mock",
-        displayName: "Deterministic Mock",
-        credentialRef: null,
-        endpointProfileId: null,
-        enabled: this.#developmentMode,
-        external: false,
-        state: this.#developmentMode ? "connected" : "disabled",
-        observedCapabilities: null,
-        lastCheckedAt: null,
-      });
-    }
-    if (
-      !existingConnections.some(
-        ({ connectionId }) => connectionId === "conn:pi:openai",
-      )
-    ) {
-      this.#repository.saveConnection({
-        connectionId: "conn:pi:openai",
-        adapterId: "pi",
-        providerType: "openai",
-        displayName: "OpenAI via Pi",
-        credentialRef: "credential:openai:provider-owned",
-        endpointProfileId: null,
-        enabled: true,
-        external: true,
-        state: "degraded",
-        observedCapabilities: null,
-        lastCheckedAt: null,
-      });
-    }
-    if (
-      !existingConnections.some(
-        ({ connectionId }) => connectionId === "conn:pi:opencode-zen",
-      )
-    ) {
-      this.#repository.saveConnection({
-        connectionId: "conn:pi:opencode-zen",
-        adapterId: "opencode",
-        providerType: "opencode",
-        displayName: "OpenCode Zen via Pi",
-        credentialRef: "credential:opencode:provider-owned",
-        endpointProfileId: null,
-        enabled: true,
-        external: true,
-        state: "degraded",
-        observedCapabilities: null,
-        lastCheckedAt: null,
-      });
+      this.#repository.saveConnection(this.#developmentFixture.connection);
     }
     const existingProfiles = new Set(
       this.#repository.listRoleProfiles().map(({ role }) => role),
     );
     for (const role of AptiloopAiRoleSchema.options) {
       if (existingProfiles.has(role)) continue;
-      const useMock = this.#developmentMode && role !== "course-designer";
+      const useDevelopmentFixture =
+        this.#developmentFixture?.assignedRoles.includes(role) === true;
       this.#repository.saveRoleProfile({
         role,
-        mode: useMock ? "connection" : "no-ai",
-        connectionId: useMock ? "conn:mock" : null,
-        modelId: useMock ? "mock-deterministic" : null,
-        requiredCapabilities: useMock
+        mode: useDevelopmentFixture ? "connection" : "no-ai",
+        connectionId: useDevelopmentFixture
+          ? this.#developmentFixture?.connection.connectionId
+          : null,
+        modelId: useDevelopmentFixture
+          ? this.#developmentFixture?.modelId
+          : null,
+        requiredCapabilities: useDevelopmentFixture
           ? ["streaming", "models", "cancellation"]
           : [],
         toolPolicyId: TOOL_POLICY_BY_ROLE[role],
         budgets: DEFAULT_BUDGETS[role],
       });
     }
+    this.#retireLegacySyntheticConfiguration();
+    if (!this.#developmentMode) this.#retireDevelopmentProviderConnections();
   }
 
-  async #refreshConnections(): Promise<void> {
+  #retireLegacySyntheticConfiguration(): void {
+    for (const profile of this.#repository.listRoleProfiles()) {
+      if (
+        !profile.connectionId ||
+        !LEGACY_SYNTHETIC_CONNECTION_IDS.includes(
+          profile.connectionId as (typeof LEGACY_SYNTHETIC_CONNECTION_IDS)[number],
+        )
+      ) {
+        continue;
+      }
+      this.#repository.saveRoleProfile({
+        ...profile,
+        mode: "no-ai",
+        connectionId: null,
+        modelId: null,
+        requiredCapabilities: [],
+      });
+    }
+    for (const connection of this.#repository.listConnections()) {
+      if (
+        !LEGACY_SYNTHETIC_CONNECTION_IDS.includes(
+          connection.connectionId as (typeof LEGACY_SYNTHETIC_CONNECTION_IDS)[number],
+        )
+      ) {
+        continue;
+      }
+      this.#repository.saveConnection({
+        ...connection,
+        enabled: false,
+        state: "disabled",
+        observedCapabilities: null,
+        lastCheckedAt: this.#now().toISOString(),
+      });
+    }
+  }
+
+  #retireDevelopmentProviderConnections(): void {
+    for (const profile of this.#repository.listRoleProfiles()) {
+      if (!profile.connectionId) continue;
+      const connection = this.#repository
+        .listConnections()
+        .find(({ connectionId }) => connectionId === profile.connectionId);
+      if (connection?.adapterId !== "mock") continue;
+      this.#repository.saveRoleProfile({
+        ...profile,
+        mode: "no-ai",
+        connectionId: null,
+        modelId: null,
+        requiredCapabilities: [],
+      });
+    }
+    for (const connection of this.#repository.listConnections()) {
+      if (connection.adapterId !== "mock") continue;
+      this.#repository.saveConnection({
+        ...connection,
+        enabled: false,
+        state: "disabled",
+        observedCapabilities: null,
+        lastCheckedAt: this.#now().toISOString(),
+      });
+    }
+  }
+
+  async #refreshConnections(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     await this.#ensureProviders();
+    signal?.throwIfAborted();
     for (const connection of this.#repository.listConnections()) {
       if (!connection.enabled) {
         this.#repository.saveConnection({
@@ -689,7 +985,15 @@ export class ProviderRuntime {
         continue;
       }
       const provider = this.#providerForConnection(connection);
-      if (!provider) continue;
+      if (!provider) {
+        this.#repository.saveConnection({
+          ...connection,
+          state: "unavailable",
+          observedCapabilities: null,
+          lastCheckedAt: this.#now().toISOString(),
+        });
+        continue;
+      }
       if (connection.adapterId === "mock" && !this.#developmentMode) {
         this.#repository.saveConnection({
           ...connection,
@@ -702,11 +1006,12 @@ export class ProviderRuntime {
       }
       const checkedAt = this.#now().toISOString();
       try {
-        const status = await provider.getStatus();
+        const status = await provider.getStatus(signal);
         const models =
           status.state === "connected" || status.state === "degraded"
-            ? await provider.listModels().catch(() => [])
+            ? await provider.listModels(signal)
             : [];
+        signal?.throwIfAborted();
         this.#repository.saveConnection({
           ...connection,
           state: status.state,
@@ -735,6 +1040,7 @@ export class ProviderRuntime {
           lastCheckedAt: checkedAt,
         });
       } catch {
+        signal?.throwIfAborted();
         this.#repository.saveConnection({
           ...connection,
           state: "unavailable",
@@ -748,10 +1054,14 @@ export class ProviderRuntime {
   #providerForConnection(
     connection: ProviderConnection,
   ): AgentProvider | undefined {
-    return (
-      this.#connectionProviders.get(connection.connectionId) ??
-      this.#providers[connection.adapterId]
-    );
+    if (
+      this.#developmentFixture &&
+      connection.connectionId ===
+        this.#developmentFixture.connection.connectionId
+    ) {
+      return this.#providers.mock;
+    }
+    return this.#connectionProviders.get(connection.connectionId);
   }
 }
 

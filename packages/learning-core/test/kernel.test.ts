@@ -10,6 +10,7 @@ import {
   reduceLearningKernel,
   type LearningKernelActivity,
   type LearningKernelCommand,
+  type LearningKernelEvidenceBody,
   type LearningKernelFact,
   type LearningKernelFactBody,
   type LearningKernelFactProvenance,
@@ -62,7 +63,7 @@ function evidence(
   outcome: "unverified" | "incorrect" | "partial" | "correct",
   basisFactIds: readonly string[],
   errorFamily?: string,
-): LearningKernelFactBody {
+): LearningKernelEvidenceBody {
   return {
     type: "evidence",
     activityId: "activity-recall",
@@ -81,6 +82,76 @@ function reduce(
   value: LearningKernelCommand,
 ) {
   return reduceLearningKernel({ scope, activities, facts, command: value });
+}
+
+function scheduledReviewFixture() {
+  const attempt = reduce(
+    [],
+    command(
+      "operation-review-seed-attempt",
+      "fact-review-seed-attempt",
+      "2026-08-10T09:00:00.000Z",
+      learner,
+      evidence("unverified", []),
+    ),
+  );
+  const incorrect = reduce(
+    attempt.facts,
+    command(
+      "operation-review-seed-error",
+      "fact-review-seed-error",
+      "2026-08-10T09:00:01.000Z",
+      evaluator,
+      evidence("incorrect", ["fact-review-seed-attempt"], "wrong-key"),
+    ),
+  );
+  const review = incorrect.projection.reviewItems.find(
+    (item) => item.reasonCode === "mistake",
+  );
+  if (!review) throw new Error("Expected a scheduled mistake Review item");
+  return { attempt, incorrect, review };
+}
+
+function reviewSubmission(
+  reviewItemId: string,
+  observedAt: string,
+): LearningKernelCommand {
+  return command(
+    "operation-review-submit",
+    "fact-review-submit",
+    observedAt,
+    learner,
+    {
+      type: "review",
+      activityId: "activity-recall",
+      reviewItemId,
+      transition: "submit",
+      response: "The callback closes over the lexical binding.",
+      activitySnapshotHash: `sha256:${"c".repeat(64)}`,
+      executionContextHash: `sha256:${"e".repeat(64)}`,
+    },
+  );
+}
+
+function reviewCompletion(
+  reviewItemId: string,
+  observedAt: string,
+  provenance: LearningKernelFactProvenance = evaluator,
+  completionEvidenceFactId = "fact-review-submit",
+): LearningKernelCommand {
+  return command(
+    "operation-review-complete",
+    "fact-review-complete",
+    observedAt,
+    provenance,
+    {
+      type: "review",
+      activityId: "activity-recall",
+      reviewItemId,
+      transition: "complete",
+      completionEvidenceFactId,
+    },
+  );
 }
 
 describe("Learning Kernel", () => {
@@ -405,6 +476,219 @@ describe("Learning Kernel", () => {
         ),
       ),
     ).toThrow("Only a learner submission may dismiss");
+  });
+
+  it("completes a due Review cycle from learner participation and schedules the next cycle", () => {
+    const { incorrect, review } = scheduledReviewFixture();
+    const masteryBefore =
+      incorrect.projection.masteryByKnowledgeNode["node-1"]?.understanding;
+    const submitted = reduce(
+      incorrect.facts,
+      reviewSubmission(review.id, review.dueAt),
+    );
+    expect(
+      submitted.projection.reviewItems.find((item) => item.id === review.id),
+    ).toMatchObject({ state: "pending", completionEvidenceId: null });
+
+    const completed = reduce(
+      submitted.facts,
+      reviewCompletion(review.id, "2026-08-13T09:00:02.000Z"),
+    );
+    const completedCycle = completed.projection.reviewItems.find(
+      (item) => item.id === review.id,
+    );
+    const successor = completed.projection.reviewItems.find(
+      (item) =>
+        item.id !== review.id &&
+        item.reasonCode === review.reasonCode &&
+        item.state === "pending" &&
+        item.sourceFactIds.includes("fact-review-complete"),
+    );
+    expect(completedCycle).toMatchObject({
+      state: "completed",
+      completionEvidenceId: "fact-review-submit",
+      sourceFactIds: expect.arrayContaining([
+        "fact-review-submit",
+        "fact-review-complete",
+      ]),
+    });
+    expect(successor).toMatchObject({
+      dueAt: "2026-08-16T09:00:02.000Z",
+      state: "pending",
+      completionEvidenceId: null,
+    });
+    expect(successor?.id).not.toBe(review.id);
+    expect(
+      completed.projection.masteryByKnowledgeNode["node-1"]?.understanding,
+    ).toEqual(masteryBefore);
+
+    const completionFact = completed.acceptedFact!;
+    const replay = reduce(completed.facts, {
+      operationId: completionFact.operationId,
+      factId: completionFact.id,
+      observedAt: completionFact.occurredAt,
+      provenance: completionFact.provenance,
+      body: completionFact.body,
+    });
+    expect(replay).toMatchObject({ accepted: false, idempotent: true });
+    expect(replay.projection.projectionHash).toBe(
+      completed.projection.projectionHash,
+    );
+  });
+
+  it("binds a repeated Review series to its latest effective source activity", () => {
+    const firstAttempt = reduce(
+      [],
+      command(
+        "operation-review-source-first-attempt",
+        "fact-a-review-source-first-attempt",
+        "2026-08-10T09:00:00.000Z",
+        learner,
+        evidence("unverified", []),
+      ),
+    );
+    const firstEvaluation = reduce(
+      firstAttempt.facts,
+      command(
+        "operation-review-source-first-evaluation",
+        "fact-a-review-source-first-evaluation",
+        "2026-08-10T09:00:01.000Z",
+        evaluator,
+        evidence(
+          "incorrect",
+          ["fact-a-review-source-first-attempt"],
+          "repeated-gap",
+        ),
+      ),
+    );
+    const secondAttempt = reduce(
+      firstEvaluation.facts,
+      command(
+        "operation-review-source-second-attempt",
+        "fact-z-review-source-second-attempt",
+        "2026-08-10T10:00:00.000Z",
+        learner,
+        {
+          ...evidence("unverified", []),
+          activityId: "activity-apply",
+        },
+      ),
+    );
+    const secondEvaluation = reduce(
+      secondAttempt.facts,
+      command(
+        "operation-review-source-second-evaluation",
+        "fact-z-review-source-second-evaluation",
+        "2026-08-10T10:00:01.000Z",
+        evaluator,
+        {
+          ...evidence(
+            "incorrect",
+            ["fact-z-review-source-second-attempt"],
+            "repeated-gap",
+          ),
+          activityId: "activity-apply",
+        },
+      ),
+    );
+    const review = secondEvaluation.projection.reviewItems.find(
+      (item) => item.reasonCode === "mistake",
+    );
+    if (!review) throw new Error("Expected a repeated mistake Review item");
+
+    const submitted = reduce(
+      secondEvaluation.facts,
+      command(
+        "operation-review-source-submit",
+        "fact-review-source-submit",
+        review.dueAt,
+        learner,
+        {
+          type: "review",
+          activityId: "activity-apply",
+          reviewItemId: review.id,
+          transition: "submit",
+          response: "The later exercise exposed the repeated gap.",
+          activitySnapshotHash: `sha256:${"d".repeat(64)}`,
+          executionContextHash: `sha256:${"f".repeat(64)}`,
+        },
+      ),
+    );
+    expect(submitted.acceptedFact?.body).toMatchObject({
+      type: "review",
+      activityId: "activity-apply",
+    });
+  });
+
+  it("rejects a Review submission before the deterministic due instant", () => {
+    const { incorrect, review } = scheduledReviewFixture();
+    expect(() =>
+      reduce(
+        incorrect.facts,
+        reviewSubmission(review.id, "2026-08-13T09:00:00.999Z"),
+      ),
+    ).toThrow("cannot be submitted before it is due");
+  });
+
+  it("rejects forged or unbound Review completion", () => {
+    const { incorrect, review } = scheduledReviewFixture();
+    const submitted = reduce(
+      incorrect.facts,
+      reviewSubmission(review.id, review.dueAt),
+    );
+    expect(() =>
+      reduce(
+        submitted.facts,
+        reviewCompletion(review.id, "2026-08-13T09:00:02.000Z", learner),
+      ),
+    ).toThrow("Only a deterministic evaluator may complete");
+    expect(() =>
+      reduce(
+        incorrect.facts,
+        reviewCompletion(
+          review.id,
+          "2026-08-13T09:00:02.000Z",
+          evaluator,
+          "missing-submit",
+        ),
+      ),
+    ).toThrow("must cite an earlier learner Review submission");
+
+    const otherReview = submitted.projection.reviewItems.find(
+      (item) => item.id !== review.id && item.reasonCode === "low_mastery",
+    );
+    if (!otherReview) throw new Error("Expected the related mastery Review");
+    expect(() =>
+      reduce(
+        submitted.facts,
+        reviewCompletion(otherReview.id, "2026-08-13T09:00:02.000Z"),
+      ),
+    ).toThrow("must match the exact Review item and activity");
+  });
+
+  it("preserves the legacy baseline projection when no executor facts exist", () => {
+    const { incorrect } = scheduledReviewFixture();
+    const projected = projectLearningKernel({
+      scope,
+      activities,
+      facts: incorrect.facts,
+      observedAt: "2026-08-13T09:00:01.000Z",
+    });
+    expect(projected.projectionHash).toBe(
+      "sha256:e90c52ac42ed3b42b1510d34cd0c1ac00f42a06be8aa20c89a4973dc1d2275de",
+    );
+    expect(projected.reviewItems).toEqual([
+      expect.objectContaining({
+        reasonCode: "low_mastery",
+        state: "pending",
+        completionEvidenceId: null,
+      }),
+      expect.objectContaining({
+        reasonCode: "mistake",
+        state: "pending",
+        completionEvidenceId: null,
+      }),
+    ]);
   });
 
   it("is byte-stable under fact input order and enforces operation idempotency", () => {

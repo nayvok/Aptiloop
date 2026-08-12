@@ -17,6 +17,7 @@ import type { Hono } from "hono";
 import { assertCourseScopedSessionSideEffectAllowed } from "./learning-session-policy.js";
 import {
   providerFailureCode,
+  type ProviderDispatch,
   type ProviderRuntime,
 } from "./provider-runtime.js";
 import { z } from "zod";
@@ -596,7 +597,7 @@ export function registerInterviewV2Routes(
             });
             if (pending) return context.json(pending, 202);
           }
-          const question = await requestQuestion(
+          const turn = await requestQuestion(
             state,
             selection,
             interview,
@@ -606,13 +607,20 @@ export function registerInterviewV2Routes(
             context.req.raw.signal,
             body.disclosureOperationId,
           );
-          addMessage(state, {
-            conversationId: stored.setup.conversationId,
-            role: "assistant",
-            content: question,
-            status: "completed",
-            idempotencyKey: questionKey,
-          });
+          try {
+            state.providerRuntime.assertDispatchCommitAllowed(turn.dispatch);
+            addMessage(state, {
+              conversationId: stored.setup.conversationId,
+              role: "assistant",
+              content: turn.question,
+              status: "completed",
+              idempotencyKey: questionKey,
+            });
+            turn.finishCompleted();
+          } catch (error) {
+            turn.finishFailed(error);
+            throw error;
+          }
         } catch (error) {
           recordProviderFailure(state, stored.setup.conversationId, error);
           return providerFailureResponse(context, error);
@@ -889,7 +897,7 @@ async function ensureOpeningQuestion(
 ): Promise<void> {
   const key = messageKey(interview.id, "opening", stored.setup.operationId);
   if (findMessageByKey(state, key)) return;
-  const question = await requestQuestion(
+  const turn = await requestQuestion(
     state,
     selection,
     interview,
@@ -900,11 +908,13 @@ async function ensureOpeningQuestion(
     disclosureOperationId,
   );
   state.connection.sqlite.exec("BEGIN IMMEDIATE");
+  let committed = false;
   try {
+    state.providerRuntime.assertDispatchCommitAllowed(turn.dispatch);
     addMessage(state, {
       conversationId: stored.setup.conversationId,
       role: "assistant",
-      content: question,
+      content: turn.question,
       status: "completed",
       idempotencyKey: key,
     });
@@ -914,8 +924,13 @@ async function ensureOpeningQuestion(
       )
       .run(interview.id);
     state.connection.sqlite.exec("COMMIT");
+    committed = true;
+    turn.finishCompleted();
   } catch (error) {
-    state.connection.sqlite.exec("ROLLBACK");
+    if (!committed && state.connection.sqlite.isTransaction) {
+      state.connection.sqlite.exec("ROLLBACK");
+    }
+    turn.finishFailed(error);
     throw error;
   }
 }
@@ -929,11 +944,17 @@ async function requestQuestion(
   questionNumber: number,
   signal: AbortSignal,
   disclosureOperationId?: string,
-): Promise<string> {
+): Promise<{
+  readonly question: string;
+  readonly dispatch: ProviderDispatch;
+  readonly finishCompleted: () => void;
+  readonly finishFailed: (error: unknown) => void;
+}> {
   const prompt = buildQuestionPrompt(stored, transcript, questionNumber);
   const dispatch = await state.providerRuntime.resolveDispatch({
     role: "interviewer",
     payload: prompt,
+    signal,
     ...(disclosureOperationId ? { disclosureOperationId } : {}),
     metadata: {
       interviewId: interview.id,
@@ -961,16 +982,23 @@ async function requestQuestion(
     failureCode: ReturnType<typeof providerFailureCode> | null,
   ) => {
     if (dispatchFinished) return;
-    state.providerRuntime.finishDispatch(dispatch, status, failureCode);
     dispatchFinished = true;
+    state.providerRuntime.finishDispatch(dispatch, status, failureCode);
   };
   try {
-    const providerSession = await provider.createSession({
-      role: "interviewer",
-      modelId: dispatch.modelId,
-      systemPrompt: getLatestPrompt("interviewer").systemPrompt,
-      metadata: { interviewId: interview.id },
-    });
+    const providerSession = await state.providerRuntime.runSetup(
+      (setupSignal) =>
+        provider.createSession(
+          {
+            role: "interviewer",
+            modelId: dispatch.modelId,
+            systemPrompt: getLatestPrompt("interviewer").systemPrompt,
+            metadata: { interviewId: interview.id },
+          },
+          setupSignal,
+        ),
+      signal,
+    );
     providerSessionId = providerSession.id;
     if (
       providerSession.providerId !== dispatch.connection.adapterId ||
@@ -1027,8 +1055,13 @@ async function requestQuestion(
       );
     }
     const question = assertSafeQuestion(content.trim());
-    finishDispatch("completed", null);
-    return question;
+    return {
+      question,
+      dispatch,
+      finishCompleted: () => finishDispatch("completed", null),
+      finishFailed: (error) =>
+        finishDispatch("failed", providerFailureCode(error)),
+    };
   } catch (error) {
     const cancelled =
       signal.aborted ||

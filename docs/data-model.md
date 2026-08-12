@@ -1,6 +1,6 @@
-# M2–M11 Core Alpha Data Model
+# Core Alpha Data Model
 
-**Document status:** Course foundations, Course Pack lifecycle, replay-complete Learning Kernel persistence, trusted Execution Fabric identity, Provider Hub, Adaptive Studio, Course Designer, and per-Course learner state added through migrations `0006`–`0018` are an **Implemented baseline**. Destructive compatibility-table removal and PostgreSQL operation remain **Approved Core Alpha target**.
+**Document status:** Course foundations, Course Pack lifecycle, replay-complete Learning Kernel persistence, trusted Execution Fabric identity, Provider Hub, Adaptive Studio, Course Designer, per-Course learner state, and provider-connection retirement added through migrations `0006`–`0019` are an **Implemented baseline**. Destructive compatibility-table removal and PostgreSQL operation remain **Approved Core Alpha target**.
 
 ## Authority and boundaries
 
@@ -89,7 +89,7 @@ The evidence registry is closed to learner attempts, quiz/code-reading/exercise/
 
 `review_items` references one source Evidence fact in the same Course/revision/activity/session scope. Kind and status registries are closed. Review Items are projections; they do not replace their source fact.
 
-The Review queue preserves due state and source fact/session provenance, but provenance is not an executable target. The current boundary fixes `nextActionHref` to `null` until an **Approved Core Alpha target** typed due-review executor can resolve exact review content and append completion evidence; no ordinary source session is fabricated or reopened.
+The Review queue preserves due state and source fact/session provenance, but provenance is not executable authority. An opaque Review execution ID resolves server-side to one exact Course/revision/branch/session, Review Item, immutable activity snapshot, and source evidence. Submission appends bounded participation evidence and a deterministic completion fact, retains the completed cycle, and schedules a distinct successor; no ordinary source session is fabricated or reopened.
 
 **Implemented baseline.** Migration `0012_learning_kernel` adds immutable accepted facts, canonical replay projections, review/mistake/mastery state, and migration provenance/quarantine. New versioned learner operations are adapted into closed kernel facts and projected transactionally; replay from the same accepted frontier reproduces the stored canonical bytes/hash. Provable legacy progress is backfilled with source provenance, while ambiguous summaries remain immutable quarantine records. Legacy source rows and older projections remain readable for compatibility; they do not override kernel authority.
 
@@ -104,6 +104,8 @@ Migration `0013_execution_fabric` stores immutable app-distributed Environment P
 ### Provider Hub, Course Designer, and Interview recovery
 
 Migration `0014_provider_hub` stores secret-free connections, exact per-role profiles/tool policies, immutable `ai_disclosure_operations`, append-only disclosure events, and terminal minimized provider-turn provenance. A disclosure is bound to provider, connection, model, role, destination, entity scope, payload categories, byte count, payload SHA-256, and expiry. The disclosed payload is not stored in the disclosure record; approval is append-only and one exact operation may be consumed once.
+
+Migration `0019_provider_connection_retirement` adds a nullable provider-connection tombstone. Retirement transactionally resets dependent current role profiles to no-AI, disables and hides the active connection, clears live credential/capability references, and preserves the connection row plus disclosure and turn provenance as historical evidence.
 
 Migration `0016_course_designer_workflow` stores a version/authoring-operation-bound workflow request, finite state, immutable events, proposals, and immutable attribution. Pending-disclosure recovery re-resolves one exact Course version/workflow/authoring operation and reconstructs the brief from server-owned workflow/Draft/source state. Browser storage is not recovery authority, and unknown, ambiguous, cross-version, cancelled, consumed, or expired disclosures fail closed.
 
@@ -128,7 +130,7 @@ Migrations `0017_learner_course_state` and `0018_learner_course_state_trigger_gu
 | Migration run/provenance/quarantine         | Append during authorized migration           | Update blocked                             | Delete blocked                                                |
 | Environment Pack / trusted check descriptor | App-distributed insert                       | Update blocked                             | Delete blocked while referenced                               |
 | Execution artifact / review evidence bundle | Append once                                  | Update blocked                             | Delete blocked                                                |
-| Provider connection / RoleProfile           | Explicit settings mutation                   | Repository-controlled                      | History remains referenced                                    |
+| Provider connection / RoleProfile           | Explicit settings mutation                   | Repository-controlled                      | Active configuration retires; historical evidence remains     |
 | Disclosure operation / event                | Insert/append once                           | Update blocked                             | Delete blocked                                                |
 | Provider turn provenance                    | Insert as `started`                          | One terminal status/time/failure update    | Delete blocked                                                |
 | Course Designer workflow request/event      | Insert/append through finite workflow        | Request/event immutable                    | Delete blocked                                                |
@@ -149,9 +151,9 @@ The normative requirement is complete arithmetic reconciliation, valid closed st
 
 ## Exact admitted schemas
 
-Ordinary startup and writable CLIs admit only the exact current `0000`–`0018` migration ledger/schema/trigger contract. Dated observed schema hashes are recorded with migration evidence rather than embedded as a timeless domain invariant.
+Ordinary startup and writable CLIs admit only the exact current `0000`–`0019` migration ledger/schema/trigger contract. Dated observed schema hashes are recorded with migration evidence rather than embedded as a timeless domain invariant.
 
-The explicitly authorized, backup-bound migration CLI alone may admit exact predecessor stages from `0000`–`0005` through `0000`–`0017` long enough to apply every missing forward migration. Every path requires `integrity_check=ok`, zero foreign-key violations, the exact expected schema/triggers for its ledger, and complete private-payload inspection. The current contract additionally requires reconciled M2 provenance, zero target orphans, immutable Course Pack/kernel/execution/provider/authoring history, and coherent `learner_course_states`: at most one selected Course, a published active revision owned by that Course, and an optional current session whose active status and immutable Course context match exactly. Context insertion advances learner state only for an active session on a published target revision; completed and compatibility-only contexts do not mutate that state.
+The explicitly authorized, backup-bound migration CLI alone may admit exact predecessor stages from `0000`–`0005` through `0000`–`0018` long enough to apply every missing forward migration. Every path requires `integrity_check=ok`, zero foreign-key violations, the exact expected schema/triggers for its ledger, and complete private-payload inspection. The current contract additionally requires reconciled M2 provenance, zero target orphans, immutable Course Pack/kernel/execution/provider/authoring history, and coherent `learner_course_states`: at most one selected Course, a published active revision owned by that Course, and an optional current session whose active status and immutable Course context match exactly. Context insertion advances learner state only for an active session on a published target revision; completed and compatibility-only contexts do not mutate that state.
 
 ## Current cutover and limitations
 
