@@ -202,7 +202,7 @@ test("hydrates a collapsed desktop rail without an expanded-frame flash", async 
     })
     .toEqual({
       corner: [72, 72],
-      inset: [12, 12, 12, 12],
+      inset: [0, 12, 0, 12],
       railWidth: 72,
     });
 
