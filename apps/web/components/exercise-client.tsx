@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -13,15 +13,17 @@ import {
   FlaskIcon,
   LockKeyIcon,
   PlayIcon,
-  WarningCircleIcon,
+  StopIcon,
 } from "@phosphor-icons/react";
 import { z } from "zod";
 
 import { api } from "@/lib/api";
+import { presentFailure, SafeUiError } from "@/lib/failure-presentation";
 import { useI18n } from "@/lib/i18n";
 import type { RouteContext } from "@/lib/route-context";
 import { formatMinutesShort } from "@/lib/time";
 import { usePageRouteContext } from "@/components/page-route-context";
+import { RouteOrientation } from "@/components/route-orientation";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,7 +42,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { PageHeader } from "@/components/page-header";
-import { EmptyState, QueryError } from "@/components/query-state";
+import { EmptyState, SafeQueryError } from "@/components/query-state";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Separator } from "@/components/ui/separator";
 
@@ -73,6 +75,9 @@ const testRunSchema = z
       "failed",
       "backend_error",
       "cancelled",
+      "timed_out",
+      "resource_limit",
+      "unsupported_environment",
     ]),
     exitCode: z.number().int(),
     output: z.string(),
@@ -236,6 +241,50 @@ type TestRun = z.infer<typeof testRunSchema>;
 type Review = z.infer<typeof reviewSchema>;
 type Exercise = z.infer<typeof exerciseSchema>;
 type OwnedValue<T> = { ownerKey: string; value: T };
+type AbortableOperation = {
+  controller: AbortController;
+  ownerKey: string;
+  token: symbol;
+};
+
+class StoppedExerciseOperationError extends DOMException {
+  constructor(readonly operation: AbortableOperation) {
+    super("Exercise operation stopped", "AbortError");
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
+
+function throwIfStopped(operation: AbortableOperation): void {
+  if (operation.controller.signal.aborted) {
+    throw new StoppedExerciseOperationError(operation);
+  }
+}
+
+function normalizeOperationError(
+  error: unknown,
+  operation: AbortableOperation,
+): never {
+  if (operation.controller.signal.aborted || isAbortError(error)) {
+    throw new StoppedExerciseOperationError(operation);
+  }
+  throw error;
+}
+
+function ownsOperation(
+  current: AbortableOperation | null,
+  operation: AbortableOperation,
+): boolean {
+  return (
+    current?.token === operation.token &&
+    current.ownerKey === operation.ownerKey
+  );
+}
 
 function exerciseOwnerKey(exercise: Exercise): string {
   return [
@@ -253,7 +302,7 @@ function assertNoProtectedFields(value: unknown, errorMessage: string): void {
   if (!value || typeof value !== "object") return;
   for (const [key, nested] of Object.entries(value)) {
     if (protectedKeys.has(key)) {
-      throw new Error(errorMessage);
+      throw new SafeUiError(errorMessage);
     }
     assertNoProtectedFields(nested, errorMessage);
   }
@@ -299,6 +348,25 @@ export function ExerciseClient() {
   const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
   const [pendingReviewDisclosure, setPendingReviewDisclosure] =
     useState<OwnedValue<PendingReviewDisclosure> | null>(null);
+  const checksOperationRef = useRef<AbortableOperation | null>(null);
+  const reviewOperationRef = useRef<AbortableOperation | null>(null);
+  const pendingReviewDisclosureRef =
+    useRef<OwnedValue<PendingReviewDisclosure> | null>(null);
+  pendingReviewDisclosureRef.current = pendingReviewDisclosure;
+
+  useEffect(
+    () => () => {
+      checksOperationRef.current?.controller.abort();
+      reviewOperationRef.current?.controller.abort();
+      const pending = pendingReviewDisclosureRef.current;
+      if (pending) {
+        void api(`/ai/disclosures/${pending.value.disclosure.operationId}`, {
+          method: "DELETE",
+        }).catch(() => undefined);
+      }
+    },
+    [],
+  );
 
   const query = useQuery({
     queryKey: ["exercise", requestedSessionId ?? "current"],
@@ -318,7 +386,25 @@ export function ExerciseClient() {
   const currentOwnerKeyRef = useRef<string | null>(resolvedOwnerKey);
   currentOwnerKeyRef.current = resolvedOwnerKey;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (
+      checksOperationRef.current &&
+      checksOperationRef.current.ownerKey !== resolvedOwnerKey
+    ) {
+      checksOperationRef.current.controller.abort();
+    }
+    if (
+      reviewOperationRef.current &&
+      reviewOperationRef.current.ownerKey !== resolvedOwnerKey
+    ) {
+      reviewOperationRef.current.controller.abort();
+    }
+    const pending = pendingReviewDisclosureRef.current;
+    if (pending && pending.ownerKey !== resolvedOwnerKey) {
+      void api(`/ai/disclosures/${pending.value.disclosure.operationId}`, {
+        method: "DELETE",
+      }).catch(() => undefined);
+    }
     setLocalDiff((current) =>
       current?.ownerKey === resolvedOwnerKey ? current : null,
     );
@@ -339,7 +425,7 @@ export function ExerciseClient() {
     const exercise = query.data;
     const attemptId = exercise?.attempt?.id;
     if (!exercise || !attemptId) {
-      throw new Error(t("practice.error.attemptRequired"));
+      throw new SafeUiError(t("practice.error.attemptRequired"));
     }
     return {
       attemptId,
@@ -373,7 +459,8 @@ export function ExerciseClient() {
   const attempt = useMutation({
     mutationFn: async () => {
       const exercise = query.data;
-      if (!exercise) throw new Error(t("practice.error.exerciseNotLoaded"));
+      if (!exercise)
+        throw new SafeUiError(t("practice.error.exerciseNotLoaded"));
       const ownerKey = exerciseOwnerKey(exercise);
       if (
         exercise.exerciseUnitId &&
@@ -446,16 +533,25 @@ export function ExerciseClient() {
   const runTests = useMutation({
     mutationFn: async () => {
       const { attemptId, ownerKey } = getAttemptContext();
+      const operation = {
+        controller: new AbortController(),
+        ownerKey,
+        token: Symbol("exercise-check"),
+      } satisfies AbortableOperation;
+      checksOperationRef.current?.controller.abort();
+      checksOperationRef.current = operation;
       const testValue = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/checks`,
         {
           method: "POST",
+          signal: operation.controller.signal,
           body: JSON.stringify({
             operationId: crypto.randomUUID(),
             checkIds: ["apt.compat.node24.npm-test.v1"],
           }),
         },
-      );
+      ).catch((error: unknown) => normalizeOperationError(error, operation));
+      throwIfStopped(operation);
       const test = parseSafe(
         checkResponseSchema,
         testValue,
@@ -463,7 +559,9 @@ export function ExerciseClient() {
       );
       const diffValue = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/diff`,
-      );
+        { signal: operation.controller.signal },
+      ).catch((error: unknown) => normalizeOperationError(error, operation));
+      throwIfStopped(operation);
       const parsedDiff = parseSafe(
         diffResponseSchema,
         diffValue,
@@ -471,6 +569,7 @@ export function ExerciseClient() {
       );
       return {
         ownerKey,
+        operation,
         test: { ...test, workspaceCurrent: true } satisfies TestRun,
         diff: {
           patch: parsedDiff.diff,
@@ -479,13 +578,38 @@ export function ExerciseClient() {
         } satisfies Diff,
       };
     },
-    onSuccess: async ({ diff, ownerKey, test }) => {
+    onSuccess: async ({ diff, operation, ownerKey, test }) => {
+      if (!ownsOperation(checksOperationRef.current, operation)) return;
       if (currentOwnerKeyRef.current === ownerKey) {
         setLocalDiff({ ownerKey, value: diff });
         setLocalTest({ ownerKey, value: test });
         setLocalReview({ ownerKey, value: null });
       }
       await invalidatePractice();
+    },
+    onError: (error) => {
+      const operation =
+        error instanceof StoppedExerciseOperationError
+          ? error.operation
+          : checksOperationRef.current;
+      if (
+        isAbortError(error) &&
+        operation !== null &&
+        ownsOperation(checksOperationRef.current, operation) &&
+        currentOwnerKeyRef.current === operation.ownerKey
+      ) {
+        setWorkspaceNotice(t("practice.operation.stopped"));
+      }
+    },
+    onSettled: (data, error) => {
+      const operation =
+        data?.operation ??
+        (error instanceof StoppedExerciseOperationError
+          ? error.operation
+          : undefined);
+      if (operation && ownsOperation(checksOperationRef.current, operation)) {
+        checksOperationRef.current = null;
+      }
     },
   });
 
@@ -495,9 +619,18 @@ export function ExerciseClient() {
       disclosureOperationId: string;
     }) => {
       const { attemptId, ownerKey } = getAttemptContext();
+      const operation = {
+        controller: new AbortController(),
+        ownerKey,
+        token: Symbol("exercise-review"),
+      } satisfies AbortableOperation;
+      reviewOperationRef.current?.controller.abort();
+      reviewOperationRef.current = operation;
       const currentDiffValue = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/diff`,
-      );
+        { signal: operation.controller.signal },
+      ).catch((error: unknown) => normalizeOperationError(error, operation));
+      throwIfStopped(operation);
       const currentDiff = parseSafe(
         diffResponseSchema,
         currentDiffValue,
@@ -508,13 +641,14 @@ export function ExerciseClient() {
         query.data?.attempt?.diff.patch ??
         "";
       if (currentDiff.diff !== visiblePatch) {
-        throw new Error(t("practice.error.diffChanged"));
+        throw new SafeUiError(t("practice.error.diffChanged"));
       }
       const reviewOperationId = input?.reviewOperationId ?? crypto.randomUUID();
       const value = await api<unknown>(
         `/exercise-attempts/${encodeURIComponent(attemptId)}/reviews`,
         {
           method: "POST",
+          signal: operation.controller.signal,
           body: JSON.stringify({
             operationId: reviewOperationId,
             ...(input
@@ -522,12 +656,14 @@ export function ExerciseClient() {
               : { previewDisclosure: true }),
           }),
         },
-      );
+      ).catch((error: unknown) => normalizeOperationError(error, operation));
+      throwIfStopped(operation);
       const disclosure = disclosureResponseSchema.safeParse(value);
       if (disclosure.success) {
         return {
           kind: "disclosure" as const,
           ownerKey,
+          operation,
           reviewOperationId,
           disclosure: disclosure.data.disclosure,
         };
@@ -540,6 +676,7 @@ export function ExerciseClient() {
       return {
         kind: "review" as const,
         ownerKey,
+        operation,
         review: reviewSchema.parse({
           id: parsed.id,
           status: parsed.status,
@@ -551,6 +688,7 @@ export function ExerciseClient() {
       };
     },
     onSuccess: async (result) => {
+      if (!ownsOperation(reviewOperationRef.current, result.operation)) return;
       if (result.kind === "disclosure") {
         if (currentOwnerKeyRef.current === result.ownerKey) {
           setPendingReviewDisclosure({
@@ -567,6 +705,30 @@ export function ExerciseClient() {
         setLocalReview({ ownerKey: result.ownerKey, value: result.review });
       }
       await invalidatePractice();
+    },
+    onError: (error) => {
+      const operation =
+        error instanceof StoppedExerciseOperationError
+          ? error.operation
+          : reviewOperationRef.current;
+      if (
+        isAbortError(error) &&
+        operation !== null &&
+        ownsOperation(reviewOperationRef.current, operation) &&
+        currentOwnerKeyRef.current === operation.ownerKey
+      ) {
+        setWorkspaceNotice(t("practice.operation.stopped"));
+      }
+    },
+    onSettled: (data, error) => {
+      const operation =
+        data?.operation ??
+        (error instanceof StoppedExerciseOperationError
+          ? error.operation
+          : undefined);
+      if (operation && ownsOperation(reviewOperationRef.current, operation)) {
+        reviewOperationRef.current = null;
+      }
     },
   });
 
@@ -623,7 +785,9 @@ export function ExerciseClient() {
         test.status !== "passed" ||
         !test.workspaceCurrent
       ) {
-        throw new Error(t("practice.error.completionEvidenceUnavailable"));
+        throw new SafeUiError(
+          t("practice.error.completionEvidenceUnavailable"),
+        );
       }
 
       const exerciseStatus = exercise.exerciseUnitProgress?.status;
@@ -697,18 +861,29 @@ export function ExerciseClient() {
   usePageRouteContext(pageRouteContext);
 
   if (query.isLoading) {
-    return <LoadingState label="practice.loading" variant="page" />;
+    return (
+      <RouteOrientation
+        slot="exercise-loading"
+        title="unit.type.exercise"
+        description="page.exercise.description"
+      >
+        <LoadingState label="practice.loading" variant="page" />
+      </RouteOrientation>
+    );
   }
   if (query.isError || !query.data) {
     return (
-      <QueryError
-        message={
-          query.error instanceof Error
-            ? query.error.message
-            : t("practice.error.unavailable")
-        }
-        retry={() => void query.refetch()}
-      />
+      <RouteOrientation
+        slot="exercise-error"
+        title="unit.type.exercise"
+        description="page.exercise.description"
+      >
+        <SafeQueryError
+          error={query.error}
+          operation="exercise.load"
+          retry={() => void query.refetch()}
+        />
+      </RouteOrientation>
     );
   }
 
@@ -779,7 +954,19 @@ export function ExerciseClient() {
         ? "practice.testRun.status.passed"
         : latestTest.status === "failed"
           ? "practice.testRun.status.failed"
-          : "practice.testRun.status.stale"
+          : latestTest.status === "running"
+            ? "practice.testRun.status.running"
+            : latestTest.status === "cancelled"
+              ? "practice.testRun.status.cancelled"
+              : latestTest.status === "timed_out"
+                ? "practice.testRun.status.timedOut"
+                : latestTest.status === "resource_limit"
+                  ? "practice.testRun.status.resourceLimit"
+                  : latestTest.status === "unsupported_environment"
+                    ? "practice.testRun.status.unsupportedEnvironment"
+                    : latestTest.status === "backend_error"
+                      ? "practice.testRun.status.backendError"
+                      : "practice.testRun.status.stale"
       : "practice.testRun.empty",
   );
   const reviewStatusLabel = t(
@@ -821,8 +1008,8 @@ export function ExerciseClient() {
   const error =
     attempt.error ??
     loadDiff.error ??
-    runTests.error ??
-    runReview.error ??
+    (isAbortError(runTests.error) ? null : runTests.error) ??
+    (isAbortError(runReview.error) ? null : runReview.error) ??
     openZed.error ??
     acceptReview.error;
 
@@ -849,11 +1036,7 @@ export function ExerciseClient() {
         disclosureOperationId: pending.disclosure.operationId,
       });
     } catch (error) {
-      setWorkspaceNotice(
-        error instanceof Error
-          ? error.message
-          : t("practice.error.disclosureApprovalFailed"),
-      );
+      setWorkspaceNotice(presentFailure(error, "exercise.action", t).message);
     }
   }
 
@@ -892,19 +1075,8 @@ export function ExerciseClient() {
         }
       />
 
-      {error instanceof Error ? (
-        <div
-          role="alert"
-          className="flex min-w-0 items-start gap-3 rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-foreground"
-        >
-          <WarningCircleIcon
-            aria-hidden
-            className="mt-0.5 size-5 shrink-0 text-destructive"
-          />
-          <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-            {error.message}
-          </span>
-        </div>
+      {error ? (
+        <SafeQueryError error={error} operation="exercise.action" />
       ) : null}
 
       <section
@@ -1089,54 +1261,80 @@ export function ExerciseClient() {
                       : "practice.diff.refresh",
                   )}
                 </Button>
-                <Button
-                  data-slot="exercise-action-tests"
-                  className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
-                  size="sm"
-                  variant={
-                    currentPracticeAction === "tests"
-                      ? "default"
-                      : testsCurrent
-                        ? "ghost"
-                        : "outline"
-                  }
-                  aria-current={
-                    currentPracticeAction === "tests" ? "step" : undefined
-                  }
-                  disabled={!attemptId || runTests.isPending}
-                  onClick={() => runTests.mutate()}
-                >
-                  <PlayIcon data-icon="inline-start" aria-hidden />
-                  {t(
-                    runTests.isPending
-                      ? "practice.tests.running"
-                      : "practice.tests.run",
-                  )}
-                </Button>
-                <Button
-                  data-slot="exercise-action-review"
-                  className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
-                  size="sm"
-                  variant={
-                    currentPracticeAction === "review"
-                      ? "default"
-                      : review
-                        ? "ghost"
-                        : "outline"
-                  }
-                  aria-current={
-                    currentPracticeAction === "review" ? "step" : undefined
-                  }
-                  disabled={!reviewAllowed || runReview.isPending}
-                  onClick={() => runReview.mutate(undefined)}
-                >
-                  <FlaskIcon data-icon="inline-start" aria-hidden />
-                  {t(
-                    runReview.isPending
-                      ? "practice.review.running"
-                      : "practice.review.request",
-                  )}
-                </Button>
+                {runTests.isPending ? (
+                  <Button
+                    data-slot="exercise-action-tests-cancel"
+                    className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      checksOperationRef.current?.controller.abort()
+                    }
+                  >
+                    <StopIcon data-icon="inline-start" aria-hidden />
+                    {t("practice.tests.stop")}
+                  </Button>
+                ) : (
+                  <Button
+                    data-slot="exercise-action-tests"
+                    className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                    size="sm"
+                    variant={
+                      currentPracticeAction === "tests"
+                        ? "default"
+                        : testsCurrent
+                          ? "ghost"
+                          : "outline"
+                    }
+                    aria-current={
+                      currentPracticeAction === "tests" ? "step" : undefined
+                    }
+                    disabled={!attemptId}
+                    onClick={() => runTests.mutate()}
+                  >
+                    <PlayIcon data-icon="inline-start" aria-hidden />
+                    {t("practice.tests.run")}
+                  </Button>
+                )}
+                {runReview.isPending && !activePendingReviewDisclosure ? (
+                  <Button
+                    data-slot="exercise-action-review-cancel"
+                    className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      reviewOperationRef.current?.controller.abort()
+                    }
+                  >
+                    <StopIcon data-icon="inline-start" aria-hidden />
+                    {t("practice.review.stop")}
+                  </Button>
+                ) : (
+                  <Button
+                    data-slot="exercise-action-review"
+                    className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
+                    size="sm"
+                    variant={
+                      currentPracticeAction === "review"
+                        ? "default"
+                        : review
+                          ? "ghost"
+                          : "outline"
+                    }
+                    aria-current={
+                      currentPracticeAction === "review" ? "step" : undefined
+                    }
+                    disabled={!reviewAllowed || runReview.isPending}
+                    onClick={() => runReview.mutate(undefined)}
+                  >
+                    <FlaskIcon data-icon="inline-start" aria-hidden />
+                    {t(
+                      runReview.isPending
+                        ? "practice.review.running"
+                        : "practice.review.request",
+                    )}
+                  </Button>
+                )}
                 {review?.status === "passed" ? (
                   <Button
                     data-slot="exercise-action-acceptance"

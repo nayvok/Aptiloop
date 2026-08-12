@@ -41,6 +41,10 @@ const { apiMock, navigationState, setThemeMock } = vi.hoisted(() => {
         search = new URL(href, "http://localhost").search;
         notify();
       }),
+      replace: vi.fn((href: string) => {
+        search = new URL(href, "http://localhost").search;
+        notify();
+      }),
       setSearch: (next: string) => {
         search = next;
         notify();
@@ -60,7 +64,10 @@ vi.mock("next/navigation", async () => {
   const React = await import("react");
   return {
     usePathname: () => "/settings",
-    useRouter: () => ({ push: navigationState.push }),
+    useRouter: () => ({
+      push: navigationState.push,
+      replace: navigationState.replace,
+    }),
     useSearchParams: () =>
       new URLSearchParams(
         React.useSyncExternalStore(
@@ -376,6 +383,22 @@ describe("Settings v2", () => {
     expect(navigationState.push).toHaveBeenLastCalledWith(
       "/settings?section=advanced&source=recovery",
       { scroll: false },
+    );
+  });
+
+  it("canonicalizes an invalid section and preserves unrelated parameters", async () => {
+    navigationState.setSearch("?section=unknown&source=recovery");
+    renderSettings();
+
+    await waitFor(() => {
+      expect(navigationState.replace).toHaveBeenCalledWith(
+        "/settings?source=recovery",
+        { scroll: false },
+      );
+    });
+    expect(screen.getByRole("tab", { name: "Interface" })).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
   });
 

@@ -24,6 +24,7 @@ import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryError } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
@@ -101,11 +102,16 @@ export function HomeClient({
             sectionHref: "/courses",
             breadcrumbs: [
               { href: "/courses", label: "nav.courses" },
-              { text: routeCourse.title },
+              {
+                text: `${routeCourse.title} · ${t(
+                  "courses.library.revisionNumber",
+                  { revision: routeCourse.version.revision },
+                )}`,
+              },
             ],
           }
         : null,
-    [isRevisionPreview, routeCourse],
+    [isRevisionPreview, routeCourse, t],
   );
   usePageRouteContext(pageRouteContext);
   const surfaceSlot = isRevisionPreview ? "course-revision-preview" : "home";
@@ -150,23 +156,24 @@ export function HomeClient({
   });
 
   if (query.isLoading) {
+    if (!isRevisionPreview) {
+      return (
+        <div data-slot="home" className="flex flex-col gap-6 lg:gap-8">
+          <HomePageHeader />
+          <LoadingState label="home.loading" variant="page" />
+        </div>
+      );
+    }
+
     return (
       <div data-slot={surfaceSlot} className="flex flex-col gap-6 lg:gap-8">
-        {isRevisionPreview ? <RevisionPageHeader /> : <HomePageHeader />}
+        <RevisionPageHeader />
         <div
           role="status"
-          aria-label={
-            isRevisionPreview
-              ? t("authoring.loading.versions")
-              : t("home.loading")
-          }
+          aria-label={t("authoring.loading.versions")}
           className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6"
         >
-          <span className="sr-only">
-            {isRevisionPreview
-              ? t("authoring.loading.versions")
-              : t("home.loading")}
-          </span>
+          <span className="sr-only">{t("authoring.loading.versions")}</span>
           <div
             className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 rounded-panel bg-surface-soft/70 p-5 sm:p-6"
             aria-hidden

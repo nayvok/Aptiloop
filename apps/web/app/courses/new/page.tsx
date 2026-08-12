@@ -8,7 +8,8 @@ import {
   SparkleIcon,
 } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -38,12 +39,35 @@ const assistedPaths = [
   },
 ] as const;
 
-type AssistedPathId = (typeof assistedPaths)[number]["id"];
-
 export default function NewCoursePage() {
   const { t } = useI18n();
-  const [selectedPathId, setSelectedPathId] = useState<AssistedPathId>();
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedPathId = searchParams.get("path");
+  const selectedPathId = assistedPaths.find(
+    (path) => path.id === requestedPathId,
+  )?.id;
   const selectedPath = assistedPaths.find((path) => path.id === selectedPathId);
+  const searchParamString = searchParams.toString();
+
+  useEffect(() => {
+    if (requestedPathId === null || selectedPathId) return;
+    const next = new URLSearchParams(searchParamString);
+    next.delete("path");
+    const serialized = next.toString();
+    router.replace(serialized ? `${pathname}?${serialized}` : pathname, {
+      scroll: false,
+    });
+  }, [pathname, requestedPathId, router, searchParamString, selectedPathId]);
+
+  const selectPath = (value: string) => {
+    const nextPath = assistedPaths.find((path) => path.id === value)?.id;
+    if (!nextPath || nextPath === selectedPathId) return;
+    const next = new URLSearchParams(searchParamString);
+    next.set("path", nextPath);
+    router.push(`${pathname}?${next.toString()}`, { scroll: false });
+  };
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <div>
@@ -71,7 +95,7 @@ export default function NewCoursePage() {
         <RadioGroup
           data-slot="course-creation-paths"
           value={selectedPathId ?? null}
-          onValueChange={(value) => setSelectedPathId(value as AssistedPathId)}
+          onValueChange={selectPath}
           className="grid gap-3 md:grid-cols-2"
         >
           {assistedPaths.map((path) => {

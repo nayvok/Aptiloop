@@ -162,6 +162,36 @@ afterEach(() => {
 });
 
 describe("restart-safe v2 practice", () => {
+  it("keeps localized exercise orientation while loading and after failure", async () => {
+    apiMock.mockReturnValueOnce(new Promise(() => undefined));
+    const loading = renderWithQuery(<ExerciseClient />);
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "Практическое задание",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("Загружаю практику…")).toBeVisible();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    loading.unmount();
+
+    apiMock.mockRejectedValueOnce(new Error("raw exercise endpoint failure"));
+    renderWithQuery(<ExerciseClient />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Не удалось загрузить это упражнение.",
+    );
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "Практическое задание",
+      }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(
+      screen.queryByText("raw exercise endpoint failure"),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps practice locked until the exercise unit is available", async () => {
     const locked = {
       ...exerciseState(),
@@ -271,6 +301,126 @@ describe("restart-safe v2 practice", () => {
     expect(
       screen.queryByText("+ local session A change"),
     ).not.toBeInTheDocument();
+  });
+
+  it("does not let an aborted old-owner check clear or notify the new exercise", async () => {
+    const sessionA = exerciseState();
+    const sessionB = {
+      ...exerciseState(),
+      sessionId: "session-b",
+      title: "Session B exercise",
+    };
+    let resolveOldCheck!: (value: unknown) => void;
+    let oldSignal: AbortSignal | null = null;
+    apiMock.mockImplementation((requestPath: string, init?: RequestInit) => {
+      if (requestPath === "/exercises/current?sessionId=session-v2") {
+        return Promise.resolve(sessionA);
+      }
+      if (requestPath === "/exercises/current?sessionId=session-b") {
+        return Promise.resolve(sessionB);
+      }
+      if (requestPath.endsWith("/checks")) {
+        oldSignal = init?.signal ?? null;
+        return new Promise((resolve) => {
+          resolveOldCheck = resolve;
+        });
+      }
+      throw new Error(`Unexpected API path: ${requestPath}`);
+    });
+    const view = renderWithQuery(<ExerciseClient />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Запустить тесты" }),
+    );
+    await vi.waitFor(() => expect(oldSignal).not.toBeNull());
+
+    view.client.setQueryData(["exercise", "session-b"], sessionB);
+    searchState.value = "sessionId=session-b";
+    view.rerenderWithQuery(<ExerciseClient />);
+    expect(
+      await screen.findByRole("heading", { level: 1, name: sessionB.title }),
+    ).toBeVisible();
+    expect(oldSignal).not.toBeNull();
+    await vi.waitFor(() =>
+      expect((oldSignal as unknown as AbortSignal).aborted).toBe(true),
+    );
+    resolveOldCheck({
+      id: "late-old-test",
+      operationId: "late-old-operation",
+      status: "passed",
+      exitCode: 0,
+      output: "old owner late pass",
+      result: null,
+    });
+
+    await vi.waitFor(() =>
+      expect(screen.queryByText("old owner late pass")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText("Остановлено. Результат этой операции не применён."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("cancels an old-owner pending review disclosure on navigation", async () => {
+    const sessionA = exerciseState();
+    const sessionB = {
+      ...exerciseState(),
+      sessionId: "session-b",
+      title: "Session B exercise",
+    };
+    apiMock.mockImplementation((requestPath: string) => {
+      if (requestPath === "/exercises/current?sessionId=session-v2") {
+        return Promise.resolve(sessionA);
+      }
+      if (requestPath === "/exercises/current?sessionId=session-b") {
+        return Promise.resolve(sessionB);
+      }
+      if (requestPath.endsWith("/diff")) {
+        return Promise.resolve({
+          diff: "+ current learner change",
+          changed: true,
+          truncated: false,
+        });
+      }
+      if (requestPath.endsWith("/reviews")) {
+        return Promise.resolve({
+          kind: "disclosure",
+          required: true,
+          disclosure: {
+            operationId: "review-disclosure-old-owner",
+            status: "pending",
+            scope: {
+              destination: "Mock provider",
+              payloadCategories: ["workspace-diff"],
+              byteCount: 128,
+              exclusions: ["protected answers"],
+            },
+          },
+        });
+      }
+      if (requestPath === "/ai/disclosures/review-disclosure-old-owner") {
+        return Promise.resolve({ cancelled: true });
+      }
+      throw new Error(`Unexpected API path: ${requestPath}`);
+    });
+    const view = renderWithQuery(<ExerciseClient />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Запросить проверку" }),
+    );
+    expect(await screen.findByRole("alertdialog")).toBeVisible();
+
+    view.client.setQueryData(["exercise", "session-b"], sessionB);
+    searchState.value = "sessionId=session-b";
+    view.rerenderWithQuery(<ExerciseClient />);
+    expect(
+      await screen.findByRole("heading", { level: 1, name: sessionB.title }),
+    ).toBeVisible();
+    await vi.waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith(
+        "/ai/disclosures/review-disclosure-old-owner",
+        { method: "DELETE" },
+      ),
+    );
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("keeps technical evidence and reviewer details collapsed until keyboard activation", async () => {
@@ -546,6 +696,107 @@ describe("restart-safe v2 practice", () => {
         },
       },
     });
+  });
+
+  it("stops trusted checks and ignores a late result", async () => {
+    let resolveCheck!: (value: unknown) => void;
+    let checkSignal: AbortSignal | null = null;
+    apiMock.mockImplementation((requestPath: string, init?: RequestInit) => {
+      if (requestPath.includes("/exercises/current")) {
+        return Promise.resolve(
+          exerciseState({ testStatus: "failed", review: null }),
+        );
+      }
+      if (requestPath.endsWith("/checks")) {
+        checkSignal = init?.signal ?? null;
+        return new Promise((resolve) => {
+          resolveCheck = resolve;
+        });
+      }
+      throw new Error(`Unexpected API path: ${requestPath}`);
+    });
+    renderWithQuery(<ExerciseClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Запустить тесты" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Остановить тесты" }),
+    );
+
+    expect(checkSignal).not.toBeNull();
+    expect((checkSignal as unknown as AbortSignal).aborted).toBe(true);
+    resolveCheck({
+      id: "late-test",
+      operationId: "late-operation",
+      status: "passed",
+      exitCode: 0,
+      output: "late pass",
+      result: null,
+    });
+    expect(
+      await screen.findByText(
+        "Остановлено. Результат этой операции не применён.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("late pass")).not.toBeInTheDocument();
+  });
+
+  it("stops a reviewer request and keeps late output non-authoritative", async () => {
+    let resolveReview!: (value: unknown) => void;
+    let reviewSignal: AbortSignal | null = null;
+    apiMock.mockImplementation((requestPath: string, init?: RequestInit) => {
+      if (requestPath.includes("/exercises/current")) {
+        return Promise.resolve(exerciseState());
+      }
+      if (requestPath.endsWith("/diff")) {
+        return Promise.resolve({
+          diff: "+ current learner change",
+          changed: true,
+          truncated: false,
+        });
+      }
+      if (requestPath.endsWith("/reviews")) {
+        reviewSignal = init?.signal ?? null;
+        return new Promise((resolve) => {
+          resolveReview = resolve;
+        });
+      }
+      throw new Error(`Unexpected API path: ${requestPath}`);
+    });
+    renderWithQuery(<ExerciseClient />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Запросить проверку" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Остановить проверку" }),
+    );
+
+    expect(reviewSignal).not.toBeNull();
+    expect((reviewSignal as unknown as AbortSignal).aborted).toBe(true);
+    resolveReview({
+      id: "late-review",
+      status: "passed",
+      summary: "late reviewer output",
+      findings: [],
+      strengths: ["late"],
+      suggestedMasteryChanges: [],
+      evidenceBundle: {
+        id: "late-bundle",
+        sha256: `sha256:${"a".repeat(64)}`,
+        workspaceSnapshotHash: `sha256:${"b".repeat(64)}`,
+      },
+    });
+    expect(
+      await screen.findByText(
+        "Остановлено. Результат этой операции не применён.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("late reviewer output")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Принять проверку и продолжить" }),
+    ).not.toBeInTheDocument();
   });
 
   it("resolves the server current session and rejects protected leaks before rendering", async () => {

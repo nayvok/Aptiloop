@@ -238,6 +238,28 @@ export function registerCoursePackRoutes(
         context.req.param("validationId"),
       );
       const body = commitSchema.parse(await context.req.json());
+      try {
+        const reconciled = repository.reconcileInstall({
+          operationId: body.operationId,
+          validationId,
+          action: body.action,
+          expectedContentHash: body.expectedContentHash,
+        });
+        if (reconciled) {
+          return context.json({
+            result: reconciled,
+            openPath: coursePackOpenPath(reconciled),
+          });
+        }
+      } catch (error) {
+        if (error instanceof CoursePackRepositoryError) {
+          return context.json(
+            { error: error.message, code: error.code },
+            error.code === "not_found" ? 404 : 409,
+          );
+        }
+        throw error;
+      }
       const entry = staged.get(validationId);
       if (!entry) {
         return context.json(
@@ -276,6 +298,7 @@ export function registerCoursePackRoutes(
         try {
           result = repository.install({
             operationId: body.operationId,
+            validationId,
             action: body.action,
             sourceBytesHash: entry.sourceBytesHash,
             pack: validation.pack,
@@ -294,10 +317,7 @@ export function registerCoursePackRoutes(
         return context.json(
           {
             result,
-            openPath:
-              body.action === "install"
-                ? `/courses/${encodeURIComponent(result.courseId)}/revisions/${encodeURIComponent(result.revisionId)}`
-                : null,
+            openPath: coursePackOpenPath(result),
           },
           result.installed ? 201 : 200,
         );
@@ -352,6 +372,16 @@ export function registerCoursePackRoutes(
       throw error;
     }
   });
+}
+
+function coursePackOpenPath(result: {
+  action: "install" | "open-as-draft";
+  courseId: string;
+  revisionId: string;
+}): string | null {
+  return result.action === "install"
+    ? `/courses/${encodeURIComponent(result.courseId)}/revisions/${encodeURIComponent(result.revisionId)}`
+    : null;
 }
 
 async function readBoundedBody(

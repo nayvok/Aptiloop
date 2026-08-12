@@ -61,7 +61,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Field, FieldDescription, FieldGroup } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+} from "@/components/ui/field";
 import {
   InputGroup,
   InputGroupAddon,
@@ -244,6 +249,12 @@ const commitResponseSchema = z
 type ValidationResponse = z.infer<typeof validationResponseSchema>;
 type CoursePackLibraryItem = z.infer<typeof libraryItemSchema>;
 type InstallAction = "install" | "open-as-draft";
+type CommitRequest = {
+  operationId: string;
+  validationId: string;
+  action: InstallAction;
+  expectedContentHash: string;
+};
 type ValidationRequest = {
   selected: File;
   generation: number;
@@ -305,6 +316,17 @@ function getErrorStatus(error: unknown): number | null {
     : null;
 }
 
+function isTerminalCommitFailure(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  return (
+    status !== null &&
+    status >= 400 &&
+    status < 500 &&
+    status !== 408 &&
+    status !== 429
+  );
+}
+
 function getErrorCode(error: unknown): string | null {
   return error &&
     typeof error === "object" &&
@@ -314,15 +336,63 @@ function getErrorCode(error: unknown): string | null {
     : null;
 }
 
+function getSafeErrorDiagnostic(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as {
+    status?: unknown;
+    code?: unknown;
+    failure?: { diagnosticId?: unknown };
+  };
+  const diagnosticId = candidate.failure?.diagnosticId;
+  if (
+    typeof diagnosticId === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u.test(diagnosticId)
+  ) {
+    return diagnosticId;
+  }
+  const status =
+    typeof candidate.status === "number" &&
+    Number.isInteger(candidate.status) &&
+    candidate.status >= 100 &&
+    candidate.status <= 599
+      ? candidate.status
+      : null;
+  const code =
+    typeof candidate.code === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/u.test(candidate.code)
+      ? candidate.code
+      : null;
+  if (status !== null && code) return `HTTP ${status} · ${code}`;
+  if (status !== null) return `HTTP ${status}`;
+  return code;
+}
+
 function hasValidationExpired(validation: ValidationResponse): boolean {
   return Date.parse(validation.expiresAt) <= Date.now();
+}
+
+function createCommitRequest(
+  validation: Extract<ValidationResponse, { valid: true }>,
+  action: InstallAction,
+): CommitRequest {
+  return {
+    operationId: `course-pack:${validation.validationId}:${action}`,
+    validationId: validation.validationId,
+    action,
+    expectedContentHash: validation.preview.contentHash,
+  };
 }
 
 type CourseListItem = {
   course: LearningCourse;
   revision: LearningCourseRevision;
   current: boolean;
-  importedRevisions: readonly CoursePackLibraryItem[];
+  revisionEntries: readonly CourseRevisionLibraryEntry[];
+  packItem?: CoursePackLibraryItem;
+};
+
+type CourseRevisionLibraryEntry = {
+  revision: LearningCourseRevision;
   packItem?: CoursePackLibraryItem;
 };
 
@@ -347,6 +417,18 @@ function courseLibraryHref(
   else next.set("filter", filter);
   if (page === 1) next.delete("page");
   else next.set("page", String(page));
+  const query = next.toString();
+  return query ? `/courses?${query}` : "/courses";
+}
+
+function canonicalCourseLibraryHref(
+  current: { toString(): string },
+  filter: CourseFilter,
+  page: number,
+): string {
+  const next = new URLSearchParams(current.toString());
+  if (filter === "all") next.delete("filter");
+  if (page === 1) next.delete("page");
   const query = next.toString();
   return query ? `/courses?${query}` : "/courses";
 }
@@ -412,14 +494,18 @@ function CoursePackClient({
   const [file, setFile] = useState<File | null>(null);
   const [validation, setValidation] = useState<ValidationResponse | null>(null);
   const [validationFailed, setValidationFailed] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [expiredValidationId, setExpiredValidationId] = useState<string | null>(
     null,
   );
   const [commitConfirmation, setCommitConfirmation] =
     useState<InstallAction | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileDescriptionId = useId();
+  const fileErrorId = useId();
   const currentFileRef = useRef<File | null>(null);
   const validationGenerationRef = useRef(0);
+  const commitRequestRef = useRef<CommitRequest | null>(null);
   const urlCourseSearch = searchParams.get("q") ?? "";
   const parsedUrlCourseFilter = courseFilterSchema.safeParse(
     searchParams.get("filter"),
@@ -428,6 +514,10 @@ function CoursePackClient({
     ? parsedUrlCourseFilter.data
     : "all";
   const urlCoursePage = parseCoursePage(searchParams.get("page"));
+  const courseLibraryUrlIsCanonical =
+    (searchParams.get("filter") === null ||
+      (parsedUrlCourseFilter.success && urlCourseFilter !== "all")) &&
+    (searchParams.get("page") === null || urlCoursePage !== 1);
   const [courseSearch, setCourseSearch] = useState(urlCourseSearch);
   const [courseFilter, setCourseFilter] =
     useState<CourseFilter>(urlCourseFilter);
@@ -447,6 +537,22 @@ function CoursePackClient({
     setCourseFilter(urlCourseFilter);
     setCoursePage(urlCoursePage);
   }, [urlCourseFilter, urlCoursePage, urlCourseSearch, view]);
+
+  useEffect(() => {
+    if (view !== "library" || courseLibraryUrlIsCanonical) return;
+    router.replace(
+      canonicalCourseLibraryHref(searchParams, urlCourseFilter, urlCoursePage),
+      { scroll: false },
+    );
+  }, [
+    courseLibraryUrlIsCanonical,
+    router,
+    searchParams,
+    urlCourseFilter,
+    urlCoursePage,
+    urlCourseSearch,
+    view,
+  ]);
 
   const library = useQuery({
     queryKey: ["course-packs"],
@@ -509,6 +615,7 @@ function CoursePackClient({
         return;
       }
       setValidationFailed(false);
+      setValidationError(null);
       if (view === "import") {
         setExpiredValidationId(null);
         setCommitConfirmation(null);
@@ -532,14 +639,18 @@ function CoursePackClient({
         return;
       }
       setValidationFailed(true);
-      toast.error(
-        error instanceof Error ? error.message : t("courses.alert.errorTitle"),
-      );
+      setValidationError(getSafeErrorDiagnostic(error));
     },
   });
   const commit = useMutation({
-    mutationFn: async (action: InstallAction) => {
+    mutationFn: async (request: CommitRequest) => {
       if (!activeValidation?.valid) {
+        throw new Error(t("courses.error.validateFirst"));
+      }
+      if (
+        activeValidation.validationId !== request.validationId ||
+        activeValidation.preview.contentHash !== request.expectedContentHash
+      ) {
         throw new Error(t("courses.error.validateFirst"));
       }
       if (hasValidationExpired(activeValidation)) {
@@ -551,15 +662,15 @@ function CoursePackClient({
           {
             method: "POST",
             body: JSON.stringify({
-              operationId: globalThis.crypto.randomUUID(),
-              action,
-              expectedContentHash: activeValidation.preview.contentHash,
+              operationId: request.operationId,
+              action: request.action,
+              expectedContentHash: request.expectedContentHash,
             }),
           },
         ),
       );
     },
-    onSuccess: async (result) => {
+    onSuccess: async (result, request) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["course-packs"] }),
         queryClient.invalidateQueries({ queryKey: ["learning-courses"] }),
@@ -571,12 +682,11 @@ function CoursePackClient({
       setValidation(null);
       setExpiredValidationId(null);
       setCommitConfirmation(null);
-      if (activeValidation) {
-        queryClient.removeQueries({
-          queryKey: ["course-pack-validation", activeValidation.validationId],
-          exact: true,
-        });
-      }
+      commitRequestRef.current = null;
+      queryClient.removeQueries({
+        queryKey: ["course-pack-validation", request.validationId],
+        exact: true,
+      });
       toast.success(
         t(
           result.result.idempotent
@@ -595,15 +705,19 @@ function CoursePackClient({
             `/courses/${encodeURIComponent(result.result.courseId)}/revisions/${encodeURIComponent(result.result.revisionId)}`);
       router.push(destination);
     },
-    onError: (error: unknown) => {
-      if (view === "intake" && getErrorStatus(error) === 404) {
+    onError: (error: unknown, request) => {
+      if (!isTerminalCommitFailure(error)) return;
+      commitRequestRef.current = null;
+      toast.error(t("courses.commitFailed.title"));
+      if (view === "intake") {
+        router.replace(
+          `/courses/intake/${encodeURIComponent(request.validationId)}`,
+          { scroll: false },
+        );
         void stagedValidation.refetch();
-        toast.error(t("courses.intake.unavailable.title"));
         return;
       }
-      toast.error(
-        error instanceof Error ? error.message : t("courses.alert.errorTitle"),
-      );
+      setCommitConfirmation(null);
     },
   });
   const selectCourse = useMutation({
@@ -669,14 +783,19 @@ function CoursePackClient({
   const currentRevision = currentCourse?.revisions.find(
     (revision) => revision.id === currentCourse.activeRevisionId,
   );
+  const currentRevisionAvailable =
+    currentRevision !== undefined &&
+    (currentRevision.status === "published" ||
+      currentCourse?.currentSessionId !== null);
   const currentCoursePath =
-    currentCourse && currentRevision
-      ? currentCourse.currentSessionId
-        ? `/session?id=${encodeURIComponent(currentCourse.currentSessionId)}`
-        : `/courses/${encodeURIComponent(currentCourse.id)}/revisions/${encodeURIComponent(currentRevision.id)}`
-      : null;
+    currentCourse?.currentSessionId !== null &&
+    currentCourse?.currentSessionId !== undefined
+      ? `/session?id=${encodeURIComponent(currentCourse.currentSessionId)}`
+      : currentCourse && currentRevision?.status === "published"
+        ? `/courses/${encodeURIComponent(currentCourse.id)}/revisions/${encodeURIComponent(currentRevision.id)}`
+        : null;
   const currentCourseRoadmapPath =
-    currentCourse && currentRevision
+    currentCourse && currentRevision?.status === "published"
       ? `/courses/${encodeURIComponent(currentCourse.id)}/revisions/${encodeURIComponent(currentRevision.id)}`
       : null;
   const packItemsByCourse = useMemo(() => {
@@ -697,16 +816,23 @@ function CoursePackClient({
         course.selected && course.activeRevisionId === revision.id;
       const packItems = packItemsByCourse.get(course.id);
       const packItem = packItems?.get(revision.id);
-      const importedRevisions = packItems
-        ? [...packItems.values()].toSorted(
-            (left, right) => right.revisionNumber - left.revisionNumber,
-          )
-        : [];
+      const revisionEntries = course.revisions
+        .map((candidate) => {
+          const candidatePackItem = packItems?.get(candidate.id);
+          return {
+            revision: candidate,
+            ...(candidatePackItem ? { packItem: candidatePackItem } : {}),
+          };
+        })
+        .toSorted(
+          (left, right) =>
+            right.revision.revisionNumber - left.revision.revisionNumber,
+        );
       items.push({
         course,
         revision,
         current,
-        importedRevisions,
+        revisionEntries,
         ...(packItem ? { packItem } : {}),
       });
     }
@@ -716,20 +842,45 @@ function CoursePackClient({
   }, [learningCourses.data?.courses, packItemsByCourse]);
   const filteredCourseItems = useMemo(() => {
     const normalizedSearch = courseSearch.trim().toLocaleLowerCase(locale);
-    return courseItems.filter(({ course, revision }) => {
+    return courseItems.flatMap((item) => {
+      const { course, revision } = item;
       const matchesSearch =
         normalizedSearch.length === 0 ||
         course.title.toLocaleLowerCase(locale).includes(normalizedSearch) ||
         (course.description ?? "")
           .toLocaleLowerCase(locale)
           .includes(normalizedSearch);
-      const matchesFilter =
+      if (!matchesSearch) return [];
+      if (
+        courseFilter === "draft" ||
+        courseFilter === "published" ||
+        courseFilter === "archived"
+      ) {
+        const matchingRevision = course.revisions
+          .filter((candidate) => candidate.status === courseFilter)
+          .toSorted(
+            (left, right) => right.revisionNumber - left.revisionNumber,
+          )[0];
+        if (!matchingRevision) return [];
+        const packItem = packItemsByCourse
+          .get(course.id)
+          ?.get(matchingRevision.id);
+        const projected: CourseListItem = {
+          course,
+          revision: matchingRevision,
+          current:
+            course.selected && course.activeRevisionId === matchingRevision.id,
+          revisionEntries: item.revisionEntries,
+          ...(packItem ? { packItem } : {}),
+        };
+        return [projected];
+      }
+      const matchesLearningState =
         courseFilter === "all" ||
-        revision.status === courseFilter ||
         revision.learningSummary.state === courseFilter;
-      return matchesSearch && matchesFilter;
+      return matchesLearningState ? [item] : [];
     });
-  }, [courseFilter, courseItems, courseSearch, locale]);
+  }, [courseFilter, courseItems, courseSearch, locale, packItemsByCourse]);
   const coursePageCount = Math.max(
     1,
     Math.ceil(filteredCourseItems.length / COURSE_PAGE_SIZE),
@@ -801,6 +952,7 @@ function CoursePackClient({
     const generation = validationGenerationRef.current + 1;
     validationGenerationRef.current = generation;
     setValidationFailed(false);
+    setValidationError(null);
     validate.mutate({ selected, generation });
   };
 
@@ -812,12 +964,16 @@ function CoursePackClient({
       return;
     }
     if (view === "intake") {
+      commit.reset();
+      commitRequestRef.current = createCommitRequest(activeValidation, action);
       router.push(
         `/courses/intake/${encodeURIComponent(activeValidation.validationId)}?confirm=${action}`,
         { scroll: false },
       );
       return;
     }
+    commit.reset();
+    commitRequestRef.current = createCommitRequest(activeValidation, action);
     setCommitConfirmation(action);
   };
 
@@ -828,10 +984,20 @@ function CoursePackClient({
       setCommitConfirmation(null);
       return;
     }
-    commit.mutate(activeCommitConfirmation);
+    const existing = commitRequestRef.current;
+    const request =
+      existing?.validationId === activeValidation.validationId &&
+      existing.action === activeCommitConfirmation &&
+      existing.expectedContentHash === activeValidation.preview.contentHash
+        ? existing
+        : createCommitRequest(activeValidation, activeCommitConfirmation);
+    commitRequestRef.current = request;
+    commit.mutate(request);
   };
 
   const cancelCommitConfirmation = () => {
+    commit.reset();
+    commitRequestRef.current = null;
     if (view === "intake" && activeValidation) {
       router.replace(
         `/courses/intake/${encodeURIComponent(activeValidation.validationId)}`,
@@ -915,19 +1081,16 @@ function CoursePackClient({
         {activeValidation ? (
           <>
             {!activeValidation.storageAvailable ? (
-              <Alert>
-                <WarningCircleIcon aria-hidden />
-                <AlertTitle>{t("courses.storageUnavailable.title")}</AlertTitle>
-                <AlertDescription>
-                  {t("courses.storageUnavailable.description")}
-                </AlertDescription>
-              </Alert>
+              <StorageUnavailableAlert
+                retrying={stagedValidation.isFetching}
+                onRetry={() => void stagedValidation.refetch()}
+              />
             ) : null}
             <section className="min-w-0 rounded-lg border border-border bg-background p-5 sm:p-6 xl:p-8">
               <CoursePackPreviewPanel
                 validation={activeValidation}
                 pendingAction={
-                  commit.isPending ? (commit.variables ?? null) : null
+                  commit.isPending ? (commit.variables?.action ?? null) : null
                 }
                 expired={validationExpired}
                 expiredRecovery="reselect"
@@ -941,6 +1104,8 @@ function CoursePackClient({
               action={activeCommitConfirmation}
               onCancel={cancelCommitConfirmation}
               onConfirm={confirmCommit}
+              pending={commit.isPending}
+              error={commit.isError ? commit.error : null}
             />
           </>
         ) : null}
@@ -996,6 +1161,11 @@ function CoursePackClient({
                   className="w-full sm:w-fit"
                   disabled={validate.isPending || commit.isPending}
                   aria-invalid={validationFailed}
+                  aria-describedby={
+                    validationFailed
+                      ? `${fileDescriptionId} ${fileErrorId}`
+                      : fileDescriptionId
+                  }
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <FileArrowUpIcon data-icon="inline-start" aria-hidden />
@@ -1017,6 +1187,7 @@ function CoursePackClient({
                     setFile(selected);
                     setValidation(null);
                     setValidationFailed(false);
+                    setValidationError(null);
                     setExpiredValidationId(null);
                     setCommitConfirmation(null);
                     if (!validate.isPending) validate.reset();
@@ -1033,14 +1204,33 @@ function CoursePackClient({
                       aria-hidden
                       className="shrink-0 text-muted-foreground"
                     />
-                    <span className="min-w-0 break-words text-sm font-medium">
+                    <span className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
                       {file.name}
                     </span>
                   </div>
                 ) : null}
-                <FieldDescription>
+                <FieldDescription id={fileDescriptionId}>
                   {t("courses.import.fileDescription")}
                 </FieldDescription>
+                {validationFailed && file ? (
+                  <FieldError id={fileErrorId}>
+                    <p>
+                      {t("courses.import.validationFailed", {
+                        filename: file.name,
+                      })}
+                    </p>
+                    {validationError ? (
+                      <details className="mt-2 text-muted-foreground">
+                        <summary className="min-h-11 cursor-pointer py-3 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                          {t("courses.library.details")}
+                        </summary>
+                        <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">
+                          {validationError}
+                        </p>
+                      </details>
+                    ) : null}
+                  </FieldError>
+                ) : null}
               </Field>
               <Field>
                 <Button
@@ -1060,13 +1250,10 @@ function CoursePackClient({
             </FieldGroup>
 
             {library.data && !library.data.storageAvailable ? (
-              <Alert>
-                <WarningCircleIcon aria-hidden />
-                <AlertTitle>{t("courses.storageUnavailable.title")}</AlertTitle>
-                <AlertDescription>
-                  {t("courses.storageUnavailable.description")}
-                </AlertDescription>
-              </Alert>
+              <StorageUnavailableAlert
+                retrying={library.isFetching}
+                onRetry={() => void library.refetch()}
+              />
             ) : null}
           </div>
 
@@ -1074,7 +1261,7 @@ function CoursePackClient({
             <CoursePackPreviewPanel
               validation={validation}
               pendingAction={
-                commit.isPending ? (commit.variables ?? null) : null
+                commit.isPending ? (commit.variables?.action ?? null) : null
               }
               expired={validationExpired}
               expiredRecovery="revalidate"
@@ -1092,6 +1279,8 @@ function CoursePackClient({
           action={activeCommitConfirmation}
           onCancel={cancelCommitConfirmation}
           onConfirm={confirmCommit}
+          pending={commit.isPending}
+          error={commit.isError ? commit.error : null}
         />
       </div>
     );
@@ -1120,7 +1309,10 @@ function CoursePackClient({
         }
       />
 
-      <section aria-labelledby="current-course-title">
+      <section
+        aria-labelledby="current-course-title"
+        className="@container/course-current min-w-0"
+      >
         <h2 id="current-course-title" className="sr-only">
           {t("courses.current.title")}
         </h2>
@@ -1140,7 +1332,7 @@ function CoursePackClient({
         {learningCourses.isSuccess && currentCourse ? (
           <article
             data-slot="course-current-summary"
-            className="relative flex min-w-0 flex-col gap-4 overflow-hidden rounded-panel bg-surface-soft/75 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"
+            className="relative flex min-w-0 flex-col gap-4 overflow-hidden rounded-panel bg-surface-soft/75 px-5 py-5 sm:px-6 @min-[48rem]/course-current:flex-row @min-[48rem]/course-current:items-center @min-[48rem]/course-current:justify-between"
           >
             <span
               aria-hidden
@@ -1155,15 +1347,15 @@ function CoursePackClient({
               </p>
               <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
                 <span>
-                  {currentRevision
+                  {currentRevision && currentRevisionAvailable
                     ? t("courses.library.revisionNumber", {
                         revision:
                           currentRevision.revisionNumber.toLocaleString(locale),
                       })
                     : t("courses.current.revisionUnavailable")}
                 </span>
-                {currentRevision ? <span aria-hidden>·</span> : null}
-                {currentRevision ? (
+                {currentRevisionAvailable ? <span aria-hidden>·</span> : null}
+                {currentRevisionAvailable && currentRevision ? (
                   <span>
                     {t(
                       learningStateLabels[
@@ -1181,13 +1373,13 @@ function CoursePackClient({
               </p>
             </div>
             {currentCoursePath ? (
-              <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <div className="flex w-full min-w-0 flex-col gap-2 @min-[48rem]/course-current:w-auto @min-[48rem]/course-current:flex-row @min-[48rem]/course-current:items-center">
                 {currentCourseRoadmapPath &&
                 currentCourseRoadmapPath !== currentCoursePath ? (
                   <Button
                     asChild
                     variant="ghost"
-                    className="min-h-12 w-full px-4 sm:w-auto"
+                    className="min-h-12 w-full px-4 md:min-h-12 @min-[48rem]/course-current:w-auto"
                   >
                     <Link href={currentCourseRoadmapPath}>
                       <MapTrifoldIcon aria-hidden />
@@ -1198,7 +1390,7 @@ function CoursePackClient({
                 <Button
                   asChild
                   variant="outline"
-                  className="min-h-12 w-full px-5 text-base sm:w-auto"
+                  className="min-h-12 w-full px-5 text-base md:min-h-12 @min-[48rem]/course-current:w-auto"
                 >
                   <Link href={currentCoursePath}>
                     {currentCourseActionLabel}
@@ -1209,7 +1401,9 @@ function CoursePackClient({
             ) : null}
           </article>
         ) : null}
-        {learningCourses.isSuccess && !currentCourse ? (
+        {learningCourses.isSuccess &&
+        !currentCourse &&
+        !(library.isSuccess && courseItems.length === 0) ? (
           <div className="rounded-panel bg-surface-soft/75 p-5">
             <p className="text-sm font-medium">{t("courses.current.none")}</p>
             <p className="mt-1 max-w-[68ch] text-sm leading-6 text-muted-foreground">
@@ -1239,6 +1433,14 @@ function CoursePackClient({
         ) : null}
         {learningCourses.isSuccess &&
         library.isSuccess &&
+        !library.data.storageAvailable ? (
+          <StorageUnavailableAlert
+            retrying={library.isFetching}
+            onRetry={() => void library.refetch()}
+          />
+        ) : null}
+        {learningCourses.isSuccess &&
+        library.isSuccess &&
         courseItems.length === 0 ? (
           <EmptyState
             title={t("courses.library.empty.title")}
@@ -1260,7 +1462,7 @@ function CoursePackClient({
         {learningCourses.isSuccess &&
         library.isSuccess &&
         courseItems.length > 0 ? (
-          <div className="flex min-w-0 flex-col gap-5">
+          <div className="@container/course-library flex min-w-0 flex-col gap-5">
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <InputGroup className="h-12 w-full rounded-control sm:max-w-sm">
                 <InputGroupAddon aria-hidden>
@@ -1360,29 +1562,29 @@ function CoursePackClient({
                 className="min-w-0 overflow-hidden rounded-panel bg-surface-raised"
               >
                 <Table className="table-fixed">
-                  <TableHeader className="hidden md:table-header-group [&_th]:h-[3.75rem] [&_th]:text-[0.9375rem]">
+                  <TableHeader className="hidden @min-[60rem]/course-library:table-header-group [&_th]:h-[3.75rem] [&_th]:text-[0.9375rem]">
                     <TableRow>
-                      <TableHead className="w-[38%] px-6">
+                      <TableHead className="w-[35%] px-6">
                         {t("courses.table.course")}
                       </TableHead>
                       <TableHead className="w-[17%] px-3">
                         {t("courses.table.revisionStatus")}
                       </TableHead>
-                      <TableHead className="w-[27%] px-3">
+                      <TableHead className="w-[26%] px-3">
                         {t("courses.table.progress")}
                       </TableHead>
-                      <TableHead className="w-[18%] px-4 text-right">
+                      <TableHead className="w-[22%] px-4 text-right">
                         {t("courses.table.actions")}
                       </TableHead>
                     </TableRow>
                   </TableHeader>
-                  <TableBody className="block md:table-row-group">
+                  <TableBody className="block @min-[60rem]/course-library:table-row-group">
                     {visibleCourseItems.map(
                       ({
                         course,
                         revision,
                         current,
-                        importedRevisions,
+                        revisionEntries,
                         packItem,
                       }) => (
                         <CourseLibraryRow
@@ -1390,7 +1592,7 @@ function CoursePackClient({
                           course={course}
                           revision={revision}
                           current={current}
-                          importedRevisions={importedRevisions}
+                          revisionEntries={revisionEntries}
                           selecting={
                             selectCourse.isPending &&
                             selectCourse.variables?.courseId === course.id &&
@@ -1714,13 +1916,18 @@ function CoursePackCommitDialog({
   action,
   onCancel,
   onConfirm,
+  pending,
+  error,
 }: {
   validation: Extract<ValidationResponse, { valid: true }> | null;
   action: InstallAction | null;
   onCancel: () => void;
   onConfirm: () => void;
+  pending: boolean;
+  error: unknown;
 }) {
   const { t } = useI18n();
+  const errorDiagnostic = getSafeErrorDiagnostic(error);
 
   if (!validation || !action) return null;
 
@@ -1775,18 +1982,80 @@ function CoursePackCommitDialog({
           />
         </dl>
 
+        {error ? (
+          <Alert variant="destructive">
+            <WarningCircleIcon aria-hidden />
+            <AlertTitle>{t("courses.commitFailed.title")}</AlertTitle>
+            <AlertDescription>
+              {t("courses.commitFailed.description")}
+              {errorDiagnostic ? (
+                <details className="mt-2 text-muted-foreground">
+                  <summary className="min-h-11 cursor-pointer py-3 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {t("courses.library.details")}
+                  </summary>
+                  <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">
+                    {errorDiagnostic}
+                  </p>
+                </details>
+              ) : null}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <AlertDialogFooter>
-          <AlertDialogCancel>{t("courses.action.cancel")}</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>
+          <AlertDialogCancel disabled={pending}>
+            {t("courses.action.cancel")}
+          </AlertDialogCancel>
+          <Button type="button" disabled={pending} onClick={onConfirm}>
+            {pending ? <Spinner data-icon="inline-start" /> : null}
             {t(
-              install
-                ? "courses.confirm.install.action"
-                : "courses.confirm.draft.action",
+              error
+                ? "courses.commitFailed.retry"
+                : install
+                  ? "courses.confirm.install.action"
+                  : "courses.confirm.draft.action",
             )}
-          </AlertDialogAction>
+          </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+function StorageUnavailableAlert({
+  retrying,
+  onRetry,
+}: {
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <Alert>
+      <WarningCircleIcon aria-hidden />
+      <AlertTitle>{t("courses.storageUnavailable.title")}</AlertTitle>
+      <AlertDescription className="flex flex-col gap-3">
+        <span>{t("courses.storageUnavailable.description")}</span>
+        <span className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/settings?section=advanced">
+              {t("courses.storageUnavailable.settings")}
+            </Link>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={retrying}
+            onClick={onRetry}
+          >
+            {retrying ? <Spinner data-icon="inline-start" /> : null}
+            {t("courses.storageUnavailable.retry")}
+          </Button>
+        </span>
+      </AlertDescription>
+    </Alert>
   );
 }
 
@@ -1888,7 +2157,7 @@ function DiagnosticList({
 function CourseLibraryRow({
   course,
   revision,
-  importedRevisions,
+  revisionEntries,
   packItem,
   current,
   selecting,
@@ -1899,7 +2168,7 @@ function CourseLibraryRow({
 }: {
   course: LearningCourse;
   revision: LearningCourseRevision;
-  importedRevisions: readonly CoursePackLibraryItem[];
+  revisionEntries: readonly CourseRevisionLibraryEntry[];
   packItem?: CoursePackLibraryItem;
   current: boolean;
   selecting: boolean;
@@ -1958,10 +2227,10 @@ function CourseLibraryRow({
       <TableRow
         data-state={current ? "selected" : undefined}
         className={cn(
-          "grid min-h-0 grid-cols-1 gap-4 px-4 py-4 data-[state=selected]:bg-primary/[0.035] md:table-row md:h-[112px] md:px-0 md:py-0",
+          "grid min-h-0 grid-cols-1 gap-4 px-4 py-4 data-[state=selected]:bg-primary/[0.035] @min-[60rem]/course-library:table-row @min-[60rem]/course-library:h-[112px] @min-[60rem]/course-library:px-0 @min-[60rem]/course-library:py-0",
         )}
       >
-        <TableCell className="relative min-w-0 whitespace-normal p-0 md:table-cell md:px-6 md:py-4">
+        <TableCell className="relative min-w-0 whitespace-normal p-0 @min-[60rem]/course-library:table-cell @min-[60rem]/course-library:px-6 @min-[60rem]/course-library:py-4">
           {current ? (
             <span
               aria-hidden
@@ -1982,15 +2251,15 @@ function CourseLibraryRow({
                 ) : null}
               </div>
               {course.description ? (
-                <p className="mt-1 line-clamp-2 break-words text-sm leading-5 text-muted-foreground md:line-clamp-1">
+                <p className="mt-1 line-clamp-2 break-words text-sm leading-5 text-muted-foreground @min-[60rem]/course-library:line-clamp-1">
                   {course.description}
                 </p>
               ) : null}
             </div>
           </div>
         </TableCell>
-        <TableCell className="min-w-0 whitespace-normal p-0 md:table-cell md:px-3 md:py-4 md:align-middle">
-          <p className="mb-1 text-xs font-medium text-muted-foreground md:hidden">
+        <TableCell className="min-w-0 whitespace-normal p-0 @min-[60rem]/course-library:table-cell @min-[60rem]/course-library:px-3 @min-[60rem]/course-library:py-4 @min-[60rem]/course-library:align-middle">
+          <p className="mb-1 text-xs font-medium text-muted-foreground @min-[60rem]/course-library:hidden">
             {t("courses.table.revisionStatus")}
           </p>
           <p className="text-sm">
@@ -2008,8 +2277,8 @@ function CourseLibraryRow({
             </span>
           </p>
         </TableCell>
-        <TableCell className="min-w-0 whitespace-normal p-0 md:table-cell md:px-3 md:py-4 md:align-middle">
-          <p className="mb-1 text-xs font-medium text-muted-foreground md:hidden">
+        <TableCell className="min-w-0 whitespace-normal p-0 @min-[60rem]/course-library:table-cell @min-[60rem]/course-library:px-3 @min-[60rem]/course-library:py-4 @min-[60rem]/course-library:align-middle">
+          <p className="mb-1 text-xs font-medium text-muted-foreground @min-[60rem]/course-library:hidden">
             {t("courses.table.progress")}
           </p>
           <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5">
@@ -2027,17 +2296,17 @@ function CourseLibraryRow({
             </div>
           </div>
         </TableCell>
-        <TableCell className="min-w-0 whitespace-normal p-0 md:table-cell md:px-4 md:py-4 md:text-right md:align-middle">
-          <p className="mb-1 text-xs font-medium text-muted-foreground md:hidden">
+        <TableCell className="min-w-0 whitespace-normal p-0 @min-[60rem]/course-library:table-cell @min-[60rem]/course-library:px-4 @min-[60rem]/course-library:py-4 @min-[60rem]/course-library:text-right @min-[60rem]/course-library:align-middle">
+          <p className="mb-1 text-xs font-medium text-muted-foreground @min-[60rem]/course-library:hidden">
             {t("courses.table.actions")}
           </p>
-          <div className="flex min-w-0 items-center gap-1.5 md:justify-end">
+          <div className="flex min-w-0 items-center gap-1.5 @min-[60rem]/course-library:justify-end">
             {primaryPath ? (
               <Button
                 asChild
                 size="sm"
                 variant="outline"
-                className="min-w-0 flex-1 md:flex-none"
+                className="min-h-11 min-w-0 flex-1 md:min-h-11 @min-[60rem]/course-library:flex-none"
               >
                 <Link href={primaryPath}>
                   {primaryLabel}
@@ -2053,7 +2322,7 @@ function CourseLibraryRow({
                 type="button"
                 size="sm"
                 variant="outline"
-                className="min-w-0 flex-1 md:flex-none"
+                className="min-h-11 min-w-0 flex-1 md:min-h-11 @min-[60rem]/course-library:flex-none"
                 disabled
               >
                 {t("courses.action.unavailable")}
@@ -2065,6 +2334,7 @@ function CourseLibraryRow({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
+                  className="size-11 shrink-0 md:size-11"
                   aria-label={t("courses.action.more", {
                     title: course.title,
                   })}
@@ -2133,18 +2403,18 @@ function CourseLibraryRow({
           </div>
         </TableCell>
       </TableRow>
-      <ImportedRevisionDisclosure
+      <CourseRevisionDisclosure
         course={course}
-        importedRevisions={importedRevisions}
+        revisionEntries={revisionEntries}
         uninstallingRevisionId={uninstallingRevisionId}
         onExport={onExport}
         onUninstall={onUninstall}
       />
       {detailsOpen ? (
-        <TableRow className="grid md:table-row">
+        <TableRow className="grid @min-[60rem]/course-library:table-row">
           <TableCell
             colSpan={4}
-            className="min-w-0 whitespace-normal bg-surface-soft px-4 py-4 md:px-6"
+            className="min-w-0 whitespace-normal bg-surface-soft px-4 py-4 @min-[60rem]/course-library:px-6"
           >
             <CourseTechnicalDetails
               course={course}
@@ -2187,15 +2457,15 @@ function CourseLibraryRow({
   );
 }
 
-function ImportedRevisionDisclosure({
+function CourseRevisionDisclosure({
   course,
-  importedRevisions,
+  revisionEntries,
   uninstallingRevisionId,
   onExport,
   onUninstall,
 }: {
   course: LearningCourse;
-  importedRevisions: readonly CoursePackLibraryItem[];
+  revisionEntries: readonly CourseRevisionLibraryEntry[];
   uninstallingRevisionId: string | null;
   onExport: (item: CoursePackLibraryItem) => void;
   onUninstall: (item: CoursePackLibraryItem) => void;
@@ -2206,20 +2476,20 @@ function ImportedRevisionDisclosure({
   const [removeTarget, setRemoveTarget] =
     useState<CoursePackLibraryItem | null>(null);
 
-  if (importedRevisions.length === 0) return null;
+  if (revisionEntries.length <= 1) return null;
 
   const revisionsLabel = t("courses.library.revisions", {
-    count: importedRevisions.length.toLocaleString(locale),
+    count: revisionEntries.length.toLocaleString(locale),
   });
   const removePending =
     removeTarget !== null && uninstallingRevisionId === removeTarget.revisionId;
 
   return (
     <>
-      <TableRow className="grid md:table-row">
+      <TableRow className="grid @min-[60rem]/course-library:table-row">
         <TableCell
           colSpan={4}
-          className="min-w-0 whitespace-normal border-t-0 px-4 py-2 md:px-6"
+          className="min-w-0 whitespace-normal border-t-0 px-4 py-2 @min-[60rem]/course-library:px-6"
         >
           <Collapsible open={open} onOpenChange={setOpen}>
             <CollapsibleTrigger asChild>
@@ -2231,7 +2501,7 @@ function ImportedRevisionDisclosure({
                 aria-label={`${course.title}: ${revisionsLabel}`}
                 aria-controls={contentId}
               >
-                <PackageIcon data-icon="inline-start" aria-hidden />
+                <BookOpenIcon data-icon="inline-start" aria-hidden />
                 <span className="min-w-0 truncate">{revisionsLabel}</span>
                 <CaretDownIcon
                   data-icon="inline-end"
@@ -2242,27 +2512,29 @@ function ImportedRevisionDisclosure({
             </CollapsibleTrigger>
             <CollapsibleContent id={contentId}>
               <ul className="mt-2 flex min-w-0 flex-col gap-2 pb-2">
-                {importedRevisions.map((item) => {
+                {revisionEntries.map(({ revision, packItem }) => {
                   const revisionLabel = t("courses.library.revisionNumber", {
-                    revision: item.revisionNumber.toLocaleString(locale),
+                    revision: revision.revisionNumber.toLocaleString(locale),
                   });
                   const openPath =
-                    item.revisionStatus === "draft"
-                      ? `/courses/studio?version=${encodeURIComponent(item.revisionId)}`
-                      : item.revisionStatus === "published"
-                        ? `/courses/${encodeURIComponent(course.id)}/revisions/${encodeURIComponent(item.revisionId)}`
+                    revision.status === "draft"
+                      ? `/courses/studio?version=${encodeURIComponent(revision.id)}`
+                      : revision.status === "published"
+                        ? `/courses/${encodeURIComponent(course.id)}/revisions/${encodeURIComponent(revision.id)}`
                         : null;
                   const openLabel =
-                    item.revisionStatus === "draft"
+                    revision.status === "draft"
                       ? t("courses.action.edit")
                       : t("courses.action.open");
                   const itemUninstalling =
-                    uninstallingRevisionId === item.revisionId;
-                  const removable = item.lifecycleAction !== "uninstall";
+                    uninstallingRevisionId === revision.id;
+                  const removable =
+                    packItem?.lifecycleAction !== "uninstall" &&
+                    packItem !== undefined;
 
                   return (
                     <li
-                      key={item.revisionId}
+                      key={revision.id}
                       aria-label={revisionLabel}
                       className="flex min-w-0 flex-col gap-3 rounded-control border border-border bg-surface-soft p-3 sm:flex-row sm:items-center sm:justify-between"
                     >
@@ -2271,25 +2543,32 @@ function ImportedRevisionDisclosure({
                           <span className="font-medium">{revisionLabel}</span>
                           <Badge
                             variant={
-                              item.revisionStatus === "published"
+                              revision.status === "published"
                                 ? "success"
-                                : item.revisionStatus === "draft"
+                                : revision.status === "draft"
                                   ? "warning"
                                   : "outline"
                             }
                           >
-                            {t(statusLabels[item.revisionStatus])}
+                            {t(statusLabels[revision.status])}
                           </Badge>
                         </div>
                         <p className="mt-1 break-words text-xs text-muted-foreground">
-                          {t("courses.library.importedAt", {
-                            date: formatDate(item.importedAt),
-                          })}
+                          {packItem
+                            ? t("courses.library.importedAt", {
+                                date: formatDate(packItem.importedAt),
+                              })
+                            : t("courses.library.localRevision")}
                         </p>
                       </div>
                       <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
                         {openPath ? (
-                          <Button asChild size="sm" variant="outline">
+                          <Button
+                            asChild
+                            size="sm"
+                            variant="outline"
+                            className="min-h-11 md:min-h-11"
+                          >
                             <Link
                               href={openPath}
                               aria-label={`${openLabel} · ${revisionLabel}`}
@@ -2306,34 +2585,39 @@ function ImportedRevisionDisclosure({
                             type="button"
                             size="sm"
                             variant="outline"
+                            className="min-h-11 md:min-h-11"
                             disabled
                             aria-label={`${t("courses.action.unavailable")} · ${revisionLabel}`}
                           >
                             {t("courses.action.unavailable")}
                           </Button>
                         )}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          aria-label={`${t("courses.action.export")} · ${revisionLabel}`}
-                          onClick={() => onExport(item)}
-                        >
-                          <DownloadSimpleIcon
-                            data-icon="inline-start"
-                            aria-hidden
-                          />
-                          {t("courses.action.export")}
-                        </Button>
+                        {packItem ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="min-h-11 md:min-h-11"
+                            aria-label={`${t("courses.action.export")} · ${revisionLabel}`}
+                            onClick={() => onExport(packItem)}
+                          >
+                            <DownloadSimpleIcon
+                              data-icon="inline-start"
+                              aria-hidden
+                            />
+                            {t("courses.action.export")}
+                          </Button>
+                        ) : null}
                         {removable ? (
                           <Button
                             type="button"
                             size="sm"
                             variant="ghost"
+                            className="min-h-11 md:min-h-11"
                             disabled={itemUninstalling}
                             aria-busy={itemUninstalling}
                             aria-label={`${t("courses.action.remove")} · ${revisionLabel}`}
-                            onClick={() => setRemoveTarget(item)}
+                            onClick={() => setRemoveTarget(packItem)}
                           >
                             {itemUninstalling ? (
                               <Spinner data-icon="inline-start" aria-hidden />
@@ -2493,7 +2777,7 @@ function CourseLibrarySkeleton() {
 
   return (
     <div
-      className="flex flex-col gap-5"
+      className="@container/course-library flex flex-col gap-5"
       role="status"
       aria-label={t("courses.library.loading")}
     >
@@ -2510,7 +2794,7 @@ function CourseLibrarySkeleton() {
         {["course-skeleton-one", "course-skeleton-two"].map((key) => (
           <div
             key={key}
-            className="grid min-h-[100px] gap-3 border-b border-border p-4 last:border-b-0 md:grid-cols-[minmax(0,2fr)_minmax(0,0.9fr)_minmax(0,1.3fr)_auto] md:items-center md:px-6"
+            className="grid min-h-[13rem] gap-3 border-b border-border p-4 last:border-b-0 @min-[60rem]/course-library:min-h-[100px] @min-[60rem]/course-library:grid-cols-[minmax(0,2fr)_minmax(0,0.9fr)_minmax(0,1.3fr)_auto] @min-[60rem]/course-library:items-center @min-[60rem]/course-library:px-6"
           >
             <div className="flex items-center gap-3">
               <Skeleton className="size-11 shrink-0" />

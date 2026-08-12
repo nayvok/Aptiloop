@@ -53,6 +53,7 @@ describe("CoursePackRepository", () => {
 
     const installed = repository.install({
       operationId: "install-development-pack",
+      validationId: "11111111-1111-4111-8111-111111111111",
       action: "install",
       sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
       pack: validation.pack,
@@ -104,6 +105,7 @@ describe("CoursePackRepository", () => {
 
     const replay = repository.install({
       operationId: "install-development-pack",
+      validationId: "11111111-1111-4111-8111-111111111111",
       action: "install",
       sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
       pack: validation.pack,
@@ -113,6 +115,7 @@ describe("CoursePackRepository", () => {
     expect(replay).toMatchObject({ installed: false, idempotent: true });
     const byteReplay = repository.install({
       operationId: "install-development-pack-again",
+      validationId: "11111111-1111-4111-8111-111111111112",
       action: "install",
       sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
       pack: validation.pack,
@@ -123,6 +126,7 @@ describe("CoursePackRepository", () => {
     expect(() =>
       repository.install({
         operationId: "open-installed-pack-as-draft",
+        validationId: "11111111-1111-4111-8111-111111111113",
         action: "open-as-draft",
         sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
         pack: validation.pack,
@@ -134,7 +138,7 @@ describe("CoursePackRepository", () => {
       database.sqlite
         .prepare("SELECT count(*) AS count FROM course_pack_lifecycle_events")
         .get(),
-    ).toEqual({ count: 1 });
+    ).toEqual({ count: 2 });
     expect(database.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual(
       [],
     );
@@ -150,6 +154,7 @@ describe("CoursePackRepository", () => {
     const first = validated(original);
     repository.install({
       operationId: "install-original",
+      validationId: "22222222-2222-4222-8222-222222222221",
       action: "install",
       sourceBytesHash: coursePackSourceBytesHash(first.sourceBytes),
       pack: first.validation.pack,
@@ -164,16 +169,18 @@ describe("CoursePackRepository", () => {
     expect(() =>
       repository.install({
         operationId: "install-original",
+        validationId: "22222222-2222-4222-8222-222222222221",
         action: "install",
         sourceBytesHash: coursePackSourceBytesHash(conflict.sourceBytes),
         pack: conflict.validation.pack,
         canonicalJson: conflict.validation.canonicalJson,
         report: conflict.validation.report,
       }),
-    ).toThrow(/different content/u);
+    ).toThrow(/different validation, action, or payload/u);
     expect(() =>
       repository.install({
         operationId: "install-conflict",
+        validationId: "22222222-2222-4222-8222-222222222222",
         action: "install",
         sourceBytesHash: coursePackSourceBytesHash(conflict.sourceBytes),
         pack: conflict.validation.pack,
@@ -203,6 +210,7 @@ describe("CoursePackRepository", () => {
     expect(() =>
       repository.install({
         operationId: "install-rollback",
+        validationId: "22222222-2222-4222-8222-222222222223",
         action: "install",
         sourceBytesHash: coursePackSourceBytesHash(rollbackPack.sourceBytes),
         pack: rollbackPack.validation.pack,
@@ -234,6 +242,7 @@ describe("CoursePackRepository", () => {
     const pack = createDevelopmentCoursePackFixture();
     const { sourceBytes, validation } = validated(pack);
     const input = {
+      validationId: "33333333-3333-4333-8333-333333333331",
       action: "open-as-draft" as const,
       sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
       pack: validation.pack,
@@ -305,12 +314,14 @@ describe("CoursePackRepository", () => {
       repository.install({
         ...input,
         operationId: "open-development-pack-again",
+        validationId: "33333333-3333-4333-8333-333333333332",
       }),
     ).toEqual({ ...opened, installed: false, idempotent: true });
     expect(() =>
       repository.install({
         ...input,
         operationId: "install-after-open",
+        validationId: "33333333-3333-4333-8333-333333333333",
         action: "install",
       }),
     ).toThrow(/different lifecycle action/u);
@@ -326,7 +337,7 @@ describe("CoursePackRepository", () => {
       database.sqlite
         .prepare("SELECT count(*) AS count FROM course_pack_lifecycle_events")
         .get(),
-    ).toEqual({ count: 1 });
+    ).toEqual({ count: 2 });
     expect(database.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual(
       [],
     );
@@ -343,6 +354,7 @@ describe("CoursePackRepository", () => {
     const first = validated(original);
     repository.install({
       operationId: "install-locale-base",
+      validationId: "44444444-4444-4444-8444-444444444441",
       action: "install",
       sourceBytesHash: coursePackSourceBytesHash(first.sourceBytes),
       pack: first.validation.pack,
@@ -372,6 +384,7 @@ describe("CoursePackRepository", () => {
     expect(() =>
       repository.install({
         operationId: "install-conflicting-locale",
+        validationId: "44444444-4444-4444-8444-444444444442",
         action: "install",
         sourceBytesHash: coursePackSourceBytesHash(second.sourceBytes),
         pack: second.validation.pack,
@@ -416,6 +429,7 @@ describe("CoursePackRepository", () => {
     const first = validated(firstPack);
     repository.install({
       operationId: "install-branch-base",
+      validationId: "55555555-5555-4555-8555-555555555551",
       action: "install",
       sourceBytesHash: coursePackSourceBytesHash(first.sourceBytes),
       pack: first.validation.pack,
@@ -430,6 +444,7 @@ describe("CoursePackRepository", () => {
     const second = finalizedAndValidated(secondPack);
     const opened = repository.install({
       operationId: "open-second-pack",
+      validationId: "55555555-5555-4555-8555-555555555552",
       action: "open-as-draft",
       sourceBytesHash: coursePackSourceBytesHash(second.sourceBytes),
       pack: second.validation.pack,
@@ -468,6 +483,7 @@ describe("CoursePackRepository", () => {
     expect(() =>
       repository.install({
         operationId: "open-third-pack",
+        validationId: "55555555-5555-4555-8555-555555555553",
         action: "open-as-draft",
         sourceBytesHash: coursePackSourceBytesHash(third.sourceBytes),
         pack: third.validation.pack,
@@ -523,6 +539,7 @@ describe("CoursePackRepository", () => {
     const { sourceBytes, validation } = validated(pack);
     repository.install({
       operationId: "install-for-uninstall",
+      validationId: "66666666-6666-4666-8666-666666666661",
       action: "install",
       sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
       pack: validation.pack,
@@ -554,6 +571,7 @@ describe("CoursePackRepository", () => {
     expect(() =>
       repository.install({
         operationId: "reinstall-after-uninstall",
+        validationId: "66666666-6666-4666-8666-666666666662",
         action: "install",
         sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
         pack: validation.pack,

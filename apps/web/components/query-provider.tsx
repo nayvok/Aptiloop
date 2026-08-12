@@ -8,8 +8,14 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     () =>
       new QueryClient({
         defaultOptions: {
-          queries: { staleTime: 10_000, retry: 1, refetchOnWindowFocus: false },
-          mutations: { retry: 0 },
+          queries: {
+            staleTime: 10_000,
+            retry: 1,
+            refetchOnWindowFocus: false,
+            refetchOnReconnect: true,
+            networkMode: "always",
+          },
+          mutations: { retry: 0, networkMode: "always" },
         },
       }),
   );

@@ -10,9 +10,9 @@ import {
   StopIcon,
 } from "@phosphor-icons/react";
 
-import { api, streamAgent } from "@/lib/api";
+import { api, ApiError, streamAgent } from "@/lib/api";
 import { CHAT_ROLES, isChatRole, type ChatRole } from "@/lib/chat-role";
-import { useI18n } from "@/lib/i18n";
+import { type MessageKey, useI18n } from "@/lib/i18n";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -110,6 +110,50 @@ type Disclosure = {
   expiresAt: string;
 };
 
+type PresentedError = {
+  message: string;
+  technicalDetails: string | null;
+};
+
+const maximumTechnicalDetailLength = 600;
+
+function safeTechnicalDetails(
+  error: unknown,
+  t: (key: MessageKey, values?: Record<string, string | number>) => string,
+): string | null {
+  if (!(error instanceof ApiError)) return null;
+
+  const metadata = [
+    t("query.technical.httpStatus", { status: error.status }),
+    error.failure?.diagnosticId
+      ? t("query.technical.diagnosticId", {
+          diagnosticId: error.failure.diagnosticId,
+        })
+      : null,
+    error.failure?.code
+      ? t("query.technical.code", { code: error.failure.code })
+      : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
+  const rawDetails = metadata.slice(0, maximumTechnicalDetailLength);
+  let details = "";
+  for (const character of rawDetails) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (
+      codePoint === 9 ||
+      codePoint === 10 ||
+      codePoint === 13 ||
+      (codePoint >= 32 && codePoint !== 127)
+    ) {
+      details += character;
+    }
+  }
+  details = details.trim();
+
+  return details || null;
+}
+
 const markdownContentClassName =
   "min-w-0 max-w-full [overflow-wrap:anywhere] [&:has(table)]:overflow-x-auto [&_pre]:max-w-full [&_table]:min-w-max";
 
@@ -138,13 +182,16 @@ export function AgentChat({
   const [streaming, setStreaming] = useState(false);
   const [streamLiveState, setStreamLiveState] =
     useState<StreamLiveState>("idle");
-  const [streamError, setStreamError] = useState<string | null>(null);
+  const [streamError, setStreamError] = useState<PresentedError | null>(null);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
   const [abortable, setAbortable] = useState(false);
   const [pendingDisclosure, setPendingDisclosure] = useState<{
     message: string;
     disclosure: Disclosure;
   } | null>(null);
+  const [disclosureError, setDisclosureError] = useState<PresentedError | null>(
+    null,
+  );
   const abortRef = useRef<AbortController | null>(null);
   const approvingDisclosureRef = useRef(false);
   const pendingMessageIdsRef = useRef(new Set<string>());
@@ -193,8 +240,10 @@ export function AgentChat({
       (model) => model.modelId === assignedModel && model.available,
     ) === true;
   const assignedModelAvailable = connectionReady && modelAvailable;
+  const chatDataReady = history.isSuccess && settings.isSuccess;
+  const chatDataLoading = history.isLoading || settings.isLoading;
   const composerReady =
-    settings.isSuccess && hasCompleteAssignment && assignedModelAvailable;
+    chatDataReady && hasCompleteAssignment && assignedModelAvailable;
   const composerNeedsConfiguration = settings.isSuccess && !composerReady;
   const recoverySection =
     hasCompleteAssignment && !connectionReady ? "connections" : "ai";
@@ -247,6 +296,7 @@ export function AgentChat({
     setStreaming(true);
     setStreamLiveState("generating");
     setStreamError(null);
+    setDisclosureError(null);
     setRetryMessage(null);
     try {
       const preparation = await api<
@@ -256,19 +306,22 @@ export function AgentChat({
         body: JSON.stringify({ role, message }),
       });
       if (preparation.required) {
-        setPendingDisclosure({ message, disclosure: preparation.disclosure });
+        setPendingDisclosure({
+          message,
+          disclosure: preparation.disclosure,
+        });
         setStreamLiveState("idle");
         return;
       }
       await runStream(message);
     } catch (error) {
       setStreamLiveState("failed");
-      setStreamError(
-        error instanceof Error
-          ? t("chat.error.prepare", { error: error.message })
-          : agentFailureMessage,
-      );
+      setStreamError({
+        message: t("chat.error.prepare"),
+        technicalDetails: safeTechnicalDetails(error, t),
+      });
       setRetryMessage(message);
+      setInput((current) => current || message);
     } finally {
       setStreaming(false);
     }
@@ -277,25 +330,40 @@ export function AgentChat({
   async function approveDisclosure() {
     const pending = pendingDisclosure;
     if (!pending) return;
-    setPendingDisclosure(null);
     setStreaming(true);
     setStreamLiveState("generating");
     setStreamError(null);
+    setDisclosureError(null);
     setRetryMessage(null);
     try {
       await api(`/ai/disclosures/${pending.disclosure.operationId}/approve`, {
         method: "POST",
         body: JSON.stringify({}),
       });
+    } catch (error) {
+      setStreamLiveState("idle");
+      setDisclosureError({
+        message: t("chat.error.send"),
+        technicalDetails: safeTechnicalDetails(error, t),
+      });
+      return;
+    } finally {
+      setStreaming(false);
+    }
+
+    setPendingDisclosure(null);
+    setStreaming(true);
+    setStreamLiveState("generating");
+    try {
       await runStream(pending.message, pending.disclosure.operationId);
     } catch (error) {
       setStreamLiveState("failed");
-      setStreamError(
-        error instanceof Error
-          ? t("chat.error.send", { error: error.message })
-          : agentFailureMessage,
-      );
+      setStreamError({
+        message: t("chat.error.send"),
+        technicalDetails: safeTechnicalDetails(error, t),
+      });
       setRetryMessage(pending.message);
+      setInput((current) => current || pending.message);
     } finally {
       setStreaming(false);
     }
@@ -305,11 +373,20 @@ export function AgentChat({
     const pending = pendingDisclosure;
     setPendingDisclosure(null);
     setStreamLiveState("idle");
+    setDisclosureError(null);
     if (!pending) return;
-    await api(`/ai/disclosures/${pending.disclosure.operationId}/cancel`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    }).catch(() => undefined);
+    try {
+      await api(`/ai/disclosures/${pending.disclosure.operationId}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    } catch (error) {
+      setPendingDisclosure(pending);
+      setDisclosureError({
+        message: t("chat.error.cancelDisclosure"),
+        technicalDetails: safeTechnicalDetails(error, t),
+      });
+    }
   }
 
   async function runStream(message: string, disclosureOperationId?: string) {
@@ -357,6 +434,7 @@ export function AgentChat({
         },
         controller.signal,
       )) {
+        if (controller.signal.aborted) break;
         switch (event.type) {
           case "message.delta":
             assistantContent += event.content;
@@ -405,7 +483,7 @@ export function AgentChat({
         terminalReason === "failed" ||
         terminalReason === null ||
         streamReportedError;
-      if (terminalReason === "cancelled") {
+      if (controller.signal.aborted || terminalReason === "cancelled") {
         assistantContent = agentCancellationMessage;
         setStreamLiveState("cancelled");
       } else if (failed) {
@@ -431,11 +509,12 @@ export function AgentChat({
       if (transportFailed) pendingMessageIdsRef.current.delete(assistantId);
       assistantContent = controller.signal.aborted
         ? agentCancellationMessage
-        : error instanceof Error
-          ? t("chat.error.responseDetail", { error: error.message })
-          : agentFailureMessage;
+        : agentFailureMessage;
       if (!controller.signal.aborted) {
-        setStreamError(assistantContent);
+        setStreamError({
+          message: t("chat.error.responseDetail"),
+          technicalDetails: safeTechnicalDetails(error, t),
+        });
         setRetryMessage(message);
         setInput((current) => current || message);
       }
@@ -486,6 +565,18 @@ export function AgentChat({
   }
 
   const retrying = retryMessage !== null && input.trim() === retryMessage;
+  const queryError: PresentedError | null = history.isError
+    ? {
+        message: t("chat.error.history"),
+        technicalDetails: safeTechnicalDetails(history.error, t),
+      }
+    : settings.isError
+      ? {
+          message: t("chat.error.settings"),
+          technicalDetails: safeTechnicalDetails(settings.error, t),
+        }
+      : null;
+  const presentedError = streamError ?? queryError;
 
   return (
     <section
@@ -555,23 +646,26 @@ export function AgentChat({
           ) : null}
         </p>
       </div>
-      {history.isError || settings.isError || streamError ? (
+      {presentedError ? (
         <Alert
           id="agent-chat-error"
           variant="destructive"
           className="rounded-none border-x-0 border-t-0"
         >
-          <AlertDescription className="flex w-full flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-            <span>
-              {streamError ??
-                (history.error instanceof Error
-                  ? t("chat.error.history", { error: history.error.message })
-                  : settings.error instanceof Error
-                    ? t("chat.error.settings", {
-                        error: settings.error.message,
-                      })
-                    : t("chat.error.dataUnavailable"))}
-            </span>
+          <AlertDescription className="flex w-full flex-col items-start justify-between gap-3 sm:flex-row sm:items-start">
+            <div className="min-w-0">
+              <p>{presentedError.message}</p>
+              {presentedError.technicalDetails ? (
+                <details className="mt-2 max-w-[65ch] text-xs text-muted-foreground">
+                  <summary className="min-h-11 cursor-pointer py-3 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {t("query.technicalDetails")}
+                  </summary>
+                  <p className="whitespace-pre-wrap font-mono [overflow-wrap:anywhere]">
+                    {presentedError.technicalDetails}
+                  </p>
+                </details>
+              ) : null}
+            </div>
             {!streamError ? (
               <Button
                 type="button"
@@ -616,7 +710,8 @@ export function AgentChat({
                   <Spinner />
                   {t("chat.status.loading")}
                 </div>
-              ) : messages.length === 0 ? (
+              ) : history.isError &&
+                messages.length === 0 ? null : messages.length === 0 ? (
                 <div className="my-auto w-full max-w-xl py-12 text-left">
                   <p className="text-sm font-medium text-muted-foreground">
                     {selectedRoleLabel}
@@ -624,6 +719,9 @@ export function AgentChat({
                   <p className="mt-2 font-medium">{t("chat.empty.title")}</p>
                   <p className="mt-2 text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
                     {t("chat.empty.description")}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+                    {t("chat.empty.reloadLimitation")}
                   </p>
                 </div>
               ) : (
@@ -648,6 +746,7 @@ export function AgentChat({
                             {message.content ? (
                               message.role === "assistant" ? (
                                 <Markdown
+                                  baseHeadingLevel={2}
                                   className={`${markdownContentClassName} max-w-[72ch]`}
                                 >
                                   {message.content}
@@ -749,11 +848,13 @@ export function AgentChat({
               }
             }}
             placeholder={
-              settings.isLoading
-                ? t("provider.checking")
-                : composerNeedsConfiguration
-                  ? t("chat.composer.unavailablePlaceholder")
-                  : t("chat.composer.placeholder")
+              chatDataLoading
+                ? t("chat.status.loading")
+                : queryError
+                  ? t("chat.error.dataUnavailable")
+                  : composerNeedsConfiguration
+                    ? t("chat.composer.unavailablePlaceholder")
+                    : t("chat.composer.placeholder")
             }
           />
           <InputGroupAddon
@@ -772,6 +873,7 @@ export function AgentChat({
             {streaming ? (
               abortable ? (
                 <InputGroupButton
+                  type="button"
                   size="sm"
                   variant="outline"
                   aria-label={t("chat.composer.stop")}
@@ -789,13 +891,17 @@ export function AgentChat({
                   {t("chat.status.generating")}
                 </span>
               )
-            ) : settings.isLoading ? (
+            ) : chatDataLoading ? (
               <span
                 role="status"
                 className="inline-flex min-h-11 shrink-0 items-center gap-2 text-xs text-muted-foreground sm:min-h-9"
               >
                 <Spinner />
-                {t("provider.checking")}
+                {t("chat.status.loading")}
+              </span>
+            ) : queryError ? (
+              <span className="inline-flex min-h-11 items-center text-xs text-muted-foreground sm:min-h-9">
+                {t("chat.error.dataUnavailable")}
               </span>
             ) : composerNeedsConfiguration ? (
               <InputGroupButton asChild size="sm" variant="default">
@@ -876,6 +982,23 @@ export function AgentChat({
                 </dd>
               </div>
             </dl>
+          ) : null}
+          {disclosureError ? (
+            <Alert variant="destructive">
+              <AlertDescription>
+                <p>{disclosureError.message}</p>
+                {disclosureError.technicalDetails ? (
+                  <details className="mt-2 text-xs text-muted-foreground">
+                    <summary className="min-h-11 cursor-pointer py-3 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      {t("query.technicalDetails")}
+                    </summary>
+                    <p className="whitespace-pre-wrap font-mono [overflow-wrap:anywhere]">
+                      {disclosureError.technicalDetails}
+                    </p>
+                  </details>
+                ) : null}
+              </AlertDescription>
+            </Alert>
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel>{t("chat.disclosure.cancel")}</AlertDialogCancel>

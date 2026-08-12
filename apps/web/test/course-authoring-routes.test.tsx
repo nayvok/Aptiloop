@@ -1,12 +1,25 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { redirectMock, studioPropsMock } = vi.hoisted(() => ({
+const { navigationMock, redirectMock, studioPropsMock } = vi.hoisted(() => ({
+  navigationMock: {
+    pathname: "/courses/new",
+    search: "",
+    push: vi.fn((href: string) => {
+      navigationMock.search = new URL(href, "http://localhost").search.slice(1);
+    }),
+    replace: vi.fn(),
+  },
   redirectMock: vi.fn(),
   studioPropsMock: vi.fn(),
 }));
 
-vi.mock("next/navigation", () => ({ redirect: redirectMock }));
+vi.mock("next/navigation", () => ({
+  redirect: redirectMock,
+  usePathname: () => navigationMock.pathname,
+  useRouter: () => navigationMock,
+  useSearchParams: () => new URLSearchParams(navigationMock.search),
+}));
 vi.mock("@/lib/i18n", () => ({
   useI18n: () => ({
     t: (key: string) =>
@@ -51,6 +64,10 @@ import MistakesCompatibilityPage from "@/app/mistakes/page";
 import CurriculumCompatibilityPage from "@/app/settings/curriculum/page";
 
 beforeEach(() => {
+  navigationMock.pathname = "/courses/new";
+  navigationMock.search = "";
+  navigationMock.push.mockReset();
+  navigationMock.replace.mockReset();
   redirectMock.mockReset();
   studioPropsMock.mockReset();
 });
@@ -79,12 +96,14 @@ describe("Course authoring routes", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 
     fireEvent.click(external);
+    view.rerender(<NewCoursePage />);
     expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute(
       "href",
       "/courses/new/external",
     );
 
     fireEvent.click(connected);
+    view.rerender(<NewCoursePage />);
     expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute(
       "href",
       "/courses/new/guided",
@@ -93,6 +112,42 @@ describe("Course authoring routes", () => {
       screen.getByRole("link", { name: /Create a blank Draft/u }),
     ).toHaveAttribute("href", "/courses/new/manual");
     expect(screen.queryByLabelText(/file/u)).not.toBeInTheDocument();
+  });
+
+  it("uses URL history for the assisted creation choice and restores it from the URL", () => {
+    navigationMock.search = "source=home";
+    const view = render(<NewCoursePage />);
+
+    fireEvent.click(
+      screen.getByRole("radio", { name: /Use an external model/u }),
+    );
+    expect(navigationMock.push).toHaveBeenLastCalledWith(
+      "/courses/new?source=home&path=external",
+      { scroll: false },
+    );
+
+    navigationMock.search = "source=home&path=connected";
+    view.rerender(<NewCoursePage />);
+    expect(
+      screen.getByRole("radio", { name: /connected Course Designer/u }),
+    ).toBeChecked();
+
+    navigationMock.search = "source=home&path=external";
+    view.rerender(<NewCoursePage />);
+    expect(
+      screen.getByRole("radio", { name: /Use an external model/u }),
+    ).toBeChecked();
+  });
+
+  it("canonicalizes an invalid creation choice while preserving other parameters", () => {
+    navigationMock.search = "path=unknown&source=home";
+    render(<NewCoursePage />);
+
+    expect(navigationMock.replace).toHaveBeenCalledWith(
+      "/courses/new?source=home",
+      { scroll: false },
+    );
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
   it("forwards a validated revision and mode to Adaptive Studio", async () => {
@@ -168,6 +223,27 @@ describe("Course authoring routes", () => {
 
     expect(redirectMock).toHaveBeenCalledWith("/courses");
     expect(studioPropsMock).not.toHaveBeenCalled();
+  });
+
+  it("canonicalizes invalid optional Studio state without changing version authority", async () => {
+    redirectMock.mockImplementationOnce(() => {
+      throw new Error("NEXT_REDIRECT");
+    });
+
+    await expect(
+      CourseStudioPage({
+        searchParams: Promise.resolve({
+          version: "draft-target",
+          mode: "automatic",
+          tab: "unknown",
+          source: "history",
+        }),
+      }),
+    ).rejects.toThrow("NEXT_REDIRECT");
+
+    expect(redirectMock).toHaveBeenCalledWith(
+      "/courses/studio?version=draft-target&source=history",
+    );
   });
 
   it.each([

@@ -22,6 +22,8 @@ import { SettingsForm } from "@/components/settings-form";
 
 const { apiMock, navigationState, setThemeMock } = vi.hoisted(() => {
   let search = "";
+  let history = [""];
+  let historyIndex = 0;
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((listener) => listener());
   return {
@@ -35,10 +37,26 @@ const { apiMock, navigationState, setThemeMock } = vi.hoisted(() => {
       },
       push: vi.fn((href: string) => {
         search = new URL(href, "http://localhost").search;
+        history = [...history.slice(0, historyIndex + 1), search];
+        historyIndex += 1;
         notify();
       }),
       setSearch: (next: string) => {
         search = next;
+        history = [next];
+        historyIndex = 0;
+        notify();
+      },
+      back: () => {
+        if (historyIndex === 0) return;
+        historyIndex -= 1;
+        search = history[historyIndex]!;
+        notify();
+      },
+      forward: () => {
+        if (historyIndex >= history.length - 1) return;
+        historyIndex += 1;
+        search = history[historyIndex]!;
         notify();
       },
     },
@@ -249,6 +267,7 @@ beforeEach(() => {
   navigationState.setSearch("");
   setThemeMock.mockReset();
   window.localStorage.clear();
+  window.sessionStorage.clear();
   document.cookie = "aptiloop.ui-locale=; Path=/; Max-Age=0";
   apiMock.mockImplementation((path: string, init?: RequestInit) => {
     if (path === "/settings" && init?.method === "PUT") {
@@ -307,7 +326,7 @@ describe("SettingsForm", () => {
     expect(screen.getByText("zed")).toBeVisible();
   });
 
-  it("applies browser-owned interface choices immediately without a server mutation", async () => {
+  it("keeps locale as a draft while theme remains immediate", async () => {
     renderForm();
     await screen.findByRole("heading", { name: "Interface" });
     expect(setThemeMock).not.toHaveBeenCalled();
@@ -321,22 +340,178 @@ describe("SettingsForm", () => {
       await screen.findByRole("option", { name: "Русский (Россия)" }),
     );
 
+    expect(screen.getByRole("heading", { name: "Interface" })).toBeVisible();
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(window.localStorage.getItem("aptiloop:ui-locale")).toBeNull();
+    expect(window.sessionStorage.getItem("aptiloop:ui-locale-draft")).toBe(
+      "ru-RU",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Interface language has unsaved changes.",
+    );
+    expect(screen.getByRole("button", { name: "Save language" })).toBeEnabled();
+    expect(
+      apiMock.mock.calls.some(
+        ([path, init]) =>
+          (path === "/settings" || path === "/settings/locale") &&
+          init?.method === "PUT",
+      ),
+    ).toBe(false);
+  });
+
+  it("cancels the locale draft without changing or persisting the locale", async () => {
+    renderForm();
+    await screen.findByRole("heading", { name: "Interface" });
+
+    fireEvent.click(screen.getByLabelText("Interface language"));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Русский (Россия)" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel language changes" }),
+    );
+
+    expect(screen.getByLabelText("Interface language")).toHaveTextContent(
+      "English (United States)",
+    );
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(window.localStorage.getItem("aptiloop:ui-locale")).toBeNull();
+    expect(
+      window.sessionStorage.getItem("aptiloop:ui-locale-draft"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Save language" }),
+    ).toBeDisabled();
+    expect(apiMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unsaved locale draft across section navigation and Back/Forward", async () => {
+    renderForm();
+    await screen.findByRole("heading", { name: "Interface" });
+
+    fireEvent.click(screen.getByLabelText("Interface language"));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Русский (Россия)" }),
+    );
+
+    openTab("AI roles");
+    expect(await screen.findByLabelText("Default model")).toBeVisible();
+    expect(
+      screen.queryByLabelText("Interface language"),
+    ).not.toBeInTheDocument();
+
+    navigationState.back();
+    expect(
+      await screen.findByLabelText("Interface language"),
+    ).toHaveTextContent("Русский (Россия)");
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(screen.getByRole("button", { name: "Save language" })).toBeEnabled();
+
+    navigationState.forward();
+    expect(await screen.findByLabelText("Default model")).toBeVisible();
+    navigationState.back();
+    expect(
+      await screen.findByLabelText("Interface language"),
+    ).toHaveTextContent("Русский (Россия)");
+    expect(window.localStorage.getItem("aptiloop:ui-locale")).toBeNull();
+  });
+
+  it("restores an unsaved locale draft after a route unmount without changing the active locale", async () => {
+    const first = renderForm();
+    await screen.findByRole("heading", { name: "Interface" });
+
+    fireEvent.click(screen.getByLabelText("Interface language"));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Русский (Россия)" }),
+    );
+    expect(window.sessionStorage.getItem("aptiloop:ui-locale-draft")).toBe(
+      "ru-RU",
+    );
+
+    first.unmount();
+    renderForm();
+
+    expect(
+      await screen.findByLabelText("Interface language"),
+    ).toHaveTextContent("Русский (Россия)");
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(window.localStorage.getItem("aptiloop:ui-locale")).toBeNull();
+    expect(screen.getByRole("button", { name: "Save language" })).toBeEnabled();
+    expect(apiMock).not.toHaveBeenCalled();
+  });
+
+  it("discards a malformed session locale draft without changing the active locale", async () => {
+    window.sessionStorage.setItem("aptiloop:ui-locale-draft", "de-DE");
+
+    renderForm();
+
+    expect(
+      await screen.findByLabelText("Interface language"),
+    ).toHaveTextContent("English (United States)");
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(
+      window.sessionStorage.getItem("aptiloop:ui-locale-draft"),
+    ).toBeNull();
+    expect(apiMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when session draft storage is blocked", async () => {
+    const originalGetItem = Storage.prototype.getItem;
+    const getItem = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(function (this: Storage, key) {
+        if (this !== window.sessionStorage) {
+          return originalGetItem.call(this, key);
+        }
+        throw new DOMException("Storage blocked", "SecurityError");
+      });
+
+    renderForm();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Browser storage is unavailable",
+    );
+    expect(screen.getByLabelText("Interface language")).toHaveTextContent(
+      "English (United States)",
+    );
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(apiMock).not.toHaveBeenCalled();
+    getItem.mockRestore();
+  });
+
+  it("saves the locale locally, survives a remount, and never mutates Core", async () => {
+    const first = renderForm();
+    await screen.findByRole("heading", { name: "Interface" });
+
+    fireEvent.click(screen.getByLabelText("Interface language"));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Русский (Россия)" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save language" }));
+
     expect(
       await screen.findByRole("heading", { name: "Интерфейс" }),
     ).toBeVisible();
     expect(document.documentElement.lang).toBe("ru-RU");
     expect(window.localStorage.getItem("aptiloop:ui-locale")).toBe("ru-RU");
     expect(
-      screen.queryByRole("button", { name: "Save interface settings" }),
-    ).not.toBeInTheDocument();
+      window.sessionStorage.getItem("aptiloop:ui-locale-draft"),
+    ).toBeNull();
+    expect(apiMock).not.toHaveBeenCalled();
+
+    first.unmount();
+    renderForm();
+
     expect(
-      apiMock.mock.calls.some(
-        ([path, init]) => path === "/settings" && init?.method === "PUT",
-      ),
-    ).toBe(false);
+      await screen.findByRole("heading", { name: "Интерфейс" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Язык интерфейса")).toHaveTextContent(
+      "Русский (Россия)",
+    );
+    expect(apiMock).not.toHaveBeenCalled();
   });
 
-  it("warns honestly when browser preference storage is unavailable", async () => {
+  it("keeps the active locale unchanged when browser storage blocks Save", async () => {
     const setItem = vi
       .spyOn(Storage.prototype, "setItem")
       .mockImplementation(() => {
@@ -348,6 +523,18 @@ describe("SettingsForm", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Browser storage is unavailable",
     );
+    fireEvent.click(screen.getByLabelText("Interface language"));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Русский (Россия)" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save language" }));
+
+    expect(screen.getByRole("heading", { name: "Interface" })).toBeVisible();
+    expect(document.documentElement.lang).toBe("en-US");
+    expect(screen.getByLabelText("Interface language")).toHaveTextContent(
+      "Русский (Россия)",
+    );
+    expect(apiMock).not.toHaveBeenCalled();
     setItem.mockRestore();
   });
 
@@ -380,6 +567,40 @@ describe("SettingsForm", () => {
         modelId: "pi-exact",
       });
     });
+  });
+
+  it("keeps raw AI role save failures in closed technical details", async () => {
+    apiMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === "/settings/ai" && init?.method === "PUT") {
+        return Promise.reject(
+          Object.assign(new Error("raw provider credential path"), {
+            status: 503,
+            failure: {
+              code: "provider_unavailable",
+              retryable: true,
+              messageKey: "ai.failure.providerUnavailable",
+              diagnosticId: "provider-hub:settings-save-1",
+              recoveryAction: null,
+            },
+          }),
+        );
+      }
+      if (path === "/settings") return Promise.resolve(settingsResponse);
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+    renderForm();
+    await screen.findByRole("tab", { name: "AI roles" });
+    openTab("AI roles");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Save AI roles" }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.querySelector("p")).toHaveTextContent(
+      "The selected AI provider is unavailable.",
+    );
+    expect(alert).not.toHaveTextContent("raw provider credential path");
+    expect(screen.getByText("provider-hub:settings-save-1")).not.toBeVisible();
   });
 
   it("creates a local connection from server-owned catalog fields", async () => {

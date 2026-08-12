@@ -573,18 +573,21 @@ describe("UI foundation", () => {
     expect(within(breadcrumbs).queryByText("Урок")).not.toBeInTheDocument();
   });
 
-  it("keeps a lesson-linked Interview in Courses", () => {
-    const context = resolveRouteContext(
-      "/interview",
-      new URLSearchParams("sessionId=session-a"),
-    );
+  it.each(["sessionId=session-a", "sessionId="])(
+    "keeps Interview in Review until the server validates %s",
+    (query) => {
+      const context = resolveRouteContext(
+        "/interview",
+        new URLSearchParams(query),
+      );
 
-    expect(context.sectionHref).toBe("/courses");
-    expect(context.breadcrumbs.map((item) => item.label)).toEqual([
-      "nav.courses",
-      "interview.title",
-    ]);
-  });
+      expect(context.sectionHref).toBe("/review");
+      expect(context.breadcrumbs.map((item) => item.label)).toEqual([
+        "nav.review",
+        "interview.title",
+      ]);
+    },
+  );
 
   it("uses the open page header as the document heading", () => {
     render(

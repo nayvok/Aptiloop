@@ -281,6 +281,65 @@ describe("core learning screens", () => {
     ).toBeVisible();
   });
 
+  it("keeps the Review dismissal confirmation open when the mutation fails", async () => {
+    apiMock.mockImplementation((path: string) => {
+      if (path === "/learning/reviews") {
+        return Promise.resolve({
+          asOf: "2026-01-02T00:00:00.000Z",
+          reviews: [
+            {
+              id: "review-pending",
+              topic: "Lexical scope",
+              knowledgeNodeId: "lexical-scope",
+              dimension: "understanding",
+              activityKind: "recall",
+              reasonCode: "mistake",
+              dueAt: "2026-01-01T00:00:00.000Z",
+              state: "pending",
+              isDue: true,
+              sessionId: "session-review",
+              activityId: "activity-review",
+              nextActionHref: null,
+            },
+          ],
+        });
+      }
+      if (path.includes("/dismiss")) {
+        return Promise.reject(new Error("write failed"));
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+
+    renderWithQuery(<ReviewQueueClient />);
+    fireEvent.pointerDown(
+      await screen.findByRole("button", {
+        name: "Убрать задание из очереди: Lexical scope",
+      }),
+      { button: 0, ctrlKey: false },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "Убрать задание из очереди",
+      }),
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Убрать задание из очереди",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Убрать задание из очереди",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith(
+        expect.stringContaining("/reviews/review-pending/dismiss"),
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    expect(dialog).toBeVisible();
+  });
+
   it("uses server due classifications for Corrections", async () => {
     apiMock.mockResolvedValue({
       asOf: "2026-01-02T00:00:00.000Z",

@@ -3,7 +3,10 @@
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/ssr";
 
 import { Button } from "@/components/ui/button";
+import type { FailureOperation } from "@/lib/failure-presentation";
+import { presentFailure } from "@/lib/failure-presentation";
 import { useI18n } from "@/lib/i18n";
+import { useOnlineStatus } from "@/lib/online-status";
 
 export function QueryError({
   title,
@@ -19,6 +22,8 @@ export function QueryError({
   kind?: "error" | "warning";
 }) {
   const { t } = useI18n();
+  const isOnline = useOnlineStatus();
+
   return (
     <div
       data-slot="query-error"
@@ -47,6 +52,14 @@ export function QueryError({
         <p className="mt-1 max-w-[65ch] text-sm text-muted-foreground">
           {message}
         </p>
+        {!isOnline ? (
+          <p className="mt-2 max-w-[65ch] text-xs leading-5 text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {t("query.offline")}:
+            </span>{" "}
+            {t("query.offlineDescription")}
+          </p>
+        ) : null}
         {diagnostic ? (
           <details className="mt-3 max-w-[65ch] text-xs text-muted-foreground">
             <summary className="min-h-11 cursor-pointer py-3 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -68,6 +81,28 @@ export function QueryError({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+export function SafeQueryError({
+  error,
+  operation,
+  retry,
+}: {
+  error: unknown;
+  operation: FailureOperation;
+  retry?: () => void;
+}) {
+  const { t } = useI18n();
+  const presentation = presentFailure(error, operation, t);
+  return (
+    <QueryError
+      message={presentation.message}
+      {...(presentation.diagnostic
+        ? { diagnostic: presentation.diagnostic }
+        : {})}
+      {...(retry ? { retry } : {})}
+    />
   );
 }
 

@@ -31,6 +31,17 @@ function requestedWorkspace(
     : null;
 }
 
+function canonicalStudioSearchParams(params: StudioSearchParams) {
+  const canonical = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string") canonical.append(key, value);
+    else if (Array.isArray(value)) {
+      for (const item of value) canonical.append(key, item);
+    }
+  }
+  return canonical;
+}
+
 export default async function CourseStudioPage({
   searchParams,
 }: {
@@ -40,15 +51,24 @@ export default async function CourseStudioPage({
   const version = requestedVersion(params.version);
   if (!version) redirect("/courses");
   const mode = requestedMode(params.mode);
-  const workspace =
-    requestedWorkspace(params.tab) ??
-    (mode === "designer" ? "designer" : "program");
+  const workspace = requestedWorkspace(params.tab);
+  if (
+    (params.mode !== undefined && mode === null) ||
+    (params.tab !== undefined && workspace === null)
+  ) {
+    const canonical = canonicalStudioSearchParams(params);
+    if (mode === null) canonical.delete("mode");
+    if (workspace === null) canonical.delete("tab");
+    redirect(`/courses/studio?${canonical.toString()}`);
+  }
   return (
     <CurriculumStudioClient
       key={`${version}:${mode ?? "manual"}`}
       initialVersionId={version}
       initialMode={mode}
-      initialWorkspace={workspace}
+      initialWorkspace={
+        workspace ?? (mode === "designer" ? "designer" : "program")
+      }
     />
   );
 }

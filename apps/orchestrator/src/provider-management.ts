@@ -8,6 +8,7 @@ import {
   type AgentProvider,
   type PiAgentProvider,
   type PiAuthInteraction,
+  type PiCredential,
   type PiProviderAuthKind,
 } from "@aptiloop/agent-core";
 import {
@@ -15,7 +16,13 @@ import {
   type DatabaseConnection,
   type LearningRepository,
 } from "@aptiloop/database";
-import type { ProviderConnection } from "@aptiloop/shared";
+import {
+  ProviderLoginStatusSchema,
+  type ProviderConnection,
+  type ProviderLoginEvent,
+  type ProviderLoginPrompt,
+  type ProviderLoginStatus,
+} from "@aptiloop/shared";
 import { z } from "zod";
 
 import { LocalPiCredentialStore } from "./local-pi-credential-store.js";
@@ -86,7 +93,7 @@ export const SetProviderApiKeySchema = z
 export const ProviderLoginAnswerSchema = z
   .object({
     promptId: z.string().uuid(),
-    answer: z.string().min(1).max(20_000),
+    answer: z.string().max(20_000),
   })
   .strict();
 
@@ -106,14 +113,7 @@ type LoginPrompt = Parameters<PiAuthInteraction["prompt"]>[0];
 
 interface PendingLoginPrompt {
   readonly promptId: string;
-  readonly type: LoginPrompt["type"];
-  readonly message: string;
-  readonly placeholder: string | null;
-  readonly options: ReadonlyArray<{
-    readonly id: string;
-    readonly label: string;
-    readonly description?: string;
-  }>;
+  readonly view: ProviderLoginPrompt;
   readonly resolve: (answer: string) => void;
   readonly reject: (error: Error) => void;
 }
@@ -123,9 +123,9 @@ interface LoginOperation {
   readonly connectionId: string;
   readonly createdAt: number;
   readonly abortController: AbortController;
-  readonly events: LoginEvent[];
+  readonly events: ProviderLoginEvent[];
   status: "running" | "completed" | "failed" | "cancelled";
-  error: string | null;
+  error: "provider-sign-in-failed" | null;
   prompt: PendingLoginPrompt | null;
 }
 
@@ -141,6 +141,7 @@ export class ProviderManagementService {
   readonly #now: () => Date;
   readonly #configs = new Map<string, ManagedProviderConnection>();
   readonly #piProviders = new Map<string, PiAgentProvider>();
+  readonly #blockedLegacyCredentialIds = new Set<string>();
   readonly #loginOperations = new Map<string, LoginOperation>();
   #loading: Promise<void> | null = null;
 
@@ -165,13 +166,19 @@ export class ProviderManagementService {
       connections: await Promise.all(
         [...this.#configs.values()].map(async (config) => {
           const entry = getPiProviderCatalogEntry(config.catalogId);
+          const blockedLegacyCredential =
+            this.#blockedLegacyCredentialIds.has(config.connectionId);
           return {
             connectionId: config.connectionId,
             catalogId: config.catalogId,
             authKind: entry.authKind,
             credentialConfigured:
-              entry.authKind === "local" ||
-              (await this.#credentials.has(config.connectionId)),
+              !blockedLegacyCredential &&
+              (entry.authKind === "local" ||
+                (await this.#credentials.has(config.connectionId))),
+            recoveryState: blockedLegacyCredential
+              ? ("reauthentication-required" as const)
+              : null,
             baseUrl: config.baseUrl,
             modelIds: [...config.modelIds],
           };
@@ -291,6 +298,7 @@ export class ProviderManagementService {
     const config = this.#requiredConfig(connectionId);
     const current = this.#requiredConnection(connectionId);
     await this.#credentials.delete(connectionId);
+    this.#blockedLegacyCredentialIds.delete(connectionId);
     this.#connectionProviders.delete(connectionId);
     this.#piProviders.delete(connectionId);
     this.#hubRepository.saveConnection({
@@ -345,7 +353,9 @@ export class ProviderManagementService {
     const interaction: PiAuthInteraction = {
       signal: operation.abortController.signal,
       notify: (event) => {
-        operation.events.push(sanitizeLoginEvent(event));
+        operation.events.push(
+          normalizeProviderLoginEvent(config.catalogId, event),
+        );
         if (operation.events.length > 50) operation.events.shift();
       },
       prompt: (prompt) => this.#waitForPrompt(operation, prompt),
@@ -355,6 +365,7 @@ export class ProviderManagementService {
       .then(() => {
         operation.status = "completed";
         operation.prompt = null;
+        this.#blockedLegacyCredentialIds.delete(config.connectionId);
         this.#enableConnection(config, entry.authKind);
       })
       .catch((error: unknown) => {
@@ -364,31 +375,24 @@ export class ProviderManagementService {
           ? "cancelled"
           : "failed";
         operation.error =
-          operation.status === "failed" ? safeMessage(error) : null;
+          operation.status === "failed" ? "provider-sign-in-failed" : null;
+        void error;
       });
     return operationId;
   }
 
-  loginStatus(operationId: string) {
+  loginStatus(operationId: string): ProviderLoginStatus {
     this.#pruneLoginOperations();
     const operation = this.#loginOperations.get(operationId);
     if (!operation) throw new Error("Unknown or expired sign-in operation");
-    return {
+    return ProviderLoginStatusSchema.parse({
       operationId: operation.operationId,
       connectionId: operation.connectionId,
       status: operation.status,
       events: operation.events.map((event) => ({ ...event })),
-      prompt: operation.prompt
-        ? {
-            promptId: operation.prompt.promptId,
-            type: operation.prompt.type,
-            message: operation.prompt.message,
-            placeholder: operation.prompt.placeholder,
-            options: operation.prompt.options.map((option) => ({ ...option })),
-          }
-        : null,
+      prompt: operation.prompt ? operation.prompt.view : null,
       error: operation.error,
-    };
+    });
   }
 
   answerLogin(operationId: string, promptId: string, answer: string): void {
@@ -400,8 +404,9 @@ export class ProviderManagementService {
     if (!prompt || prompt.promptId !== promptId) {
       throw new Error("Sign-in prompt is no longer active");
     }
+    const normalizedAnswer = normalizeProviderLoginAnswer(prompt.view, answer);
     operation.prompt = null;
-    prompt.resolve(answer);
+    prompt.resolve(normalizedAnswer);
   }
 
   cancelLogin(operationId: string): void {
@@ -423,6 +428,22 @@ export class ProviderManagementService {
       const connection = this.#hubRepository
         .listConnections()
         .find((candidate) => candidate.connectionId === config.connectionId);
+      const credential = await this.#credentials.read(config.connectionId);
+      if (hasUnsupportedLegacyGitHubCredential(config, credential)) {
+        this.#blockedLegacyCredentialIds.add(config.connectionId);
+        this.#piProviders.delete(config.connectionId);
+        this.#connectionProviders.delete(config.connectionId);
+        if (connection) {
+          this.#hubRepository.saveConnection({
+            ...connection,
+            enabled: false,
+            state: "misconfigured",
+            observedCapabilities: null,
+            lastCheckedAt: this.#now().toISOString(),
+          });
+        }
+        continue;
+      }
       if (!connection?.enabled) continue;
       const provider = this.#registerProvider(config);
       this.#connectionProviders.set(config.connectionId, provider);
@@ -491,6 +512,11 @@ export class ProviderManagementService {
     }
     return new Promise<string>((resolve, reject) => {
       const promptId = randomUUID();
+      const normalizedPrompt = normalizeProviderLoginPrompt(
+        this.#requiredConfig(operation.connectionId).catalogId,
+        promptId,
+        rawPrompt,
+      );
       const onAbort = () => {
         operation.abortController.signal.removeEventListener("abort", onAbort);
         reject(new Error("Sign-in cancelled"));
@@ -500,16 +526,7 @@ export class ProviderManagementService {
       });
       operation.prompt = {
         promptId,
-        type: rawPrompt.type,
-        message: rawPrompt.message.slice(0, 2_000),
-        placeholder:
-          "placeholder" in rawPrompt
-            ? (rawPrompt.placeholder?.slice(0, 500) ?? null)
-            : null,
-        options:
-          rawPrompt.type === "select"
-            ? rawPrompt.options.slice(0, 20).map((option) => ({ ...option }))
-            : [],
+        view: normalizedPrompt,
         resolve: (answer) => {
           operation.abortController.signal.removeEventListener(
             "abort",
@@ -536,6 +553,18 @@ export class ProviderManagementService {
       this.#loginOperations.delete(operationId);
     }
   }
+}
+
+function hasUnsupportedLegacyGitHubCredential(
+  config: ManagedProviderConnection,
+  credential: PiCredential | undefined,
+): boolean {
+  return (
+    config.catalogId === "github-copilot-subscription" &&
+    credential?.type === "oauth" &&
+    typeof credential.enterpriseUrl === "string" &&
+    credential.enterpriseUrl.trim().length > 0
+  );
 }
 
 function uniqueModelIds(modelIds: readonly string[]): string[] {
@@ -608,41 +637,147 @@ function validateExternalOpenAiBaseUrl(value: string | undefined): string {
   return url.toString();
 }
 
-function sanitizeLoginEvent(event: LoginEvent): LoginEvent {
-  if (event.type === "auth_url") {
-    const url = new URL(event.url);
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
-      throw new Error("Provider returned an unsafe sign-in URL");
-    }
+export function normalizeProviderLoginPrompt(
+  catalogId: (typeof catalogIds)[number],
+  promptId: string,
+  rawPrompt: LoginPrompt,
+): ProviderLoginPrompt {
+  if (
+    catalogId === "github-copilot-subscription" &&
+    rawPrompt.type === "text" &&
+    rawPrompt.message ===
+      "GitHub Enterprise URL/domain (blank for github.com)" &&
+    rawPrompt.placeholder === "company.ghe.com"
+  ) {
     return {
-      ...event,
-      url: url.toString(),
-      ...(event.instructions
-        ? { instructions: event.instructions.slice(0, 2_000) }
-        : {}),
+      promptId,
+      kind: "github-enterprise-domain",
+      type: "text",
+      optional: true,
+      options: [],
+    };
+  }
+  if (
+    catalogId === "openai-subscription" &&
+    rawPrompt.type === "select" &&
+    rawPrompt.message === "Select OpenAI Codex login method:" &&
+    rawPrompt.options.length === 2 &&
+    rawPrompt.options[0]?.id === "browser" &&
+    rawPrompt.options[0].label === "Browser login (default)" &&
+    rawPrompt.options[0].description === undefined &&
+    rawPrompt.options[1]?.id === "device_code" &&
+    rawPrompt.options[1].label === "Device code login (headless)" &&
+    rawPrompt.options[1].description === undefined
+  ) {
+    return {
+      promptId,
+      kind: "openai-codex-login-method",
+      type: "select",
+      optional: false,
+      options: ["browser", "device_code"],
+    };
+  }
+  if (
+    ["openai-subscription", "anthropic-subscription"].includes(catalogId) &&
+    rawPrompt.type === "manual_code" &&
+    rawPrompt.message ===
+      "Complete login in your browser, or paste the authorization code / redirect URL here:"
+  ) {
+    return {
+      promptId,
+      kind: "oauth-authorization-code",
+      type: "manual_code",
+      optional: false,
+      options: [],
+    };
+  }
+  throw new Error("Provider produced an unsupported sign-in prompt");
+}
+
+export function normalizeProviderLoginAnswer(
+  prompt: ProviderLoginPrompt,
+  answer: string,
+): string {
+  const normalizedAnswer = answer.trim();
+  if (prompt.kind === "github-enterprise-domain") {
+    if (normalizedAnswer.length > 0) {
+      throw new Error(
+        "GitHub Enterprise sign-in is not supported by the current endpoint policy",
+      );
+    }
+    return "";
+  }
+  if (!normalizedAnswer) {
+    throw new Error("Sign-in prompt requires an answer");
+  }
+  if (
+    prompt.type === "select" &&
+    !prompt.options.includes(
+      normalizedAnswer as (typeof prompt.options)[number],
+    )
+  ) {
+    throw new Error("Sign-in prompt answer is not an allowed option");
+  }
+  return normalizedAnswer;
+}
+
+export function normalizeProviderLoginEvent(
+  catalogId: (typeof catalogIds)[number],
+  event: LoginEvent,
+): ProviderLoginEvent {
+  if (event.type === "auth_url") {
+    const url = validateProviderLoginUrl(catalogId, event.url, "auth");
+    return {
+      type: "auth_url",
+      url,
     };
   }
   if (event.type === "device_code") {
-    const url = new URL(event.verificationUri);
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
-      throw new Error("Provider returned an unsafe verification URL");
+    const userCode = event.userCode.trim();
+    if (!userCode || userCode.length > 128) {
+      throw new Error("Provider returned an invalid device code");
     }
-    return { ...event, verificationUri: url.toString() };
-  }
-  if (event.type === "info") {
     return {
-      ...event,
-      message: event.message.slice(0, 2_000),
-      ...(event.links
-        ? { links: event.links.slice(0, 10).map((link) => ({ ...link })) }
-        : {}),
+      type: "device_code",
+      userCode,
+      verificationUri: validateProviderLoginUrl(
+        catalogId,
+        event.verificationUri,
+        "device",
+      ),
     };
   }
-  return { ...event, message: event.message.slice(0, 2_000) };
+  return { type: "progress" };
 }
 
-function safeMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim()
-    ? error.message.slice(0, 500)
-    : "Provider sign-in failed";
+function validateProviderLoginUrl(
+  catalogId: (typeof catalogIds)[number],
+  value: string,
+  purpose: "auth" | "device",
+): string {
+  const url = new URL(value);
+  const expected =
+    catalogId === "openai-subscription" && purpose === "auth"
+      ? { hostname: "auth.openai.com", pathname: "/oauth/authorize" }
+      : catalogId === "openai-subscription" && purpose === "device"
+        ? { hostname: "auth.openai.com", pathname: "/codex/device" }
+        : catalogId === "anthropic-subscription" && purpose === "auth"
+          ? { hostname: "claude.ai", pathname: "/oauth/authorize" }
+          : catalogId === "github-copilot-subscription" && purpose === "device"
+            ? { hostname: "github.com", pathname: "/login/device" }
+            : null;
+  if (
+    !expected ||
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.port ||
+    url.hostname.toLowerCase() !== expected.hostname ||
+    url.pathname !== expected.pathname ||
+    url.hash ||
+    (purpose === "device" && url.search)
+  ) {
+    throw new Error("Provider returned an unsupported sign-in URL");
+  }
+  return url.toString();
 }

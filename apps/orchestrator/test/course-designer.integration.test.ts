@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { type AgentProvider } from "@aptiloop/agent-core";
 import {
   CurriculumAuthoringRepository,
@@ -17,12 +19,27 @@ import type {
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { registerCourseDesignerRoutes } from "../src/course-designer.js";
+import {
+  createCourseDesignerTools,
+  registerCourseDesignerRoutes,
+} from "../src/course-designer.js";
+import { authoringDraftHash } from "../src/authoring-draft-hash.js";
 import { registerCurriculumEditorRoutes } from "../src/curriculum-editor.js";
 import { ProviderRuntime } from "../src/provider-runtime.js";
 
 const timestamp = "2026-08-10T00:00:00.000Z";
 const connections: DatabaseConnection[] = [];
+
+const sha256 = (value: string) =>
+  `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+
+function collectKeys(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => collectKeys(item));
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(
+    ([key, nested]) => [key, ...collectKeys(nested)],
+  );
+}
 
 const completeProposal = {
   summary: "Add a finite foundations slice",
@@ -82,7 +99,9 @@ class ProposalProvider implements AgentProvider {
   readonly id: ProviderId;
   readonly createInputs: CreateAgentSessionInput[] = [];
   readonly streamInputs: StreamAgentMessageInput[] = [];
+  readonly cancelCalls: string[] = [];
   readonly #proposal: string;
+  createSessionGate?: Promise<void>;
 
   constructor(id: ProviderId, proposal: unknown) {
     this.id = id;
@@ -114,6 +133,7 @@ class ProposalProvider implements AgentProvider {
 
   async createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
     this.createInputs.push(input);
+    await this.createSessionGate;
     return {
       id: `session:${this.createInputs.length}`,
       providerId: this.id,
@@ -145,10 +165,15 @@ class ProposalProvider implements AgentProvider {
     };
   }
 
-  async cancelSession(): Promise<void> {}
+  async cancelSession(sessionId: string): Promise<void> {
+    this.cancelCalls.push(sessionId);
+  }
 }
 
-async function createRuntime(proposal: unknown = completeProposal) {
+async function createRuntime(
+  proposal: unknown = completeProposal,
+  options?: { beforeProposalCommit?: () => Promise<void> | void },
+) {
   const connection = openDatabase(":memory:");
   migrateDatabase(connection);
   connections.push(connection);
@@ -195,16 +220,26 @@ async function createRuntime(proposal: unknown = completeProposal) {
   });
   const app = new Hono();
   registerCurriculumEditorRoutes(app, { connection });
-  registerCourseDesignerRoutes(app, { connection, providerRuntime });
+  registerCourseDesignerRoutes(app, {
+    connection,
+    providerRuntime,
+    ...options,
+  });
   return { app, connection, mock, providerRuntime, repository, version };
 }
 
-function post(app: Hono, path: string, body: unknown): Promise<Response> {
+function post(
+  app: Hono,
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<Response> {
   return Promise.resolve(
     app.request(`http://127.0.0.1:8787${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     }),
   );
 }
@@ -244,6 +279,115 @@ async function startWorkflow(app: Hono, base: string): Promise<string> {
 }
 
 describe("Course Designer", () => {
+  it("cancels generation aborted during provider session creation without persisting a proposal", async () => {
+    const runtime = await createRuntime();
+    let releaseCreate!: () => void;
+    runtime.mock.createSessionGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const base = `/api/curriculum-editor/versions/${runtime.version.id}/designer`;
+    const workflowId = await startWorkflow(runtime.app, base);
+    const controller = new AbortController();
+    const responsePromise = post(
+      runtime.app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/generate`,
+      { operationId: "proposal:cancel-create" },
+      controller.signal,
+    );
+    await expect.poll(() => runtime.mock.createInputs.length).toBe(1);
+    controller.abort();
+    releaseCreate();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "cancelled" });
+    expect(runtime.mock.streamInputs).toHaveLength(0);
+    expect(runtime.mock.cancelCalls).toEqual(["session:1"]);
+    expect(
+      runtime.connection.sqlite
+        .prepare(
+          `SELECT status, failure_code AS failureCode
+           FROM provider_turn_provenance WHERE role = 'course-designer'
+           ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(),
+    ).toEqual({ status: "cancelled", failureCode: "cancelled" });
+    expect(
+      runtime.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM course_draft_proposals")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      runtime.connection.sqlite
+        .prepare(
+          "SELECT state, active_proposal_id AS activeProposalId FROM course_designer_workflows WHERE id = ?",
+        )
+        .get(workflowId),
+    ).toEqual({ state: "CURRICULUM_PROPOSAL", activeProposalId: null });
+  });
+
+  it("cancels generation after provider completion without attribution or workflow transition", async () => {
+    let releaseCommit!: () => void;
+    const commitGate = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    let markProviderCompleted!: () => void;
+    const providerCompleted = new Promise<void>((resolve) => {
+      markProviderCompleted = resolve;
+    });
+    const runtime = await createRuntime(completeProposal, {
+      beforeProposalCommit: async () => {
+        markProviderCompleted();
+        await commitGate;
+      },
+    });
+    const base = `/api/curriculum-editor/versions/${runtime.version.id}/designer`;
+    const workflowId = await startWorkflow(runtime.app, base);
+    const controller = new AbortController();
+    const responsePromise = post(
+      runtime.app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/generate`,
+      { operationId: "proposal:cancel-before-commit" },
+      controller.signal,
+    );
+    await providerCompleted;
+    controller.abort();
+    releaseCommit();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "cancelled" });
+    expect(runtime.mock.cancelCalls).toEqual(["session:1"]);
+    expect(
+      runtime.connection.sqlite
+        .prepare(
+          `SELECT status, failure_code AS failureCode
+           FROM provider_turn_provenance WHERE role = 'course-designer'
+           ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(),
+    ).toEqual({ status: "cancelled", failureCode: "cancelled" });
+    expect(
+      runtime.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM course_draft_proposals")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      runtime.connection.sqlite
+        .prepare(
+          "SELECT count(*) AS count FROM course_draft_proposal_attribution",
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      runtime.connection.sqlite
+        .prepare(
+          "SELECT state, active_proposal_id AS activeProposalId FROM course_designer_workflows WHERE id = ?",
+        )
+        .get(workflowId),
+    ).toEqual({ state: "CURRICULUM_PROPOSAL", activeProposalId: null });
+  });
+
   it("restores only the exact pending disclosure for its draft workflow", async () => {
     const { app, connection, providerRuntime, repository, version } =
       await createRuntime();
@@ -360,6 +504,207 @@ describe("Course Designer", () => {
     const stale = await get(app, disclosurePath);
     expect(stale.status).toBe(200);
     expect(await stale.json()).toEqual({ pendingDisclosure: null });
+  });
+
+  it("binds disclosure and dispatch to one provider-safe authoring projection", async () => {
+    const { app, connection, mock, providerRuntime, repository, version } =
+      await createRuntime();
+    connection.sqlite
+      .prepare(
+        "UPDATE provider_hub_connections SET external = 1 WHERE connection_id = 'conn:mock'",
+      )
+      .run();
+    const week = await repository.addWeek({
+      versionId: version.id,
+      stableId: "provider-safe-week",
+      title: "Legitimate provider-visible week",
+    });
+    const day = await repository.addDay({
+      versionId: version.id,
+      weekId: week.id,
+      stableId: "provider-safe-day",
+      title: "Legitimate provider-visible day",
+      goal: "Keep legitimate draft structure available for proposals",
+      estimatedMinutes: 15,
+      depthLevel: "foundation",
+    });
+    await repository.addUnit({
+      versionId: version.id,
+      dayId: day.id,
+      stableId: "provider-safe-unit",
+      type: "recall",
+      title: "Legitimate provider-visible activity",
+      questions: [
+        {
+          id: "protected-question",
+          kind: "multiple-choice",
+          prompt: "Legitimate provider-visible question prompt",
+          options: [
+            { id: "option-a", label: "Visible option A" },
+            { id: "option-b", label: "Visible option B" },
+          ],
+          correctOptionIds: ["PROTECTED_CORRECT_OPTION_MARKER"],
+          referenceAnswer: "PROTECTED_QUESTION_ANSWER_MARKER",
+          evaluationPoints: ["PROTECTED_EVALUATION_POINT_MARKER"],
+          commonMistakes: ["PROTECTED_COMMON_MISTAKE_MARKER"],
+          nested: {
+            reference_answer: "PROTECTED_RECURSIVE_REFERENCE_MARKER",
+            CORRECT_ANSWER: "PROTECTED_RECURSIVE_CORRECT_MARKER",
+            rubric: "PROTECTED_RECURSIVE_RUBRIC_MARKER",
+          },
+          visibleRationale: "Legitimate provider-visible question context",
+        },
+      ],
+      misconceptions: ["PROTECTED_UNIT_MISCONCEPTION_MARKER"],
+      referenceAnswer: "PROTECTED_UNIT_ANSWER_MARKER",
+      completionCriteria: [{ type: "attempts", minimum: 1 }],
+      payload: {
+        type: "recall",
+        prompt: "Legitimate provider-visible recall prompt",
+        nested: {
+          expectedAnswer: "PROTECTED_RECURSIVE_EXPECTED_MARKER",
+          safeContext: "Legitimate recursively nested provider context",
+        },
+      },
+    });
+
+    const base = `/api/curriculum-editor/versions/${version.id}/designer`;
+    const workflowId = await startWorkflow(app, base);
+    const disclosurePath = `${base}/workflows/${encodeURIComponent(workflowId)}/disclosures`;
+    const prepared = await post(app, disclosurePath, {
+      operationId: "proposal:provider-safe",
+    });
+    expect(prepared.status).toBe(200);
+    const preparedBody = (await prepared.json()) as {
+      required: true;
+      disclosure: {
+        operationId: string;
+        scope: {
+          byteCount: number;
+          payloadSha256: string;
+          exclusions: string[];
+        };
+      };
+    };
+    providerRuntime.approveDisclosure(preparedBody.disclosure.operationId);
+    const generated = await post(
+      app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/generate`,
+      {
+        operationId: "proposal:provider-safe",
+        disclosureOperationId: preparedBody.disclosure.operationId,
+      },
+    );
+    expect(generated.status).toBe(200);
+    expect(mock.streamInputs).toHaveLength(1);
+    const transmitted = mock.streamInputs[0]?.message;
+    expect(transmitted).toBeDefined();
+    if (!transmitted) throw new Error("Provider payload was not captured");
+    expect(Buffer.byteLength(transmitted, "utf8")).toBe(
+      preparedBody.disclosure.scope.byteCount,
+    );
+    expect(sha256(transmitted)).toBe(
+      preparedBody.disclosure.scope.payloadSha256,
+    );
+    expect(preparedBody.disclosure.scope.exclusions).toContain(
+      "No learner evidence, credentials, or protected answers",
+    );
+
+    const payload = JSON.parse(transmitted) as {
+      request: typeof workflowRequest;
+      draft: {
+        primaryLocale: string;
+        version: { id: string };
+        weeks: Array<{
+          stableId: string;
+          days: Array<{
+            stableId: string;
+            units: Array<{
+              stableId: string;
+              questions: Array<Record<string, unknown>>;
+              payload: Record<string, unknown>;
+            }>;
+          }>;
+        }>;
+      };
+    };
+    expect(payload.request).toEqual(workflowRequest);
+    expect(payload.draft.primaryLocale).toBe("en-US");
+    expect(payload.draft.version.id).toBe(version.id);
+    expect(payload.draft.weeks[0]?.stableId).toBe("provider-safe-week");
+    const transmittedUnit = payload.draft.weeks[0]?.days[0]?.units[0];
+    expect(transmittedUnit?.stableId).toBe("provider-safe-unit");
+    expect(transmittedUnit?.questions[0]).toMatchObject({
+      prompt: "Legitimate provider-visible question prompt",
+      options: [{ label: "Visible option A" }, { label: "Visible option B" }],
+      visibleRationale: "Legitimate provider-visible question context",
+    });
+    expect(transmittedUnit?.payload).toMatchObject({
+      type: "recall",
+      prompt: "Legitimate provider-visible recall prompt",
+      nested: { safeContext: "Legitimate recursively nested provider context" },
+    });
+
+    const forbiddenKeys = new Set([
+      "commonMistakes",
+      "correctOptionIds",
+      "evaluationPoints",
+      "misconceptions",
+      "referenceAnswer",
+      "reference_answer",
+      "CORRECT_ANSWER",
+      "rubric",
+      "expectedAnswer",
+    ]);
+    expect(
+      collectKeys(payload).filter((key) => forbiddenKeys.has(key)),
+    ).toEqual([]);
+    for (const marker of [
+      "PROTECTED_CORRECT_OPTION_MARKER",
+      "PROTECTED_QUESTION_ANSWER_MARKER",
+      "PROTECTED_EVALUATION_POINT_MARKER",
+      "PROTECTED_COMMON_MISTAKE_MARKER",
+      "PROTECTED_RECURSIVE_REFERENCE_MARKER",
+      "PROTECTED_RECURSIVE_CORRECT_MARKER",
+      "PROTECTED_RECURSIVE_RUBRIC_MARKER",
+      "PROTECTED_UNIT_MISCONCEPTION_MARKER",
+      "PROTECTED_UNIT_ANSWER_MARKER",
+      "PROTECTED_RECURSIVE_EXPECTED_MARKER",
+    ]) {
+      expect(transmitted).not.toContain(marker);
+    }
+
+    const graph = await repository.getVersionGraph(version.id);
+    const tools = createCourseDesignerTools(connection)("course-designer", {
+      role: "course-designer",
+      modelId: "mock-designer",
+      systemPrompt: "Course Designer test prompt",
+      metadata: {
+        versionId: version.id,
+        workflowId,
+        draftHash: authoringDraftHash(graph),
+        prompt: workflowRequest.goal,
+        authoringOperationId: "proposal:provider-safe",
+        providerOperationId: "provider-turn:provider-safe",
+        approvedSources: workflowRequest.sources,
+      },
+    });
+    const readDraft = tools.find(
+      (tool) => tool.name === "course.readDraftSlice",
+    );
+    if (!readDraft) throw new Error("Course draft read tool was not installed");
+    for (const section of ["all", "activities"] as const) {
+      const result = await readDraft.execute("tool-call:read", { section });
+      const text = result.content
+        .filter((item) => item.type === "text")
+        .map((item) => item.text)
+        .join("");
+      expect(text).toContain("Legitimate provider-visible activity");
+      expect(text).toContain("Legitimate provider-visible question prompt");
+      expect(text).toContain("Legitimate recursively nested provider context");
+      for (const key of forbiddenKeys) expect(text).not.toContain(key);
+      expect(text).not.toContain("PROTECTED_");
+    }
   });
 
   it("runs the finite review workflow and publishes only through the manual gate", async () => {

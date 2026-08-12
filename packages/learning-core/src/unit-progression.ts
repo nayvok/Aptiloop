@@ -148,6 +148,29 @@ export function isLessonComplete(
   );
 }
 
+/**
+ * Projects terminal roadmap state after the lesson completion fact is known.
+ * Completed optional work remains completed; optional work without a terminal
+ * completion is represented as skipped once the lesson can no longer resume.
+ */
+export function projectCompletedLessonProgress(
+  units: readonly UnitDefinition[],
+  progress: readonly UnitProgressionItem[],
+): UnitProgressionItem[] {
+  validateAndResolveDefinitions(units);
+  if (!isValidProgress(units, progress)) {
+    throw new TypeError("completed lesson progress is invalid");
+  }
+  const byUnitId = new Map(progress.map((item) => [item.unitId, item.status]));
+  return units.map((unit) => ({
+    unitId: unit.id,
+    status:
+      unit.optional && byUnitId.get(unit.id) !== "completed"
+        ? "skipped"
+        : "completed",
+  }));
+}
+
 function targetStatusForEvent(
   current: UnitProgressionStatus,
   event: UnitProgressionEvent["type"],

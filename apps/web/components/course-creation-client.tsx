@@ -45,6 +45,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
+import { presentFailure } from "@/lib/failure-presentation";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -544,7 +545,7 @@ function ReadinessPanel({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
-  const { t } = useI18n();
+  const { formatDate, t } = useI18n();
   const observed = readiness.connection?.observedCapabilities;
   return (
     <section
@@ -619,6 +620,19 @@ function ReadinessPanel({
               {observed.connection.streaming && observed.connection.cancellation
                 ? t("authoring.connected.evidence.observed")
                 : t("authoring.connected.evidence.notAvailable")}
+            </dd>
+          </div>
+          <div className="sm:col-span-3">
+            <dt className="text-muted-foreground">
+              {t("authoring.connected.evidence.observedAt")}
+            </dt>
+            <dd className="mt-1 font-medium">
+              <time dateTime={observed.observedAt}>
+                {formatDate(observed.observedAt, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}
+              </time>
             </dd>
           </div>
         </dl>
@@ -713,9 +727,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
       });
       router.push(`/courses/studio?${search.toString()}`);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : t("authoring.creation.error"),
-      );
+      toast.error(presentFailure(error, "course.create", t).message);
     } finally {
       setBusy(false);
     }
@@ -742,9 +754,7 @@ export function CourseCreationClient({ mode }: { mode: CreationMode }) {
       toast.success(t("authoring.external.downloaded"));
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : t("authoring.external.downloadError"),
+        presentFailure(error, "course.instructions.download", t).message,
       );
     } finally {
       setBusy(false);

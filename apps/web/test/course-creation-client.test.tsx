@@ -538,6 +538,22 @@ describe("Course creation brief", () => {
     ).toBeEnabled();
   });
 
+  it("shows when the connected capability evidence was observed", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(connectedSettings("connection")), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    renderCreation(<CourseCreationClient mode="guided" />);
+
+    expect(await screen.findByText("Technically ready")).toBeInTheDocument();
+    const snapshot = screen.getByText("Capability snapshot").parentElement;
+    expect(snapshot?.querySelector("time")).toHaveAttribute(
+      "datetime",
+      "2026-08-11T10:00:00.000Z",
+    );
+  });
+
   it("creates the same explicit Draft contract through the no-AI fallback", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ version: { id: "manual-draft" } }), {
@@ -658,8 +674,11 @@ describe("Course creation brief", () => {
 
     await waitFor(() =>
       expect(toastErrorMock).toHaveBeenCalledWith(
-        "Local storage is unavailable",
+        "The local Course draft could not be created. Try again.",
       ),
+    );
+    expect(toastErrorMock).not.toHaveBeenCalledWith(
+      "Local storage is unavailable",
     );
     expect(title).toHaveValue("Retained local title");
     expect(pushMock).not.toHaveBeenCalled();

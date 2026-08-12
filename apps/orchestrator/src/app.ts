@@ -139,6 +139,11 @@ export interface AppOptions {
   developmentMode?: boolean;
   exerciseAttemptsRoot?: string;
   startupConfig?: OrchestratorStartupConfig;
+  /** @internal Deterministic cancellation fence seams. */
+  cancellationTestHooks?: {
+    afterTrustedCheckRun?: () => Promise<void> | void;
+    beforeReviewCommit?: () => Promise<void> | void;
+  };
 }
 
 interface AttemptRecord {
@@ -319,7 +324,6 @@ const chatSchema = z
 const disclosureRequestSchema = chatSchema.omit({
   disclosureOperationId: true,
 });
-
 export function createApp(options: AppOptions = {}) {
   const projectRoot = path.resolve(options.projectRoot ?? sourceRoot);
   loadRootEnvironment(projectRoot);
@@ -1474,6 +1478,8 @@ export function createApp(options: AppOptions = {}) {
         expectedInputSnapshotHash: inputSnapshot.contentHash,
         signal: context.req.raw.signal,
       });
+      await options.cancellationTestHooks?.afterTrustedCheckRun?.();
+      context.req.raw.signal.throwIfAborted();
       const testedDiff = await getExerciseDiff(attempt.workspacePath, {
         expectedBaselineHash: attempt.baselineHash,
       });
@@ -1488,6 +1494,7 @@ export function createApp(options: AppOptions = {}) {
         .join("\n");
       const now = Date.now();
       await withAsyncTransaction(state.connection, async () => {
+        context.req.raw.signal.throwIfAborted();
         state.connection.sqlite
           .prepare(
             `UPDATE test_runs
@@ -1538,25 +1545,47 @@ export function createApp(options: AppOptions = {}) {
         result: publicResult,
       });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Trusted check runner failed";
+      const cancelled = context.req.raw.signal.aborted;
+      const message = cancelled
+        ? "Trusted check was cancelled"
+        : error instanceof Error
+          ? error.message
+          : "Trusted check runner failed";
       state.connection.sqlite
         .prepare(
           `UPDATE test_runs
-           SET status = 'backend_error', stderr = ?, result_json = ?,
+           SET status = ?, stderr = ?, result_json = ?,
                completed_at = ?
            WHERE id = ? AND status = 'running'`,
         )
         .run(
+          cancelled ? "cancelled" : "backend_error",
           message,
           JSON.stringify({
             ...runningResult,
-            status: "backend_error",
+            status: cancelled ? "cancelled" : "backend_error",
             error: message,
           }),
           Date.now(),
           testRunId,
         );
+      if (cancelled) {
+        return context.json(
+          {
+            id: testRunId,
+            output: message,
+            exitCode: 1,
+            status: "cancelled",
+            operationId: body.operationId,
+            result: {
+              ...runningResult,
+              status: "cancelled",
+              error: message,
+            },
+          },
+          400,
+        );
+      }
       throw error;
     }
   });
@@ -1671,76 +1700,87 @@ export function createApp(options: AppOptions = {}) {
     if (review.kind === "disclosure") {
       return context.json(review, 202);
     }
-    const [after, afterSnapshot] = await Promise.all([
-      getExerciseDiff(attempt.workspacePath, {
-        expectedBaselineHash: attempt.baselineHash,
-      }),
-      snapshotCompleteWorkspace(attempt.workspacePath),
-    ]);
-    if (
-      before.patch !== after.patch ||
-      before.truncated !== after.truncated ||
-      before.baselineCommit !== after.baselineCommit ||
-      beforeSnapshot.contentHash !== afterSnapshot.contentHash
-    ) {
-      throw new Error("Reviewer boundary violation: workspace changed");
+    try {
+      await options.cancellationTestHooks?.beforeReviewCommit?.();
+      context.req.raw.signal.throwIfAborted();
+      const [after, afterSnapshot] = await Promise.all([
+        getExerciseDiff(attempt.workspacePath, {
+          expectedBaselineHash: attempt.baselineHash,
+        }),
+        snapshotCompleteWorkspace(attempt.workspacePath),
+      ]);
+      if (
+        before.patch !== after.patch ||
+        before.truncated !== after.truncated ||
+        before.baselineCommit !== after.baselineCommit ||
+        beforeSnapshot.contentHash !== afterSnapshot.contentHash
+      ) {
+        throw new Error("Reviewer boundary violation: workspace changed");
+      }
+      const now = Date.now();
+      const reviewId = randomUUID();
+      const bundleId = randomUUID();
+      const evidenceSha256 = `sha256:${createHash("sha256")
+        .update(review.evidenceBundleJson)
+        .digest("hex")}`;
+      await withAsyncTransaction(state.connection, async () => {
+        context.req.raw.signal.throwIfAborted();
+        await review.persistCompletedAssistant();
+        context.req.raw.signal.throwIfAborted();
+        state.connection.sqlite
+          .prepare(
+            `INSERT INTO reviews
+             (id, session_id, exercise_attempt_id, operation_id, provider_id,
+              model_id, status, result_json, raw_response, created_at, completed_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            reviewId,
+            attempt.sessionId,
+            attempt.id,
+            body.operationId,
+            review.providerId,
+            review.modelId,
+            review.result.status,
+            JSON.stringify(review.result),
+            null,
+            now,
+            now,
+          );
+        state.connection.sqlite
+          .prepare(
+            `INSERT INTO review_evidence_bundles
+             (id, review_id, exercise_attempt_id, test_run_id,
+              workspace_snapshot_hash, diff_fingerprint, bundle_sha256,
+              bundle_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            bundleId,
+            reviewId,
+            attempt.id,
+            latestTest.id,
+            beforeSnapshot.contentHash,
+            reviewedDiffFingerprint,
+            evidenceSha256,
+            review.evidenceBundleJson,
+            now,
+          );
+        context.req.raw.signal.throwIfAborted();
+        review.finishCompleted();
+      });
+      return context.json({
+        id: reviewId,
+        ...review.result,
+        evidenceBundle: {
+          id: bundleId,
+          sha256: evidenceSha256,
+          workspaceSnapshotHash: beforeSnapshot.contentHash,
+        },
+      });
+    } catch (error) {
+      return await review.fail(error);
     }
-    const now = Date.now();
-    const reviewId = randomUUID();
-    const bundleId = randomUUID();
-    const evidenceSha256 = `sha256:${createHash("sha256")
-      .update(review.evidenceBundleJson)
-      .digest("hex")}`;
-    await withAsyncTransaction(state.connection, async () => {
-      state.connection.sqlite
-        .prepare(
-          `INSERT INTO reviews
-           (id, session_id, exercise_attempt_id, operation_id, provider_id,
-            model_id, status, result_json, raw_response, created_at, completed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          reviewId,
-          attempt.sessionId,
-          attempt.id,
-          body.operationId,
-          review.providerId,
-          review.modelId,
-          review.result.status,
-          JSON.stringify(review.result),
-          null,
-          now,
-          now,
-        );
-      state.connection.sqlite
-        .prepare(
-          `INSERT INTO review_evidence_bundles
-           (id, review_id, exercise_attempt_id, test_run_id,
-            workspace_snapshot_hash, diff_fingerprint, bundle_sha256,
-            bundle_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          bundleId,
-          reviewId,
-          attempt.id,
-          latestTest.id,
-          beforeSnapshot.contentHash,
-          reviewedDiffFingerprint,
-          evidenceSha256,
-          review.evidenceBundleJson,
-          now,
-        );
-    });
-    return context.json({
-      id: reviewId,
-      ...review.result,
-      evidenceBundle: {
-        id: bundleId,
-        sha256: evidenceSha256,
-        workspaceSnapshotHash: beforeSnapshot.contentHash,
-      },
-    });
   });
 
   app.get(
@@ -2611,6 +2651,9 @@ async function requestExerciseReview(
       modelId: string;
       result: ReviewResult;
       evidenceBundleJson: string;
+      persistCompletedAssistant: () => Promise<void>;
+      finishCompleted: () => void;
+      fail: (error: unknown) => Promise<never>;
     }
   | {
       kind: "disclosure";
@@ -2724,6 +2767,7 @@ async function requestExerciseReview(
   let storedSession = state.providerSessions.get(key);
   let turnId: string | undefined;
   let terminalReason: "completed" | "failed" | "cancelled" | undefined;
+  let providerStreamStarted = false;
   let providerStreamCompleted = false;
   let dispatchFinished = false;
   const finishDispatch = (
@@ -2743,8 +2787,45 @@ async function requestExerciseReview(
       );
     }
   };
+  const throwIfCancelled = () => {
+    if (!input.signal.aborted) return;
+    throw new ProviderHubError("cancelled", "Reviewer turn was cancelled");
+  };
+  const failTurn = async (error: unknown): Promise<never> => {
+    const cancelled =
+      input.signal.aborted ||
+      terminalReason === "cancelled" ||
+      (error instanceof ProviderHubError && error.failure.code === "cancelled");
+    if (providerStreamCompleted || !providerStreamStarted) {
+      await cancelTurn();
+    } else if (storedSession) {
+      evictProviderSession(state, key, storedSession);
+    }
+    finishDispatch(
+      cancelled ? "cancelled" : "failed",
+      cancelled ? "cancelled" : providerFailureCode(error),
+    );
+    if (storedSession) {
+      try {
+        await persistAgentResponse(state, {
+          conversationId: storedSession.conversationId,
+          content: cancelled
+            ? safeAgentCancellationMessage
+            : safeAgentFailureMessage,
+          status: cancelled ? "cancelled" : "failed",
+        });
+      } catch {
+        // A transcript failure must not make an invalid review authoritative.
+      }
+    }
+    throw new Error(
+      cancelled ? safeAgentCancellationMessage : safeAgentFailureMessage,
+      { cause: error },
+    );
+  };
 
   try {
+    throwIfCancelled();
     if (!storedSession) {
       const session = await provider.createSession({
         role: "reviewer",
@@ -2755,6 +2836,10 @@ async function requestExerciseReview(
           exerciseAttemptId: input.attempt.id,
         },
       });
+      if (input.signal.aborted) {
+        await provider.cancelSession(session.id).catch(() => undefined);
+        throwIfCancelled();
+      }
       if (
         session.providerId !== providerId ||
         session.role !== "reviewer" ||
@@ -2782,15 +2867,18 @@ async function requestExerciseReview(
       state.providerSessions.set(key, storedSession);
     }
 
+    throwIfCancelled();
     await state.repository.addMessage({
       conversationId: storedSession.conversationId,
       role: "user",
       content: reviewPrompt,
     });
+    throwIfCancelled();
     let rawResponse = "";
     let messageCompleted = false;
     turnId = randomUUID();
     state.activeProviderTurns.set(turnId, { key, session: storedSession });
+    providerStreamStarted = true;
     for await (const event of state.providerRuntime.stream(
       dispatch,
       storedSession.providerSessionId,
@@ -2819,6 +2907,7 @@ async function requestExerciseReview(
       }
     }
     providerStreamCompleted = true;
+    throwIfCancelled();
     if (terminalReason !== "completed" || !messageCompleted) {
       throw new ProviderHubError(
         terminalReason === "cancelled" ? "cancelled" : "invalid_output",
@@ -2826,50 +2915,28 @@ async function requestExerciseReview(
       );
     }
     const result = await parseReviewResult(rawResponse);
-    await persistAgentResponse(state, {
-      conversationId: storedSession.conversationId,
-      content: JSON.stringify(result),
-      status: "completed",
-    });
-    finishDispatch("completed", null);
+    throwIfCancelled();
+    const conversationId = storedSession.conversationId;
     return {
       kind: "review",
       providerId,
       modelId,
       result,
       evidenceBundleJson: reviewPrompt,
+      persistCompletedAssistant: async () => {
+        throwIfCancelled();
+        await persistAgentResponse(state, {
+          conversationId,
+          content: JSON.stringify(result),
+          status: "completed",
+        });
+        throwIfCancelled();
+      },
+      finishCompleted: () => finishDispatch("completed", null),
+      fail: failTurn,
     };
   } catch (error) {
-    const cancelled =
-      input.signal.aborted ||
-      terminalReason === "cancelled" ||
-      (error instanceof ProviderHubError && error.failure.code === "cancelled");
-    if (providerStreamCompleted) {
-      await cancelTurn();
-    } else if (storedSession) {
-      evictProviderSession(state, key, storedSession);
-    }
-    finishDispatch(
-      cancelled ? "cancelled" : "failed",
-      cancelled ? "cancelled" : providerFailureCode(error),
-    );
-    if (storedSession) {
-      try {
-        await persistAgentResponse(state, {
-          conversationId: storedSession.conversationId,
-          content: cancelled
-            ? safeAgentCancellationMessage
-            : safeAgentFailureMessage,
-          status: cancelled ? "cancelled" : "failed",
-        });
-      } catch {
-        // A transcript failure must not make an invalid review authoritative.
-      }
-    }
-    throw new Error(
-      cancelled ? safeAgentCancellationMessage : safeAgentFailureMessage,
-      { cause: error },
-    );
+    return await failTurn(error);
   } finally {
     if (turnId) {
       const active = state.activeProviderTurns.get(turnId);
@@ -2888,8 +2955,8 @@ async function persistAgentResponse(
     status: string;
     idempotencyKey?: string;
   },
-): Promise<void> {
-  await state.repository.addMessage({
+): Promise<string> {
+  const message = await state.repository.addMessage({
     conversationId: input.conversationId,
     role: "assistant",
     content: input.content,
@@ -2898,6 +2965,7 @@ async function persistAgentResponse(
       ? {}
       : { idempotencyKey: input.idempotencyKey }),
   });
+  return message.id;
 }
 
 function loadRootEnvironment(projectRoot: string): void {

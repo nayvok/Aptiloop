@@ -4,6 +4,10 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HomeClient } from "@/components/home-client";
+import {
+  PageRouteContextProvider,
+  type PageRouteContextRegistration,
+} from "@/components/page-route-context";
 import { LocaleProvider, type UiLocale } from "@/lib/i18n";
 
 const { apiMock, pushMock } = vi.hoisted(() => ({
@@ -744,6 +748,36 @@ describe("Aptiloop Home", () => {
     expect(apiMock).toHaveBeenCalledWith(endpoint);
   });
 
+  it("registers the exact localized revision in breadcrumbs without raw IDs", async () => {
+    const endpoint = "/learning/courses/course-1/revisions/revision-2/path";
+    const register = vi.fn<PageRouteContextRegistration>(() => vi.fn());
+    apiMock.mockResolvedValue(pathFixture());
+
+    renderWithQuery(
+      <PageRouteContextProvider
+        register={register}
+        routeKey="/courses/course-1/revisions/revision-2?"
+      >
+        <HomeClient
+          surface="revision"
+          pathEndpoint={endpoint}
+          selectionTarget={{ courseId: "course-1", revisionId: "revision-2" }}
+        />
+      </PageRouteContextProvider>,
+    );
+
+    await screen.findByRole("heading", { name: "JavaScript Foundations" });
+    await vi.waitFor(() => expect(register).toHaveBeenCalled());
+    const context = register.mock.calls.at(-1)?.[1];
+    expect(context?.breadcrumbs).toEqual([
+      { href: "/courses", label: "nav.courses" },
+      { text: "JavaScript Foundations · Revision 2" },
+    ]);
+    expect(JSON.stringify(context?.breadcrumbs)).not.toMatch(
+      /course-1|revision-2/u,
+    );
+  });
+
   it("keeps revision identity and recovery when the exact preview path fails", async () => {
     const endpoint = "/learning/courses/course-1/revisions/revision-2/path";
     apiMock.mockRejectedValue(new Error("Revision path is unavailable"));
@@ -858,6 +892,13 @@ describe("Aptiloop Home", () => {
     expect(screen.getByRole("status")).toHaveAccessibleName(
       "Loading your learning path…",
     );
+    expect(screen.getByRole("status")).toHaveAttribute("data-variant", "page");
+    expect(
+      loading.container.querySelectorAll('[data-slot="loading-state"]'),
+    ).toHaveLength(1);
+    expect(
+      loading.container.querySelector('[data-slot="skeleton"]'),
+    ).not.toBeInTheDocument();
     loading.unmount();
 
     apiMock.mockClear();

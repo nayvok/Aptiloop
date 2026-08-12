@@ -19,7 +19,12 @@ import { z } from "zod";
 
 import { ActivityFrame } from "@/components/activity-frame";
 import { usePageRouteContext } from "@/components/page-route-context";
+import { RouteOrientation } from "@/components/route-orientation";
 import { api, streamAgent } from "@/lib/api";
+import {
+  presentFailure,
+  type FailurePresentation,
+} from "@/lib/failure-presentation";
 import {
   activityColorClass,
   activitySurfaceClass,
@@ -41,7 +46,11 @@ import {
 } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { EmptyState, QueryError } from "@/components/query-state";
+import {
+  EmptyState,
+  QueryError,
+  SafeQueryError,
+} from "@/components/query-state";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Textarea } from "@/components/ui/textarea";
 import type { RouteContext } from "@/lib/route-context";
@@ -62,6 +71,7 @@ const protectedFields = new Set([
   "referenceAnswer",
   "evaluationPoints",
   "correctOptionIds",
+  "correctQuestionIds",
   "commonMistakes",
   "misconceptions",
   "protectedEvaluation",
@@ -297,7 +307,6 @@ const progressPayloadSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("quiz"),
       attemptedQuestionIds: z.array(idSchema),
-      correctQuestionIds: z.array(idSchema).optional(),
       score: z.number().min(0).max(1).nullable(),
     })
     .passthrough(),
@@ -575,10 +584,6 @@ function operationId(): string {
   return globalThis.crypto.randomUUID();
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unknown error";
-}
-
 export function SessionClient() {
   const { locale, t } = useI18n();
   const params = useSearchParams();
@@ -683,7 +688,7 @@ export function SessionClient() {
       await acceptSession(getSession(result));
       return result;
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(presentFailure(error, "session.action", t).message);
       return null;
     } finally {
       setPendingAction(null);
@@ -720,33 +725,52 @@ export function SessionClient() {
 
   if (query.isPending) {
     return (
-      <LoadingState
-        label="session.loading"
-        className="min-h-[calc(100dvh-var(--shell-bar-size,4.5rem))] rounded-none"
-      />
+      <RouteOrientation
+        slot="session-loading"
+        title="shell.route.lesson"
+        description="page.lesson.description"
+        className="px-4 py-8 sm:px-6 sm:py-10 lg:px-6 lg:py-8"
+      >
+        <LoadingState label="session.loading" />
+      </RouteOrientation>
     );
   }
 
   if (query.isError) {
     return (
-      <QueryError
-        message={errorMessage(query.error)}
-        retry={() => void query.refetch()}
-      />
+      <RouteOrientation
+        slot="session-error"
+        title="shell.route.lesson"
+        description="page.lesson.description"
+        className="px-4 py-8 sm:px-6 sm:py-10 lg:px-6 lg:py-8"
+      >
+        <SafeQueryError
+          error={query.error}
+          operation="session.load"
+          retry={() => void query.refetch()}
+        />
+      </RouteOrientation>
     );
   }
 
   if (!session) {
     return (
-      <EmptyState
-        title={t("session.empty.title")}
-        description={t("session.empty.description")}
-        action={
-          <Button onClick={() => router.push("/")}>
-            {t("session.openHome")}
-          </Button>
-        }
-      />
+      <RouteOrientation
+        slot="session-empty"
+        title="shell.route.lesson"
+        description="page.lesson.description"
+        className="px-4 py-8 sm:px-6 sm:py-10 lg:px-6 lg:py-8"
+      >
+        <EmptyState
+          title={t("session.empty.title")}
+          description={t("session.empty.description")}
+          action={
+            <Button onClick={() => router.push("/")}>
+              {t("session.openHome")}
+            </Button>
+          }
+        />
+      </RouteOrientation>
     );
   }
 
@@ -767,11 +791,29 @@ export function SessionClient() {
             unit.stableId === session.currentStep,
         );
   if (!focusedUnit) {
-    return <QueryError message={t("session.error.noProgress")} />;
+    return (
+      <RouteOrientation
+        slot="session-progress-error"
+        title="shell.route.lesson"
+        description="page.lesson.description"
+        className="px-4 py-8 sm:px-6 sm:py-10 lg:px-6 lg:py-8"
+      >
+        <QueryError message={t("session.error.noProgress")} />
+      </RouteOrientation>
+    );
   }
   const focusedProgress = progressByUnit.get(focusedUnit.id);
   if (!focusedProgress) {
-    return <QueryError message={t("session.error.noProgress")} />;
+    return (
+      <RouteOrientation
+        slot="session-progress-error"
+        title="shell.route.lesson"
+        description="page.lesson.description"
+        className="px-4 py-8 sm:px-6 sm:py-10 lg:px-6 lg:py-8"
+      >
+        <QueryError message={t("session.error.noProgress")} />
+      </RouteOrientation>
+    );
   }
   const completed = session.snapshot.units.filter((unit) => {
     const status = progressByUnit.get(unit.id)?.status;
@@ -955,49 +997,7 @@ function ReadyLearningBrief({
     unit.payload.type === "study" && unit.payload.body
       ? unit.payload.body
       : null;
-  const completionCriteria = unit.completionCriteria.map((criterion) => {
-    switch (criterion.type) {
-      case "acknowledgement":
-        return t("session.criteria.acknowledgement");
-      case "checklist":
-        return t("session.criteria.checklist", {
-          count: criterion.requiredItemIds.length,
-        });
-      case "attempts":
-        return t("session.criteria.attempts", { count: criterion.minimum });
-      case "dialogue":
-        return t(
-          criterion.requiresRevision
-            ? "session.criteria.dialogueWithRevision"
-            : "session.criteria.dialogue",
-          { count: criterion.minimumTurns },
-        );
-      case "score":
-        return t("session.criteria.score", {
-          score: new Intl.NumberFormat(locale, {
-            style: "percent",
-            maximumFractionDigits: 0,
-          }).format(criterion.minimum),
-          attempts: criterion.minimumAttempts,
-        });
-      case "fields":
-        return t("session.criteria.fields", {
-          fields: criterion.required.join(", "),
-        });
-      case "exercise":
-        return t(
-          criterion.passingTestsRequired && criterion.acceptedReviewRequired
-            ? "session.criteria.exerciseTestsAndReview"
-            : criterion.passingTestsRequired
-              ? "session.criteria.exerciseTests"
-              : criterion.acceptedReviewRequired
-                ? "session.criteria.exerciseReview"
-                : "session.criteria.exercise",
-        );
-      case "custom":
-        return t("session.criteria.custom", { key: criterion.key });
-    }
-  });
+  const completionCriteria = completionCriteriaLabels(unit, locale, t);
 
   return (
     <div
@@ -1278,10 +1278,98 @@ function UnitShell({
             {t(unitStatusMessageKeys[progress.status])}
           </Badge>
         ),
+        evidence: unit.completionCriteria.length ? (
+          <CompletionEvidence unit={unit} />
+        ) : undefined,
       }}
     >
       {children}
     </ActivityFrame>
+  );
+}
+
+function completionCriteriaLabels(
+  unit: LearnerUnit,
+  locale: string,
+  t: ReturnType<typeof useI18n>["t"],
+): string[] {
+  return unit.completionCriteria.map((criterion) => {
+    switch (criterion.type) {
+      case "acknowledgement":
+        return t("session.criteria.acknowledgement");
+      case "checklist":
+        return t("session.criteria.checklist", {
+          count: criterion.requiredItemIds.length,
+        });
+      case "attempts":
+        return t("session.criteria.attempts", { count: criterion.minimum });
+      case "dialogue":
+        return t(
+          criterion.requiresRevision
+            ? "session.criteria.dialogueWithRevision"
+            : "session.criteria.dialogue",
+          { count: criterion.minimumTurns },
+        );
+      case "score":
+        return t("session.criteria.score", {
+          score: new Intl.NumberFormat(locale, {
+            style: "percent",
+            maximumFractionDigits: 0,
+          }).format(criterion.minimum),
+          attempts: criterion.minimumAttempts,
+        });
+      case "fields":
+        return t("session.criteria.fields", {
+          fields: criterion.required.join(", "),
+        });
+      case "exercise":
+        return t(
+          criterion.passingTestsRequired && criterion.acceptedReviewRequired
+            ? "session.criteria.exerciseTestsAndReview"
+            : criterion.passingTestsRequired
+              ? "session.criteria.exerciseTests"
+              : criterion.acceptedReviewRequired
+                ? "session.criteria.exerciseReview"
+                : "session.criteria.exercise",
+        );
+      case "custom":
+        return t("session.criteria.custom", { key: criterion.key });
+    }
+  });
+}
+
+function CompletionEvidence({ unit }: { unit: LearnerUnit }) {
+  const { locale, t } = useI18n();
+  return (
+    <section
+      data-slot="completion-evidence"
+      aria-labelledby={`completion-evidence-${unit.id}`}
+      className="flex min-w-0 flex-col gap-2"
+    >
+      <h3
+        id={`completion-evidence-${unit.id}`}
+        className="text-sm font-semibold"
+      >
+        {t("session.learningBrief.completion")}
+      </h3>
+      <p className="max-w-[68ch] text-xs leading-5 text-muted-foreground">
+        {t("session.completionEvidence.description")}
+      </p>
+      <ul className="flex flex-col gap-2 text-sm leading-6 text-muted-foreground">
+        {completionCriteriaLabels(unit, locale, t).map((criterion) => (
+          <li key={criterion} className="flex min-w-0 gap-2">
+            <CircleIcon
+              aria-hidden
+              weight="fill"
+              className="size-1.5 shrink-0 self-center text-primary"
+            />
+            <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+              {criterion}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -1628,9 +1716,13 @@ function StudyUnit({
   );
   const checked = draft.value.checkedItemIds;
   const notes = draft.value.notes;
-  const required = unit.checklist
-    .filter((item) => item.required)
-    .map((item) => item.id);
+  const required = Array.from(
+    new Set(
+      unit.completionCriteria.flatMap((criterion) =>
+        criterion.type === "checklist" ? criterion.requiredItemIds : [],
+      ),
+    ),
+  );
   const complete = progress.status === "completed";
   const nextPayload = {
     type: "study" as const,
@@ -1940,7 +2032,8 @@ function TeacherDialogueUnit({
     content: string;
   }> | null>(null);
   const [streaming, setStreaming] = useState(false);
-  const [providerError, setProviderError] = useState<string | null>(null);
+  const [providerError, setProviderError] =
+    useState<FailurePresentation | null>(null);
   const [streamStatus, setStreamStatus] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const history = useQuery({
@@ -2084,7 +2177,7 @@ function TeacherDialogueUnit({
               : message,
           ),
         );
-        setProviderError(teacherStreamFailureMessage);
+        setProviderError({ message: teacherStreamFailureMessage });
         setStreamStatus(t("session.tutor.unavailable"));
         return;
       }
@@ -2122,7 +2215,7 @@ function TeacherDialogueUnit({
         }
         setStreamStatus(t("session.tutor.stopped"));
       } else {
-        setProviderError(errorMessage(error));
+        setProviderError(presentFailure(error, "session.action", t));
         setStreamStatus(t("session.tutor.unavailable"));
       }
     } finally {
@@ -2145,8 +2238,9 @@ function TeacherDialogueUnit({
           className="min-h-28"
         />
       ) : history.isError ? (
-        <QueryError
-          message={errorMessage(history.error)}
+        <SafeQueryError
+          error={history.error}
+          operation="session.load"
           retry={() => void history.refetch()}
         />
       ) : (
@@ -2184,21 +2278,13 @@ function TeacherDialogueUnit({
         </ol>
       )}
       {providerError ? (
-        <div
-          role="alert"
-          className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-y border-destructive/30 bg-destructive/5 py-4 text-sm text-destructive"
-        >
-          <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-            {providerError}
-          </span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void sendRevision()}
-          >
-            {t("session.tutor.retry")}
-          </Button>
-        </div>
+        <QueryError
+          message={providerError.message}
+          {...(providerError.diagnostic
+            ? { diagnostic: providerError.diagnostic }
+            : {})}
+          retry={() => void sendRevision()}
+        />
       ) : null}
       <p className="sr-only" role="status" aria-live="polite">
         {streamStatus}
@@ -2331,18 +2417,10 @@ function QuizUnit({
     { type: "quiz" as const, answers: {} },
   );
   const answers = draft.value.answers;
-  const persistedCorrectQuestionIds = payload.correctQuestionIds;
   const [results, setResults] = useState<Array<{
     questionId: string;
     correct: boolean;
-  }> | null>(
-    payload.score === null || persistedCorrectQuestionIds === undefined
-      ? null
-      : payload.attemptedQuestionIds.map((questionId) => ({
-          questionId,
-          correct: persistedCorrectQuestionIds.includes(questionId),
-        })),
-  );
+  }> | null>(null);
   const minimumScore =
     unit.payload.type === "quiz" ? unit.payload.minimumScore : 1;
   const scored = payload.score !== null;
@@ -2901,16 +2979,11 @@ function SummaryUnit({
           </footer>
         </div>
       ) : persisted.isError ? (
-        <div className="flex flex-col items-start gap-3" role="alert">
-          <p className="text-sm text-destructive">
-            {t("session.summary.restoreError", {
-              error: errorMessage(persisted.error),
-            })}
-          </p>
-          <Button variant="outline" onClick={() => void persisted.refetch()}>
-            {t("session.summary.retry")}
-          </Button>
-        </div>
+        <SafeQueryError
+          error={persisted.error}
+          operation="session.load"
+          retry={() => void persisted.refetch()}
+        />
       ) : persisted.isPending && summaryId ? (
         <LoadingState
           label="session.summary.loading"

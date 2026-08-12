@@ -955,7 +955,10 @@ export function registerCurriculumEditorRoutes(
         .prepare(
           `SELECT v.id, v.curriculum_id AS curriculumId, c.slug AS curriculumSlug,
                   course.primary_locale AS primaryLocale,
-                  v.revision, v.parent_version_id AS parentVersionId, v.status,
+                  v.revision, v.parent_version_id AS parentVersionId,
+                  v.branch_kind AS branchKind,
+                  v.based_on_content_hash AS basedOnContentHash,
+                  v.adaptation_branch_id AS adaptationBranchId, v.status,
                   v.title, v.description, v.content_hash AS contentHash,
                   v.created_at AS createdAt, v.published_at AS publishedAt,
                   v.archived_at AS archivedAt, v.updated_at AS updatedAt

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createUnitProgression,
+  projectCompletedLessonProgress,
   resolveExplicitUnitDefinitions,
   isLessonComplete,
   transitionUnitProgression,
@@ -124,6 +125,38 @@ describe("unit progression", () => {
         { unitId: "summary", status: "in_progress" },
       ]),
     ).toBe(false);
+  });
+
+  it("preserves completed optional work in a completed lesson projection", () => {
+    expect(
+      projectCompletedLessonProgress(units, [
+        { unitId: "briefing", status: "completed" },
+        { unitId: "study", status: "completed" },
+        { unitId: "bonus", status: "completed" },
+        { unitId: "summary", status: "completed" },
+      ]),
+    ).toEqual([
+      { unitId: "briefing", status: "completed" },
+      { unitId: "study", status: "completed" },
+      { unitId: "bonus", status: "completed" },
+      { unitId: "summary", status: "completed" },
+    ]);
+  });
+
+  it("projects untouched optional work as skipped after lesson completion", () => {
+    expect(
+      projectCompletedLessonProgress(units, [
+        { unitId: "briefing", status: "completed" },
+        { unitId: "study", status: "completed" },
+        { unitId: "bonus", status: "ready" },
+        { unitId: "summary", status: "completed" },
+      ]),
+    ).toEqual([
+      { unitId: "briefing", status: "completed" },
+      { unitId: "study", status: "completed" },
+      { unitId: "bonus", status: "skipped" },
+      { unitId: "summary", status: "completed" },
+    ]);
   });
 
   it("rejects invalid definitions and malformed persisted progress", () => {

@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { Markdown } from "@/components/ui/markdown";
@@ -48,5 +48,23 @@ describe("Markdown", () => {
     expect(cells).toHaveLength(2);
     expect(cells[0]?.textContent).toBe("Скоуп");
     expect(cells[1]?.textContent).toBe("Изучено");
+  });
+
+  it("offsets embedded Markdown headings from the surrounding hierarchy", () => {
+    render(
+      <Markdown baseHeadingLevel={2}>
+        {"# First\n## Second\n### Third"}
+      </Markdown>,
+    );
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: "First" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Second" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 4, name: "Third" }),
+    ).toBeVisible();
   });
 });

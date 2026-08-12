@@ -360,6 +360,10 @@ export function AppShell({
     }
   }, [pathname, resolvedTheme]);
 
+  useEffect(() => {
+    document.title = documentTitle;
+  }, [documentTitle]);
+
   const toggleSidebar = () => {
     setSidebarCollapsed((current) => {
       const nextCollapsed = !current;

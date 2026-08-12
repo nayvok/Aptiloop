@@ -54,6 +54,12 @@ const enUS = {
   "nav.settings": "Settings",
   "page.home.description":
     "Continue the next deterministic learning action in your active Course.",
+  "page.lesson.description":
+    "Follow the saved Lesson plan and continue from the current activity.",
+  "page.exercise.description":
+    "Complete the trusted local practice workflow for the current Lesson.",
+  "page.interview.description":
+    "Set up, continue, or review a technical interview without changing mastery directly.",
   "home.loading": "Loading your learning path…",
   "home.unavailable": "Aptiloop Core is unavailable.",
   "home.noCourse.title": "No active Course",
@@ -172,7 +178,7 @@ const enUS = {
   "settings.theme.help": "Applied immediately and saved in this browser.",
   "settings.locale": "Interface language",
   "settings.locale.help":
-    "Applied immediately in this browser. Does not change Course content or its primary locale.",
+    "Kept as a draft until you save. Does not change Course content or its primary locale.",
   "settings.section.local": "Core & local paths",
   "settings.section.localDescription":
     "Diagnostic values owned by Aptiloop. They are never sent by this browser.",
@@ -250,17 +256,78 @@ const enUS = {
   "settings.localDevelopment": "Local development",
   "settings.models": "{count} models",
   "settings.developerDiagnostics": "Developer diagnostics",
-  "settings.saved": "Settings saved",
+  "settings.saved": "Interface language saved in this browser",
   "settings.saveError": "Could not save settings",
-  "settings.localOnly": "Saved automatically in this browser",
+  "settings.localOnly":
+    "Theme saves immediately. Language changes require Save and stay in this browser.",
   "settings.localStorageUnavailable":
-    "Browser storage is unavailable. Changes apply now but may reset after reload.",
-  "settings.save": "Save interface settings",
+    "Browser storage is unavailable. The language draft cannot be saved; your current language is unchanged.",
+  "settings.locale.unsaved": "Interface language has unsaved changes.",
+  "settings.save": "Save language",
+  "settings.cancel": "Cancel language changes",
   "settings.status.off": "Off",
   "settings.status.starting": "Starting",
   "settings.status.connected": "Connected",
   "query.failed": "Could not load data",
+  "query.offline": "You're offline",
+  "query.offlineDescription":
+    "This browser reports that it is offline. Reconnect to the network, then try again.",
   "query.technicalDetails": "Technical details",
+  "query.technical.httpStatus": "HTTP status: {status}",
+  "query.technical.diagnosticId": "Diagnostic ID: {diagnosticId}",
+  "query.technical.code": "Code: {code}",
+  "failure.operation.session.load": "This lesson could not be loaded.",
+  "failure.operation.session.action":
+    "The lesson change could not be saved. Try again.",
+  "failure.operation.exercise.load": "This exercise could not be loaded.",
+  "failure.operation.exercise.action":
+    "The exercise action did not complete. Try again.",
+  "failure.operation.settingsAiSave":
+    "AI role settings could not be saved. Try again.",
+  "failure.operation.courseCreate":
+    "The local Course draft could not be created. Try again.",
+  "failure.operation.courseInstructionsDownload":
+    "The authoring instructions could not be downloaded. Try again.",
+  "failure.operation.studioLoad": "Curriculum Studio could not be loaded.",
+  "failure.operation.studioAction":
+    "The Studio action did not complete. Try again.",
+  "ai.failure.disabled": "AI is off for this role.",
+  "ai.failure.connectionNotFound": "The selected AI connection was not found.",
+  "ai.failure.connectionDisabled": "The selected AI connection is disabled.",
+  "ai.failure.authenticationRequired":
+    "The selected AI connection needs authentication.",
+  "ai.failure.misconfigured": "The selected AI connection is not configured.",
+  "ai.failure.providerUnavailable": "The selected AI provider is unavailable.",
+  "ai.failure.modelUnavailable": "The selected AI model is unavailable.",
+  "ai.failure.capabilityUnknown":
+    "The selected model's capabilities have not been verified.",
+  "ai.failure.capabilityMissing":
+    "The selected model does not support this operation.",
+  "ai.failure.toolPolicyUnavailable":
+    "The required AI tool policy is unavailable.",
+  "ai.failure.disclosureRequired":
+    "Review and approve the external AI disclosure to continue.",
+  "ai.failure.disclosureMismatch":
+    "The AI disclosure no longer matches this operation. Review it again.",
+  "ai.failure.invalidOutput": "The AI response could not be safely used.",
+  "ai.failure.budgetExceeded": "The AI operation exceeded its allowed budget.",
+  "ai.failure.cancelled": "The AI operation was cancelled.",
+  "ai.failure.timeout": "The AI operation timed out. Try again.",
+  "ai.failure.providerError":
+    "The AI provider could not complete the operation.",
+  "routeBoundary.retry": "Try again",
+  "routeBoundary.back": "Go back",
+  "routeBoundary.home": "Go to Home",
+  "routeBoundary.technicalDetails": "Technical details",
+  "routeBoundary.error.eyebrow": "Recovery",
+  "routeBoundary.error.title": "This page could not be shown",
+  "routeBoundary.error.description":
+    "Aptiloop could not finish loading this page. Your saved learning data was not changed. Try again, return to the previous page, or go Home.",
+  "routeBoundary.error.reference": "Error reference: {digest}",
+  "routeBoundary.notFound.eyebrow": "Page not found",
+  "routeBoundary.notFound.title": "This page is not available",
+  "routeBoundary.notFound.description":
+    "The link may be outdated, or the page may have moved. Go back or return Home to continue learning.",
   "ui.developerTools.title": "Developer tools",
   "ui.developerTools.description":
     "Diagnostics and manual tools for checking the provider lifecycle. They are not part of the primary learning path.",
@@ -299,6 +366,21 @@ const enUS = {
     "Provider sign-in status is unavailable. Start sign-in again to retry.",
   "settings.connection.answering": "Sending response…",
   "settings.connection.loginRunning": "Waiting for the provider…",
+  "settings.connection.progressUpdate": "Provider sign-in is in progress.",
+  "settings.connection.promptText": "Enter the value requested by the provider",
+  "settings.connection.promptSecret":
+    "Enter the secret requested by the provider",
+  "settings.connection.promptSelect": "Choose a provider sign-in option",
+  "settings.connection.promptCode": "Enter the provider sign-in code",
+  "settings.connection.promptGithubDomain": "GitHub Enterprise domain",
+  "settings.connection.promptGithubDomainDescription":
+    "Optional. Leave blank to sign in with github.com.",
+  "settings.connection.promptGithubDomainPlaceholder": "company.ghe.com",
+  "settings.connection.promptGithubDomainUnsupported":
+    "GitHub Enterprise domains are not supported yet. Leave this field blank to use github.com.",
+  "settings.connection.promptOpenAiLoginMethod": "OpenAI Codex sign-in method",
+  "settings.connection.promptOptionBrowser": "Browser sign-in (recommended)",
+  "settings.connection.promptOptionDeviceCode": "Device code sign-in",
   "settings.connection.updating": "Updating…",
   "settings.connection.cancelling": "Cancelling…",
   "settings.connection.loginCancelled":
@@ -331,6 +413,7 @@ const enUS = {
   "provider.unavailable": "Unavailable",
   "provider.noModel": "No model",
   "provider.problem": "One or more connections need configuration.",
+  "provider.recoverConnections": "Review connections",
   "provider.fullDiagnostics": "Open developer diagnostics",
   "query.loadingSettings": "Loading settings…",
   "query.settingsUnavailable": "Settings are unavailable",
@@ -347,14 +430,21 @@ const enUS = {
   "chat.role.interviewer": "Interviewer",
   "chat.role.curator": "Learning curator",
   "chat.role.codexExpert": "Architecture expert",
-  "chat.error.prepare": "Could not prepare the request: {error}",
-  "chat.error.send": "Could not send the request: {error}",
-  "chat.error.responseDetail": "Could not get a response: {error}",
+  "chat.error.prepare":
+    "Could not prepare the request. Your message is ready to retry.",
+  "chat.error.send":
+    "Could not send the request. Your message is ready to retry.",
+  "chat.error.responseDetail":
+    "Could not get a response. Your message is ready to retry.",
   "chat.error.emptyResponse": "The agent completed the response without text.",
   "chat.a11y.roleSelector": "Agent role",
   "chat.a11y.transcript": "Agent conversation transcript",
-  "chat.error.history": "History is unavailable: {error}",
-  "chat.error.settings": "Provider settings are unavailable: {error}",
+  "chat.error.history": "Conversation history is temporarily unavailable.",
+  "chat.error.settings": "Provider settings are temporarily unavailable.",
+  "chat.error.recovery":
+    "Pending external-data approval could not be checked. Nothing was sent.",
+  "chat.error.cancelDisclosure":
+    "The pending external-data approval could not be cancelled. Nothing was sent; try again.",
   "chat.error.dataUnavailable": "Agent data is temporarily unavailable.",
   "chat.retry": "Try again",
   "chat.status.generating": "Agent is preparing a response",
@@ -363,6 +453,8 @@ const enUS = {
   "chat.empty.title": "Start by writing your question or answer",
   "chat.empty.description":
     "The agent will not write a practice solution for you. Solution review works only with a committed diff.",
+  "chat.empty.reloadLimitation":
+    "Reload does not restore an unsent draft or a response in progress.",
   "chat.a11y.typing": "Agent is typing",
   "chat.composer.label": "Message to the agent",
   "chat.composer.placeholder": "Write your answer or ask a follow-up question…",
@@ -607,6 +699,8 @@ const enUS = {
   "session.sources.focus": "Focus",
   "session.learningBrief.title": "What to learn",
   "session.learningBrief.completion": "Completion evidence",
+  "session.completionEvidence.description":
+    "Progress changes only after Aptiloop saves the authored evidence below.",
   "session.criteria.acknowledgement":
     "Acknowledge the activity after reviewing it",
   "session.criteria.checklist": "Required checklist items: {count}",
@@ -668,6 +762,8 @@ const enUS = {
   "courses.import.fileLabel": "JSON file",
   "courses.import.fileDescription":
     "UTF-8 JSON, up to 1 MiB. Invalid source bytes are not stored.",
+  "courses.import.validationFailed":
+    "Could not validate {filename}. The selected file is still available; check it and try again.",
   "courses.import.validate": "Validate Pack",
   "courses.intake.title": "Course Pack inspection",
   "courses.intake.description":
@@ -683,9 +779,11 @@ const enUS = {
     "The staged validation could not be read safely. Retry the read or select the local file again.",
   "courses.intake.retry": "Retry",
   "courses.intake.reselect": "Select file again",
-  "courses.storageUnavailable.title": "M3 storage is unavailable",
+  "courses.storageUnavailable.title": "Local Course storage is unavailable",
   "courses.storageUnavailable.description":
-    "Preview still works, but installation is blocked until the Course Pack migration is applied.",
+    "Preview still works, but Aptiloop cannot install this Course Pack or create a draft until local storage is available. Review Core & local paths in Settings, then retry.",
+  "courses.storageUnavailable.settings": "Open Core & local paths",
+  "courses.storageUnavailable.retry": "Retry storage check",
   "courses.alert.errorTitle": "Operation failed",
   "courses.alert.successTitle": "Done",
   "courses.library.title": "Local library",
@@ -788,6 +886,10 @@ const enUS = {
   "courses.confirm.draft.consequence":
     "The source Pack remains unchanged; publishing is a separate explicit action.",
   "courses.confirm.draft.action": "Create local draft",
+  "courses.commitFailed.title": "The local change was not completed",
+  "courses.commitFailed.description":
+    "The request was rejected or Aptiloop could not confirm that it completed. The validation and confirmation are still open. Retry when ready; repeated requests are safe.",
+  "courses.commitFailed.retry": "Retry local change",
   "courses.action.open": "Open",
   "courses.action.continue": "Continue",
   "courses.action.edit": "Edit",
@@ -861,8 +963,12 @@ const enUS = {
   "practice.diff.refresh": "Refresh Git diff",
   "practice.tests.running": "Running tests…",
   "practice.tests.run": "Run tests",
+  "practice.tests.stop": "Stop tests",
   "practice.review.running": "Reviewer is reading…",
   "practice.review.request": "Request review",
+  "practice.review.stop": "Stop review",
+  "practice.operation.stopped":
+    "Stopped. No result from this operation was applied.",
   "practice.diff.title": "Diff from baseline",
   "practice.diff.empty": "The diff will appear after your first change.",
   "practice.diff.truncated": "The diff was truncated by the server limit.",
@@ -871,6 +977,13 @@ const enUS = {
   "practice.testRun.empty": "Tests have not run yet.",
   "practice.testRun.status.passed": "Tests passed against the current diff",
   "practice.testRun.status.failed": "Tests failed",
+  "practice.testRun.status.running": "Test run in progress",
+  "practice.testRun.status.cancelled": "Test run cancelled",
+  "practice.testRun.status.timedOut": "Test run timed out",
+  "practice.testRun.status.resourceLimit": "Test output limit reached",
+  "practice.testRun.status.unsupportedEnvironment":
+    "Trusted environment unavailable",
+  "practice.testRun.status.backendError": "Trusted check unavailable",
   "practice.testRun.status.stale": "Code changed after the test",
   "practice.sidebar.label": "Review and topics",
   "practice.topics.title": "Topics in practice",
@@ -1128,6 +1241,7 @@ const enUS = {
   "authoring.connected.evidence.model": "Exact model",
   "authoring.connected.evidence.tools": "Typed tools",
   "authoring.connected.evidence.transport": "Stream and cancel",
+  "authoring.connected.evidence.observedAt": "Capability snapshot",
   "authoring.connected.evidence.observed": "Observed",
   "authoring.connected.evidence.notAvailable": "Not available",
   "authoring.connected.qualityNote":
@@ -1222,6 +1336,16 @@ const enUS = {
   "authoring.current.publishedAt": "Published {date}",
   "authoring.current.structure": "{weeks} · {days}",
   "authoring.current.structureLoading": "Loading weeks and days…",
+  "authoring.current.primaryLocale": "Course locale: {locale}",
+  "authoring.current.branchUpstream": "Upstream branch",
+  "authoring.current.branchPersonal": "Personal branch",
+  "authoring.current.parent": "Parent: {id}",
+  "authoring.current.saving": "Saving…",
+  "authoring.current.saved": "Saved",
+  "authoring.current.saveFailed": "Save failed",
+  "authoring.current.hashDetails": "Revision integrity details",
+  "authoring.current.contentHash": "Published content hash",
+  "authoring.current.baseHash": "Immutable base hash",
   "authoring.adaptation.confirm.description":
     "A new personal draft will be created. The current published personal revision and upstream revision remain unchanged until you review and Publish it.",
   "authoring.adaptation.confirm.keep-personal":
@@ -1286,6 +1410,9 @@ const enUS = {
   "authoring.designer.action.confirm": "Confirm for compilation",
   "authoring.designer.action.requestRevision": "Request revision",
   "authoring.designer.action.retry": "Retry from failed step",
+  "authoring.designer.action.cancelGeneration": "Cancel generation",
+  "authoring.designer.action.configureAi": "Configure AI or provider",
+  "authoring.designer.action.continueManually": "Continue manually",
   "authoring.designer.action.skipDiagnostic": "Skip diagnostic",
   "authoring.designer.action.submitRequest": "Submit request",
   "authoring.designer.attribution": "{provider} · {model} · prompt {version}",
@@ -1302,8 +1429,23 @@ const enUS = {
   "authoring.designer.disclosureApprove": "Approve and generate",
   "authoring.designer.disclosureCancel": "Cancel",
   "authoring.designer.disclosureDescription":
-    "Send {bytes} bytes of the named draft payload to {destination}?",
+    "Review the exact one-time scope before any data is sent.",
   "authoring.designer.disclosureTitle": "External provider disclosure",
+  "authoring.designer.disclosure.role": "AI role",
+  "authoring.designer.disclosure.connection": "Connection ID",
+  "authoring.designer.disclosure.provider": "Provider type",
+  "authoring.designer.disclosure.model": "Exact model",
+  "authoring.designer.disclosure.destination": "Destination",
+  "authoring.designer.disclosure.payload": "Payload categories",
+  "authoring.designer.disclosure.bytes": "Payload size (bytes)",
+  "authoring.designer.disclosure.scope": "Draft, entity, and source scope",
+  "authoring.designer.disclosure.sources": "Approved source scope",
+  "authoring.designer.disclosure.exclusions": "Not sent",
+  "authoring.designer.disclosure.expires": "Approval expires",
+  "authoring.designer.disclosure.retention":
+    "Approval is valid only for this named operation until the displayed expiry and is consumed once. Aptiloop does not receive provider retention terms through this contract.",
+  "authoring.designer.cancelled":
+    "Generation was cancelled. The draft and authoring request were preserved.",
   "authoring.designer.empty": "No Course Designer proposals yet.",
   "authoring.designer.failed":
     "Course Designer failed without changing the draft.",
@@ -1508,6 +1650,12 @@ const ruRU: Record<MessageKey, string> = {
   "nav.settings": "Настройки",
   "page.home.description":
     "Продолжи следующее действие детерминированного учебного маршрута активного курса.",
+  "page.lesson.description":
+    "Следуйте сохранённому плану урока и продолжайте с текущей активности.",
+  "page.exercise.description":
+    "Пройдите доверенный локальный сценарий практики для текущего урока.",
+  "page.interview.description":
+    "Настройте, продолжите или изучите техническое интервью без прямого изменения уровня освоения.",
   "home.loading": "Загружаю учебный маршрут…",
   "home.unavailable": "Aptiloop Core недоступен.",
   "home.noCourse.title": "Нет активного курса",
@@ -1627,7 +1775,7 @@ const ruRU: Record<MessageKey, string> = {
   "settings.theme.help": "Применяется сразу и сохраняется в этом браузере.",
   "settings.locale": "Язык интерфейса",
   "settings.locale.help":
-    "Применяется сразу в этом браузере. Не меняет содержимое и основной язык курса.",
+    "Остаётся черновиком до сохранения. Не меняет содержимое и основной язык курса.",
   "settings.section.local": "Core и локальные пути",
   "settings.section.localDescription":
     "Диагностические значения принадлежат Aptiloop и не отправляются браузером.",
@@ -1705,17 +1853,78 @@ const ruRU: Record<MessageKey, string> = {
   "settings.localDevelopment": "Локальная разработка",
   "settings.models": "Моделей: {count}",
   "settings.developerDiagnostics": "Диагностика разработчика",
-  "settings.saved": "Настройки сохранены",
+  "settings.saved": "Язык интерфейса сохранён в этом браузере",
   "settings.saveError": "Не удалось сохранить настройки",
-  "settings.localOnly": "Автоматически сохраняется в этом браузере",
+  "settings.localOnly":
+    "Тема сохраняется сразу. Изменение языка требует сохранения и остаётся в этом браузере.",
   "settings.localStorageUnavailable":
-    "Хранилище браузера недоступно. Изменения применятся сейчас, но могут сброситься после перезагрузки.",
-  "settings.save": "Сохранить настройки интерфейса",
+    "Хранилище браузера недоступно. Черновик языка нельзя сохранить; текущий язык не изменён.",
+  "settings.locale.unsaved": "Есть несохранённое изменение языка интерфейса.",
+  "settings.save": "Сохранить язык",
+  "settings.cancel": "Отменить изменение языка",
   "settings.status.off": "Выключено",
   "settings.status.starting": "Запускается",
   "settings.status.connected": "Подключено",
   "query.failed": "Не удалось получить данные",
+  "query.offline": "Нет подключения к сети",
+  "query.offlineDescription":
+    "Браузер сообщает, что подключения к сети нет. Восстановите подключение и повторите попытку.",
   "query.technicalDetails": "Технические подробности",
+  "query.technical.httpStatus": "Статус HTTP: {status}",
+  "query.technical.diagnosticId": "Идентификатор диагностики: {diagnosticId}",
+  "query.technical.code": "Код: {code}",
+  "failure.operation.session.load": "Не удалось загрузить это занятие.",
+  "failure.operation.session.action":
+    "Не удалось сохранить изменение занятия. Повторите попытку.",
+  "failure.operation.exercise.load": "Не удалось загрузить это упражнение.",
+  "failure.operation.exercise.action":
+    "Действие с упражнением не завершилось. Повторите попытку.",
+  "failure.operation.settingsAiSave":
+    "Не удалось сохранить настройки AI-ролей. Повторите попытку.",
+  "failure.operation.courseCreate":
+    "Не удалось создать локальный черновик курса. Повторите попытку.",
+  "failure.operation.courseInstructionsDownload":
+    "Не удалось скачать инструкции по авторингу. Повторите попытку.",
+  "failure.operation.studioLoad": "Не удалось загрузить Curriculum Studio.",
+  "failure.operation.studioAction":
+    "Действие Studio не завершилось. Повторите попытку.",
+  "ai.failure.disabled": "AI выключен для этой роли.",
+  "ai.failure.connectionNotFound": "Выбранное AI-подключение не найдено.",
+  "ai.failure.connectionDisabled": "Выбранное AI-подключение отключено.",
+  "ai.failure.authenticationRequired":
+    "Для выбранного AI-подключения требуется аутентификация.",
+  "ai.failure.misconfigured": "Выбранное AI-подключение не настроено.",
+  "ai.failure.providerUnavailable": "Выбранный AI-провайдер недоступен.",
+  "ai.failure.modelUnavailable": "Выбранная AI-модель недоступна.",
+  "ai.failure.capabilityUnknown":
+    "Возможности выбранной модели ещё не проверены.",
+  "ai.failure.capabilityMissing":
+    "Выбранная модель не поддерживает эту операцию.",
+  "ai.failure.toolPolicyUnavailable":
+    "Требуемая политика AI-инструментов недоступна.",
+  "ai.failure.disclosureRequired":
+    "Чтобы продолжить, проверьте и подтвердите раскрытие данных внешнему AI.",
+  "ai.failure.disclosureMismatch":
+    "Раскрытие данных AI больше не соответствует этой операции. Проверьте его снова.",
+  "ai.failure.invalidOutput": "Ответ AI нельзя безопасно использовать.",
+  "ai.failure.budgetExceeded": "AI-операция превысила допустимый бюджет.",
+  "ai.failure.cancelled": "AI-операция отменена.",
+  "ai.failure.timeout":
+    "Время ожидания AI-операции истекло. Повторите попытку.",
+  "ai.failure.providerError": "AI-провайдер не смог завершить операцию.",
+  "routeBoundary.retry": "Повторить",
+  "routeBoundary.back": "Назад",
+  "routeBoundary.home": "На главную",
+  "routeBoundary.technicalDetails": "Технические подробности",
+  "routeBoundary.error.eyebrow": "Восстановление",
+  "routeBoundary.error.title": "Не удалось показать эту страницу",
+  "routeBoundary.error.description":
+    "Aptiloop не смог завершить загрузку этой страницы. Сохранённые учебные данные не изменены. Повторите попытку, вернитесь на предыдущую страницу или откройте главную.",
+  "routeBoundary.error.reference": "Идентификатор ошибки: {digest}",
+  "routeBoundary.notFound.eyebrow": "Страница не найдена",
+  "routeBoundary.notFound.title": "Эта страница недоступна",
+  "routeBoundary.notFound.description":
+    "Ссылка могла устареть или страница могла быть перемещена. Вернитесь назад или откройте главную, чтобы продолжить обучение.",
   "ui.developerTools.title": "Инструменты разработчика",
   "ui.developerTools.description":
     "Диагностика и ручные инструменты для проверки provider lifecycle. Они не входят в основной учебный маршрут.",
@@ -1754,6 +1963,24 @@ const ruRU: Record<MessageKey, string> = {
     "Состояние авторизации у провайдера недоступно. Запустите авторизацию снова.",
   "settings.connection.answering": "Отправляю ответ…",
   "settings.connection.loginRunning": "Ожидаю ответ провайдера…",
+  "settings.connection.progressUpdate":
+    "Авторизация у провайдера продолжается.",
+  "settings.connection.promptText": "Введите значение, запрошенное провайдером",
+  "settings.connection.promptSecret": "Введите секрет, запрошенный провайдером",
+  "settings.connection.promptSelect": "Выберите вариант авторизации провайдера",
+  "settings.connection.promptCode": "Введите код авторизации провайдера",
+  "settings.connection.promptGithubDomain": "Домен GitHub Enterprise",
+  "settings.connection.promptGithubDomainDescription":
+    "Необязательно. Оставьте поле пустым для входа через github.com.",
+  "settings.connection.promptGithubDomainPlaceholder": "company.ghe.com",
+  "settings.connection.promptGithubDomainUnsupported":
+    "Домены GitHub Enterprise пока не поддерживаются. Оставьте поле пустым, чтобы использовать github.com.",
+  "settings.connection.promptOpenAiLoginMethod":
+    "Способ авторизации OpenAI Codex",
+  "settings.connection.promptOptionBrowser":
+    "Авторизация в браузере (рекомендуется)",
+  "settings.connection.promptOptionDeviceCode":
+    "Авторизация по коду устройства",
   "settings.connection.updating": "Обновляю…",
   "settings.connection.cancelling": "Отменяю…",
   "settings.connection.loginCancelled":
@@ -1786,6 +2013,7 @@ const ruRU: Record<MessageKey, string> = {
   "provider.unavailable": "Недоступно",
   "provider.noModel": "Модель не выбрана",
   "provider.problem": "Одно или несколько подключений требуют настройки.",
+  "provider.recoverConnections": "Проверить подключения",
   "provider.fullDiagnostics": "Открыть диагностику разработчика",
   "query.loadingSettings": "Загружаю настройки…",
   "query.settingsUnavailable": "Настройки недоступны",
@@ -1802,14 +2030,21 @@ const ruRU: Record<MessageKey, string> = {
   "chat.role.interviewer": "Интервьюер",
   "chat.role.curator": "Куратор обучения",
   "chat.role.codexExpert": "Эксперт по архитектуре",
-  "chat.error.prepare": "Не удалось подготовить запрос: {error}",
-  "chat.error.send": "Не удалось отправить запрос: {error}",
-  "chat.error.responseDetail": "Не удалось получить ответ: {error}",
+  "chat.error.prepare":
+    "Не удалось подготовить запрос. Сообщение сохранено для повторной отправки.",
+  "chat.error.send":
+    "Не удалось отправить запрос. Сообщение сохранено для повторной отправки.",
+  "chat.error.responseDetail":
+    "Не удалось получить ответ. Сообщение сохранено для повторной отправки.",
   "chat.error.emptyResponse": "Агент завершил ответ без текста.",
   "chat.a11y.roleSelector": "Роль агента",
   "chat.a11y.transcript": "История диалога с агентом",
-  "chat.error.history": "История недоступна: {error}",
-  "chat.error.settings": "Настройки провайдера недоступны: {error}",
+  "chat.error.history": "История диалога временно недоступна.",
+  "chat.error.settings": "Настройки провайдера временно недоступны.",
+  "chat.error.recovery":
+    "Не удалось проверить ожидающее разрешение на отправку внешнему AI. Данные не отправлены.",
+  "chat.error.cancelDisclosure":
+    "Не удалось отменить ожидающее разрешение на отправку внешнему AI. Данные не отправлены — повтори попытку.",
   "chat.error.dataUnavailable": "Данные агента временно недоступны.",
   "chat.retry": "Повторить",
   "chat.status.generating": "Агент формирует ответ",
@@ -1818,6 +2053,8 @@ const ruRU: Record<MessageKey, string> = {
   "chat.empty.title": "Сначала сформулируй свой вопрос или ответ",
   "chat.empty.description":
     "Агент не будет писать практическое решение вместо тебя. Проверка решения работает только с зафиксированным diff.",
+  "chat.empty.reloadLimitation":
+    "Перезагрузка не восстанавливает неотправленный черновик или формируемый ответ.",
   "chat.a11y.typing": "Агент печатает",
   "chat.composer.label": "Сообщение агенту",
   "chat.composer.placeholder":
@@ -2063,6 +2300,8 @@ const ruRU: Record<MessageKey, string> = {
   "session.sources.focus": "Обратите внимание",
   "session.learningBrief.title": "Что изучить",
   "session.learningBrief.completion": "Подтверждения завершения",
+  "session.completionEvidence.description":
+    "Прогресс изменится только после того, как Aptiloop сохранит указанные ниже подтверждения.",
   "session.criteria.acknowledgement": "Подтвердить ознакомление с активностью",
   "session.criteria.checklist": "Отметить обязательные пункты: {count}",
   "session.criteria.attempts": "Отправить минимум попыток: {count}",
@@ -2124,6 +2363,8 @@ const ruRU: Record<MessageKey, string> = {
   "courses.import.fileLabel": "JSON-файл",
   "courses.import.fileDescription":
     "UTF-8 JSON, не более 1 MiB. Невалидные исходные байты не сохраняются.",
+  "courses.import.validationFailed":
+    "Не удалось проверить файл {filename}. Выбранный файл сохранён: проверьте его и повторите попытку.",
   "courses.import.validate": "Проверить Pack",
   "courses.intake.title": "Проверка Course Pack",
   "courses.intake.description":
@@ -2139,9 +2380,11 @@ const ruRU: Record<MessageKey, string> = {
     "Безопасно прочитать сохранённую проверку не удалось. Повторите чтение или снова выберите локальный файл.",
   "courses.intake.retry": "Повторить",
   "courses.intake.reselect": "Выбрать файл повторно",
-  "courses.storageUnavailable.title": "Хранилище M3 недоступно",
+  "courses.storageUnavailable.title": "Локальное хранилище курсов недоступно",
   "courses.storageUnavailable.description":
-    "Предпросмотр работает, но установка заблокирована до применения миграции Course Pack.",
+    "Предпросмотр работает, но Aptiloop не сможет установить Course Pack или создать черновик, пока локальное хранилище недоступно. Проверьте раздел «Core и локальные пути» в Настройках и повторите попытку.",
+  "courses.storageUnavailable.settings": "Открыть Core и локальные пути",
+  "courses.storageUnavailable.retry": "Повторить проверку хранилища",
   "courses.alert.errorTitle": "Операция не выполнена",
   "courses.alert.successTitle": "Готово",
   "courses.library.title": "Локальная библиотека",
@@ -2244,6 +2487,10 @@ const ruRU: Record<MessageKey, string> = {
   "courses.confirm.draft.consequence":
     "Исходный Pack останется неизменным; публикация выполняется отдельным явным действием.",
   "courses.confirm.draft.action": "Создать локальный черновик",
+  "courses.commitFailed.title": "Локальное изменение не завершено",
+  "courses.commitFailed.description":
+    "Запрос отклонён или Aptiloop не смог подтвердить его завершение. Проверка и окно подтверждения сохранены. Повторите попытку, когда будете готовы: повторный запрос безопасен.",
+  "courses.commitFailed.retry": "Повторить локальное изменение",
   "courses.action.open": "Открыть",
   "courses.action.continue": "Продолжить",
   "courses.action.edit": "Редактировать",
@@ -2317,8 +2564,12 @@ const ruRU: Record<MessageKey, string> = {
   "practice.diff.refresh": "Обновить Git diff",
   "practice.tests.running": "Тестирую…",
   "practice.tests.run": "Запустить тесты",
+  "practice.tests.stop": "Остановить тесты",
   "practice.review.running": "Проверка читает…",
   "practice.review.request": "Запросить проверку",
+  "practice.review.stop": "Остановить проверку",
+  "practice.operation.stopped":
+    "Остановлено. Результат этой операции не применён.",
   "practice.diff.title": "Diff от baseline",
   "practice.diff.empty": "Diff появится после первой самостоятельной правки.",
   "practice.diff.truncated": "Diff обрезан серверным лимитом.",
@@ -2327,6 +2578,13 @@ const ruRU: Record<MessageKey, string> = {
   "practice.testRun.empty": "Тесты ещё не запускались.",
   "practice.testRun.status.passed": "Тесты прошли на текущем diff",
   "practice.testRun.status.failed": "Тесты не прошли",
+  "practice.testRun.status.running": "Тесты выполняются",
+  "practice.testRun.status.cancelled": "Запуск тестов отменён",
+  "practice.testRun.status.timedOut": "Время запуска тестов истекло",
+  "practice.testRun.status.resourceLimit": "Достигнут лимит вывода тестов",
+  "practice.testRun.status.unsupportedEnvironment":
+    "Доверенная среда недоступна",
+  "practice.testRun.status.backendError": "Trusted check недоступен",
   "practice.testRun.status.stale": "Код изменён после теста",
   "practice.sidebar.label": "Проверка и темы",
   "practice.topics.title": "Тренируемые темы",
@@ -2580,6 +2838,7 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.connected.evidence.model": "Точная модель",
   "authoring.connected.evidence.tools": "Типизированные инструменты",
   "authoring.connected.evidence.transport": "Поток и отмена",
+  "authoring.connected.evidence.observedAt": "Снимок возможностей",
   "authoring.connected.evidence.observed": "Подтверждено",
   "authoring.connected.evidence.notAvailable": "Недоступно",
   "authoring.connected.qualityNote":
@@ -2674,6 +2933,16 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.current.publishedAt": "Опубликована {date}",
   "authoring.current.structure": "{weeks} · {days}",
   "authoring.current.structureLoading": "Недели и дни загружаются…",
+  "authoring.current.primaryLocale": "Язык курса: {locale}",
+  "authoring.current.branchUpstream": "Исходная ветка",
+  "authoring.current.branchPersonal": "Личная ветка",
+  "authoring.current.parent": "Родитель: {id}",
+  "authoring.current.saving": "Сохраняю…",
+  "authoring.current.saved": "Сохранено",
+  "authoring.current.saveFailed": "Сохранение не удалось",
+  "authoring.current.hashDetails": "Данные целостности ревизии",
+  "authoring.current.contentHash": "Хеш опубликованного содержимого",
+  "authoring.current.baseHash": "Неизменяемый базовый хеш",
   "authoring.adaptation.confirm.description":
     "Будет создан новый личный черновик. Текущая опубликованная личная ревизия и исходная ревизия не изменятся, пока вы не проверите и не опубликуете его.",
   "authoring.adaptation.confirm.keep-personal":
@@ -2740,6 +3009,9 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.designer.action.confirm": "Подтвердить для компиляции",
   "authoring.designer.action.requestRevision": "Запросить доработку",
   "authoring.designer.action.retry": "Повторить с места сбоя",
+  "authoring.designer.action.cancelGeneration": "Отменить генерацию",
+  "authoring.designer.action.configureAi": "Настроить AI или провайдера",
+  "authoring.designer.action.continueManually": "Продолжить вручную",
   "authoring.designer.action.skipDiagnostic": "Пропустить диагностику",
   "authoring.designer.action.submitRequest": "Отправить запрос",
   "authoring.designer.attribution": "{provider} · {model} · промпт {version}",
@@ -2756,8 +3028,24 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.designer.disclosureApprove": "Разрешить и сгенерировать",
   "authoring.designer.disclosureCancel": "Отмена",
   "authoring.designer.disclosureDescription":
-    "Отправить {bytes} байт указанного черновика в {destination}?",
+    "Проверьте точную одноразовую область передачи до отправки данных.",
   "authoring.designer.disclosureTitle": "Передача внешнему провайдеру",
+  "authoring.designer.disclosure.role": "AI-роль",
+  "authoring.designer.disclosure.connection": "ID подключения",
+  "authoring.designer.disclosure.provider": "Тип провайдера",
+  "authoring.designer.disclosure.model": "Точная модель",
+  "authoring.designer.disclosure.destination": "Получатель",
+  "authoring.designer.disclosure.payload": "Категории данных",
+  "authoring.designer.disclosure.bytes": "Размер данных (байт)",
+  "authoring.designer.disclosure.scope":
+    "Область черновика, сущностей и источников",
+  "authoring.designer.disclosure.sources": "Область одобренных источников",
+  "authoring.designer.disclosure.exclusions": "Не отправляется",
+  "authoring.designer.disclosure.expires": "Срок разрешения",
+  "authoring.designer.disclosure.retention":
+    "Разрешение действует только для указанной операции до показанного срока и используется один раз. Контракт не передаёт Aptiloop условия хранения данных у провайдера.",
+  "authoring.designer.cancelled":
+    "Генерация отменена. Черновик и запрос на авторинг сохранены.",
   "authoring.designer.empty": "Предложений Course Designer пока нет.",
   "authoring.designer.failed":
     "Course Designer завершился с ошибкой и не изменил черновик.",
@@ -2940,7 +3228,7 @@ export const catalogs: Readonly<
 
 type LocaleContextValue = {
   locale: UiLocale;
-  setLocale: (locale: UiLocale) => void;
+  setLocale: (locale: UiLocale) => boolean;
   t: (
     key: MessageKey,
     values?: Readonly<Record<string, string | number>>,
@@ -2995,11 +3283,12 @@ function readStoredLocale(): { available: boolean; value: string | null } {
   }
 }
 
-function persistStoredLocale(locale: UiLocale): void {
+function persistStoredLocale(locale: UiLocale): boolean {
   try {
     window.localStorage.setItem(uiLocaleStorageKey, locale);
+    return true;
   } catch {
-    // The in-memory preference and cookie mirror remain usable when storage is blocked.
+    return false;
   }
 }
 
@@ -3034,14 +3323,16 @@ export function LocaleProvider({
   const [locale, setLocaleState] = useState<UiLocale>(initialLocale);
   const [draftLocale, setDraftLocale] = useState<UiLocale>(initialLocale);
   const [showFirstRun, setShowFirstRun] = useState(false);
+  const [firstRunSaveError, setFirstRunSaveError] = useState(false);
 
   const setLocale = useCallback((nextLocale: UiLocale) => {
-    if (!isUiLocale(nextLocale)) return;
+    if (!isUiLocale(nextLocale)) return false;
+    if (!persistStoredLocale(nextLocale)) return false;
     setLocaleState(nextLocale);
     setDraftLocale(nextLocale);
     document.documentElement.lang = nextLocale;
-    persistStoredLocale(nextLocale);
     writeLocaleCookie(nextLocale);
+    return true;
   }, []);
 
   useEffect(() => {
@@ -3145,6 +3436,7 @@ export function LocaleProvider({
                 const next = event.target.value as UiLocale;
                 setDraftLocale(next);
                 setLocaleState(next);
+                setFirstRunSaveError(false);
               }}
               className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
@@ -3154,12 +3446,21 @@ export function LocaleProvider({
             <FieldDescription>
               {value.t("locale.field.description")}
             </FieldDescription>
+            {firstRunSaveError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {value.t("locale.saveError")}
+              </p>
+            ) : null}
           </Field>
           <AlertDialogFooter>
             <AlertDialogAction
               onClick={() => {
-                setLocale(draftLocale);
-                setShowFirstRun(false);
+                if (setLocale(draftLocale)) {
+                  setFirstRunSaveError(false);
+                  setShowFirstRun(false);
+                } else {
+                  setFirstRunSaveError(true);
+                }
               }}
             >
               {value.t("locale.confirm")}

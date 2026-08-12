@@ -80,6 +80,25 @@ describe("Course Pack V1", () => {
     ).toThrow(/parsing exceeded/u);
   });
 
+  it("rejects malformed JSON and unknown format versions before semantic validation", () => {
+    expect(diagnosticCodes(encoder.encode('{"format":'))).toContain(
+      "PACK_JSON_INVALID_JSON",
+    );
+
+    const unknownVersion = { ...validCoursePack(), formatVersion: 99 };
+    const result = validateCoursePackBytes(bytes(unknownVersion));
+    expect(result.valid).toBe(false);
+    expect(result.preview).toBeNull();
+    expect(result.report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_SHAPE_INVALID",
+          path: "/formatVersion",
+        }),
+      ]),
+    );
+  });
+
   it("rejects authority fields, secrets, active content, unsafe URLs, and paths", () => {
     const cases = [
       ["command", "npm test", "PACK_AUTHORITY_FIELD"],

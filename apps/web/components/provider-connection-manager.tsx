@@ -49,8 +49,14 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
 import { type MessageKey, useI18n } from "@/lib/i18n";
+import {
+  ProviderLoginStatusSchema,
+  type ProviderLoginStatus,
+  type ProviderLoginPrompt,
+  type ProviderLoginSelectOptionId,
+} from "@aptiloop/shared";
 
 export interface ProviderConnectionSummary {
   connectionId: string;
@@ -89,34 +95,6 @@ interface ManagedConnectionMetadata {
 export interface ProviderManagementSettings {
   catalog: ProviderCatalogEntry[];
   connections: ManagedConnectionMetadata[];
-}
-
-interface LoginStatus {
-  operationId: string;
-  connectionId: string;
-  status: "running" | "completed" | "failed" | "cancelled";
-  events: Array<
-    | {
-        type: "info";
-        message: string;
-        links?: Array<{ url: string; label?: string }>;
-      }
-    | { type: "auth_url"; url: string; instructions?: string }
-    | {
-        type: "device_code";
-        userCode: string;
-        verificationUri: string;
-      }
-    | { type: "progress"; message: string }
-  >;
-  prompt: {
-    promptId: string;
-    type: "text" | "secret" | "select" | "manual_code";
-    message: string;
-    placeholder: string | null;
-    options: Array<{ id: string; label: string; description?: string }>;
-  } | null;
-  error: string | null;
 }
 
 const statusLabels: Readonly<Record<string, MessageKey>> = {
@@ -274,15 +252,17 @@ export function ProviderConnectionManager({
   const loginQuery = useQuery({
     queryKey: ["provider-login", loginOperationId],
     enabled: loginOperationId !== null,
-    queryFn: () =>
-      api<LoginStatus>(
-        `/settings/ai/login/${encodeURIComponent(loginOperationId!)}`,
+    queryFn: async () =>
+      ProviderLoginStatusSchema.parse(
+        await api<unknown>(
+          `/settings/ai/login/${encodeURIComponent(loginOperationId!)}`,
+        ),
       ),
     refetchInterval: (query) =>
       query.state.data?.status === "running" ? 750 : false,
   });
   const answerLogin = useMutation({
-    mutationFn: (prompt: NonNullable<LoginStatus["prompt"]>) =>
+    mutationFn: (prompt: ProviderLoginPrompt) =>
       api<{ accepted: true }>(
         `/settings/ai/login/${encodeURIComponent(loginOperationId!)}/answer`,
         {
@@ -1006,14 +986,14 @@ function LoginPanel({
   onAnswer,
   onCancel,
 }: {
-  status: LoginStatus | undefined;
+  status: ProviderLoginStatus | undefined;
   isLoading: boolean;
   error: unknown;
   answer: string;
   setAnswer: (value: string) => void;
   answering: boolean;
   cancelling: boolean;
-  onAnswer: (prompt: NonNullable<LoginStatus["prompt"]>) => void;
+  onAnswer: (prompt: ProviderLoginPrompt) => void;
   onCancel: () => void;
 }) {
   const { t } = useI18n();
@@ -1053,7 +1033,6 @@ function LoginPanel({
             if (event.type === "auth_url") {
               return (
                 <p key={`${event.type}:${index}`} className="leading-6">
-                  {event.instructions ? `${event.instructions} ` : ""}
                   <a
                     className="font-medium text-primary underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     href={event.url}
@@ -1084,7 +1063,7 @@ function LoginPanel({
             }
             return (
               <p key={`${event.type}:${index}`} className="leading-6">
-                {event.message}
+                {t("settings.connection.progressUpdate")}
               </p>
             );
           })}
@@ -1094,7 +1073,7 @@ function LoginPanel({
       {status.prompt ? (
         <Field>
           <FieldLabel htmlFor={`provider-prompt-${status.prompt.promptId}`}>
-            {status.prompt.message}
+            {t(providerPromptLabel(status.prompt.kind))}
           </FieldLabel>
           {status.prompt.type === "select" ? (
             <select
@@ -1104,27 +1083,47 @@ function LoginPanel({
               className="min-h-11 rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               <option value="">{t("settings.connection.chooseOption")}</option>
-              {status.prompt.options.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
+              {status.prompt.options.map((optionId) => (
+                <option key={optionId} value={optionId}>
+                  {t(providerPromptOptionLabel(optionId))}
                 </option>
               ))}
             </select>
           ) : (
             <Input
               id={`provider-prompt-${status.prompt.promptId}`}
-              type={status.prompt.type === "secret" ? "password" : "text"}
+              type="text"
               autoComplete="off"
-              placeholder={status.prompt.placeholder ?? undefined}
+              placeholder={
+                status.prompt.kind === "github-enterprise-domain"
+                  ? t("settings.connection.promptGithubDomainPlaceholder")
+                  : undefined
+              }
               value={answer}
               onChange={(event) => setAnswer(event.target.value)}
             />
           )}
+          {status.prompt.kind === "github-enterprise-domain" ? (
+            answer.trim() ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t("settings.connection.promptGithubDomainUnsupported")}
+              </p>
+            ) : (
+              <FieldDescription>
+                {t("settings.connection.promptGithubDomainDescription")}
+              </FieldDescription>
+            )
+          ) : null}
           <Button
             className="w-full sm:w-fit"
             type="button"
             size="sm"
-            disabled={!answer || answering}
+            disabled={
+              (!status.prompt.optional && !answer.trim()) ||
+              (status.prompt.kind === "github-enterprise-domain" &&
+                Boolean(answer.trim())) ||
+              answering
+            }
             onClick={() => onAnswer(status.prompt!)}
           >
             {answering ? <Spinner data-icon="inline-start" /> : null}
@@ -1149,7 +1148,7 @@ function LoginPanel({
       ) : null}
       {status.status === "failed" ? (
         <p role="alert" className="text-destructive">
-          {status.error ?? t("settings.connection.signInFailed")}
+          {t("settings.connection.signInFailed")}
         </p>
       ) : null}
       {status.status === "cancelled" ? (
@@ -1178,6 +1177,26 @@ function LoginPanel({
   );
 }
 
+function providerPromptLabel(kind: ProviderLoginPrompt["kind"]): MessageKey {
+  switch (kind) {
+    case "github-enterprise-domain":
+      return "settings.connection.promptGithubDomain";
+    case "openai-codex-login-method":
+      return "settings.connection.promptOpenAiLoginMethod";
+    case "oauth-authorization-code":
+      return "settings.connection.promptCode";
+  }
+}
+
+function providerPromptOptionLabel(
+  optionId: ProviderLoginSelectOptionId,
+): MessageKey {
+  return optionId === "browser"
+    ? "settings.connection.promptOptionBrowser"
+    : "settings.connection.promptOptionDeviceCode";
+}
+
 function apiErrorMessage(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.message : fallback;
+  void error;
+  return fallback;
 }

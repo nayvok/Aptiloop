@@ -1,8 +1,8 @@
 "use client";
 
 import { CheckIcon } from "@phosphor-icons/react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect } from "react";
 
 import { ReviewQueueClient } from "@/components/flashcards-client";
 import { InterviewClient } from "@/components/interview-client";
@@ -16,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { type MessageKey, useI18n } from "@/lib/i18n";
@@ -35,10 +36,6 @@ const viewDescriptions: Readonly<Record<ReviewView, MessageKey>> = {
   interviews: "review.viewDescription.interviews",
 };
 
-function reviewHref(view: ReviewView) {
-  return view === "due" ? "/review" : `/review?view=${view}`;
-}
-
 export function ReviewPageSkeleton({
   label = "cards.loading",
   compact = false,
@@ -47,6 +44,10 @@ export function ReviewPageSkeleton({
   compact?: boolean;
 }) {
   const { t } = useI18n();
+  if (compact) {
+    return <LoadingState label={label} variant="panel" />;
+  }
+
   return (
     <div
       data-slot="review-loading-state"
@@ -56,12 +57,10 @@ export function ReviewPageSkeleton({
       className="flex min-w-0 flex-col gap-5"
     >
       <span className="sr-only">{t(label)}</span>
-      {!compact ? (
-        <div aria-hidden className="flex flex-col gap-3">
-          <Skeleton className="h-11 w-56 max-w-[70%]" />
-          <Skeleton className="h-6 w-[34rem] max-w-full" />
-        </div>
-      ) : null}
+      <div aria-hidden className="flex flex-col gap-3">
+        <Skeleton className="h-11 w-56 max-w-[70%]" />
+        <Skeleton className="h-6 w-[34rem] max-w-full" />
+      </div>
       <div aria-hidden className="flex flex-col gap-5">
         <div className="grid h-11 w-[46rem] max-w-full grid-cols-4 gap-1">
           {[0, 1, 2, 3].map((tab) => (
@@ -85,6 +84,7 @@ export function ReviewPageSkeleton({
 }
 
 export function ReviewClient() {
+  const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { t } = useI18n();
@@ -92,9 +92,30 @@ export function ReviewClient() {
   const active: ReviewView = views.some((view) => view.id === requested)
     ? (requested as ReviewView)
     : "due";
+  const searchParamString = searchParams.toString();
+
+  useEffect(() => {
+    if (requested === null || views.some((view) => view.id === requested)) {
+      return;
+    }
+    const next = new URLSearchParams(searchParamString);
+    next.delete("view");
+    const serialized = next.toString();
+    router.replace(serialized ? `${pathname}?${serialized}` : pathname, {
+      scroll: false,
+    });
+  }, [pathname, requested, router, searchParamString]);
+
   const navigateToView = (value: string) => {
     const next = views.find((view) => view.id === value)?.id;
-    if (next && next !== active) router.push(reviewHref(next));
+    if (!next || next === active) return;
+    const params = new URLSearchParams(searchParamString);
+    if (next === "due") params.delete("view");
+    else params.set("view", next);
+    const serialized = params.toString();
+    router.push(serialized ? `${pathname}?${serialized}` : pathname, {
+      scroll: false,
+    });
   };
 
   return (

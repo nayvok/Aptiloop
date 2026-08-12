@@ -85,6 +85,7 @@ describe("UI locale contract", () => {
       catalogs["en-US"]["interview.report.evidence"],
     ].join(" ");
     const russianInterviewCopy = [
+      catalogs["ru-RU"]["page.interview.description"],
       catalogs["ru-RU"]["review.viewDescription.interviews"],
       catalogs["ru-RU"]["interview.setup.description"],
       catalogs["ru-RU"]["interview.session.description"],

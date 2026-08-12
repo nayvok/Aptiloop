@@ -5,16 +5,53 @@ import remarkGfm from "remark-gfm";
 
 import { cn } from "@/lib/utils";
 
+export type MarkdownHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
+
 export interface MarkdownProps {
+  /** The document heading level represented by a Markdown `#` heading. */
+  baseHeadingLevel?: MarkdownHeadingLevel;
   className?: string;
   children: string;
 }
 
 const paragraphClassName = "my-1.5 leading-6 first:mt-0 last:mb-0";
 const headingClassName = "mb-2 mt-3 font-semibold first:mt-0 last:mb-0";
+const headingSizeClassNames: Record<MarkdownHeadingLevel, string> = {
+  1: "text-lg",
+  2: "text-base",
+  3: "text-sm",
+  4: "text-sm",
+  5: "text-sm",
+  6: "text-sm",
+};
 
-/** Markdown renderer for interview content and reports: prose styles without animation. */
-export function Markdown({ className, children }: MarkdownProps) {
+/**
+ * Renders embedded Markdown without introducing a second page-level heading.
+ * Heading ranks are offset from the surrounding document hierarchy.
+ */
+export function Markdown({
+  baseHeadingLevel = 2,
+  className,
+  children,
+}: MarkdownProps) {
+  const renderHeading = (markdownLevel: MarkdownHeadingLevel) => {
+    const headingLevel = Math.min(
+      6,
+      baseHeadingLevel + markdownLevel - 1,
+    ) as MarkdownHeadingLevel;
+    const Heading = `h${headingLevel}` as const;
+
+    return ({
+      node: _node,
+      ...props
+    }: { node?: unknown } & React.ComponentPropsWithoutRef<"h1">) => (
+      <Heading
+        className={cn(headingClassName, headingSizeClassNames[markdownLevel])}
+        {...props}
+      />
+    );
+  };
+
   return (
     <div className={cn("text-sm leading-6", className)}>
       <ReactMarkdown
@@ -23,18 +60,12 @@ export function Markdown({ className, children }: MarkdownProps) {
           p: ({ node: _node, ...props }) => (
             <p className={paragraphClassName} {...props} />
           ),
-          h1: ({ node: _node, ...props }) => (
-            <h1 className={cn(headingClassName, "text-lg")} {...props} />
-          ),
-          h2: ({ node: _node, ...props }) => (
-            <h2 className={cn(headingClassName, "text-base")} {...props} />
-          ),
-          h3: ({ node: _node, ...props }) => (
-            <h3 className={cn(headingClassName, "text-sm")} {...props} />
-          ),
-          h4: ({ node: _node, ...props }) => (
-            <h4 className={cn(headingClassName, "text-sm")} {...props} />
-          ),
+          h1: renderHeading(1),
+          h2: renderHeading(2),
+          h3: renderHeading(3),
+          h4: renderHeading(4),
+          h5: renderHeading(5),
+          h6: renderHeading(6),
           ul: ({ node: _node, ...props }) => (
             <ul
               className="my-1.5 list-disc space-y-1 pl-5 first:mt-0 last:mb-0"

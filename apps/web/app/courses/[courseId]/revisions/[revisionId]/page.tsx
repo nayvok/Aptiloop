@@ -1,4 +1,5 @@
 import { HomeClient } from "@/components/home-client";
+import { notFound } from "next/navigation";
 
 export default async function CourseRevisionPage({
   params,
@@ -6,15 +7,16 @@ export default async function CourseRevisionPage({
   params: Promise<{ courseId: string; revisionId: string }>;
 }) {
   const { courseId, revisionId } = await params;
-  const apiCourseId = encodeURIComponent(decodeURIComponent(courseId));
-  const apiRevisionId = encodeURIComponent(decodeURIComponent(revisionId));
+  if (!courseId || !revisionId) notFound();
+  const apiCourseId = encodeURIComponent(courseId);
+  const apiRevisionId = encodeURIComponent(revisionId);
   return (
     <HomeClient
       surface="revision"
       pathEndpoint={`/learning/courses/${apiCourseId}/revisions/${apiRevisionId}/path`}
       selectionTarget={{
-        courseId: decodeURIComponent(courseId),
-        revisionId: decodeURIComponent(revisionId),
+        courseId,
+        revisionId,
       }}
     />
   );

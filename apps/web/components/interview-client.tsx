@@ -36,6 +36,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { PageHeader } from "@/components/page-header";
+import { usePageRouteContext } from "@/components/page-route-context";
+import { RouteOrientation } from "@/components/route-orientation";
 import { InterviewChatView } from "@/components/interview-chat-view";
 import { QueryError } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
@@ -69,6 +71,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { type MessageKey, useI18n } from "@/lib/i18n";
+import type { RouteContext } from "@/lib/route-context";
 import { formatMinutesShort } from "@/lib/time";
 
 const protectedFields = new Set([
@@ -152,6 +155,35 @@ const currentResponseSchema = z
   .object({
     learningSessionId: idSchema.nullable(),
     interview: interviewSchema.nullable(),
+  })
+  .strict();
+const linkedSessionContextSchema = z
+  .object({
+    session: z
+      .object({
+        id: idSchema,
+        courseContext: z
+          .object({
+            courseId: idSchema,
+            revisionId: idSchema,
+          })
+          .passthrough()
+          .optional(),
+        snapshot: z
+          .object({
+            curriculumId: idSchema,
+            curriculumVersionId: idSchema,
+            curriculumTitle: z.string().trim().min(1),
+            day: z
+              .object({
+                order: z.number().int().positive(),
+                title: z.string().trim().min(1),
+              })
+              .passthrough(),
+          })
+          .passthrough(),
+      })
+      .passthrough(),
   })
   .strict();
 const finishResponseSchema = z
@@ -383,27 +415,44 @@ function parsePayload<T>(schema: z.ZodType<T>, value: unknown): T {
 
 function readStorage<T>(key: string, schema: z.ZodType<T>): T | null {
   if (typeof window === "undefined") return null;
-  const value = window.localStorage.getItem(key);
-  if (!value) return null;
   try {
+    const value = window.localStorage.getItem(key);
+    if (!value) return null;
     const parsed = schema.safeParse(JSON.parse(value));
     if (parsed.success) return parsed.data;
-    window.localStorage.removeItem(key);
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // Keep the controlled form usable when browser storage is blocked.
+    }
     return null;
   } catch {
-    window.localStorage.removeItem(key);
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // Keep the controlled form usable when browser storage is blocked.
+    }
     return null;
   }
 }
 
 function writeStorage(key: string, value: unknown): void {
   if (typeof window !== "undefined") {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // The current in-memory draft remains usable for this page lifetime.
+    }
   }
 }
 
 function removeStorage(key: string): void {
-  if (typeof window !== "undefined") window.localStorage.removeItem(key);
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // A blocked storage backend must not break the Interview workflow.
+  }
 }
 
 type DraftStore<T> = { version: 1; drafts: T[] };
@@ -842,6 +891,53 @@ export function InterviewClient({
   const interview = interviewReadResult?.interview ?? null;
   const validatedLearningSessionId =
     interviewReadResult?.learningSessionId ?? null;
+  const linkedSessionQuery = useQuery({
+    queryKey: ["interview-linked-session", validatedLearningSessionId],
+    queryFn: async () => {
+      const learningSessionId = validatedLearningSessionId;
+      if (!learningSessionId) throw new Error("Missing linked session scope");
+      const result = linkedSessionContextSchema.parse(
+        await api<unknown>(
+          `/learning/sessions/v2/${encodeURIComponent(learningSessionId)}`,
+        ),
+      );
+      if (result.session.id !== learningSessionId) {
+        throw new InterviewReadError("association-mismatch");
+      }
+      return result.session;
+    },
+    enabled: validatedLearningSessionId !== null,
+    retry: false,
+  });
+  const linkedSession = linkedSessionQuery.data ?? null;
+  const pageRouteContext = useMemo<RouteContext | null>(() => {
+    if (!validatedLearningSessionId || !linkedSession) return null;
+    const courseId =
+      linkedSession.courseContext?.courseId ??
+      linkedSession.snapshot.curriculumId;
+    const revisionId =
+      linkedSession.courseContext?.revisionId ??
+      linkedSession.snapshot.curriculumVersionId;
+    return {
+      sectionHref: "/courses",
+      breadcrumbs: [
+        { href: "/courses", label: "nav.courses" },
+        {
+          href: `/courses/${encodeURIComponent(courseId)}/revisions/${encodeURIComponent(revisionId)}`,
+          text: linkedSession.snapshot.curriculumTitle,
+        },
+        {
+          href: `/session?id=${encodeURIComponent(validatedLearningSessionId)}`,
+          text: t("session.lessonTitle", {
+            order: linkedSession.snapshot.day.order,
+            title: linkedSession.snapshot.day.title,
+          }),
+        },
+        { label: "interview.title" },
+      ],
+    };
+  }, [linkedSession, t, validatedLearningSessionId]);
+  usePageRouteContext(pageRouteContext);
   const returnLearningSessionId = interview?.learningSessionId ?? null;
   const currentQuestionId = interview ? pendingQuestionId(interview) : null;
   const readinessQueryEnabled =
@@ -1587,7 +1683,18 @@ export function InterviewClient({
   );
 
   if (interviewQuery.isLoading) {
-    return <LoadingState label="interview.loading" variant="page" />;
+    if (embedded) {
+      return <LoadingState label="interview.loading" variant="page" />;
+    }
+    return (
+      <RouteOrientation
+        slot="interview-loading"
+        title="interview.title"
+        description="page.interview.description"
+      >
+        <LoadingState label="interview.loading" variant="page" />
+      </RouteOrientation>
+    );
   }
 
   if (interviewQuery.error) {
@@ -1595,11 +1702,21 @@ export function InterviewClient({
       interviewQuery.error instanceof InterviewReadError
         ? t(interviewReadErrorKeys[interviewQuery.error.code])
         : t("interview.error.load");
-    return (
+    const errorState = (
       <QueryError
         message={message}
         retry={() => void interviewQuery.refetch()}
       />
+    );
+    if (embedded) return errorState;
+    return (
+      <RouteOrientation
+        slot="interview-error"
+        title="interview.title"
+        description="page.interview.description"
+      >
+        {errorState}
+      </RouteOrientation>
     );
   }
 
@@ -2019,7 +2136,10 @@ function InterviewReportView({
           >
             {t("interview.report.summary")}
           </DetailHeading>
-          <Markdown className={`${markdownContentClassName} mt-3 max-w-[72ch]`}>
+          <Markdown
+            baseHeadingLevel={3}
+            className={`${markdownContentClassName} mt-3 max-w-[72ch]`}
+          >
             {report.summary}
           </Markdown>
         </section>
@@ -2094,7 +2214,10 @@ function InterviewReportView({
                         excerpt: item.answerExcerpt,
                       })}
                     </blockquote>
-                    <Markdown className={`${markdownContentClassName} mt-2`}>
+                    <Markdown
+                      baseHeadingLevel={3}
+                      className={`${markdownContentClassName} mt-2`}
+                    >
                       {item.observation}
                     </Markdown>
                   </CollapsibleContent>
@@ -2153,7 +2276,9 @@ function ReportList({
               aria-hidden
               className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground"
             />
-            <Markdown className={markdownContentClassName}>{item}</Markdown>
+            <Markdown baseHeadingLevel={3} className={markdownContentClassName}>
+              {item}
+            </Markdown>
           </li>
         ))}
       </ul>

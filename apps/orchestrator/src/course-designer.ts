@@ -434,10 +434,132 @@ function insertProposal(
   return row;
 }
 
+const protectedAuthoringKeys = new Set(
+  [
+    "answer",
+    "answerkey",
+    "commonMistakes",
+    "correctAnswer",
+    "correctIndex",
+    "correctOptionIds",
+    "correctOptionStableIds",
+    "correctQuestionIds",
+    "evaluationPoints",
+    "expectedAnswer",
+    "expectedOutput",
+    "gradingRubric",
+    "misconceptions",
+    "modelAnswer",
+    "protectedEvaluation",
+    "protectedMaterial",
+    "referenceAnswer",
+    "referenceSolution",
+    "rubric",
+    "solution",
+  ].map((key) => key.toLowerCase()),
+);
+
+function isProtectedAuthoringKey(key: string): boolean {
+  return protectedAuthoringKeys.has(
+    key.replaceAll(/[^a-z0-9]/giu, "").toLowerCase(),
+  );
+}
+
+function providerSafeAuthoringValue(value: unknown): JsonValue {
+  if (Array.isArray(value)) {
+    return value.map((item) => providerSafeAuthoringValue(item));
+  }
+  if (value === null || typeof value !== "object") {
+    return value as JsonValue;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !isProtectedAuthoringKey(key))
+      .map(([key, nested]) => [key, providerSafeAuthoringValue(nested)]),
+  );
+}
+
+function providerSafeUnit(
+  unit: CurriculumVersionGraph["weeks"][number]["days"][number]["units"][number],
+): Record<string, JsonValue> {
+  return providerSafeAuthoringValue({
+    id: unit.id,
+    versionId: unit.versionId,
+    dayId: unit.dayId,
+    stableId: unit.stableId,
+    type: unit.type,
+    orderIndex: unit.orderIndex,
+    title: unit.title,
+    description: unit.description,
+    estimatedMinutes: unit.estimatedMinutes,
+    objectives: unit.objectives,
+    checklist: unit.checklist,
+    sources: unit.sources,
+    questions: unit.questions,
+    completionCriteria: unit.completionCriteria,
+    unlockRules: unit.unlockRules,
+    optional: unit.optional,
+    depthLevel: unit.depthLevel,
+    payload: unit.payload,
+  }) as Record<string, JsonValue>;
+}
+
+function providerSafeAuthoringGraph(
+  graph: CurriculumVersionGraph,
+): Record<string, JsonValue> {
+  return {
+    primaryLocale: graph.primaryLocale,
+    version: {
+      id: graph.version.id,
+      curriculumId: graph.version.curriculumId,
+      revision: graph.version.revision,
+      parentVersionId: graph.version.parentVersionId,
+      status: graph.version.status,
+      title: graph.version.title,
+      description: graph.version.description,
+      contentHash: graph.version.contentHash,
+      createdAt: graph.version.createdAt,
+      publishedAt: graph.version.publishedAt,
+      archivedAt: graph.version.archivedAt,
+      updatedAt: graph.version.updatedAt,
+    },
+    weeks: graph.weeks.map((week) => ({
+      id: week.id,
+      versionId: week.versionId,
+      stableId: week.stableId,
+      orderIndex: week.orderIndex,
+      title: week.title,
+      description: week.description,
+      createdAt: week.createdAt,
+      updatedAt: week.updatedAt,
+      days: week.days.map((day) => ({
+        id: day.id,
+        versionId: day.versionId,
+        weekId: day.weekId,
+        stableId: day.stableId,
+        orderIndex: day.orderIndex,
+        title: day.title,
+        description: day.description,
+        goal: day.goal,
+        estimatedMinutes: day.estimatedMinutes,
+        depthLevel: day.depthLevel,
+        createdAt: day.createdAt,
+        updatedAt: day.updatedAt,
+        prerequisites: providerSafeAuthoringValue(day.prerequisites),
+        expectedOutcomes: providerSafeAuthoringValue(day.expectedOutcomes),
+        outOfScope: providerSafeAuthoringValue(day.outOfScope),
+        topics: providerSafeAuthoringValue(day.topics),
+        units: day.units.map((unit) => providerSafeUnit(unit)),
+      })),
+    })),
+  };
+}
+
 function graphSlice(graph: CurriculumVersionGraph, section: string): unknown {
+  const safeGraph = providerSafeAuthoringGraph(graph);
   if (section === "outline") {
     return {
-      version: graph.version,
+      version: safeGraph.version,
       weeks: graph.weeks.map((week) => ({
         id: week.id,
         stableId: week.stableId,
@@ -448,7 +570,7 @@ function graphSlice(graph: CurriculumVersionGraph, section: string): unknown {
           stableId: day.stableId,
           title: day.title,
           goal: day.goal,
-          topics: day.topics,
+          topics: providerSafeAuthoringValue(day.topics),
         })),
       })),
     };
@@ -457,11 +579,11 @@ function graphSlice(graph: CurriculumVersionGraph, section: string): unknown {
     return graph.weeks.flatMap((week) =>
       week.days.map((day) => ({
         dayStableId: day.stableId,
-        units: day.units,
+        units: day.units.map((unit) => providerSafeUnit(unit)),
       })),
     );
   }
-  return graph;
+  return safeGraph;
 }
 
 export function createCourseDesignerTools(
@@ -537,6 +659,7 @@ export function createCourseDesignerTools(
         execute: async (_toolCallId, parameters, signal) => {
           signal?.throwIfAborted();
           const proposal = proposalToolInputSchema.parse(parameters).proposal;
+          signal?.throwIfAborted();
           const row = insertProposal(connection, { ...metadata, proposal });
           return {
             content: [
@@ -562,6 +685,8 @@ export function createCourseDesignerTools(
 export interface CourseDesignerState {
   connection: DatabaseConnection;
   providerRuntime: ProviderRuntime;
+  /** @internal Deterministic cancellation fence seam. */
+  beforeProposalCommit?: () => Promise<void> | void;
 }
 
 const createWorkflowSchema = z
@@ -669,6 +794,15 @@ async function route<T>(
   try {
     return context.json(await work());
   } catch (error) {
+    if (context.req.raw.signal.aborted) {
+      return context.json(
+        {
+          error: "Course Designer provider turn was cancelled",
+          code: "cancelled",
+        },
+        409,
+      );
+    }
     if (error instanceof CourseDesignerError) {
       return context.json(
         { error: error.message, code: error.code },
@@ -875,7 +1009,7 @@ function designerPayload(
         "update-unit",
       ],
     },
-    draft: graph,
+    draft: providerSafeAuthoringGraph(graph),
   });
 }
 
@@ -1031,12 +1165,13 @@ async function runDesignerTurn(
   workflow: CourseDesignerWorkflow,
   authoringOperationId: string,
   signal: AbortSignal,
-): Promise<ProposalRow> {
+): Promise<{ proposal: ProposalRow; providerSessionId: string }> {
   const promptDefinition = getLatestPrompt("course-designer");
   const prompt = workflow.request.goal;
   let providerSessionId: string | null = null;
   let completedContent: string | null = null;
   try {
+    signal.throwIfAborted();
     const session = await dispatch.provider.createSession({
       role: "course-designer",
       modelId: dispatch.modelId,
@@ -1054,6 +1189,7 @@ async function runDesignerTurn(
       },
     });
     providerSessionId = session.id;
+    signal.throwIfAborted();
     for await (const event of state.providerRuntime.stream(
       dispatch,
       providerSessionId,
@@ -1062,6 +1198,7 @@ async function runDesignerTurn(
     )) {
       if (event.type === "message.completed") completedContent = event.content;
     }
+    signal.throwIfAborted();
 
     let proposal = state.connection.sqlite
       .prepare(
@@ -1074,6 +1211,7 @@ async function runDesignerTurn(
         JSON.parse(completedContent) as unknown,
       );
       if (parsed.success) {
+        signal.throwIfAborted();
         proposal = insertProposal(state.connection, {
           versionId: graph.version.id,
           draftHash: authoringDraftHash(graph),
@@ -1090,13 +1228,26 @@ async function runDesignerTurn(
         "Course Designer completed without a valid draft proposal",
       );
     }
-    state.providerRuntime.finishDispatch(dispatch, "completed");
-    return proposal;
+    signal.throwIfAborted();
+    return { proposal, providerSessionId };
   } catch (error) {
+    if (signal.aborted) {
+      state.connection.sqlite
+        .prepare(
+          `DELETE FROM course_draft_proposals
+           WHERE version_id = ? AND provider_operation_id = ?
+             AND authoring_operation_id = ? AND status = 'proposed'
+             AND NOT EXISTS (
+               SELECT 1 FROM course_draft_proposal_attribution
+               WHERE proposal_id = course_draft_proposals.id
+             )`,
+        )
+        .run(graph.version.id, dispatch.operationId, authoringOperationId);
+    }
     state.providerRuntime.finishDispatch(
       dispatch,
       signal.aborted ? "cancelled" : "failed",
-      providerFailureCode(error),
+      signal.aborted ? "cancelled" : providerFailureCode(error),
     );
     if (providerSessionId && signal.aborted) {
       await dispatch.provider
@@ -1786,7 +1937,7 @@ export function registerCourseDesignerRoutes(
               promptTemplateVersion: prompt.version,
             },
           });
-          const proposal = await runDesignerTurn(
+          const turn = await runDesignerTurn(
             state,
             dispatch,
             graph,
@@ -1794,47 +1945,85 @@ export function registerCourseDesignerRoutes(
             input.operationId,
             context.req.raw.signal,
           );
-          const parsedProposal = CourseDraftProposalSchema.parse(
-            parseJson(proposal.proposal_json),
-          );
-          const validation = validateProposal(graph, parsedProposal);
-          state.connection.sqlite.exec("BEGIN IMMEDIATE");
+          const { proposal } = turn;
           try {
-            persistAttribution(state.connection, {
-              proposal,
-              workflow,
-              dispatch,
-              graph,
-            });
-            row = transitionWithinTransaction(state.connection, row, {
-              operationId: input.operationId,
-              eventType: "proposal-generated",
-              toState: "USER_REVIEW",
-              activeProposalId: proposal.id,
-              payload: {
-                proposalId: proposal.id,
-                valid: validation.valid,
-                errors: validation.errors,
-                warnings: validation.warnings,
-              },
-            });
-            state.connection.sqlite.exec("COMMIT");
+            await state.beforeProposalCommit?.();
+            context.req.raw.signal.throwIfAborted();
+            const parsedProposal = CourseDraftProposalSchema.parse(
+              parseJson(proposal.proposal_json),
+            );
+            const validation = validateProposal(graph, parsedProposal);
+            state.connection.sqlite.exec("BEGIN IMMEDIATE");
+            try {
+              context.req.raw.signal.throwIfAborted();
+              persistAttribution(state.connection, {
+                proposal,
+                workflow,
+                dispatch,
+                graph,
+              });
+              row = transitionWithinTransaction(state.connection, row, {
+                operationId: input.operationId,
+                eventType: "proposal-generated",
+                toState: "USER_REVIEW",
+                activeProposalId: proposal.id,
+                payload: {
+                  proposalId: proposal.id,
+                  valid: validation.valid,
+                  errors: validation.errors,
+                  warnings: validation.warnings,
+                },
+              });
+              context.req.raw.signal.throwIfAborted();
+              state.connection.sqlite.exec("COMMIT");
+            } catch (error) {
+              state.connection.sqlite.exec("ROLLBACK");
+              throw error;
+            }
+            state.providerRuntime.finishDispatch(dispatch, "completed");
+            return {
+              workflow: workflowDto(row),
+              proposal: proposalDto(state.connection, proposal),
+            };
           } catch (error) {
-            state.connection.sqlite.exec("ROLLBACK");
+            if (context.req.raw.signal.aborted) {
+              state.connection.sqlite
+                .prepare(
+                  `DELETE FROM course_draft_proposals
+                   WHERE id = ? AND status = 'proposed'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM course_draft_proposal_attribution
+                       WHERE proposal_id = course_draft_proposals.id
+                     )`,
+                )
+                .run(proposal.id);
+              state.providerRuntime.finishDispatch(
+                dispatch,
+                "cancelled",
+                "cancelled",
+              );
+              await dispatch.provider
+                .cancelSession(turn.providerSessionId)
+                .catch(() => undefined);
+            } else {
+              state.providerRuntime.finishDispatch(
+                dispatch,
+                "failed",
+                providerFailureCode(error),
+              );
+            }
             throw error;
           }
-          return {
-            workflow: workflowDto(row),
-            proposal: proposalDto(state.connection, proposal),
-          };
         } catch (error) {
-          failWorkflow(
-            state.connection,
-            row,
-            input.operationId,
-            "CURRICULUM_PROPOSAL",
-            error,
-          );
+          if (!context.req.raw.signal.aborted) {
+            failWorkflow(
+              state.connection,
+              row,
+              input.operationId,
+              "CURRICULUM_PROPOSAL",
+              error,
+            );
+          }
           throw error;
         }
       }),

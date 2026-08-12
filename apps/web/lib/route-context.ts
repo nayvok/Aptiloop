@@ -70,7 +70,7 @@ function courseCreation(leafLabel: MessageKey): RouteContext {
  */
 export function resolveRouteContext(
   rawPathname: string,
-  searchParams?: Pick<URLSearchParams, "has">,
+  _searchParams?: Pick<URLSearchParams, "get">,
 ): RouteContext {
   const pathname = normalizePathname(rawPathname);
 
@@ -130,9 +130,6 @@ export function resolveRouteContext(
   }
 
   if (isAtOrBelow(pathname, "/interview")) {
-    if (searchParams?.has("sessionId")) {
-      return section("/courses", "nav.courses", "interview.title");
-    }
     return section("/review", "nav.review", "interview.title");
   }
   if (isAtOrBelow(pathname, "/mistakes")) {

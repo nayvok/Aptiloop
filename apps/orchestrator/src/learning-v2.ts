@@ -18,6 +18,7 @@ import {
   createUnitProgression,
   createEmptyMasteryProfile,
   learningKernelSha256,
+  projectCompletedLessonProgress,
   deriveDaySummary,
   isLessonComplete,
   isLearningKernelReviewDue,
@@ -1787,6 +1788,15 @@ async function readLearnerPath(
             item.status,
           ]),
         );
+        const completedProgress =
+          session?.status === "completed"
+            ? completedLessonPathProgress(
+                kernelRepository,
+                session.id,
+                observedAt,
+                units,
+              )
+            : null;
         return {
           id: day.id,
           stableId: day.stableId,
@@ -1806,9 +1816,7 @@ async function readLearnerPath(
             ...toLearnerUnit(unit),
             status:
               session?.status === "completed"
-                ? unit.optional
-                  ? "skipped"
-                  : "completed"
+                ? (completedProgress?.get(unit.id) ?? "locked")
                 : (kernelProgress?.get(unit.id) ??
                   initial.get(unit.id) ??
                   "locked"),
@@ -1850,6 +1858,21 @@ async function readLearnerPath(
     curriculum,
     nextAction: LearningPathNextActionSchema.parse(nextAction),
   };
+}
+
+function completedLessonPathProgress(
+  kernelRepository: LearningKernelRepository,
+  sessionId: string,
+  observedAt: string,
+  units: readonly CurriculumUnit[],
+): ReadonlyMap<string, UnitStatus> {
+  const scope = kernelRepository.resolveSessionScope(sessionId);
+  const projection = kernelRepository.reproject(scope, observedAt);
+  const projected = projectCompletedLessonProgress(
+    toDefinitions(units),
+    projection.progress,
+  );
+  return new Map(projected.map((item) => [item.unitId, item.status]));
 }
 
 function requireCurrentPathKernelState(

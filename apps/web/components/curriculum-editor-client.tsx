@@ -25,6 +25,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
 
 import { parseAuthoringBriefDescription } from "@/app/courses/new/authoring-brief";
+import {
+  presentFailure,
+  type FailurePresentation,
+} from "@/lib/failure-presentation";
 import { usePageRouteContext } from "@/components/page-route-context";
 import {
   Accordion,
@@ -43,7 +47,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,7 +56,11 @@ import {
 } from "@/components/ui/collapsible";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { PageHeader } from "@/components/page-header";
-import { EmptyState, QueryError } from "@/components/query-state";
+import {
+  EmptyState,
+  QueryError,
+  SafeQueryError,
+} from "@/components/query-state";
 import { LoadingState } from "@/components/ui/loading-state";
 import {
   Sheet,
@@ -103,6 +110,9 @@ const versionListItemSchema = versionSchema
   .extend({
     curriculumSlug: idSchema,
     primaryLocale: CourseLocaleSchema,
+    branchKind: z.enum(["upstream", "personal"]).optional(),
+    basedOnContentHash: z.string().nullable().optional(),
+    adaptationBranchId: idSchema.nullable().optional(),
   })
   .strict();
 
@@ -488,6 +498,17 @@ async function checkedApi<T>(
             z.object({ message: z.string().min(1) }).passthrough(),
           ])
           .optional(),
+        code: z.string().optional(),
+        failure: z
+          .object({
+            code: z.string(),
+            retryable: z.boolean(),
+            messageKey: z.string(),
+            diagnosticId: z.string(),
+            recoveryAction: z.string().nullable(),
+          })
+          .strict()
+          .optional(),
       })
       .passthrough()
       .safeParse(value);
@@ -497,7 +518,13 @@ async function checkedApi<T>(
         ? backendError
         : (backendError?.message ??
           t("authoring.error.requestFailed", { status: response.status }));
-    throw new Error(message);
+    throw Object.assign(new Error(message), {
+      status: response.status,
+      ...(parsed.success && parsed.data.failure
+        ? { failure: parsed.data.failure }
+        : {}),
+      ...(parsed.success && parsed.data.code ? { code: parsed.data.code } : {}),
+    });
   }
   assertSafeResponse(value, t);
   return schema.parse(value);
@@ -558,6 +585,13 @@ export type StudioWorkspace =
 function errorMessage(error: unknown, t: Translate): string {
   if (error instanceof z.ZodError)
     return t("authoring.error.unsafeServerResponse");
+  if (
+    error instanceof TypeError ||
+    (error !== null &&
+      typeof error === "object" &&
+      typeof (error as { status?: unknown }).status === "number")
+  )
+    return presentFailure(error, "studio.action", t).message;
   if (error instanceof Error) return error.message;
   return t("authoring.error.saveFailed");
 }
@@ -1627,16 +1661,20 @@ function CourseDesignerPanel({
   mutate,
   busy,
   initialGoal,
+  onContinueManually,
 }: {
   graph: Graph;
   mutate: Mutate;
   busy: boolean;
   initialGoal?: string;
+  onContinueManually: () => void;
 }) {
   const { locale, t } = useI18n();
   const queryClient = useQueryClient();
   const [working, setWorking] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const generationController = useRef<AbortController | null>(null);
   const creationBrief = parseAuthoringBriefDescription(initialGoal);
   const initialConstraints = creationBrief
     ? [
@@ -1750,19 +1788,36 @@ function CourseDesignerPanel({
     authoringOperationId: string,
     disclosureOperationId?: string,
   ) => {
-    await checkedApi(
-      `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(workflowId)}/generate`,
-      courseProposalResponseSchema,
-      t,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          operationId: authoringOperationId,
-          ...(disclosureOperationId ? { disclosureOperationId } : {}),
-        }),
-      },
-    );
-    await refreshDesigner();
+    const controller = new AbortController();
+    generationController.current = controller;
+    setGenerating(true);
+    try {
+      await checkedApi(
+        `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(workflowId)}/generate`,
+        courseProposalResponseSchema,
+        t,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            operationId: authoringOperationId,
+            ...(disclosureOperationId ? { disclosureOperationId } : {}),
+          }),
+          signal: controller.signal,
+        },
+      );
+    } catch (cause) {
+      if (controller.signal.aborted) {
+        setError(t("authoring.designer.cancelled"));
+        return;
+      }
+      throw cause;
+    } finally {
+      if (generationController.current === controller) {
+        generationController.current = null;
+      }
+      setGenerating(false);
+      await refreshDesigner();
+    }
   };
 
   const requestProposal = async () => {
@@ -1824,6 +1879,7 @@ function CourseDesignerPanel({
   const activeProposal = activeWorkflow?.activeProposalId
     ? proposalRows.find(({ id }) => id === activeWorkflow.activeProposalId)
     : undefined;
+  const disclosedSources = activeWorkflow?.request.sources ?? [];
   return (
     <section
       className={panelClass}
@@ -2074,38 +2130,68 @@ function CourseDesignerPanel({
               </Button>
             ) : null}
             {activeWorkflow.state === "CURRICULUM_PROPOSAL" ? (
-              <Button
-                type="button"
-                disabled={
-                  busy ||
-                  working ||
-                  pendingDisclosureQuery.isFetching ||
-                  Boolean(pendingDisclosure)
-                }
-                onClick={() => void requestProposal()}
-              >
-                {t(
-                  working
-                    ? "authoring.designer.generating"
-                    : "authoring.designer.generate",
-                )}
-              </Button>
+              generating ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => generationController.current?.abort()}
+                >
+                  {t("authoring.designer.action.cancelGeneration")}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  disabled={
+                    busy ||
+                    working ||
+                    pendingDisclosureQuery.isFetching ||
+                    Boolean(pendingDisclosure)
+                  }
+                  onClick={() => void requestProposal()}
+                >
+                  {t(
+                    working
+                      ? "authoring.designer.generating"
+                      : "authoring.designer.generate",
+                  )}
+                </Button>
+              )
             ) : null}
             {activeWorkflow.state === "FAILED" ? (
-              <Button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setError(null);
-                  void mutate(
-                    `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/retry`,
-                    { method: "POST", body: JSON.stringify({}) },
-                    courseDesignerWorkflowResponseSchema,
-                  ).catch((cause) => setError(errorMessage(cause, t)));
-                }}
-              >
-                {t("authoring.designer.action.retry")}
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setError(null);
+                    void mutate(
+                      `/curriculum-editor/versions/${encodeURIComponent(graph.version.id)}/designer/workflows/${encodeURIComponent(activeWorkflow.id)}/retry`,
+                      { method: "POST", body: JSON.stringify({}) },
+                      courseDesignerWorkflowResponseSchema,
+                    ).catch((cause) => setError(errorMessage(cause, t)));
+                  }}
+                >
+                  {t("authoring.designer.action.retry")}
+                </Button>
+                <Button type="button" variant="outline" asChild>
+                  <Link href="/settings?section=ai">
+                    {t("authoring.designer.action.configureAi")}
+                  </Link>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onContinueManually}
+                >
+                  {t("authoring.designer.action.continueManually")}
+                </Button>
+                <Button type="button" variant="ghost" asChild>
+                  <Link href="/courses">
+                    <ArrowLeftIcon aria-hidden />
+                    {t("authoring.common.back")}
+                  </Link>
+                </Button>
+              </>
             ) : null}
           </div>
 
@@ -2260,17 +2346,99 @@ function CourseDesignerPanel({
           <h4 className="font-medium">
             {t("authoring.designer.disclosureTitle")}
           </h4>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("authoring.designer.disclosureDescription", {
-              destination: pendingDisclosure.disclosure.scope.destination,
-              bytes:
-                pendingDisclosure.disclosure.scope.byteCount.toLocaleString(
-                  locale,
-                ),
-            })}
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            {t("authoring.designer.disclosureDescription")}
           </p>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {pendingDisclosure.disclosure.scope.payloadCategories.join(", ")}
+          <dl className="mt-4 grid min-w-0 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+            {(
+              [
+                [
+                  "authoring.designer.disclosure.role",
+                  pendingDisclosure.disclosure.scope.role,
+                ],
+                [
+                  "authoring.designer.disclosure.connection",
+                  pendingDisclosure.disclosure.scope.connectionId,
+                ],
+                [
+                  "authoring.designer.disclosure.provider",
+                  pendingDisclosure.disclosure.scope.providerType,
+                ],
+                [
+                  "authoring.designer.disclosure.model",
+                  pendingDisclosure.disclosure.scope.modelId,
+                ],
+                [
+                  "authoring.designer.disclosure.destination",
+                  pendingDisclosure.disclosure.scope.destination,
+                ],
+                [
+                  "authoring.designer.disclosure.payload",
+                  pendingDisclosure.disclosure.scope.payloadCategories.join(
+                    ", ",
+                  ),
+                ],
+                [
+                  "authoring.designer.disclosure.bytes",
+                  pendingDisclosure.disclosure.scope.byteCount.toLocaleString(
+                    locale,
+                  ),
+                ],
+                [
+                  "authoring.designer.disclosure.expires",
+                  new Intl.DateTimeFormat(locale, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  }).format(new Date(pendingDisclosure.disclosure.expiresAt)),
+                ],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label} className="min-w-0">
+                <dt className="text-xs font-medium text-muted-foreground">
+                  {t(label)}
+                </dt>
+                <dd className="mt-1 break-all text-foreground">{value}</dd>
+              </div>
+            ))}
+            <div className="min-w-0 sm:col-span-2">
+              <dt className="text-xs font-medium text-muted-foreground">
+                {t("authoring.designer.disclosure.scope")}
+              </dt>
+              <dd className="mt-1 grid gap-1">
+                {Object.entries(
+                  pendingDisclosure.disclosure.scope.entityIds,
+                ).map(([kind, id]) => (
+                  <span key={kind} className="break-all text-foreground">
+                    {kind}: {id}
+                  </span>
+                ))}
+              </dd>
+            </div>
+            {disclosedSources.length > 0 ? (
+              <div className="min-w-0 sm:col-span-2">
+                <dt className="text-xs font-medium text-muted-foreground">
+                  {t("authoring.designer.disclosure.sources")}
+                </dt>
+                <dd className="mt-1 grid gap-1">
+                  {disclosedSources.map((source) => (
+                    <span key={source.id} className="break-all text-foreground">
+                      {source.id}: {source.title}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            ) : null}
+            <div className="min-w-0 sm:col-span-2">
+              <dt className="text-xs font-medium text-muted-foreground">
+                {t("authoring.designer.disclosure.exclusions")}
+              </dt>
+              <dd className="mt-1 break-words text-foreground">
+                {pendingDisclosure.disclosure.scope.exclusions.join("; ")}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-4 text-xs leading-5 text-muted-foreground">
+            {t("authoring.designer.disclosure.retention")}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button
@@ -3856,11 +4024,15 @@ function CourseStudioHeader({
   graph,
   mutate,
   busy,
+  saving,
+  saveFailed,
 }: {
   version: VersionListItem;
   graph: Graph | undefined;
   mutate: Mutate;
   busy: boolean;
+  saving: boolean;
+  saveFailed: boolean;
 }) {
   const { formatDate, locale, t } = useI18n();
   const weeksCount = graph?.weeks.length ?? 0;
@@ -3902,6 +4074,71 @@ function CourseStudioHeader({
               : t("authoring.current.structureLoading")}
           </span>
         </div>
+        <div className="mt-3 flex min-w-0 flex-wrap gap-2">
+          <Badge variant="outline" className="max-w-full break-all">
+            {t("authoring.current.primaryLocale", {
+              locale: version.primaryLocale,
+            })}
+          </Badge>
+          <Badge variant="outline" className="max-w-full break-all">
+            {t(
+              version.branchKind === "personal"
+                ? "authoring.current.branchPersonal"
+                : "authoring.current.branchUpstream",
+            )}
+          </Badge>
+          {version.parentVersionId ? (
+            <Badge variant="outline" className="max-w-full break-all">
+              {t("authoring.current.parent", {
+                id: version.parentVersionId,
+              })}
+            </Badge>
+          ) : null}
+          {saveFailed || saving ? (
+            <Badge role="status" variant="warning" className="max-w-full">
+              {t(
+                saveFailed
+                  ? "authoring.current.saveFailed"
+                  : "authoring.current.saving",
+              )}
+            </Badge>
+          ) : null}
+        </div>
+        {version.contentHash || version.basedOnContentHash ? (
+          <Collapsible className="group/hash mt-3">
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="-ml-2">
+                {t("authoring.current.hashDetails")}
+                <CaretDownIcon
+                  aria-hidden
+                  className="transition-transform group-data-[state=open]/hash:rotate-180 motion-reduce:transition-none"
+                />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <dl className="grid min-w-0 gap-2 rounded-lg border border-border/70 bg-background p-3 text-xs">
+                {version.contentHash ? (
+                  <div className="min-w-0">
+                    <dt className="font-medium text-muted-foreground">
+                      {t("authoring.current.contentHash")}
+                    </dt>
+                    <dd className="mt-1 break-all">{version.contentHash}</dd>
+                  </div>
+                ) : null}
+                {version.basedOnContentHash ? (
+                  <div className="min-w-0">
+                    <dt className="font-medium text-muted-foreground">
+                      {t("authoring.current.baseHash")}
+                    </dt>
+                    <dd className="mt-1 break-all">
+                      {version.basedOnContentHash}
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
         {description ? (
           <p className="mt-2 max-w-[70ch] break-words text-sm leading-6 text-muted-foreground">
             {description}
@@ -3985,7 +4222,7 @@ function VersionHistory({
                         revision: version.revision.toLocaleString(locale),
                       })}
                     </strong>
-                    <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
+                    <span className="min-w-0 whitespace-normal font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
                       r{version.revision} · {version.title}
                     </span>
                   </span>
@@ -4292,8 +4529,11 @@ export function CurriculumEditorClient({
   }, [searchParamString]);
   const [addWeekOpen, setAddWeekOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const replaceStudioLocation = (
+  const [actionError, setActionError] = useState<FailurePresentation | null>(
+    null,
+  );
+  const updateStudioLocation = (
+    history: "push" | "replace",
     mutateParams?: (params: URLSearchParams) => void,
   ) => {
     const next = new URLSearchParams(studioParamsRef.current);
@@ -4304,14 +4544,14 @@ export function CurriculumEditorClient({
     next.set("tab", workspaceRef.current);
     const serialized = next.toString();
     studioParamsRef.current = serialized;
-    router.replace(`/courses/studio?${serialized}`, { scroll: false });
+    router[history](`/courses/studio?${serialized}`, { scroll: false });
   };
   const selectVersion = (id: string | null) => {
     const previousId = selectedIdRef.current;
     selectedIdRef.current = id;
     setSelectedId(id);
     if (id && id !== previousId) {
-      replaceStudioLocation((next) => {
+      updateStudioLocation("replace", (next) => {
         next.delete("week");
         next.delete("day");
       });
@@ -4320,7 +4560,7 @@ export function CurriculumEditorClient({
   const selectWorkspace = (nextWorkspace: StudioWorkspace) => {
     workspaceRef.current = nextWorkspace;
     setWorkspace(nextWorkspace);
-    replaceStudioLocation();
+    updateStudioLocation("push");
   };
   const versions = useQuery({
     queryKey: ["curriculum-editor", "versions"],
@@ -4398,7 +4638,7 @@ export function CurriculumEditorClient({
       await queryClient.invalidateQueries({ queryKey: ["curriculum-editor"] });
       return result;
     } catch (cause) {
-      setActionError(errorMessage(cause, t));
+      setActionError(presentFailure(cause, "studio.action", t));
       throw cause;
     } finally {
       setBusy(false);
@@ -4409,18 +4649,22 @@ export function CurriculumEditorClient({
     return <LoadingState label="authoring.loading.versions" />;
   if (versions.isError || !versions.data)
     return (
-      <QueryError
-        message={t("authoring.error.versionsUnavailable")}
+      <SafeQueryError
+        error={versions.error}
+        operation="studio.load"
         retry={() => void versions.refetch()}
       />
     );
   return (
     <div className="flex min-w-0 flex-col gap-6">
       {actionError ? (
-        <Alert variant="destructive" data-slot="studio-action-error">
-          <AlertTitle>{t("authoring.error.actionTitle")}</AlertTitle>
-          <AlertDescription>{actionError}</AlertDescription>
-        </Alert>
+        <QueryError
+          title={t("authoring.error.actionTitle")}
+          message={actionError.message}
+          {...(actionError.diagnostic
+            ? { diagnostic: actionError.diagnostic }
+            : {})}
+        />
       ) : null}
       {requestedVersionMissing ? (
         <EmptyState
@@ -4456,8 +4700,9 @@ export function CurriculumEditorClient({
             ) : graph.isLoading ? (
               <LoadingState label="authoring.loading.graph" variant="panel" />
             ) : graph.isError || !graph.data ? (
-              <QueryError
-                message={t("authoring.error.graphUnavailable")}
+              <SafeQueryError
+                error={graph.error}
+                operation="studio.load"
                 retry={() => void graph.refetch()}
               />
             ) : (
@@ -4467,6 +4712,8 @@ export function CurriculumEditorClient({
                   graph={graph.data.curriculum}
                   mutate={mutate}
                   busy={busy}
+                  saving={busy}
+                  saveFailed={Boolean(actionError)}
                 />
 
                 <Tabs
@@ -4531,6 +4778,7 @@ export function CurriculumEditorClient({
                         graph={graph.data.curriculum}
                         mutate={mutate}
                         busy={busy}
+                        onContinueManually={() => selectWorkspace("program")}
                         {...(authoringStart === "designer"
                           ? {
                               initialGoal:

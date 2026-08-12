@@ -444,8 +444,20 @@ export class ProviderRuntime {
     const onAbort = () => {
       void cancel();
     };
+    const throwIfAborted = () => {
+      if (!combined.aborted) return;
+      throw new ProviderHubError(
+        deadline.signal.aborted ? "timeout" : "cancelled",
+        deadline.signal.aborted
+          ? "Provider turn exceeded its deadline"
+          : "Provider turn was cancelled",
+      );
+    };
     combined.addEventListener("abort", onAbort, { once: true });
     try {
+      // AbortSignal listeners added after an abort do not fire. Fence explicitly
+      // before the provider sees the payload and again after it stops yielding.
+      throwIfAborted();
       const inputBytes = Buffer.byteLength(dispatch.payload, "utf8");
       if (usage.inputBytes + inputBytes > budgets.maxInputBytes) {
         throw new ProviderHubError(
@@ -455,19 +467,13 @@ export class ProviderRuntime {
       }
       usage.inputBytes += inputBytes;
       this.#sessionBudgetUsage.set(providerSessionId, usage);
+      throwIfAborted();
       for await (const yielded of dispatch.provider.streamMessage({
         sessionId: providerSessionId,
         message: dispatch.payload,
         responseFormat,
       })) {
-        if (combined.aborted) {
-          throw new ProviderHubError(
-            deadline.signal.aborted ? "timeout" : "cancelled",
-            deadline.signal.aborted
-              ? "Provider turn exceeded its deadline"
-              : "Provider turn was cancelled",
-          );
-        }
+        throwIfAborted();
         eventCount += 1;
         usage.events = eventCount;
         if (eventCount > budgets.maxEvents) {
@@ -537,6 +543,7 @@ export class ProviderRuntime {
         }
         yield event;
       }
+      throwIfAborted();
       if (!terminal) {
         throw new ProviderHubError(
           "invalid_output",

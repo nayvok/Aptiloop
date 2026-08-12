@@ -43,6 +43,7 @@ const fencedReviewResult: ReviewResult = {
 };
 
 const safeAgentFailure = "The agent response was rejected by safety policy.";
+const safeAgentCancellation = "The agent turn was cancelled.";
 
 type ReviewerEventScript = (
   sessionId: string,
@@ -55,6 +56,8 @@ class FencedReviewProvider implements AgentProvider {
   readonly cancelCalls: string[] = [];
   response = `\`\`\`json\n${JSON.stringify(fencedReviewResult)}\n\`\`\``;
   script?: ReviewerEventScript;
+  createSessionGate?: Promise<void>;
+  streamCalls = 0;
 
   constructor(id: "mock" | "pi" = "mock") {
     this.id = id;
@@ -87,6 +90,7 @@ class FencedReviewProvider implements AgentProvider {
 
   async createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
     this.createInputs.push(input);
+    await this.createSessionGate;
     return {
       id: "private-review-provider-handle",
       providerId: this.id,
@@ -99,6 +103,7 @@ class FencedReviewProvider implements AgentProvider {
   }
 
   async *streamMessage(): AsyncIterable<AgentEvent> {
+    this.streamCalls += 1;
     const timestamp = new Date().toISOString();
     const raw = this.response;
     if (this.script) {
@@ -169,7 +174,10 @@ const reviewerCommitBoundaryCases: Array<[string, ReviewerEventScript]> = [
   ],
 ];
 
-function runtime(providers?: AppOptions["providers"]) {
+function runtime(
+  providers?: AppOptions["providers"],
+  cancellationTestHooks?: AppOptions["cancellationTestHooks"],
+) {
   const databaseRoot = mkdtempSync(
     path.join(process.env.TEMP ?? projectRoot, "aptiloop-practice-db-"),
   );
@@ -185,6 +193,7 @@ function runtime(providers?: AppOptions["providers"]) {
     databaseMode: "disposable",
     exerciseAttemptsRoot: attemptsRoot,
     ...(providers ? { providers } : {}),
+    ...(cancellationTestHooks ? { cancellationTestHooks } : {}),
   });
   runtimes.push(created);
   return created;
@@ -390,6 +399,109 @@ describe("practice execution and reviewer boundaries", () => {
         .get(),
     ).toEqual({ count: 0 });
   });
+
+  it("propagates request cancellation into a trusted check and persists a terminal cancellation", async () => {
+    const current = runtime();
+    const { attemptId } = await createAttempt(current);
+    const controller = new AbortController();
+    const responsePromise = request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/checks`,
+      {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({
+          operationId: "cancel-trusted-check",
+          checkIds: ["apt.compat.node24.npm-test.v1"],
+        }),
+      },
+    );
+    await expect
+      .poll(() =>
+        current.state.connection.sqlite
+          .prepare("SELECT status FROM test_runs WHERE operation_id = ?")
+          .get("cancel-trusted-check"),
+      )
+      .toEqual({ status: "running" });
+
+    controller.abort();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      operationId: "cancel-trusted-check",
+      status: "cancelled",
+    });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT status, completed_at AS completedAt
+           FROM test_runs WHERE operation_id = ?`,
+        )
+        .get("cancel-trusted-check"),
+    ).toEqual({ status: "cancelled", completedAt: expect.any(Number) });
+  }, 30_000);
+
+  it("rejects a trusted-check result aborted after execution but before persistence", async () => {
+    let releaseCommit!: () => void;
+    const commitGate = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    let markRunCompleted!: () => void;
+    const runCompleted = new Promise<void>((resolve) => {
+      markRunCompleted = resolve;
+    });
+    const current = runtime(undefined, {
+      afterTrustedCheckRun: async () => {
+        markRunCompleted();
+        await commitGate;
+      },
+    });
+    const { attemptId, workspacePath } = await createAttempt(current);
+    writeFileSync(
+      path.join(workspacePath, "src", "normalize-profile.ts"),
+      passingImplementation,
+      "utf8",
+    );
+    const controller = new AbortController();
+    const responsePromise = request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/checks`,
+      {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({
+          operationId: "cancel-after-trusted-run",
+          checkIds: ["apt.compat.node24.npm-test.v1"],
+        }),
+      },
+    );
+    await runCompleted;
+    controller.abort();
+    releaseCommit();
+    const response = await responsePromise;
+
+    expect((await response.json()) as { status: string }).toMatchObject({
+      status: "cancelled",
+    });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT status, exit_code AS exitCode, diff_fingerprint AS diffFingerprint
+           FROM test_runs WHERE operation_id = ?`,
+        )
+        .get("cancel-after-trusted-run"),
+    ).toEqual({ status: "cancelled", exitCode: null, diffFingerprint: null });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT count(*) AS count FROM execution_artifacts artifact
+           JOIN test_runs run ON run.id = artifact.test_run_id
+           WHERE run.operation_id = ?`,
+        )
+        .get("cancel-after-trusted-run"),
+    ).toEqual({ count: 0 });
+  }, 30_000);
 
   it("rejects a persisted attempt path that no longer matches its server-owned id", async () => {
     const current = runtime();
@@ -846,6 +958,233 @@ describe("practice execution and reviewer boundaries", () => {
     },
     30_000,
   );
+
+  it("cancels an in-flight reviewer request and rejects its late output", async () => {
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    let markProviderStarted!: () => void;
+    const providerStarted = new Promise<void>((resolve) => {
+      markProviderStarted = resolve;
+    });
+    const provider = new FencedReviewProvider();
+    provider.script = async function* (sessionId, response) {
+      markProviderStarted();
+      await providerGate;
+      const timestamp = new Date().toISOString();
+      yield {
+        type: "message.completed",
+        sessionId,
+        sequence: 0,
+        timestamp,
+        content: response,
+      };
+      yield {
+        type: "session.completed",
+        sessionId,
+        sequence: 1,
+        timestamp,
+        reason: "completed",
+      };
+    };
+    const current = runtime({ mock: provider });
+    const { attemptId, workspacePath } = await createAttempt(current);
+    writeFileSync(
+      path.join(workspacePath, "src", "normalize-profile.ts"),
+      passingImplementation,
+      "utf8",
+    );
+    const testResponse = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/checks`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          operationId: "cancel-review-test",
+          checkIds: ["apt.compat.node24.npm-test.v1"],
+        }),
+      },
+    );
+    expect(await testResponse.json()).toMatchObject({ status: "passed" });
+
+    const controller = new AbortController();
+    const reviewPromise = request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({ operationId: "cancel-review" }),
+      },
+    );
+    await providerStarted;
+    controller.abort();
+    releaseProvider();
+    const response = await reviewPromise;
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: safeAgentCancellation });
+    expect(provider.cancelCalls).toEqual(["private-review-provider-handle"]);
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT status, failure_code AS failureCode
+           FROM provider_turn_provenance WHERE role = 'reviewer'
+           ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(),
+    ).toEqual({ status: "cancelled", failureCode: "cancelled" });
+    expect(current.state.activeProviderTurns.size).toBe(0);
+    expect(
+      current.state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM reviews")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT content, status FROM agent_messages
+           WHERE role = 'assistant'`,
+        )
+        .get(),
+    ).toEqual({ content: safeAgentCancellation, status: "cancelled" });
+  }, 30_000);
+
+  it("cancels a reviewer aborted while provider session creation is gated", async () => {
+    let releaseCreate!: () => void;
+    const provider = new FencedReviewProvider();
+    provider.createSessionGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const current = runtime({ mock: provider });
+    const { attemptId, workspacePath } = await createAttempt(current);
+    writeFileSync(
+      path.join(workspacePath, "src", "normalize-profile.ts"),
+      passingImplementation,
+      "utf8",
+    );
+    expect(
+      await (
+        await request(
+          current.app,
+          `/api/exercise-attempts/${attemptId}/checks`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              operationId: "cancel-create-review-test",
+              checkIds: ["apt.compat.node24.npm-test.v1"],
+            }),
+          },
+        )
+      ).json(),
+    ).toMatchObject({ status: "passed" });
+    const controller = new AbortController();
+    const responsePromise = request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({ operationId: "cancel-review-create-session" }),
+      },
+    );
+    await expect.poll(() => provider.createInputs.length).toBe(1);
+    controller.abort();
+    releaseCreate();
+    const response = await responsePromise;
+
+    expect(await response.json()).toEqual({ error: safeAgentCancellation });
+    expect(provider.streamCalls).toBe(0);
+    expect(provider.cancelCalls).toEqual(["private-review-provider-handle"]);
+    expect(
+      current.state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM reviews")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      current.state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM agent_messages")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT status, failure_code AS failureCode
+           FROM provider_turn_provenance WHERE role = 'reviewer'
+           ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(),
+    ).toEqual({ status: "cancelled", failureCode: "cancelled" });
+  }, 30_000);
+
+  it("rejects a completed reviewer result aborted before the authoritative review commit", async () => {
+    let releaseCommit!: () => void;
+    const commitGate = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    let markProviderCompleted!: () => void;
+    const providerCompleted = new Promise<void>((resolve) => {
+      markProviderCompleted = resolve;
+    });
+    const provider = new FencedReviewProvider();
+    const current = runtime(
+      { mock: provider },
+      {
+        beforeReviewCommit: async () => {
+          markProviderCompleted();
+          await commitGate;
+        },
+      },
+    );
+    const { attemptId, workspacePath } = await createAttempt(current);
+    writeFileSync(
+      path.join(workspacePath, "src", "normalize-profile.ts"),
+      passingImplementation,
+      "utf8",
+    );
+    await request(current.app, `/api/exercise-attempts/${attemptId}/checks`, {
+      method: "POST",
+      body: JSON.stringify({
+        operationId: "cancel-review-commit-test",
+        checkIds: ["apt.compat.node24.npm-test.v1"],
+      }),
+    });
+    const controller = new AbortController();
+    const responsePromise = request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({ operationId: "cancel-review-before-commit" }),
+      },
+    );
+    await providerCompleted;
+    controller.abort();
+    releaseCommit();
+    const response = await responsePromise;
+
+    expect(await response.json()).toEqual({ error: safeAgentCancellation });
+    expect(
+      current.state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM reviews")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      current.state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM review_evidence_bundles")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT count(*) AS count FROM agent_messages
+           WHERE role = 'assistant' AND status = 'completed'`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+  }, 30_000);
 
   it("stores only canonical validated review output and no raw provider handle", async () => {
     const provider = new FencedReviewProvider();

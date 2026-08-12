@@ -88,7 +88,6 @@ type ProgressPayloadFixture =
   | {
       type: "quiz";
       attemptedQuestionIds: string[];
-      correctQuestionIds?: string[];
       score: number | null;
     }
   | {
@@ -187,7 +186,6 @@ function progressPayload(type: UnitType): ProgressPayloadFixture {
       return {
         type,
         attemptedQuestionIds: [],
-        correctQuestionIds: [],
         score: null,
       };
     case "code-reading":
@@ -558,6 +556,22 @@ afterEach(() => {
 });
 
 describe("guided versioned session", () => {
+  it("keeps the oriented loading shell bounded below the viewport", () => {
+    apiMock.mockImplementation(() => new Promise(() => undefined));
+    const { container } = renderWithQuery(<SessionClient />);
+
+    const orientation = container.querySelector(
+      '[data-slot="session-loading"]',
+    );
+    const loader = container.querySelector('[data-slot="loading-state"]');
+    expect(orientation).toHaveClass("px-4", "py-8", "sm:py-10");
+    expect(loader).toHaveAttribute("data-variant", "page");
+    expect(loader).toHaveClass("min-h-[18rem]", "sm:min-h-[22rem]");
+    expect(loader).not.toHaveClass(
+      "min-h-[calc(100dvh-var(--shell-bar-size,4.5rem))]",
+    );
+  });
+
   it("keeps the active unit in focus with a responsive lesson plan", async () => {
     apiMock.mockResolvedValue({ session: makeSession("briefing") });
     renderWithQuery(<SessionClient />);
@@ -799,6 +813,19 @@ describe("guided versioned session", () => {
     expect(
       screen.getByRole("button", { name: "Начать активность" }),
     ).toBeEnabled();
+  });
+
+  it("keeps authored completion evidence visible after an activity starts", async () => {
+    apiMock.mockResolvedValue({ session: makeSession("study", "in_progress") });
+    renderWithQuery(<SessionClient />);
+
+    const evidence = await screen.findByRole("region", {
+      name: "Подтверждения завершения",
+    });
+    expect(evidence).toHaveTextContent(
+      "Прогресс изменится только после того, как Aptiloop сохранит указанные ниже подтверждения.",
+    );
+    expect(evidence).toHaveTextContent("Отметить обязательные пункты: 1");
   });
 
   it("resets renderer state when currentStep moves between same-type activities", async () => {
@@ -1072,8 +1099,11 @@ describe("guided versioned session", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Сохранить заметки" }));
     await vi.waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalledWith("Temporary write failure");
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "Не удалось сохранить изменение занятия. Повторите попытку.",
+      );
     });
+    expect(toastErrorMock).not.toHaveBeenCalledWith("Temporary write failure");
     expect(window.localStorage.getItem(storageKey)).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Сохранить заметки" }));
@@ -1124,8 +1154,13 @@ describe("guided versioned session", () => {
     );
 
     await vi.waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalledWith("Activity start unavailable");
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "Не удалось сохранить изменение занятия. Повторите попытку.",
+      );
     });
+    expect(toastErrorMock).not.toHaveBeenCalledWith(
+      "Activity start unavailable",
+    );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Начать активность" }),
@@ -1403,6 +1438,25 @@ describe("guided versioned session", () => {
         }),
       );
     });
+  });
+
+  it("gates Study completion by the authored checklist criterion, not presentation flags", async () => {
+    const session = makeSession("study");
+    const unit = session.snapshot.units[0]!;
+    unit.checklist = [
+      { id: "criterion-item", label: "Criterion item", required: false },
+      { id: "display-only", label: "Display-only item", required: true },
+    ];
+    unit.completionCriteria = [
+      { type: "checklist", requiredItemIds: ["criterion-item"] },
+    ];
+    apiMock.mockResolvedValue({ session });
+    renderWithQuery(<SessionClient />);
+
+    fireEvent.click(await screen.findByLabelText(/Criterion item/u));
+    expect(
+      screen.getByRole("button", { name: /Завершить изучение/u }),
+    ).toBeEnabled();
   });
 
   it("persists a distinct immutable first attempt for every recall question", async () => {
@@ -1917,7 +1971,6 @@ describe("guided versioned session", () => {
     const failedPayload = {
       type: "quiz" as const,
       attemptedQuestionIds: ["quiz-q1", "quiz-q2"],
-      correctQuestionIds: ["quiz-q1"],
       score: 0.5,
     };
     const failed = makeSession("quiz", "in_progress", failedPayload);
@@ -1929,7 +1982,6 @@ describe("guided versioned session", () => {
 
     const passedPayload = {
       ...failedPayload,
-      correctQuestionIds: ["quiz-q1", "quiz-q2"],
       score: 1,
     };
     const passed = replaceProgress(failed, "in_progress", passedPayload);
@@ -2031,8 +2083,11 @@ describe("guided versioned session", () => {
     renderWithQuery(<SessionClient />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Protected curriculum field received",
+      "Не удалось загрузить это занятие.",
     );
+    expect(
+      screen.queryByText("Protected curriculum field received"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("server-only rubric")).not.toBeInTheDocument();
   });
 
@@ -2158,17 +2213,40 @@ describe("guided versioned session", () => {
   it("announces loading and renders a retryable contract or network error", async () => {
     apiMock.mockReturnValueOnce(new Promise(() => undefined));
     const loading = renderWithQuery(<SessionClient />);
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Урок" }),
+    ).toBeVisible();
     expect(screen.getByRole("status")).toHaveAccessibleName(
       "Загружаю занятие…",
     );
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     loading.unmount();
 
     apiMock.mockRejectedValueOnce(new Error("Session endpoint unavailable"));
     renderWithQuery(<SessionClient />);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Session endpoint unavailable",
-    );
+    const alert = await screen.findByRole("alert");
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Урок" }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(alert).toHaveTextContent("Не удалось загрузить это занятие.");
+    expect(
+      screen.queryByText("Session endpoint unavailable"),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Повторить" })).toBeEnabled();
     expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps localized lesson orientation in the no-active-session state", async () => {
+    searchState.value = "";
+    apiMock.mockResolvedValue({ session: null });
+
+    renderWithQuery(<SessionClient />);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Урок" }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(await screen.findByText("Активного занятия нет")).toBeVisible();
   });
 });

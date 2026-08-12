@@ -100,6 +100,148 @@ export const ProviderConnectionSchema = z
   .strict();
 export type ProviderConnection = z.infer<typeof ProviderConnectionSchema>;
 
+export const ProviderLoginSelectOptionIdSchema = z.enum([
+  "browser",
+  "device_code",
+]);
+export type ProviderLoginSelectOptionId = z.infer<
+  typeof ProviderLoginSelectOptionIdSchema
+>;
+
+const ProviderLoginPromptIdSchema = z.string().uuid();
+
+export const ProviderLoginPromptSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      promptId: ProviderLoginPromptIdSchema,
+      kind: z.literal("github-enterprise-domain"),
+      type: z.literal("text"),
+      optional: z.literal(true),
+      options: z.tuple([]),
+    })
+    .strict(),
+  z
+    .object({
+      promptId: ProviderLoginPromptIdSchema,
+      kind: z.literal("openai-codex-login-method"),
+      type: z.literal("select"),
+      optional: z.literal(false),
+      options: z.tuple([z.literal("browser"), z.literal("device_code")]),
+    })
+    .strict(),
+  z
+    .object({
+      promptId: ProviderLoginPromptIdSchema,
+      kind: z.literal("oauth-authorization-code"),
+      type: z.literal("manual_code"),
+      optional: z.literal(false),
+      options: z.tuple([]),
+    })
+    .strict(),
+]);
+export type ProviderLoginPrompt = z.infer<typeof ProviderLoginPromptSchema>;
+
+function isAllowedProviderLoginUrl(
+  value: string,
+  purpose: "auth" | "device",
+): boolean {
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.port ||
+      url.hash
+    ) {
+      return false;
+    }
+    const endpoint = `${url.hostname.toLowerCase()}${url.pathname}`;
+    if (purpose === "auth") {
+      return (
+        endpoint === "auth.openai.com/oauth/authorize" ||
+        endpoint === "claude.ai/oauth/authorize"
+      );
+    }
+    return (
+      !url.search &&
+      (endpoint === "auth.openai.com/codex/device" ||
+        endpoint === "github.com/login/device")
+    );
+  } catch {
+    return false;
+  }
+}
+
+const ProviderLoginAuthUrlSchema = z
+  .string()
+  .url()
+  .max(2_000)
+  .refine((value) => isAllowedProviderLoginUrl(value, "auth"), {
+    message: "Expected an app-approved provider authorization URL",
+  });
+const ProviderLoginDeviceUrlSchema = z
+  .string()
+  .url()
+  .max(2_000)
+  .refine((value) => isAllowedProviderLoginUrl(value, "device"), {
+    message: "Expected an app-approved provider device URL",
+  });
+
+export const ProviderLoginEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("progress") }).strict(),
+  z
+    .object({
+      type: z.literal("auth_url"),
+      url: ProviderLoginAuthUrlSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("device_code"),
+      userCode: z.string().trim().min(1).max(128),
+      verificationUri: ProviderLoginDeviceUrlSchema,
+    })
+    .strict(),
+]);
+export type ProviderLoginEvent = z.infer<typeof ProviderLoginEventSchema>;
+
+export const ProviderLoginStatusSchema = z
+  .object({
+    operationId: z.string().uuid(),
+    connectionId: StableIdSchema,
+    status: z.enum(["running", "completed", "failed", "cancelled"]),
+    events: z.array(ProviderLoginEventSchema).max(50),
+    prompt: ProviderLoginPromptSchema.nullable(),
+    error: z.literal("provider-sign-in-failed").nullable(),
+  })
+  .strict()
+  .superRefine((status, context) => {
+    if (status.status === "failed" && status.error === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["error"],
+        message:
+          "Failed provider login status requires an app-owned error code",
+      });
+    }
+    if (status.status !== "failed" && status.error !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["error"],
+        message: "Only failed provider login status may include an error code",
+      });
+    }
+    if (status.prompt !== null && status.status !== "running") {
+      context.addIssue({
+        code: "custom",
+        path: ["prompt"],
+        message: "Only a running provider login may include a prompt",
+      });
+    }
+  });
+export type ProviderLoginStatus = z.infer<typeof ProviderLoginStatusSchema>;
+
 export const RoleBudgetsSchema = z
   .object({
     maxInputBytes: z.number().int().positive().max(2_500_000),

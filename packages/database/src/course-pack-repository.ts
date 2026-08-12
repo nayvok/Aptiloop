@@ -41,6 +41,7 @@ export interface CoursePackRepositoryOptions {
 
 export interface InstallCoursePackInput {
   readonly operationId: string;
+  readonly validationId: string;
   readonly action: CoursePackInstallAction;
   readonly sourceBytesHash: string;
   readonly pack: CoursePackV1;
@@ -56,6 +57,13 @@ export interface CoursePackInstallResult {
   readonly revisionStatus: "draft" | "published" | "archived";
   readonly installed: boolean;
   readonly idempotent: boolean;
+}
+
+export interface ReconcileCoursePackInstallInput {
+  readonly operationId: string;
+  readonly validationId: string;
+  readonly action: CoursePackInstallAction;
+  readonly expectedContentHash: string;
 }
 
 export interface CoursePackLibraryItem {
@@ -140,6 +148,7 @@ export class CoursePackRepository {
   install(input: InstallCoursePackInput): CoursePackInstallResult {
     this.#assertStorage();
     const operationId = CourseOperationIdSchema.parse(input.operationId);
+    const validationId = CourseOperationIdSchema.parse(input.validationId);
     const pack = CoursePackV1Schema.parse(input.pack);
     assertSha256(input.sourceBytesHash, "Course Pack source bytes hash");
     if (!input.report.valid || input.report.errors !== 0) {
@@ -157,28 +166,12 @@ export class CoursePackRepository {
     return withTransaction(this.#connection, () => {
       const existingOperation = this.#readLifecycleOperation(operationId);
       if (existingOperation) {
-        if (
-          existingOperation.revision_id !== pack.revision.revisionKey ||
-          existingOperation.action !== input.action
-        ) {
-          throw new CoursePackRepositoryError(
-            "conflict",
-            "Course Pack operation ID is already bound to a different action",
-          );
-        }
-        const existingManifest = this.#connection.sqlite
-          .prepare(
-            `SELECT content_hash FROM course_pack_manifests WHERE revision_id = ?`,
-          )
-          .get(pack.revision.revisionKey) as
-          { content_hash: string } | undefined;
-        if (existingManifest?.content_hash !== pack.revision.contentHash) {
-          throw new CoursePackRepositoryError(
-            "conflict",
-            "Course Pack operation is bound to different content",
-          );
-        }
-        return this.#installResult(pack, input.action, false, true);
+        return this.#reconcileInstallOperation(existingOperation, {
+          operationId,
+          validationId,
+          action: input.action,
+          expectedContentHash: pack.revision.contentHash,
+        });
       }
 
       const existingManifest = this.#connection.sqlite
@@ -200,7 +193,18 @@ export class CoursePackRepository {
             "Course Pack revision is already bound to a different lifecycle action",
           );
         }
-        return this.#installResult(pack, input.action, false, true);
+        const result = this.#installResult(pack, input.action, false, true);
+        this.#insertInstallLifecycleEvent({
+          operationId,
+          validationId,
+          action: input.action,
+          manifestRevisionId: pack.revision.revisionKey,
+          resultRevisionId: result.revisionId,
+          contentHash: pack.revision.contentHash,
+          sourceBytesHash: input.sourceBytesHash,
+          occurredAt: this.#now(),
+        });
+        return result;
       }
 
       const now = this.#now();
@@ -261,27 +265,38 @@ export class CoursePackRepository {
         this.#archiveManifestRevision(pack, now);
       }
 
-      this.#connection.sqlite
-        .prepare(
-          `INSERT INTO course_pack_lifecycle_events
-           (id, revision_id, operation_id, action, occurred_at, details_json)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          this.#id(),
-          pack.revision.revisionKey,
-          operationId,
-          input.action,
-          now,
-          canonicalJson({
-            contentHash: pack.revision.contentHash,
-            manifestRevisionId: pack.revision.revisionKey,
-            resultRevisionId,
-            sourceBytesHash: input.sourceBytesHash,
-          }),
-        );
+      this.#insertInstallLifecycleEvent({
+        operationId,
+        validationId,
+        action: input.action,
+        manifestRevisionId: pack.revision.revisionKey,
+        resultRevisionId,
+        contentHash: pack.revision.contentHash,
+        sourceBytesHash: input.sourceBytesHash,
+        occurredAt: now,
+      });
 
       return this.#installResult(pack, input.action, true, false);
+    });
+  }
+
+  reconcileInstall(
+    input: ReconcileCoursePackInstallInput,
+  ): CoursePackInstallResult | null {
+    this.#assertStorage();
+    const operationId = CourseOperationIdSchema.parse(input.operationId);
+    const validationId = CourseOperationIdSchema.parse(input.validationId);
+    assertSha256(
+      input.expectedContentHash,
+      "Course Pack expected content hash",
+    );
+    const existingOperation = this.#readLifecycleOperation(operationId);
+    if (!existingOperation) return null;
+    return this.#reconcileInstallOperation(existingOperation, {
+      operationId,
+      validationId,
+      action: input.action,
+      expectedContentHash: input.expectedContentHash,
     });
   }
 
@@ -1163,19 +1178,98 @@ export class CoursePackRepository {
     };
   }
 
+  #insertInstallLifecycleEvent(input: {
+    operationId: string;
+    validationId: string;
+    action: CoursePackInstallAction;
+    manifestRevisionId: string;
+    resultRevisionId: string;
+    contentHash: string;
+    sourceBytesHash: string;
+    occurredAt: number;
+  }): void {
+    this.#connection.sqlite
+      .prepare(
+        `INSERT INTO course_pack_lifecycle_events
+         (id, revision_id, operation_id, action, occurred_at, details_json)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        this.#id(),
+        input.manifestRevisionId,
+        input.operationId,
+        input.action,
+        input.occurredAt,
+        canonicalJson({
+          contentHash: input.contentHash,
+          manifestRevisionId: input.manifestRevisionId,
+          resultRevisionId: input.resultRevisionId,
+          sourceBytesHash: input.sourceBytesHash,
+          validationId: input.validationId,
+        }),
+      );
+  }
+
   #readLifecycleOperation(operationId: string):
     | {
         revision_id: string;
         action: CoursePackLifecycleAction;
+        details_json: string;
       }
     | undefined {
     return this.#connection.sqlite
       .prepare(
-        `SELECT revision_id, action FROM course_pack_lifecycle_events
+        `SELECT revision_id, action, details_json FROM course_pack_lifecycle_events
          WHERE operation_id = ?`,
       )
       .get(operationId) as
-      { revision_id: string; action: CoursePackLifecycleAction } | undefined;
+      | {
+          revision_id: string;
+          action: CoursePackLifecycleAction;
+          details_json: string;
+        }
+      | undefined;
+  }
+
+  #reconcileInstallOperation(
+    operation: {
+      revision_id: string;
+      action: CoursePackLifecycleAction;
+      details_json: string;
+    },
+    input: ReconcileCoursePackInstallInput,
+  ): CoursePackInstallResult {
+    const details = lifecycleInstallDetails(operation.details_json);
+    if (
+      operation.action !== input.action ||
+      details === null ||
+      details.validationId !== input.validationId ||
+      details.contentHash !== input.expectedContentHash ||
+      details.manifestRevisionId !== operation.revision_id
+    ) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Course Pack operation ID is already bound to a different validation, action, or payload",
+      );
+    }
+    const manifest = this.#connection.sqlite
+      .prepare(
+        `SELECT canonical_json, content_hash FROM course_pack_manifests
+         WHERE revision_id = ?`,
+      )
+      .get(operation.revision_id) as
+      { canonical_json: string; content_hash: string } | undefined;
+    if (!manifest || manifest.content_hash !== details.contentHash) {
+      throw new Error("Committed Course Pack operation is inconsistent");
+    }
+    const pack = CoursePackV1Schema.parse(
+      JSON.parse(manifest.canonical_json) as unknown,
+    );
+    const result = this.#installResult(pack, input.action, false, true);
+    if (result.revisionId !== details.resultRevisionId) {
+      throw new Error("Committed Course Pack result is inconsistent");
+    }
+    return result;
   }
 
   #readImportLifecycle(
@@ -1249,4 +1343,37 @@ function assertSha256(value: string, label: string): void {
   if (!/^sha256:[0-9a-f]{64}$/u.test(value)) {
     throw new Error(`${label} is malformed`);
   }
+}
+
+function lifecycleInstallDetails(value: string): {
+  contentHash: string;
+  manifestRevisionId: string;
+  resultRevisionId: string;
+  validationId: string;
+} | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const details = parsed as Record<string, unknown>;
+  return typeof details.contentHash === "string" &&
+    /^sha256:[0-9a-f]{64}$/u.test(details.contentHash) &&
+    typeof details.manifestRevisionId === "string" &&
+    details.manifestRevisionId.length > 0 &&
+    typeof details.resultRevisionId === "string" &&
+    details.resultRevisionId.length > 0 &&
+    typeof details.validationId === "string" &&
+    CourseOperationIdSchema.safeParse(details.validationId).success
+    ? {
+        contentHash: details.contentHash,
+        manifestRevisionId: details.manifestRevisionId,
+        resultRevisionId: details.resultRevisionId,
+        validationId: details.validationId,
+      }
+    : null;
 }

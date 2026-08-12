@@ -14,6 +14,8 @@ import {
   LearningMistakesResponseSchema,
   LearningPathNextActionSchema,
   LearningReviewsResponseSchema,
+  ProviderLoginPromptSchema,
+  ProviderLoginStatusSchema,
   SessionSnapshotSchema,
   UnitQuestionSchema,
   UnitProgressSchema,
@@ -198,6 +200,132 @@ describe("shared contracts", () => {
 
   it("exposes all supported agent roles", () => {
     expect(AgentRoleSchema.options).toHaveLength(9);
+  });
+
+  it("keeps provider login prompts inside the Aptiloop-owned prompt registry", () => {
+    expect(
+      ProviderLoginPromptSchema.parse({
+        promptId: "88a6558f-d070-478e-adbc-18678089cb43",
+        kind: "github-enterprise-domain",
+        type: "text",
+        optional: true,
+        options: [],
+      }),
+    ).toMatchObject({ kind: "github-enterprise-domain", optional: true });
+    expect(
+      ProviderLoginPromptSchema.safeParse({
+        promptId: "88a6558f-d070-478e-adbc-18678089cb43",
+        kind: "openai-codex-login-method",
+        type: "select",
+        optional: false,
+        options: ["raw-provider-option"],
+      }).success,
+    ).toBe(false);
+    expect(
+      ProviderLoginPromptSchema.safeParse({
+        promptId: "88a6558f-d070-478e-adbc-18678089cb43",
+        kind: "github-enterprise-domain",
+        type: "text",
+        optional: false,
+        options: [],
+        message: "raw provider prompt",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects raw provider fields from the browser login status contract", () => {
+    const status = {
+      operationId: "88a6558f-d070-478e-adbc-18678089cb43",
+      connectionId: "connection:github",
+      status: "running",
+      events: [{ type: "progress" }],
+      prompt: null,
+      error: null,
+    } as const;
+
+    expect(ProviderLoginStatusSchema.parse(status)).toEqual(status);
+    expect(
+      ProviderLoginStatusSchema.safeParse({
+        ...status,
+        events: [{ type: "progress", message: "raw provider secret" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      ProviderLoginStatusSchema.safeParse({
+        ...status,
+        providerMessage: "raw provider secret",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("allows only pinned provider authorization and device URLs", () => {
+    const baseStatus = {
+      operationId: "88a6558f-d070-478e-adbc-18678089cb43",
+      connectionId: "connection:provider",
+      status: "running",
+      prompt: null,
+      error: null,
+    } as const;
+
+    for (const event of [
+      {
+        type: "auth_url",
+        url: "https://auth.openai.com/oauth/authorize?state=opaque",
+      },
+      {
+        type: "auth_url",
+        url: "https://claude.ai/oauth/authorize?state=opaque",
+      },
+      {
+        type: "device_code",
+        userCode: "CODE",
+        verificationUri: "https://auth.openai.com/codex/device",
+      },
+      {
+        type: "device_code",
+        userCode: "CODE",
+        verificationUri: "https://github.com/login/device",
+      },
+    ]) {
+      expect(
+        ProviderLoginStatusSchema.safeParse({
+          ...baseStatus,
+          events: [event],
+        }).success,
+      ).toBe(true);
+    }
+
+    for (const event of [
+      {
+        type: "auth_url",
+        url: "https://auth.openai.com.attacker.example/oauth/authorize",
+      },
+      {
+        type: "auth_url",
+        url: "https://auth.openai.com/oauth/token?state=opaque",
+      },
+      {
+        type: "auth_url",
+        url: "https://claude.ai/oauth/authorize#secret",
+      },
+      {
+        type: "device_code",
+        userCode: "CODE",
+        verificationUri: "https://github.com/login/device?next=evil",
+      },
+      {
+        type: "device_code",
+        userCode: "CODE",
+        verificationUri: "https://auth.openai.com/codex/device#secret",
+      },
+    ]) {
+      expect(
+        ProviderLoginStatusSchema.safeParse({
+          ...baseStatus,
+          events: [event],
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("keeps quiz options public and validates the protected answer key", () => {

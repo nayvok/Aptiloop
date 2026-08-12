@@ -31,7 +31,9 @@ const RevisionGraphIdentitySchema = z.object({
     weeks: z.array(
       z.object({
         days: z.array(
-          z.object({ units: z.array(z.object({ id: z.string() })) }),
+          z.object({
+            units: z.array(z.object({ id: z.string(), stableId: z.string() })),
+          }),
         ),
       }),
     ),
@@ -109,6 +111,7 @@ async function cloneAndPublishActiveRevision(
   parentRevisionId: string,
   operationPrefix: string,
   mutateFirstUnit = false,
+  makeFirstUnitOptional = false,
 ): Promise<string> {
   const cloned = await request(
     app,
@@ -125,7 +128,7 @@ async function cloneAndPublishActiveRevision(
     throw new Error(`Revision clone failed: ${cloned.status}`);
   }
   const clone = ClonedRevisionResponseSchema.parse(await cloned.json());
-  if (mutateFirstUnit) {
+  if (mutateFirstUnit || makeFirstUnitOptional) {
     const graph = RevisionGraphIdentitySchema.parse(
       await (
         await request(
@@ -143,12 +146,33 @@ async function cloneAndPublishActiveRevision(
         method: "PATCH",
         body: JSON.stringify({
           operationId: `${operationPrefix}-change-unit`,
-          title: `${operationPrefix} changed activity`,
+          ...(mutateFirstUnit
+            ? { title: `${operationPrefix} changed activity` }
+            : {}),
+          ...(makeFirstUnitOptional ? { optional: true } : {}),
         }),
       },
     );
     if (changed.status !== 200) {
       throw new Error(`Revision activity change failed: ${changed.status}`);
+    }
+    if (makeFirstUnitOptional) {
+      const secondUnitId = graph.curriculum.weeks[0]?.days[0]?.units[1]?.id;
+      if (!secondUnitId) throw new Error("Cloned revision has no second unit");
+      const unblocked = await request(
+        app,
+        `/api/curriculum-editor/versions/${clone.version.id}/units/${secondUnitId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            operationId: `${operationPrefix}-unblock-second-unit`,
+            unlockRules: [],
+          }),
+        },
+      );
+      if (unblocked.status !== 200) {
+        throw new Error(`Revision activity unlink failed: ${unblocked.status}`);
+      }
     }
   }
   const validation = ValidationResponseSchema.parse(
@@ -2101,6 +2125,159 @@ describe("versioned learning API", () => {
     );
     expect(exactRevisionUnlock.status).toBe(201);
   });
+
+  it.each([
+    ["completed", true, "completed"],
+    ["untouched", false, "skipped"],
+  ] as const)(
+    "projects %s optional Activity facts after Lesson completion",
+    async (_caseName, completeOptional, expectedStatus) => {
+      const { app, state } = createRuntime();
+      const initialPath = z
+        .object({
+          courseContext: z.object({
+            courseId: z.string(),
+            revisionId: z.string(),
+          }),
+        })
+        .parse(await (await request(app, "/api/learning/path")).json());
+      const revisionId = await cloneAndPublishActiveRevision(
+        app,
+        initialPath.courseContext.revisionId,
+        `optional-roadmap-${_caseName}`,
+        false,
+        true,
+      );
+      const selected = await request(
+        app,
+        `/api/learning/courses/${initialPath.courseContext.courseId}/select`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            revisionId,
+            operationId: `select-optional-roadmap-${_caseName}`,
+          }),
+        },
+      );
+      expect(selected.status).toBe(200);
+      const pathBefore = z
+        .object({
+          curriculum: z.object({
+            weeks: z.array(
+              z.object({
+                days: z.array(
+                  z.object({
+                    id: z.string(),
+                    units: z.array(
+                      z.object({
+                        id: z.string(),
+                        optional: z.boolean(),
+                        status: z.string(),
+                      }),
+                    ),
+                  }),
+                ),
+              }),
+            ),
+          }),
+        })
+        .parse(await (await request(app, "/api/learning/path")).json());
+      const lesson = pathBefore.curriculum.weeks[0]!.days[0]!;
+      const optionalActivity = lesson.units[0]!;
+      expect(optionalActivity.optional).toBe(true);
+
+      const started = await request(app, "/api/learning/sessions/v2", {
+        method: "POST",
+        body: JSON.stringify({
+          dayId: lesson.id,
+          operationId: `optional-roadmap-session-${_caseName}`,
+        }),
+      });
+      expect(started.status).toBe(201);
+      const session = z
+        .object({ session: z.object({ id: z.string() }) })
+        .parse(await started.json()).session;
+      const kernel = createLearningKernelRepository(state.connection);
+      const scope = kernel.resolveSessionScope(session.id);
+      const activities = kernel.listActivities(scope);
+      const selectedActivities = activities.filter(
+        (activity) => completeOptional || !activity.optional,
+      );
+      const baseTime = Date.now() - selectedActivities.length * 2 - 10;
+      let sequence = 0;
+      for (const activity of selectedActivities) {
+        const sourceId = `optional-roadmap-${_caseName}-${activity.id}`;
+        kernel.accept(scope, {
+          operationId: `${sourceId}-start`,
+          factId: `${sourceId}-start-fact`,
+          observedAt: new Date(baseTime + sequence++).toISOString(),
+          provenance: {
+            kind: "learner_submission",
+            sourceId,
+            sourceHash: learningKernelSha256({ sourceId, transition: "start" }),
+          },
+          body: {
+            type: "progress",
+            activityId: activity.id,
+            transition: "start",
+          },
+        });
+        kernel.accept(scope, {
+          operationId: `${sourceId}-complete`,
+          factId: `${sourceId}-complete-fact`,
+          observedAt: new Date(baseTime + sequence++).toISOString(),
+          provenance: {
+            kind: "deterministic_evaluator",
+            sourceId,
+            sourceHash: learningKernelSha256({
+              sourceId,
+              transition: "complete",
+            }),
+            evaluatorVersion: "optional-roadmap-fixture-v1",
+          },
+          body: {
+            type: "progress",
+            activityId: activity.id,
+            transition: "complete",
+          },
+        });
+      }
+      const completedAt = Date.now();
+      state.connection.sqlite
+        .prepare(
+          `UPDATE learning_sessions
+           SET status = 'completed', current_step = 'complete', completed_at = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(completedAt, completedAt, session.id);
+
+      const completedPath = z
+        .object({
+          curriculum: z.object({
+            weeks: z.array(
+              z.object({
+                days: z.array(
+                  z.object({
+                    status: z.string(),
+                    units: z.array(
+                      z.object({ id: z.string(), status: z.string() }),
+                    ),
+                  }),
+                ),
+              }),
+            ),
+          }),
+        })
+        .parse(await (await request(app, "/api/learning/path")).json());
+      const completedLesson = completedPath.curriculum.weeks[0]!.days[0]!;
+      expect(completedLesson.status).toBe("completed");
+      expect(
+        completedLesson.units.find((unit) => unit.id === optionalActivity.id)
+          ?.status,
+      ).toBe(expectedStatus);
+    },
+  );
 
   it("enforces evidence, unlocks units, persists reloads, and completes safely", async () => {
     const firstRuntime = createRuntime();

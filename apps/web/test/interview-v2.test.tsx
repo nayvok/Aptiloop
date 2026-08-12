@@ -11,32 +11,39 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InterviewClient } from "@/components/interview-client";
+import {
+  PageRouteContextProvider,
+  type PageRouteContextRegistration,
+} from "@/components/page-route-context";
 import { ReviewClient } from "@/components/review-client";
 import { LocaleProvider } from "@/lib/i18n";
 
-const { ApiErrorMock, apiMock, pushMock, searchState } = vi.hoisted(() => {
-  class TestApiError extends Error {
-    readonly status: number;
+const { ApiErrorMock, apiMock, pushMock, replaceMock, searchState } =
+  vi.hoisted(() => {
+    class TestApiError extends Error {
+      readonly status: number;
 
-    constructor(message: string, status: number) {
-      super(message);
-      this.name = "ApiError";
-      this.status = status;
+      constructor(message: string, status: number) {
+        super(message);
+        this.name = "ApiError";
+        this.status = status;
+      }
     }
-  }
 
-  return {
-    ApiErrorMock: TestApiError,
-    apiMock: vi.fn(),
-    pushMock: vi.fn(),
-    searchState: { value: "" },
-  };
-});
+    return {
+      ApiErrorMock: TestApiError,
+      apiMock: vi.fn(),
+      pushMock: vi.fn(),
+      replaceMock: vi.fn(),
+      searchState: { value: "" },
+    };
+  });
 
 vi.mock("@/lib/api", () => ({ ApiError: ApiErrorMock, api: apiMock }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushMock }),
+  usePathname: () => "/review",
+  useRouter: () => ({ push: pushMock, replace: replaceMock }),
   useSearchParams: () => new URLSearchParams(searchState.value),
 }));
 
@@ -399,6 +406,7 @@ function renderWithQuery(children: ReactNode) {
 beforeEach(() => {
   apiMock.mockReset();
   pushMock.mockReset();
+  replaceMock.mockReset();
   searchState.value = "";
   window.localStorage.clear();
   Object.defineProperty(Element.prototype, "scrollIntoView", {
@@ -418,6 +426,211 @@ afterEach(() => {
 });
 
 describe("versioned interview workflow", () => {
+  it("keeps localized standalone orientation while loading and after failure", async () => {
+    apiMock.mockReturnValueOnce(new Promise(() => undefined));
+    const loading = renderWithQuery(<InterviewClient />);
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "Техническое интервью",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("Загружаю интервью…")).toBeVisible();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    loading.unmount();
+
+    apiMock.mockRejectedValueOnce(new Error("raw interview endpoint failure"));
+    renderWithQuery(<InterviewClient />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Не удалось загрузить интервью. Повторите попытку.",
+    );
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "Техническое интервью",
+      }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.queryByText("raw interview endpoint failure")).toBeNull();
+  });
+
+  it("keeps the setup usable when browser draft storage is blocked", async () => {
+    const storage = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new DOMException("Storage blocked", "SecurityError");
+      },
+    });
+    installApi(interviewRoutes());
+
+    try {
+      renderWithQuery(<InterviewClient />);
+
+      fireEvent.click(
+        await screen.findByRole("radio", { name: /Выбрать вручную/u }),
+      );
+      const topics = screen.getByLabelText("Темы через запятую");
+      fireEvent.change(topics, { target: { value: "TypeScript" } });
+
+      expect(topics).toHaveValue("TypeScript");
+      expect(
+        screen.getByRole("button", { name: "Начать интервью" }),
+      ).toBeEnabled();
+    } finally {
+      cleanup();
+      if (storage) Object.defineProperty(window, "localStorage", storage);
+    }
+  });
+
+  it("registers Course and Lesson breadcrumbs only after validating the linked session", async () => {
+    searchState.value = "sessionId=session-1";
+    const register = vi.fn<PageRouteContextRegistration>(() => vi.fn());
+    installApi(
+      interviewRoutes({
+        current: currentInterviewResponse(null),
+        extra: {
+          "/interviews/v2/current?learningSessionId=session-1":
+            currentInterviewResponse(null, "session-1"),
+          "/learning/sessions/v2/session-1": {
+            session: {
+              id: "session-1",
+              courseContext: {
+                courseId: "private-course-id",
+                revisionId: "private-revision-id",
+              },
+              snapshot: {
+                curriculumId: "snapshot-course-id",
+                curriculumVersionId: "snapshot-revision-id",
+                curriculumTitle: "JavaScript Foundations",
+                day: { order: 3, title: "Closures and scope" },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    renderWithQuery(
+      <PageRouteContextProvider
+        register={register}
+        routeKey="/interview?sessionId=session-1"
+      >
+        <InterviewClient />
+      </PageRouteContextProvider>,
+    );
+
+    await screen.findByRole("radio", { name: /Только изученные/u });
+    await vi.waitFor(() => expect(register).toHaveBeenCalled());
+    const context = register.mock.calls.at(-1)?.[1];
+    expect(context).toMatchObject({
+      sectionHref: "/courses",
+      breadcrumbs: [
+        { href: "/courses", label: "nav.courses" },
+        {
+          href: "/courses/private-course-id/revisions/private-revision-id",
+          text: "JavaScript Foundations",
+        },
+        {
+          href: "/session?id=session-1",
+          text: "Урок 3 · Closures and scope",
+        },
+        { label: "interview.title" },
+      ],
+    });
+    expect(JSON.stringify(context?.breadcrumbs)).not.toContain(
+      '"text":"private-',
+    );
+  });
+
+  it("registers linked Course and Lesson breadcrumbs for an id-only interview URL", async () => {
+    searchState.value = "id=interview-1";
+    const register = vi.fn<PageRouteContextRegistration>(() => vi.fn());
+    installApi(
+      interviewRoutes({
+        extra: {
+          "/interviews/v2/interview-1": interviewFixture({
+            learningSessionId: "session-1",
+          }),
+          "/learning/sessions/v2/session-1": {
+            session: {
+              id: "session-1",
+              courseContext: {
+                courseId: "private-course-id",
+                revisionId: "private-revision-id",
+              },
+              snapshot: {
+                curriculumId: "snapshot-course-id",
+                curriculumVersionId: "snapshot-revision-id",
+                curriculumTitle: "JavaScript Foundations",
+                day: { order: 3, title: "Closures and scope" },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    renderWithQuery(
+      <PageRouteContextProvider
+        register={register}
+        routeKey="/interview?id=interview-1"
+      >
+        <InterviewClient />
+      </PageRouteContextProvider>,
+    );
+
+    await screen.findByText(/Чем lexical scope отличается/u);
+    await vi.waitFor(() => expect(register).toHaveBeenCalled());
+    const context = register.mock.calls.at(-1)?.[1];
+    expect(context).toMatchObject({
+      sectionHref: "/courses",
+      breadcrumbs: [
+        { href: "/courses", label: "nav.courses" },
+        {
+          href: "/courses/private-course-id/revisions/private-revision-id",
+          text: "JavaScript Foundations",
+        },
+        {
+          href: "/session?id=session-1",
+          text: "Урок 3 · Closures and scope",
+        },
+        { label: "interview.title" },
+      ],
+    });
+    expect(apiMock).toHaveBeenCalledWith("/learning/sessions/v2/session-1");
+    expect(JSON.stringify(context?.breadcrumbs)).not.toContain(
+      '"text":"private-',
+    );
+  });
+
+  it("treats an empty sessionId as standalone", async () => {
+    searchState.value = "sessionId=";
+    const register = vi.fn<PageRouteContextRegistration>(() => vi.fn());
+    installApi(interviewRoutes());
+
+    renderWithQuery(
+      <PageRouteContextProvider
+        register={register}
+        routeKey="/interview?sessionId="
+      >
+        <InterviewClient />
+      </PageRouteContextProvider>,
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Техническое интервью",
+      }),
+    ).toBeVisible();
+    expect(apiMock).toHaveBeenCalledWith("/interviews/v2/current");
+    expect(apiMock).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^\/learning\/sessions\/v2\//u),
+    );
+    expect(register).not.toHaveBeenCalled();
+  });
+
   it("runs setup, sequential questions, answers, finish and renders the persisted report", async () => {
     const opened = interviewFixture();
     const followedUp = interviewFixture({
@@ -1336,7 +1549,39 @@ describe("versioned interview workflow", () => {
     activeDestination.focus();
     fireEvent.keyDown(activeDestination, { key: "ArrowLeft" });
     await waitFor(() => {
-      expect(pushMock).toHaveBeenCalledWith("/review?view=cards");
+      expect(pushMock).toHaveBeenCalledWith("/review?view=cards", {
+        scroll: false,
+      });
+    });
+  });
+
+  it("preserves unrelated Review parameters and canonicalizes an invalid view", async () => {
+    searchState.value = "view=interviews&source=home";
+    installApi(
+      interviewRoutes({
+        current: currentInterviewResponse(interviewFixture()),
+      }),
+    );
+    const view = renderWithQuery(<ReviewClient />);
+
+    await screen.findByText(/Чем lexical scope отличается/u);
+    fireEvent.mouseDown(
+      screen.getByRole("tab", { name: "Очередь повторения" }),
+      { button: 0 },
+    );
+    expect(pushMock).toHaveBeenLastCalledWith(
+      "/review?view=cards&source=home",
+      { scroll: false },
+    );
+
+    view.unmount();
+    searchState.value = "view=unknown&source=home";
+    installApi(interviewRoutes());
+    renderWithQuery(<ReviewClient />);
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenLastCalledWith("/review?source=home", {
+        scroll: false,
+      });
     });
   });
 
@@ -1455,6 +1700,69 @@ describe("versioned interview workflow", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Как TypeScript narrowing меняет доступный тип?",
     );
+  });
+
+  it("nests interview transcript Markdown headings below the page heading", async () => {
+    installApi(
+      interviewRoutes({
+        current: currentInterviewResponse(
+          interviewFixture({
+            transcript: [
+              {
+                id: "question-1",
+                role: "assistant",
+                content: "# First\n## Second\n### Third",
+                createdAt: now,
+              },
+            ],
+          }),
+        ),
+      }),
+    );
+    renderWithQuery(<InterviewClient />);
+
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "First" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Second" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 4, name: "Third" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { level: 1, name: "First" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("nests report Markdown headings below report section headings", async () => {
+    const report = reportFixture();
+    report.summary = "# First\n## Second\n### Third";
+    installApi(
+      interviewRoutes({
+        current: currentInterviewResponse(
+          interviewFixture({
+            status: "completed",
+            transcript: transcriptComplete(),
+            report,
+          }),
+        ),
+      }),
+    );
+    renderWithQuery(<InterviewClient />);
+
+    expect(
+      await screen.findByRole("heading", { level: 3, name: "First" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 4, name: "Second" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 5, name: "Third" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { level: 1, name: "First" }),
+    ).not.toBeInTheDocument();
   });
 
   it("sends with Enter and keeps Shift+Enter as a newline", async () => {

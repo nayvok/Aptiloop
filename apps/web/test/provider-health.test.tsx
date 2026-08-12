@@ -86,6 +86,7 @@ describe("ProviderHealth", () => {
       name: /AI status: open details: AI Off/u,
     });
     expect(trigger).toHaveAttribute("data-state", "off");
+    expect(trigger).not.toHaveClass("bg-success/10");
     fireEvent.click(trigger);
 
     const title = await screen.findByText("Optional AI assistance");
@@ -104,7 +105,55 @@ describe("ProviderHealth", () => {
       expect(
         row.querySelector('[data-slot="provider-role-indicator"]'),
       ).toHaveAttribute("data-state", "off");
+      expect(
+        row.querySelector('[data-slot="provider-role-indicator"]'),
+      ).not.toHaveClass("bg-success");
     }
+    expect(
+      (popover as HTMLElement).querySelector(
+        '[data-slot="provider-recovery-link"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("puts configured-provider recovery ahead of developer diagnostics", async () => {
+    apiMock.mockResolvedValue({
+      ai: {
+        connections: [
+          {
+            ...readyConnection,
+            state: "error",
+          },
+        ],
+        roleProfiles: roles.map((role) => roleProfile(role, "connection")),
+      },
+    });
+
+    renderProviderHealth();
+
+    const trigger = await screen.findByRole("button", {
+      name: /AI status: open details: AI needs attention/u,
+    });
+    expect(trigger).toHaveAttribute("data-state", "problem");
+    fireEvent.click(trigger);
+
+    const recovery = await screen.findByRole("link", {
+      name: "Review connections",
+    });
+    expect(recovery).toHaveAttribute(
+      "href",
+      "/settings?section=connections&source=recovery",
+    );
+    expect(recovery).toHaveAttribute("data-slot", "provider-recovery-link");
+    expect(recovery).toHaveClass("bg-primary");
+
+    const diagnostics = screen.getByRole("link", {
+      name: "Open developer diagnostics",
+    });
+    expect(recovery.compareDocumentPosition(diagnostics)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(diagnostics).not.toHaveClass("bg-primary");
   });
 
   it("counts only configured ready roles in a mixed profile", async () => {

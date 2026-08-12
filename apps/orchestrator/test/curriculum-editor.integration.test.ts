@@ -929,6 +929,8 @@ describe("curriculum editor routes", () => {
         id: string;
         revision: number;
         primaryLocale: string;
+        branchKind: string;
+        parentVersionId: string | null;
       }>;
     }>(await request(app, "/api/curriculum-editor/versions"));
     expect(versions.versions).toEqual(
@@ -937,11 +939,15 @@ describe("curriculum editor routes", () => {
           id: draft.version.id,
           revision: 1,
           primaryLocale: "ru-RU",
+          branchKind: "upstream",
+          parentVersionId: null,
         }),
         expect.objectContaining({
           id: clone.version.id,
           revision: 2,
           primaryLocale: "ru-RU",
+          branchKind: "upstream",
+          parentVersionId: draft.version.id,
         }),
       ]),
     );

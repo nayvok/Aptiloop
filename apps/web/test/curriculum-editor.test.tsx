@@ -602,7 +602,7 @@ describe("CurriculumEditorClient", () => {
     fireEvent.mouseDown(screen.getByRole("tab", { name: "Программа" }), {
       button: 0,
     });
-    expect(replaceMock).toHaveBeenCalledWith(
+    expect(pushMock).toHaveBeenCalledWith(
       "/courses/studio?version=draft-target&tab=program",
       { scroll: false },
     );
@@ -753,7 +753,70 @@ describe("CurriculumEditorClient", () => {
     );
   });
 
-  it("clones a published revision and edits only the draft DTO", async () => {
+  it("keeps version history scoped to the selected Course and wraps long revision names", async () => {
+    const current = version("draft-current", 3, "draft");
+    const sameCourse = {
+      ...version("published-same-course", 2, "published"),
+      title:
+        "Extremely long revision title that must remain readable without clipping inside the bounded history card",
+    };
+    const otherCourse = {
+      ...version("published-other-course", 1, "published"),
+      curriculumId: "curriculum-other",
+      title: "Other Course revision that must not appear",
+    };
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) {
+        return {
+          versions: [
+            listItem(current),
+            listItem(sameCourse),
+            { ...listItem(otherCourse), curriculumSlug: "other-course" },
+          ],
+        };
+      }
+      if (path === `/curriculum-editor/versions/${current.id}` && !init) {
+        return { curriculum: { version: current, weeks: [] } };
+      }
+      if (
+        path === "/curriculum-editor/courses/curriculum-js/adaptation" &&
+        !init
+      ) {
+        return {
+          branch: null,
+          revisions: [],
+          comparison: {
+            status: "none",
+            upstreamRevisionId: current.id,
+            personalVersionId: null,
+            commonBaseRevisionId: null,
+            upstreamChanges: [],
+            personalChanges: [],
+            conflicts: [],
+          },
+        };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor(
+      <CurriculumEditorClient
+        initialVersionId={current.id}
+        initialWorkspace="history"
+      />,
+    );
+
+    const longTitle = await screen.findByText(/Extremely long revision title/u);
+    expect(longTitle).toHaveClass(
+      "whitespace-normal",
+      "[overflow-wrap:anywhere]",
+    );
+    expect(
+      screen.queryByText("Other Course revision that must not appear"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not claim an edited form is saved before submission", async () => {
     const sourceVersion = version("published-1", 1, "published");
     const sourceWeek = week(
       "source-week",
@@ -814,6 +877,21 @@ describe("CurriculumEditorClient", () => {
     fireEvent.change(within(form).getByLabelText("Название"), {
       target: { value: "Изменённая неделя" },
     });
+    const studioHeader = document.querySelector(
+      '[data-slot="course-studio-header"]',
+    );
+    expect(studioHeader).toBeInTheDocument();
+    if (!(studioHeader instanceof HTMLElement))
+      throw new Error("Studio header did not render");
+    expect(within(studioHeader).queryByRole("status")).not.toBeInTheDocument();
+    expect(studioHeader).not.toHaveTextContent("Сохранено");
+    expect(
+      apiMock.mock.calls.some(
+        ([path, init]) =>
+          String(path).endsWith("/weeks/draft-week") &&
+          init?.method === "PATCH",
+      ),
+    ).toBe(false);
     fireEvent.click(
       within(form).getByRole("button", { name: "Сохранить неделю" }),
     );
@@ -833,9 +911,14 @@ describe("CurriculumEditorClient", () => {
     expect(
       await screen.findByText("Не удалось получить данные"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Список ревизий недоступен.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Не удалось загрузить Curriculum Studio."),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText("must-not-reach-browser-state"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Технические подробности"),
     ).not.toBeInTheDocument();
   });
 
@@ -943,14 +1026,19 @@ describe("CurriculumEditorClient", () => {
     });
     fireEvent.click(clone);
     expect(
-      await screen.findByText("Network connection lost"),
+      await screen.findByText(
+        "Действие Studio не завершилось. Повторите попытку.",
+      ),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Network connection lost"),
+    ).not.toBeInTheDocument();
     fireEvent.click(clone);
     await waitFor(() => expect(operationIds).toHaveLength(2));
     expect(operationIds[0]).toBe(operationIds[1]);
   });
 
-  it("shows the nested backend error message", async () => {
+  it("keeps nested backend error text out of primary Studio action copy", async () => {
     const published = version("published-error", 1, "published");
     apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === "/curriculum-editor/versions" && !init)
@@ -974,9 +1062,19 @@ describe("CurriculumEditorClient", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Клонировать в черновик" }),
     );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Действие Studio не завершилось. Повторите попытку.",
+    );
+    expect(within(alert).getAllByRole("paragraph")[0]).toHaveTextContent(
+      "Действие Studio не завершилось. Повторите попытку.",
+    );
     expect(
-      await screen.findByText("Ревизию уже клонировали в другом окне"),
-    ).toBeInTheDocument();
+      screen.queryByText("Ревизию уже клонировали в другом окне"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Технические подробности"),
+    ).not.toBeInTheDocument();
   });
 
   it("creates a draft revision, week and days from the add-week scenario", async () => {
@@ -1466,6 +1564,14 @@ describe("CurriculumEditorClient", () => {
     expect(
       await screen.findByText("Передача внешнему провайдеру"),
     ).toBeInTheDocument();
+    expect(screen.getByText("conn:pi:openai")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5.2")).toBeInTheDocument();
+    expect(screen.getByText("course-designer")).toBeInTheDocument();
+    expect(
+      screen.getByText(/course-revision: draft-designer/u),
+    ).toBeInTheDocument();
+    expect(screen.getByText("source:1: Provided text 1")).toBeInTheDocument();
+    expect(screen.getByText(/условия хранения данных/u)).toBeInTheDocument();
     expect(generated).toBe(false);
     expect(disclosurePreparations).toBe(1);
 
@@ -1504,6 +1610,149 @@ describe("CurriculumEditorClient", () => {
     );
     expect(await screen.findByText("Применено")).toBeInTheDocument();
     expect(graph.weeks).toHaveLength(1);
+  });
+
+  it("offers a complete failed-state recovery hierarchy without changing the draft", async () => {
+    const draft = version("draft-failed-designer", 1, "draft");
+    const workflow = {
+      id: "course-designer-workflow:failed",
+      versionId: draft.id,
+      state: "FAILED",
+      recoveryState: "CURRICULUM_PROPOSAL",
+      request: {
+        goal: "A preserved learning goal",
+        targetOutcome: "A preserved outcome",
+        currentLevel: "Beginner",
+        constraints: [],
+        sources: [],
+        activityPreferences: [],
+        runtimeRequirements: [],
+      },
+      diagnostic: { questions: [], answers: {}, skipped: false },
+      revisionRequests: [],
+      activeProposalId: null,
+      authoringOperationId: "workflow:failed",
+      failureCode: "provider_unavailable",
+      failureMessage: "Provider is temporarily unavailable",
+      createdAt: now,
+      updatedAt: now,
+    };
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === "/curriculum-editor/versions") {
+        return { versions: [listItem(draft)] };
+      }
+      if (path === `/curriculum-editor/versions/${draft.id}`) {
+        return { curriculum: { version: draft, weeks: [] } };
+      }
+      if (path.endsWith("/designer/workflows")) {
+        return { workflows: [workflow] };
+      }
+      if (path.endsWith("/designer/proposals")) return { proposals: [] };
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor(
+      <CurriculumEditorClient
+        initialVersionId={draft.id}
+        initialMode="designer"
+      />,
+    );
+
+    expect(
+      await screen.findByText("Provider is temporarily unavailable"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("A preserved learning goal")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Повторить с места сбоя" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Настроить AI или провайдера" }),
+    ).toHaveAttribute("href", "/settings?section=ai");
+    expect(screen.getByRole("link", { name: "Назад" })).toHaveAttribute(
+      "href",
+      "/courses",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Продолжить вручную" }));
+    expect(pushMock).toHaveBeenCalledWith(
+      expect.stringContaining("tab=program"),
+      { scroll: false },
+    );
+  });
+
+  it("cancels an in-flight Designer request through its existing abort seam", async () => {
+    const draft = version("draft-cancel-designer", 1, "draft");
+    const workflow = {
+      id: "course-designer-workflow:cancel",
+      versionId: draft.id,
+      state: "CURRICULUM_PROPOSAL",
+      recoveryState: null,
+      request: {
+        goal: "Keep this request",
+        targetOutcome: "Keep this outcome",
+        currentLevel: "Beginner",
+        constraints: [],
+        sources: [],
+        activityPreferences: [],
+        runtimeRequirements: [],
+      },
+      diagnostic: { questions: [], answers: {}, skipped: false },
+      revisionRequests: [],
+      activeProposalId: null,
+      authoringOperationId: "workflow:cancel",
+      failureCode: null,
+      failureMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) {
+        return { versions: [listItem(draft)] };
+      }
+      if (path === `/curriculum-editor/versions/${draft.id}` && !init) {
+        return { curriculum: { version: draft, weeks: [] } };
+      }
+      if (path.endsWith("/designer/workflows") && !init) {
+        return { workflows: [workflow] };
+      }
+      if (path.endsWith("/designer/proposals") && !init) {
+        return { proposals: [] };
+      }
+      if (path.endsWith("/disclosures") && !init) {
+        return { pendingDisclosure: null };
+      }
+      if (path.endsWith("/disclosures") && init?.method === "POST") {
+        return { required: false };
+      }
+      if (path.endsWith("/generate") && init?.method === "POST") {
+        return await new Promise((_, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    renderEditor(
+      <CurriculumEditorClient
+        initialVersionId={draft.id}
+        initialMode="designer"
+      />,
+    );
+    const generate = await screen.findByRole("button", {
+      name: "Сгенерировать предложение",
+    });
+    await waitFor(() => expect(generate).toBeEnabled());
+    fireEvent.click(generate);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Отменить генерацию" }),
+    );
+    expect(
+      await screen.findByText(
+        "Генерация отменена. Черновик и запрос на авторинг сохранены.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Keep this request")).toBeInTheDocument();
   });
 
   it("creates a personal adaptation without replacing upstream", async () => {

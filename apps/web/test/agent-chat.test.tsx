@@ -3,6 +3,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -13,32 +14,8 @@ import { AgentChat } from "@/components/agent-chat";
 import type { ChatRole } from "@/lib/chat-role";
 import { LocaleProvider } from "@/lib/i18n";
 
-const mockAgentState = vi.hoisted(() => ({
-  messages: [] as Array<{
-    id: string;
-    role: "user" | "assistant";
-    content: string;
-  }>,
-  events: [] as Array<Record<string, unknown>>,
-  streamFails: false,
-  disclosureRequired: false,
-  aiOff: false,
-  connectionEnabled: true,
-  connectionState: "connected",
-  authenticated: true,
-  streaming: true,
-  modelAvailable: true,
-  assignedModelId: "mock-deterministic" as string | null,
-  disclosureApproved: false,
-  streamInputs: [] as Array<{
-    role?: string;
-    message: string;
-    disclosureOperationId?: string;
-  }>,
-}));
-
-vi.mock("@/lib/api", () => {
-  class ApiError extends Error {
+const { ApiErrorMock, mockAgentState } = vi.hoisted(() => {
+  class TestApiError extends Error {
     constructor(
       message: string,
       readonly status: number,
@@ -53,37 +30,79 @@ vi.mock("@/lib/api", () => {
       super(message);
     }
   }
+
   return {
-    ApiError,
-    api: vi.fn((path: string, init?: RequestInit) => {
+    ApiErrorMock: TestApiError,
+    mockAgentState: {
+      messages: [] as Array<{
+        id: string;
+        role: "user" | "assistant";
+        content: string;
+      }>,
+      events: [] as Array<Record<string, unknown>>,
+      streamFails: false,
+      waitForAbort: false,
+      streamSignals: [] as AbortSignal[],
+      historyError: null as Error | null,
+      historyGate: null as Promise<void> | null,
+      disclosureRequired: false,
+      aiOff: false,
+      connectionEnabled: true,
+      connectionState: "connected",
+      authenticated: true,
+      streaming: true,
+      modelAvailable: true,
+      assignedModelId: "mock-deterministic" as string | null,
+      disclosureApproved: false,
+      approvalError: null as Error | null,
+      cancellationError: null as Error | null,
+      streamInputs: [] as Array<{
+        role?: string;
+        message: string;
+        disclosureOperationId?: string;
+      }>,
+    },
+  };
+});
+
+vi.mock("@/lib/api", () => {
+  return {
+    ApiError: ApiErrorMock,
+    api: vi.fn(async (path: string, init?: RequestInit) => {
       if (path.startsWith("/agent/history")) {
-        return Promise.resolve({ messages: mockAgentState.messages });
+        if (mockAgentState.historyGate) await mockAgentState.historyGate;
+        if (mockAgentState.historyError) throw mockAgentState.historyError;
+        return { messages: mockAgentState.messages };
       }
       if (path === "/ai/disclosures" && init?.method === "POST") {
         if (!mockAgentState.disclosureRequired) {
           return Promise.resolve({ required: false });
         }
+        const disclosure = {
+          operationId: "disclosure-1",
+          role: "tutor",
+          scope: {
+            destination: "OpenAI via Pi",
+            purpose: "Tutor response",
+            payloadCategories: ["learner-message"],
+            exclusions: ["credentials", "protected-answers"],
+            byteCount: 26,
+            sha256: "a".repeat(64),
+          },
+        };
         return Promise.resolve({
           required: true,
-          disclosure: {
-            operationId: "disclosure-1",
-            role: "tutor",
-            scope: {
-              destination: "OpenAI via Pi",
-              purpose: "Tutor response",
-              payloadCategories: ["learner-message"],
-              exclusions: ["credentials", "protected-answers"],
-              byteCount: 26,
-              sha256: "a".repeat(64),
-            },
-          },
+          disclosure,
         });
       }
       if (path === "/ai/disclosures/disclosure-1/approve") {
+        if (mockAgentState.approvalError) throw mockAgentState.approvalError;
         mockAgentState.disclosureApproved = true;
         return Promise.resolve({ status: "approved" });
       }
       if (path === "/ai/disclosures/disclosure-1/cancel") {
+        if (mockAgentState.cancellationError)
+          throw mockAgentState.cancellationError;
         return Promise.resolve({ status: "cancelled" });
       }
       return Promise.resolve({
@@ -139,12 +158,16 @@ vi.mock("@/lib/api", () => {
         },
       });
     }),
-    streamAgent: vi.fn(async function* (input: {
-      role?: string;
-      message: string;
-      disclosureOperationId?: string;
-    }) {
+    streamAgent: vi.fn(async function* (
+      input: {
+        role?: string;
+        message: string;
+        disclosureOperationId?: string;
+      },
+      signal: AbortSignal,
+    ) {
       mockAgentState.streamInputs.push(input);
+      mockAgentState.streamSignals.push(signal);
       if (
         mockAgentState.disclosureRequired &&
         (!mockAgentState.disclosureApproved ||
@@ -158,6 +181,29 @@ vi.mock("@/lib/api", () => {
       mockAgentState.messages = [
         { id: "user-message", role: "user", content: input.message },
       ];
+      if (mockAgentState.waitForAbort) {
+        yield {
+          type: "message.delta",
+          turnId: "turn-1",
+          content: "Начало ответа",
+        };
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else
+            signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield {
+          type: "message.delta",
+          turnId: "turn-1",
+          content: " ПОЗДНЯЯ ДЕЛЬТА",
+        };
+        yield {
+          type: "session.completed",
+          turnId: "turn-1",
+          reason: "completed",
+        };
+        return;
+      }
       for (const event of mockAgentState.events) yield event;
     }),
   };
@@ -167,8 +213,14 @@ afterEach(cleanup);
 beforeEach(() => {
   mockAgentState.messages = [];
   mockAgentState.streamFails = false;
+  mockAgentState.waitForAbort = false;
+  mockAgentState.streamSignals = [];
+  mockAgentState.historyError = null;
+  mockAgentState.historyGate = null;
   mockAgentState.disclosureRequired = false;
   mockAgentState.disclosureApproved = false;
+  mockAgentState.approvalError = null;
+  mockAgentState.cancellationError = null;
   mockAgentState.aiOff = false;
   mockAgentState.connectionEnabled = true;
   mockAgentState.connectionState = "connected";
@@ -207,6 +259,70 @@ function renderAgentChat() {
 }
 
 describe("AgentChat", () => {
+  it("shows an explicit loading state while history is pending", async () => {
+    mockAgentState.historyGate = new Promise(() => undefined);
+    renderAgentChat();
+
+    expect(
+      await screen.findAllByText("Загружаю диалог…", {
+        selector: '[role="status"]',
+      }),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByText("Сначала сформулируй свой вопрос или ответ"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows an explicit empty state and the reload recovery limitation", async () => {
+    renderAgentChat();
+
+    expect(
+      await screen.findByText("Сначала сформулируй свой вопрос или ответ"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Перезагрузка не восстанавливает неотправленный черновик или формируемый ответ.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("uses safe history copy and keeps bounded diagnostics closed", async () => {
+    mockAgentState.historyError = new ApiErrorMock(
+      `safe history diagnostic ${"x".repeat(800)}`,
+      503,
+      {
+        code: "provider_unavailable",
+        retryable: true,
+        messageKey: "provider.unavailable",
+        diagnosticId: "diagnostic-history-1",
+        recoveryAction: null,
+      },
+    );
+    renderAgentChat();
+
+    const alert = await screen.findByRole("alert");
+    expect(
+      within(alert).getByText("История диалога временно недоступна."),
+    ).toBeVisible();
+    const details = within(alert)
+      .getByText("Технические подробности")
+      .closest("details");
+    expect(details).not.toHaveAttribute("open");
+    expect(details?.textContent).not.toContain("safe history diagnostic");
+    expect(details?.textContent).toContain("diagnostic-history-1");
+    expect(details?.textContent).toContain("Статус HTTP: 503");
+    expect(details?.textContent).toContain(
+      "Идентификатор диагностики: diagnostic-history-1",
+    );
+    expect(details?.textContent.length).toBeLessThanOrEqual(630);
+    expect(
+      within(alert).getByRole("button", { name: "Повторить" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByText("Сначала сформулируй свой вопрос или ответ"),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps the learner message and renders streamed agent output", async () => {
     renderAgentChat();
 
@@ -219,6 +335,35 @@ describe("AgentChat", () => {
 
     expect(screen.getByText("Мой самостоятельный ответ")).toBeInTheDocument();
     expect(await screen.findByText("Уточни механизм")).toBeInTheDocument();
+  });
+
+  it("nests assistant Markdown headings below the chat page heading", async () => {
+    mockAgentState.events = [
+      {
+        type: "message.completed",
+        turnId: "turn-1",
+        content: "# First\n## Second\n### Third",
+      },
+      {
+        type: "session.completed",
+        turnId: "turn-1",
+        reason: "completed",
+      },
+    ];
+    renderAgentChat();
+
+    fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
+      target: { value: "Show the hierarchy" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+
+    const firstHeading = await screen.findByRole("heading", {
+      level: 2,
+      name: "First",
+    });
+    expect(firstHeading.tagName).toBe("H2");
+    expect(screen.getByText("Second").tagName).toBe("H3");
+    expect(screen.getByText("Third").tagName).toBe("H4");
   });
 
   it("keeps AI Off non-mutating and links to configuration", async () => {
@@ -291,13 +436,80 @@ describe("AgentChat", () => {
 
     expect(await screen.findByText("Уточни механизм")).toBeInTheDocument();
     expect(mockAgentState.disclosureApproved).toBe(true);
-    expect(mockAgentState.streamInputs).toEqual([
+    expect(mockAgentState.streamInputs).toHaveLength(1);
+    expect(mockAgentState.streamInputs[0]).toMatchObject({
+      role: "teacher",
+      message: "Поясни замыкания",
+      disclosureOperationId: "disclosure-1",
+    });
+  });
+
+  it("keeps the exact pending approval open when approval fails", async () => {
+    mockAgentState.disclosureRequired = true;
+    mockAgentState.approvalError = new ApiErrorMock(
+      "credential=secret-value",
+      503,
       {
-        role: "teacher",
-        message: "Поясни замыкания",
-        disclosureOperationId: "disclosure-1",
+        code: "provider_unavailable",
+        retryable: true,
+        messageKey: "provider.unavailable",
+        diagnosticId: "diagnostic-approval-1",
+        recoveryAction: null,
       },
-    ]);
+    );
+    renderAgentChat();
+
+    fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
+      target: { value: "Не потеряй эту операцию" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Разрешить один раз" }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toBeVisible();
+    expect(dialog).toHaveTextContent(
+      "Не удалось отправить запрос. Сообщение сохранено для повторной отправки.",
+    );
+    expect(dialog).toHaveTextContent("diagnostic-approval-1");
+    expect(dialog).not.toHaveTextContent("credential=secret-value");
+    expect(mockAgentState.streamInputs).toHaveLength(0);
+    expect(
+      within(dialog).getByRole("button", { name: "Разрешить один раз" }),
+    ).toBeEnabled();
+  });
+
+  it("reopens the exact disclosure when cancellation cannot be confirmed", async () => {
+    mockAgentState.disclosureRequired = true;
+    mockAgentState.cancellationError = new ApiErrorMock(
+      "credential=cancel-secret",
+      503,
+      {
+        code: "provider_unavailable",
+        retryable: true,
+        messageKey: "provider.unavailable",
+        diagnosticId: "diagnostic-cancel-1",
+        recoveryAction: null,
+      },
+    );
+    renderAgentChat();
+
+    fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
+      target: { value: "Отмени безопасно" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Не отправлять" }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(
+      "Не удалось отменить ожидающее разрешение на отправку внешнему AI. Данные не отправлены — повтори попытку.",
+    );
+    expect(dialog).toHaveTextContent("diagnostic-cancel-1");
+    expect(dialog).not.toHaveTextContent("credential=cancel-secret");
+    expect(mockAgentState.streamInputs).toHaveLength(0);
   });
 
   it("keeps a completion-only provider answer visible", async () => {
@@ -351,6 +563,71 @@ describe("AgentChat", () => {
 
     expect(await screen.findByText("Итоговый ответ")).toBeVisible();
     expect(screen.queryByText("Черновик")).not.toBeInTheDocument();
+  });
+
+  it("wraps long unbroken learner and assistant content", async () => {
+    const learnerToken = `learner-${"a".repeat(300)}`;
+    const assistantToken = `assistant-${"b".repeat(300)}`;
+    mockAgentState.events = [
+      {
+        type: "message.completed",
+        turnId: "turn-1",
+        content: assistantToken,
+      },
+      {
+        type: "session.completed",
+        turnId: "turn-1",
+        reason: "completed",
+      },
+    ];
+    renderAgentChat();
+
+    fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
+      target: { value: learnerToken },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+
+    const learnerMessage = await screen.findByRole("article", { name: "Ты" });
+    expect(within(learnerMessage).getByText(learnerToken)).toHaveClass(
+      "[overflow-wrap:anywhere]",
+    );
+    expect(
+      (await screen.findByText(assistantToken)).closest("div"),
+    ).toHaveClass("[overflow-wrap:anywhere]", "min-w-0", "max-w-[72ch]");
+  });
+
+  it("stops the active stream, ignores late deltas, and resets controls", async () => {
+    mockAgentState.waitForAbort = true;
+    renderAgentChat();
+
+    fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
+      target: { value: "Останови этот ответ" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
+
+    expect(await screen.findByText("Начало ответа")).toBeVisible();
+    const stop = screen.getByRole("button", { name: "Остановить ответ" });
+    expect(mockAgentState.streamSignals).toHaveLength(1);
+    expect(mockAgentState.streamSignals[0]?.aborted).toBe(false);
+
+    fireEvent.click(stop);
+
+    await waitFor(() => {
+      expect(mockAgentState.streamSignals[0]?.aborted).toBe(true);
+      expect(screen.getAllByText("Ответ остановлен.")).toHaveLength(2);
+    });
+    expect(screen.queryByText(/ПОЗДНЯЯ ДЕЛЬТА/u)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Ответ остановлен.", { selector: 'p[role="status"]' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Остановить ответ" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Сообщение агенту")).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Сообщение агенту"), {
+      target: { value: "Следующий вопрос" },
+    });
+    expect(screen.getByRole("button", { name: "Отправить" })).toBeEnabled();
   });
 
   it("discloses only allowlisted tool names and lifecycle status", async () => {
@@ -483,14 +760,18 @@ describe("AgentChat", () => {
     });
     fireEvent.click(await screen.findByRole("button", { name: "Отправить" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Не удалось получить ответ: provider transport failed",
-    );
+    const alert = await screen.findByRole("alert");
     expect(
-      screen.getAllByText(
-        "Не удалось получить ответ: provider transport failed",
+      within(alert).getByText(
+        "Не удалось получить ответ. Сообщение сохранено для повторной отправки.",
       ),
-    ).toHaveLength(1);
+    ).toBeVisible();
+    expect(
+      screen.queryByText("provider transport failed"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(alert).queryByText("Технические подробности"),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Сообщение агенту")).toHaveValue(
       "Проверь мой ответ",
     );

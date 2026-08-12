@@ -182,6 +182,13 @@ describe("Course Pack import", () => {
     expect(
       screen.getAllByRole("button", { name: "Проверить Pack" }),
     ).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Проверить Pack" }),
+    ).toBeDisabled();
+    expect(apiMock).not.toHaveBeenCalledWith(
+      "/course-packs/validate",
+      expect.anything(),
+    );
     await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/course-packs"));
   });
 
@@ -249,8 +256,51 @@ describe("Course Pack import", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Safe QA injected failure")).toBeInTheDocument();
     expect(
-      screen.queryByText("Хранилище M3 недоступно"),
+      screen.queryByText("Локальное хранилище курсов недоступно"),
     ).not.toBeInTheDocument();
+  });
+
+  it("retains hostile long filenames and exposes only bounded failure diagnostics", async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === "/course-packs") {
+        return { storageAvailable: true, packs: [] };
+      }
+      if (path === "/course-packs/validate") {
+        throw {
+          status: 413,
+          code: "payload_too_large",
+          message: "C:\\Users\\learner\\private\\pack.json parser offset 412",
+        };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+    renderWithQuery(<CoursePackImportClient />);
+    const filename = `${"hostile-name-".repeat(24)}<script>.json`;
+    const file = new File(["not json"], filename, {
+      type: "application/json",
+    });
+    fireEvent.change(coursePackFileInput(), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Проверить Pack" }));
+
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveTextContent(
+      `Не удалось проверить файл ${filename}. Выбранный файл сохранён`,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(filename);
+    const picker = screen.getByRole("button", { name: "JSON-файл" });
+    expect(picker).toHaveAttribute("aria-invalid", "true");
+    expect(picker.getAttribute("aria-describedby")?.split(" ")).toContain(
+      error.id,
+    );
+    const details = within(error)
+      .getByText("Технические сведения")
+      .closest("details");
+    expect(details).not.toHaveAttribute("open");
+    expect(
+      within(error).getByText("HTTP 413 · payload_too_large"),
+    ).not.toBeVisible();
+    expect(screen.queryByText(/Users\\learner/u)).not.toBeInTheDocument();
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
   it("keeps restored commit actions disabled when storage is unavailable", async () => {
@@ -269,7 +319,16 @@ describe("Course Pack import", () => {
     await screen.findByRole("heading", {
       name: "Deterministic Learning Basics",
     });
-    expect(screen.getByText("Хранилище M3 недоступно")).toBeInTheDocument();
+    expect(
+      screen.getByText("Локальное хранилище курсов недоступно"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Открыть Core и локальные пути" }),
+    ).toHaveAttribute("href", "/settings?section=advanced");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Повторить проверку хранилища" }),
+    );
+    await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
     expect(
       screen.getByRole("button", { name: "Установить и открыть" }),
     ).toBeDisabled();
@@ -498,7 +557,7 @@ describe("Course Pack import", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          operationId: "123e4567-e89b-42d3-a456-426614174000",
+          operationId: `course-pack:${validValidationResponse.validationId}:install`,
           action: "install",
           expectedContentHash: contentHash,
         }),
@@ -660,20 +719,19 @@ describe("Course Pack import", () => {
     );
 
     await waitFor(() => {
-      const installButton = screen.getByRole("button", {
-        name: "Установить и открыть",
+      const confirmation = screen.getByRole("alertdialog", {
+        name: "Создать этот локальный черновик?",
       });
-      const draftButton = screen.getByRole("button", {
-        name: "Открыть как черновик",
+      const draftButton = within(confirmation).getByRole("button", {
+        name: "Создать локальный черновик",
       });
-      expect(installButton).toBeDisabled();
       expect(draftButton).toBeDisabled();
-      expect(
-        installButton.querySelector('[data-slot="spinner"]'),
-      ).not.toBeInTheDocument();
       expect(
         draftButton.querySelector('[data-slot="spinner"]'),
       ).toBeInTheDocument();
+      expect(
+        within(confirmation).getByRole("button", { name: "Отмена" }),
+      ).toBeDisabled();
     });
 
     await act(async () => {
@@ -694,6 +752,97 @@ describe("Course Pack import", () => {
     await waitFor(() =>
       expect(pushMock).toHaveBeenCalledWith(
         "/courses/studio?version=development-kernel-basics%2Fv1-draft",
+      ),
+    );
+  });
+
+  it("keeps an uncertain commit confirmation open with details and supports retry", async () => {
+    let commitAttempts = 0;
+    const commitBodies: Array<Record<string, unknown>> = [];
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (
+        path ===
+        `/course-packs/validations/${validValidationResponse.validationId}`
+      ) {
+        return validValidationResponse;
+      }
+      if (path.endsWith("/commit")) {
+        commitAttempts += 1;
+        commitBodies.push(
+          JSON.parse(String(init?.body)) as Record<string, unknown>,
+        );
+        if (commitAttempts === 1)
+          throw {
+            status: 503,
+            code: "storage_unavailable",
+            message:
+              "C:\\private\\database.sqlite connection closed after send",
+          };
+        return {
+          result: {
+            courseId: "development-kernel-basics",
+            revisionId: "development-kernel-basics/v1",
+            contentHash,
+            action: "install",
+            revisionStatus: "published",
+            installed: false,
+            idempotent: true,
+          },
+          openPath:
+            "/courses/development-kernel-basics/revisions/development-kernel-basics%2Fv1",
+        };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+    navigationState.search = "?confirm=install";
+    renderWithQuery(
+      <CoursePackIntakeClient
+        operationId={validValidationResponse.validationId}
+      />,
+    );
+    const confirmation = await screen.findByRole("alertdialog", {
+      name: "Установить эту неизменяемую ревизию?",
+    });
+    fireEvent.click(
+      within(confirmation).getByRole("button", {
+        name: "Установить неизменяемую ревизию",
+      }),
+    );
+
+    expect(
+      await within(confirmation).findByText("Локальное изменение не завершено"),
+    ).toBeInTheDocument();
+    expect(confirmation).toBeInTheDocument();
+    expect(within(confirmation).getByText(contentHash)).toBeInTheDocument();
+    const details = within(confirmation)
+      .getAllByText("Технические сведения")
+      .at(-1)
+      ?.closest("details");
+    expect(details).not.toHaveAttribute("open");
+    expect(
+      within(confirmation).getByText("HTTP 503 · storage_unavailable"),
+    ).not.toBeVisible();
+    expect(
+      within(confirmation).queryByText(/private\\database/u),
+    ).not.toBeInTheDocument();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      within(confirmation).getByRole("button", {
+        name: "Повторить локальное изменение",
+      }),
+    );
+    await waitFor(() => expect(commitAttempts).toBe(2));
+    expect(commitBodies).toHaveLength(2);
+    expect(commitBodies[1]).toEqual(commitBodies[0]);
+    expect(commitBodies[0]).toMatchObject({
+      operationId: `course-pack:${validValidationResponse.validationId}:install`,
+      action: "install",
+      expectedContentHash: contentHash,
+    });
+    await waitFor(() =>
+      expect(pushMock).toHaveBeenCalledWith(
+        "/courses/development-kernel-basics/revisions/development-kernel-basics%2Fv1",
       ),
     );
   });
@@ -902,6 +1051,12 @@ describe("Course library", () => {
     expect(
       await screen.findByText("Локальных курсов пока нет"),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Текущий курс не выбран"),
+    ).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[data-slot="empty-state"]')).toHaveLength(
+      1,
+    );
   });
 
   it("renders one row per Course and applies search without changing the current card", async () => {
@@ -982,15 +1137,49 @@ describe("Course library", () => {
       view.container.querySelector('[data-slot="course-current-summary"]'),
     ).toBeInTheDocument();
     expect(
+      view.container.querySelector('[data-slot="course-current-summary"]'),
+    ).toHaveClass(
+      "flex-col",
+      "@min-[48rem]/course-current:flex-row",
+      "@min-[48rem]/course-current:justify-between",
+    );
+    expect(
       view.container.querySelector('[data-slot="course-library-table"]'),
     ).toBeInTheDocument();
+    const libraryLayout = view.container.querySelector(
+      ".\\@container\\/course-library",
+    );
+    expect(libraryLayout).toBeInTheDocument();
+    expect(
+      view.container.querySelector('[data-slot="table-header"]'),
+    ).toHaveClass("@min-[60rem]/course-library:table-header-group");
     const currentRow = screen
       .getByRole("heading", { name: "Current foundations" })
       .closest("tr");
     expect(currentRow).not.toBeNull();
+    expect(currentRow).toHaveClass(
+      "grid",
+      "@min-[60rem]/course-library:table-row",
+    );
     expect(
       within(currentRow as HTMLElement).getByText("Текущий курс"),
     ).toBeVisible();
+    const revisionsDisclosure = screen.getByRole("button", {
+      name: "Current foundations: Ревизий: 2",
+    });
+    fireEvent.click(revisionsDisclosure);
+    expect(
+      within(screen.getByRole("listitem", { name: "Ревизия 1" })).getByRole(
+        "button",
+        { name: "Недоступно · Ревизия 1" },
+      ),
+    ).toBeDisabled();
+    expect(
+      within(screen.getByRole("listitem", { name: "Ревизия 2" })).getByRole(
+        "link",
+        { name: "Открыть · Ревизия 2" },
+      ),
+    ).toHaveAttribute("href", "/courses/current-course/revisions/current-v2");
     const progressRings = Array.from(
       view.container.querySelectorAll<HTMLElement>(
         '[data-slot="course-progress-ring"]',
@@ -1009,6 +1198,11 @@ describe("Course library", () => {
       ),
     ).toEqual(["50%", "0%"]);
     expect(progressRings[0]).toHaveClass("size-10", "shrink-0");
+    expect(
+      within(currentRow as HTMLElement).getByRole("button", {
+        name: "Другие действия для курса «Current foundations»",
+      }),
+    ).toHaveClass("size-11", "shrink-0", "md:size-11");
     expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(2);
     expect(screen.getByText("Показано 1–2 из 2")).toBeInTheDocument();
 
@@ -1109,6 +1303,168 @@ describe("Course library", () => {
     ).toHaveTextContent("100%");
   });
 
+  it("shows storage recovery without hiding the readable local library", async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === "/course-packs") {
+        return { storageAvailable: false, packs: [] };
+      }
+      if (path === "/learning/courses") {
+        return {
+          courses: [
+            {
+              id: "draft-course",
+              stableId: "draft-course",
+              title: "Readable local draft",
+              description: null,
+              primaryLocale: "en-US",
+              selected: false,
+              activeRevisionId: null,
+              currentSessionId: null,
+              revisions: [
+                {
+                  id: "draft-revision",
+                  revisionNumber: 1,
+                  status: "draft",
+                  branchKind: "personal",
+                  contentHash: null,
+                  learningSummary: notStartedSummary,
+                },
+              ],
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+
+    renderWithQuery(<CourseLibraryClient />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Readable local draft" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Локальное хранилище курсов недоступно"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Открыть Core и локальные пути" }),
+    ).toHaveAttribute("href", "/settings?section=advanced");
+    expect(
+      screen.getByRole("button", { name: "Повторить проверку хранилища" }),
+    ).toBeInTheDocument();
+  });
+
+  it("fails a stale selected archived revision closed while preserving history", async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === "/course-packs") {
+        return { storageAvailable: true, packs: [] };
+      }
+      if (path === "/learning/courses") {
+        return {
+          courses: [
+            {
+              id: "stale-course",
+              stableId: "stale-course",
+              title: "Archived selection",
+              description: "Selection points at history, not a learning target",
+              primaryLocale: "en-US",
+              selected: true,
+              activeRevisionId: "archived-revision",
+              currentSessionId: null,
+              revisions: [
+                {
+                  id: "archived-revision",
+                  revisionNumber: 1,
+                  status: "archived",
+                  branchKind: "upstream",
+                  contentHash,
+                  learningSummary: notStartedSummary,
+                },
+              ],
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+
+    renderWithQuery(<CourseLibraryClient />);
+
+    const currentSummary = await screen.findByText("Ревизия курса недоступна");
+    expect(currentSummary).toBeInTheDocument();
+    expect(
+      currentSummary.closest('[data-slot="course-current-summary"]'),
+    ).not.toHaveTextContent("Открыть");
+    const row = screen
+      .getByRole("heading", { name: "Archived selection" })
+      .closest("tr");
+    expect(row).not.toBeNull();
+    expect(
+      within(row as HTMLElement).getByRole("button", { name: "Недоступно" }),
+    ).toBeDisabled();
+  });
+
+  it("matches status filters against every immutable Course revision", async () => {
+    navigationState.search = "?filter=archived";
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === "/course-packs") {
+        return { storageAvailable: true, packs: [] };
+      }
+      if (path === "/learning/courses") {
+        return {
+          courses: [
+            {
+              id: "course-history",
+              stableId: "course-history",
+              title: "Course with history",
+              description: null,
+              primaryLocale: "en-US",
+              selected: true,
+              activeRevisionId: "published-revision",
+              currentSessionId: null,
+              revisions: [
+                {
+                  id: "archived-revision",
+                  revisionNumber: 1,
+                  status: "archived",
+                  branchKind: "upstream",
+                  contentHash,
+                  learningSummary: notStartedSummary,
+                },
+                {
+                  id: "published-revision",
+                  revisionNumber: 2,
+                  status: "published",
+                  branchKind: "upstream",
+                  contentHash,
+                  learningSummary: notStartedSummary,
+                },
+              ],
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+
+    renderWithQuery(<CourseLibraryClient />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Course with history" }),
+    ).toBeInTheDocument();
+    const row = screen
+      .getByRole("heading", { name: "Course with history" })
+      .closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("Ревизия 1")).toBeVisible();
+    expect(within(row as HTMLElement).getByText("Архивный")).toBeVisible();
+    expect(
+      within(row as HTMLElement).getByRole("button", { name: "Недоступно" }),
+    ).toBeDisabled();
+    expect(
+      within(row as HTMLElement).queryByRole("link", { name: "Открыть" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("restores search, filter, and pagination from browser history and reloads", async () => {
     const courses = [
       ...Array.from({ length: 9 }, (_, index) => {
@@ -1173,9 +1529,9 @@ describe("Course library", () => {
     expect(
       screen.queryByRole("heading", { name: "Course 01" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("searchbox", { name: "Поиск курсов" })).toHaveValue(
-      "Course",
-    );
+    expect(
+      await screen.findByRole("searchbox", { name: "Поиск курсов" }),
+    ).toHaveValue("Course");
     expect(screen.getByText("Показано 9–9 из 9")).toBeInTheDocument();
     expect(
       within(
@@ -1187,9 +1543,11 @@ describe("Course library", () => {
       button: 0,
       ctrlKey: false,
     });
-    expect(
-      await screen.findByRole("menuitemradio", { name: "Черновик" }),
-    ).toHaveAttribute("aria-checked", "true");
+    const draftFilter = await screen.findByRole("menuitemradio", {
+      name: "Черновик",
+    });
+    expect(draftFilter).toHaveAttribute("aria-checked", "true");
+    expect(draftFilter).toHaveClass("min-h-11", "md:min-h-9", "md:py-1.5");
     fireEvent.keyDown(document, { key: "Escape" });
 
     navigationState.search = "?q=Course&filter=draft&keep=yes";
@@ -1201,13 +1559,79 @@ describe("Course library", () => {
       screen.queryByRole("heading", { name: "Course 09" }),
     ).not.toBeInTheDocument();
     expect(screen.getByText("Показано 1–8 из 9")).toBeInTheDocument();
+    expect(replaceMock).not.toHaveBeenCalled();
 
+    replaceMock.mockClear();
     navigationState.search = "?q=Course&filter=draft&page=2&keep=yes";
     view.rerender(<CourseLibraryClient />);
     expect(
       await screen.findByRole("heading", { name: "Course 09" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Показано 9–9 из 9")).toBeInTheDocument();
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("canonicalizes malformed and default library URL state without losing search or unrelated parameters", async () => {
+    navigationState.search = "?q=Course&filter=unknown&page=0&keep=yes";
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === "/course-packs") {
+        return { storageAvailable: true, packs: [] };
+      }
+      if (path === "/learning/courses") {
+        return {
+          courses: [
+            {
+              id: "course-query-state",
+              stableId: "course-query-state",
+              title: "Course query state",
+              description: null,
+              primaryLocale: "en-US",
+              selected: false,
+              activeRevisionId: null,
+              currentSessionId: null,
+              revisions: [
+                {
+                  id: "course-query-state/v1",
+                  revisionNumber: 1,
+                  status: "draft",
+                  branchKind: "personal",
+                  contentHash: null,
+                  learningSummary: notStartedSummary,
+                },
+              ],
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+
+    const view = renderWithQuery(<CourseLibraryClient />);
+
+    await waitFor(() =>
+      expect(replaceMock).toHaveBeenCalledWith("/courses?q=Course&keep=yes", {
+        scroll: false,
+      }),
+    );
+    expect(
+      await screen.findByRole("searchbox", { name: "Поиск курсов" }),
+    ).toHaveValue("Course");
+
+    replaceMock.mockClear();
+    navigationState.search = "?q=Course&filter=draft&page=2&keep=yes";
+    view.rerender(<CourseLibraryClient />);
+    expect(replaceMock).not.toHaveBeenCalledWith(
+      "/courses?q=Course&filter=draft&page=2&keep=yes",
+      expect.anything(),
+    );
+
+    navigationState.search = "?q=Course&filter=all&page=1&keep=yes";
+    view.rerender(<CourseLibraryClient />);
+    await waitFor(() =>
+      expect(replaceMock).toHaveBeenCalledWith("/courses?q=Course&keep=yes", {
+        scroll: false,
+      }),
+    );
   });
 
   it("renders historical revisions with an unprefixed SHA-256 digest", async () => {

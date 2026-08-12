@@ -2,6 +2,8 @@ import {
   expect,
   test,
   type APIRequestContext,
+  type Browser,
+  type Locator,
   type Page,
 } from "@playwright/test";
 import { rm, writeFile } from "node:fs/promises";
@@ -781,6 +783,372 @@ test("runs and restores the dedicated interview workflow", async ({ page }) => {
     page.getByRole("link", { name: "Вернуться к занятию" }),
   ).toHaveCount(0);
 });
+
+const responsiveMatrix = [
+  {
+    label: "1586x992 Home expanded",
+    viewport: { width: 1586, height: 992 },
+    path: "/",
+    locale: "en-US",
+    theme: "light",
+    collapsed: false,
+    ready: '[data-slot="home-primary-action"]',
+    primaryAction: '[data-slot="home-primary-action"]',
+  },
+  {
+    label: "1440x900 Courses expanded",
+    viewport: { width: 1440, height: 900 },
+    path: "/courses",
+    locale: "ru-RU",
+    theme: "dark",
+    collapsed: false,
+    ready: '[data-slot="page-header"]',
+    primaryAction: '[data-slot="page-header"] [data-slot="button"]',
+  },
+  {
+    label: "1280x800 Review expanded",
+    viewport: { width: 1280, height: 800 },
+    path: "/review",
+    locale: "en-US",
+    theme: "light",
+    collapsed: false,
+    ready: '[data-slot="review-destination-navigation"]',
+    primaryAction: '[data-slot="review-destination-navigation"] [role="tab"]',
+  },
+  {
+    label: "1280x800 Skills collapsed",
+    viewport: { width: 1280, height: 800 },
+    path: "/skills",
+    locale: "ru-RU",
+    theme: "dark",
+    collapsed: true,
+    ready: '[data-slot="page-header"]',
+    primaryAction: 'main [data-slot="button"]',
+  },
+  {
+    label: "1024x768 Settings expanded",
+    viewport: { width: 1024, height: 768 },
+    path: "/settings",
+    locale: "en-US",
+    theme: "dark",
+    collapsed: false,
+    ready: '[data-slot="settings-form"]',
+    primaryAction: '[data-slot="settings-form"] [data-slot="button"]',
+  },
+  {
+    label: "768x1024 Courses collapsed",
+    viewport: { width: 768, height: 1024 },
+    path: "/courses",
+    locale: "ru-RU",
+    theme: "light",
+    collapsed: true,
+    ready: '[data-slot="page-header"]',
+    primaryAction: '[data-slot="page-header"] [data-slot="button"]',
+  },
+  {
+    label: "390x844 Review mobile",
+    viewport: { width: 390, height: 844 },
+    path: "/review",
+    locale: "en-US",
+    theme: "dark",
+    collapsed: false,
+    ready: '[data-slot="review-destination-navigation"]',
+    primaryAction:
+      '[data-slot="review-destination-navigation"] [data-slot="select-trigger"]',
+  },
+  {
+    label: "320x700 Session mobile",
+    viewport: { width: 320, height: 700 },
+    path: "session",
+    locale: "ru-RU",
+    theme: "light",
+    collapsed: false,
+    ready: '[data-slot="session-progress-header"]',
+    primaryAction: 'main [data-slot="button"]',
+  },
+  {
+    label: "effective 200% reflow from 1280x800",
+    viewport: { width: 640, height: 400 },
+    path: "/",
+    locale: "en-US",
+    theme: "dark",
+    collapsed: false,
+    reducedMotion: true,
+    ready: '[data-slot="home-primary-action"]',
+    primaryAction: '[data-slot="home-primary-action"]',
+  },
+] as const;
+
+test("keeps the seeded daily flow usable across the responsive accessibility matrix", async ({
+  browser,
+  request,
+}) => {
+  test.setTimeout(120_000);
+  const sessionId = await ensureSeededResponsiveSession(request);
+
+  for (const scenario of responsiveMatrix) {
+    await test.step(scenario.label, async () => {
+      const page = await openResponsiveMatrixPage(browser, scenario);
+      try {
+        const path =
+          scenario.path === "session"
+            ? `/session?id=${encodeURIComponent(sessionId)}`
+            : scenario.path;
+        await page.goto(path);
+        await expect(page.locator(scenario.ready).first()).toBeVisible();
+        await expect(page.locator("html")).toHaveAttribute(
+          "lang",
+          scenario.locale,
+        );
+        await expect(page.locator("html")).toHaveClass(
+          new RegExp(`(?:^|\\s)${scenario.theme}(?:\\s|$)`, "u"),
+        );
+
+        await expectResponsiveShell(page, scenario.viewport.width);
+        await expectNoDocumentOverflow(page);
+        await expectPrimaryActionIsUsable(page, scenario.primaryAction);
+
+        if (scenario.viewport.width < 768) {
+          await expectMobileTouchTargets(page);
+        }
+        if ("reducedMotion" in scenario && scenario.reducedMotion) {
+          await expectReducedMotion(page);
+        }
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+});
+
+async function openResponsiveMatrixPage(
+  browser: Browser,
+  scenario: (typeof responsiveMatrix)[number],
+): Promise<Page> {
+  const context = await browser.newContext({
+    baseURL: webOrigin,
+    colorScheme: scenario.theme,
+    reducedMotion:
+      "reducedMotion" in scenario && scenario.reducedMotion
+        ? "reduce"
+        : "no-preference",
+    viewport: scenario.viewport,
+  });
+  await context.addCookies([
+    {
+      name: "aptiloop.ui-locale",
+      value: scenario.locale,
+      url: webOrigin,
+    },
+    {
+      name: "aptiloop.sidebar-collapsed",
+      value: String(scenario.collapsed),
+      url: webOrigin,
+    },
+  ]);
+  const page = await context.newPage();
+  await page.addInitScript(
+    ({ collapsed, locale, theme }) => {
+      window.localStorage.setItem("aptiloop:ui-locale", locale);
+      window.localStorage.setItem(
+        "aptiloop:sidebar-collapsed",
+        String(collapsed),
+      );
+      window.localStorage.setItem("theme", theme);
+    },
+    {
+      collapsed: scenario.collapsed,
+      locale: scenario.locale,
+      theme: scenario.theme,
+    },
+  );
+  return page;
+}
+
+async function expectResponsiveShell(
+  page: Page,
+  viewportWidth: number,
+): Promise<void> {
+  const utilityHeader = page.locator('[data-slot="utility-header"]');
+  await expect(utilityHeader).toBeVisible();
+  await expect
+    .poll(async () =>
+      Math.round((await utilityHeader.boundingBox())?.height ?? 0),
+    )
+    .toBe(72);
+  expect(
+    await page.evaluate(() =>
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--shell-bar-size")
+        .trim(),
+    ),
+  ).toBe("4.5rem");
+
+  const desktopNavigation = page.locator(
+    '[data-slot="sidebar"] nav[aria-label]',
+  );
+  const mobileNavigation = page.locator('[data-slot="mobile-navigation"]');
+  if (viewportWidth >= 768) {
+    await expect(desktopNavigation).toBeVisible();
+    await expect(mobileNavigation).toBeHidden();
+    await expect(desktopNavigation.getByRole("link")).toHaveCount(5);
+    const sidebar = page.locator('[data-slot="sidebar"]');
+    const sidebarHeader = page.locator('[data-slot="sidebar-header"]');
+    await expect
+      .poll(async () =>
+        Math.round((await sidebarHeader.boundingBox())?.height ?? 0),
+      )
+      .toBe(72);
+    if ((await sidebar.getAttribute("data-state")) === "collapsed") {
+      await expect
+        .poll(async () => {
+          const rail = await sidebar.boundingBox();
+          const corner = await sidebarHeader.boundingBox();
+          return rail && corner
+            ? [
+                Math.round(rail.width),
+                Math.round(corner.width),
+                Math.round(corner.height),
+              ]
+            : [];
+        })
+        .toEqual([72, 72, 72]);
+    }
+  } else {
+    await expect(desktopNavigation).toBeHidden();
+    await expect(mobileNavigation).toBeVisible();
+    await expect(mobileNavigation.getByRole("link")).toHaveCount(5);
+  }
+}
+
+async function expectNoDocumentOverflow(page: Page): Promise<void> {
+  await expect
+    .poll(async () =>
+      page.evaluate(() => ({
+        bodyFits: document.body.scrollWidth <= document.body.clientWidth,
+        documentFits:
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth,
+      })),
+    )
+    .toEqual({
+      bodyFits: true,
+      documentFits: true,
+    });
+}
+
+async function expectPrimaryActionIsUsable(
+  page: Page,
+  selector: string,
+): Promise<void> {
+  const action = await firstVisible(page.locator(selector));
+  await action.scrollIntoViewIfNeeded();
+  await expect(action).toBeVisible();
+  const box = await action.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+}
+
+async function firstVisible(locator: Locator): Promise<Locator> {
+  for (let index = 0; index < (await locator.count()); index += 1) {
+    const candidate = locator.nth(index);
+    if (await candidate.isVisible()) return candidate;
+  }
+  throw new Error("Expected at least one visible primary action");
+}
+
+async function expectMobileTouchTargets(page: Page): Promise<void> {
+  const targets = page.locator(
+    '[data-slot="mobile-navigation"] a, main [data-slot="button"], main [data-slot="select-trigger"], main [role="tab"]',
+  );
+  let visibleTargets = 0;
+  for (let index = 0; index < (await targets.count()); index += 1) {
+    const target = targets.nth(index);
+    if (!(await target.isVisible())) continue;
+    visibleTargets += 1;
+    const box = await target.boundingBox();
+    expect(box, `touch target ${index} must have a box`).not.toBeNull();
+    expect(box!.width, `touch target ${index} width`).toBeGreaterThanOrEqual(
+      44,
+    );
+    expect(box!.height, `touch target ${index} height`).toBeGreaterThanOrEqual(
+      44,
+    );
+  }
+  expect(visibleTargets).toBeGreaterThanOrEqual(6);
+}
+
+async function expectReducedMotion(page: Page): Promise<void> {
+  expect(
+    await page.evaluate(
+      () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    ),
+  ).toBe(true);
+  const durations = await page
+    .locator('[data-slot="app-shell"]')
+    .evaluate((shell) => {
+      const samples = [
+        shell,
+        ...shell.querySelectorAll('[data-slot="button"]'),
+      ];
+      return samples.flatMap((element) => {
+        const style = getComputedStyle(element);
+        return [style.animationDuration, style.transitionDuration];
+      });
+    });
+  for (const duration of durations) {
+    for (const value of duration.split(",")) {
+      const normalized = value.trim();
+      const milliseconds = normalized.endsWith("ms")
+        ? Number.parseFloat(normalized)
+        : Number.parseFloat(normalized) * 1000;
+      expect(milliseconds).toBeLessThanOrEqual(0.01);
+    }
+  }
+}
+
+async function ensureSeededResponsiveSession(
+  request: APIRequestContext,
+): Promise<string> {
+  const headers = { "X-Aptiloop-Client": "web", Origin: webOrigin };
+  const currentResponse = await request.get(
+    `${orchestratorOrigin}/api/learning/sessions/current`,
+    { headers },
+  );
+  expect(currentResponse.ok()).toBe(true);
+  const current = (await currentResponse.json()) as {
+    session: { id: string } | null;
+  };
+  if (current.session) return current.session.id;
+
+  const pathResponse = await request.get(
+    `${orchestratorOrigin}/api/learning/path`,
+    { headers },
+  );
+  expect(pathResponse.ok()).toBe(true);
+  const learningPath = (await pathResponse.json()) as {
+    nextAction: { type: string; lessonId: string } | null;
+  };
+  if (learningPath.nextAction?.type !== "start") {
+    throw new Error("Seeded E2E data has no session or startable lesson");
+  }
+  const response = await request.post(
+    `${orchestratorOrigin}/api/learning/sessions/v2`,
+    {
+      data: {
+        dayId: learningPath.nextAction.lessonId,
+        operationId: crypto.randomUUID(),
+      },
+      headers,
+    },
+  );
+  expect(response.ok()).toBe(true);
+  const created = (await response.json()) as { session: { id: string } };
+  return created.session.id;
+}
 
 async function startUnit(page: Page): Promise<void> {
   const button = page.getByRole("button", { name: "Начать активность" });

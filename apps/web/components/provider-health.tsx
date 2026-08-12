@@ -329,9 +329,18 @@ export function ProviderHealth({
             </p>
           ) : null}
           <div className="border-t border-border pt-2">
+            {hasProblem || hasDegraded ? (
+              <Link
+                href="/settings?section=connections&source=recovery"
+                data-slot="provider-recovery-link"
+                className="inline-flex h-9 w-full items-center justify-center rounded-control bg-primary px-3 text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary-hover focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+              >
+                {t("provider.recoverConnections")}
+              </Link>
+            ) : null}
             <Link
               href="/settings/developer-tools"
-              className="text-xs font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+              className="mt-2 inline-flex text-xs font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
             >
               {t("provider.fullDiagnostics")}
             </Link>

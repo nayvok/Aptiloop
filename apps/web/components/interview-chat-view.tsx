@@ -153,6 +153,7 @@ export function InterviewChatView({
                             aria-atomic={live ? "true" : undefined}
                           >
                             <Markdown
+                              baseHeadingLevel={2}
                               className={`${markdownContentClassName} max-w-[72ch]`}
                             >
                               {message.content}

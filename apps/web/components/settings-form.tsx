@@ -7,8 +7,13 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { ApiError, api } from "@/lib/api";
-import { type MessageKey, useI18n, isUiLocale } from "@/lib/i18n";
+import { api } from "@/lib/api";
+import {
+  type MessageKey,
+  type UiLocale,
+  useI18n,
+  isUiLocale,
+} from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,7 +35,7 @@ import {
   PopoverRoot,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { QueryError } from "@/components/query-state";
+import { QueryError, SafeQueryError } from "@/components/query-state";
 import {
   ProviderConnectionManager,
   type ProviderConnectionSummary,
@@ -644,24 +649,77 @@ function browserPreferenceStorageAvailable(): boolean {
     const key = "aptiloop:preference-storage-check";
     window.localStorage.setItem(key, "1");
     window.localStorage.removeItem(key);
+    window.sessionStorage.setItem(key, "1");
+    window.sessionStorage.removeItem(key);
     return true;
   } catch {
     return false;
   }
 }
 
-function InterfaceSettingsPane() {
+const uiLocaleDraftStorageKey = "aptiloop:ui-locale-draft";
+
+function readLocaleDraft(): {
+  available: boolean;
+  locale: UiLocale | null;
+} {
+  try {
+    const value = window.sessionStorage.getItem(uiLocaleDraftStorageKey);
+    if (value === null) return { available: true, locale: null };
+    if (isUiLocale(value)) return { available: true, locale: value };
+    window.sessionStorage.removeItem(uiLocaleDraftStorageKey);
+    return { available: true, locale: null };
+  } catch {
+    return { available: false, locale: null };
+  }
+}
+
+function persistLocaleDraft(locale: UiLocale): boolean {
+  try {
+    window.sessionStorage.setItem(uiLocaleDraftStorageKey, locale);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearLocaleDraft(): boolean {
+  try {
+    window.sessionStorage.removeItem(uiLocaleDraftStorageKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type LocaleSaveStatus = "idle" | "saved" | "error";
+
+function InterfaceSettingsPane({
+  draftLocale,
+  localeDirty,
+  localeSaveStatus,
+  storageAvailable,
+  onDraftLocaleChange,
+  onCancelLocale,
+  onSaveLocale,
+  onStorageAvailabilityChange,
+}: {
+  draftLocale: UiLocale;
+  localeDirty: boolean;
+  localeSaveStatus: LocaleSaveStatus;
+  storageAvailable: boolean | null;
+  onDraftLocaleChange: (locale: UiLocale) => void;
+  onCancelLocale: () => void;
+  onSaveLocale: () => void;
+  onStorageAvailabilityChange: (available: boolean) => void;
+}) {
   const { theme, setTheme } = useTheme();
-  const { locale, setLocale, t } = useI18n();
+  const { t } = useI18n();
   const [themeMounted, setThemeMounted] = useState(false);
-  const [storageAvailable, setStorageAvailable] = useState<boolean | null>(
-    null,
-  );
   const themeValue = isThemePreference(theme) ? theme : "system";
 
   useEffect(() => {
     setThemeMounted(true);
-    setStorageAvailable(browserPreferenceStorageAvailable());
   }, []);
 
   return (
@@ -694,7 +752,9 @@ function InterfaceSettingsPane() {
                 onValueChange={(value) => {
                   if (!isThemePreference(value)) return;
                   setTheme(value);
-                  setStorageAvailable(browserPreferenceStorageAvailable());
+                  onStorageAvailabilityChange(
+                    browserPreferenceStorageAvailable(),
+                  );
                 }}
               >
                 <SelectTrigger id="theme" className="w-full">
@@ -736,11 +796,10 @@ function InterfaceSettingsPane() {
               <FieldDescription>{t("settings.locale.help")}</FieldDescription>
             </FieldContent>
             <Select
-              value={locale}
+              value={draftLocale}
               onValueChange={(value) => {
                 if (!isUiLocale(value)) return;
-                setLocale(value);
-                setStorageAvailable(browserPreferenceStorageAvailable());
+                onDraftLocaleChange(value);
               }}
             >
               <SelectTrigger id="ui-locale" className="w-full">
@@ -760,21 +819,50 @@ function InterfaceSettingsPane() {
           </Field>
           <div
             data-slot="settings-interface-footer"
-            className="border-t border-border/35 py-3.5"
+            className="flex flex-col gap-3 border-t border-border/35 py-3.5 sm:flex-row sm:items-center sm:justify-between"
           >
-            {storageAvailable === false ? (
-              <span role="alert" className="text-sm text-warning-foreground">
-                {t("settings.localStorageUnavailable")}
-              </span>
-            ) : (
-              <span
-                role="status"
-                aria-live="polite"
-                className="text-xs leading-5 text-muted-foreground"
+            <div className="min-w-0">
+              {storageAvailable === false ? (
+                <span role="alert" className="text-sm text-warning-foreground">
+                  {t("settings.localStorageUnavailable")}
+                </span>
+              ) : localeSaveStatus === "error" ? (
+                <span role="alert" className="text-sm text-destructive">
+                  {t("settings.saveError")}
+                </span>
+              ) : (
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className="text-xs leading-5 text-muted-foreground"
+                >
+                  {t(
+                    localeDirty
+                      ? "settings.locale.unsaved"
+                      : localeSaveStatus === "saved"
+                        ? "settings.saved"
+                        : "settings.localOnly",
+                  )}
+                </span>
+              )}
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!localeDirty}
+                onClick={onCancelLocale}
               >
-                {t("settings.localOnly")}
-              </span>
-            )}
+                {t("settings.cancel")}
+              </Button>
+              <Button
+                type="button"
+                disabled={!localeDirty}
+                onClick={onSaveLocale}
+              >
+                {t("settings.save")}
+              </Button>
+            </div>
           </div>
         </FieldGroup>
       </section>
@@ -787,14 +875,101 @@ export function SettingsForm() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t } = useI18n();
+  const { locale, setLocale, t } = useI18n();
   const requestedSection = searchParams.get("section");
   const activeSection = isSettingsSection(requestedSection)
     ? requestedSection
     : "interface";
+  const searchParamString = searchParams.toString();
   const [roleProfiles, setRoleProfiles] = useState<RoleProfile[]>([]);
   const [defaultAiSelection, setDefaultAiSelection] = useState("off");
   const [roleOverrides, setRoleOverrides] = useState<RoleOverrides>({});
+  const [draftLocale, setDraftLocale] = useState<UiLocale>(locale);
+  const [localeDraftEdited, setLocaleDraftEdited] = useState(false);
+  const [localeDraftHydrated, setLocaleDraftHydrated] = useState(false);
+  const [localeSaveStatus, setLocaleSaveStatus] =
+    useState<LocaleSaveStatus>("idle");
+  const [storageAvailable, setStorageAvailable] = useState<boolean | null>(
+    null,
+  );
+  const localeDirty = draftLocale !== locale;
+  useEffect(() => {
+    const storedDraft = readLocaleDraft();
+    const storageReady =
+      storedDraft.available && browserPreferenceStorageAvailable();
+    setStorageAvailable(storageReady);
+    if (storedDraft.locale && storedDraft.locale !== locale) {
+      setDraftLocale(storedDraft.locale);
+      setLocaleDraftEdited(true);
+    } else if (storedDraft.locale) {
+      clearLocaleDraft();
+      setDraftLocale(locale);
+      setLocaleDraftEdited(false);
+    }
+    setLocaleDraftHydrated(true);
+  }, [locale]);
+  useEffect(() => {
+    if (!localeDraftHydrated || localeDraftEdited) return;
+    setDraftLocale(locale);
+  }, [locale, localeDraftEdited, localeDraftHydrated]);
+  const updateDraftStorage = (nextLocale: UiLocale) => {
+    const available =
+      nextLocale === locale
+        ? clearLocaleDraft()
+        : persistLocaleDraft(nextLocale);
+    setStorageAvailable(available && browserPreferenceStorageAvailable());
+    return available;
+  };
+  const interfaceSettingsPane = (
+    <InterfaceSettingsPane
+      draftLocale={draftLocale}
+      localeDirty={localeDirty}
+      localeSaveStatus={localeSaveStatus}
+      storageAvailable={storageAvailable}
+      onDraftLocaleChange={(nextLocale) => {
+        setDraftLocale(nextLocale);
+        setLocaleDraftEdited(nextLocale !== locale);
+        setLocaleSaveStatus("idle");
+        updateDraftStorage(nextLocale);
+      }}
+      onCancelLocale={() => {
+        const cleared = clearLocaleDraft();
+        setDraftLocale(locale);
+        setLocaleDraftEdited(false);
+        setLocaleSaveStatus("idle");
+        setStorageAvailable(cleared && browserPreferenceStorageAvailable());
+      }}
+      onSaveLocale={() => {
+        if (!browserPreferenceStorageAvailable()) {
+          setStorageAvailable(false);
+          setLocaleSaveStatus("error");
+          return;
+        }
+        if (!clearLocaleDraft()) {
+          setStorageAvailable(false);
+          setLocaleSaveStatus("error");
+          return;
+        }
+        const saved = setLocale(draftLocale);
+        if (!saved) persistLocaleDraft(draftLocale);
+        setStorageAvailable(saved);
+        setLocaleSaveStatus(saved ? "saved" : "error");
+        if (saved) setLocaleDraftEdited(false);
+      }}
+      onStorageAvailabilityChange={setStorageAvailable}
+    />
+  );
+  useEffect(() => {
+    if (requestedSection === null || isSettingsSection(requestedSection)) {
+      return;
+    }
+    const next = new URLSearchParams(searchParamString);
+    next.delete("section");
+    const serialized = next.toString();
+    router.replace(serialized ? `${pathname}?${serialized}` : pathname, {
+      scroll: false,
+    });
+  }, [pathname, requestedSection, router, searchParamString]);
   const query = useQuery({
     queryKey: ["settings", "page"],
     queryFn: () => api<SettingsQuery>("/settings"),
@@ -852,7 +1027,7 @@ export function SettingsForm() {
   });
   const navigateToSection = (value: string) => {
     if (!isSettingsSection(value) || value === activeSection) return;
-    const next = new URLSearchParams(searchParams.toString());
+    const next = new URLSearchParams(searchParamString);
     next.set("section", value);
     router.push(`${pathname}?${next.toString()}`, { scroll: false });
   };
@@ -863,7 +1038,7 @@ export function SettingsForm() {
         activeSection={activeSection}
         navigateToSection={navigateToSection}
       >
-        <InterfaceSettingsPane />
+        {interfaceSettingsPane}
       </SettingsLayout>
     );
   }
@@ -957,7 +1132,7 @@ export function SettingsForm() {
       activeSection={activeSection}
       navigateToSection={navigateToSection}
     >
-      <InterfaceSettingsPane />
+      {interfaceSettingsPane}
 
       <TabsContent value="ai">
         <section aria-labelledby="settings-ai-title" className={sectionClass}>
@@ -1151,6 +1326,15 @@ export function SettingsForm() {
               </CollapsibleContent>
             </Collapsible>
 
+            {saveAi.isError ? (
+              <div className="border-t border-border/60 p-4 sm:px-5">
+                <SafeQueryError
+                  error={saveAi.error}
+                  operation="settings.ai.save"
+                  retry={() => saveAi.mutate(editedRoleProfiles)}
+                />
+              </div>
+            ) : null}
             <div className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-5">
               <span
                 role="status"
@@ -1159,11 +1343,7 @@ export function SettingsForm() {
               >
                 {saveAi.isSuccess
                   ? t("settings.aiSaved")
-                  : saveAi.isError
-                    ? saveAi.error instanceof ApiError
-                      ? saveAi.error.message
-                      : t("settings.aiSaveError")
-                    : t("settings.externalDisclosure")}
+                  : t("settings.externalDisclosure")}
               </span>
               <Button
                 className="w-full sm:w-auto"

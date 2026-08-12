@@ -72,7 +72,7 @@ function ReviewRow({
 }: {
   review: ReviewItem;
   dismissing: boolean;
-  onDismiss: (review: ReviewItem) => void;
+  onDismiss: (review: ReviewItem, onSuccess: () => void) => void;
 }) {
   const { formatDate, t } = useI18n();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -197,7 +197,10 @@ function ReviewRow({
           <AlertDialogAction
             variant="destructive"
             disabled={dismissing}
-            onClick={() => onDismiss(review)}
+            onClick={(event) => {
+              event.preventDefault();
+              onDismiss(review, () => setConfirmOpen(false));
+            }}
           >
             {dismissing ? <Spinner data-icon="inline-start" /> : null}
             {t("cards.dismiss")}
@@ -357,7 +360,9 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
               key={review.id}
               review={review}
               dismissing={dismissingId === review.id}
-              onDismiss={(item) => dismiss.mutate(item)}
+              onDismiss={(item, onSuccess) =>
+                dismiss.mutate(item, { onSuccess })
+              }
             />
           ))}
         </div>
@@ -405,7 +410,9 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
                   key={review.id}
                   review={review}
                   dismissing={false}
-                  onDismiss={(item) => dismiss.mutate(item)}
+                  onDismiss={(item, onSuccess) =>
+                    dismiss.mutate(item, { onSuccess })
+                  }
                 />
               ))}
             </div>

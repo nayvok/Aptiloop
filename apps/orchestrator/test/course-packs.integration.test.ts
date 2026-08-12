@@ -172,6 +172,99 @@ describe("Course Pack HTTP lifecycle", () => {
       },
     });
     expect(await readdir(stagingRoot)).toEqual([]);
+    const replay = await app.request(
+      `/api/course-packs/validations/${preview.validationId}/commit`,
+      jsonRequest({
+        operationId: "install-pack",
+        action: "install",
+        expectedContentHash: preview.preview.contentHash,
+      }),
+    );
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      result: {
+        revisionId: pack.revision.revisionKey,
+        installed: false,
+        idempotent: true,
+      },
+    });
+    expect(await readdir(stagingRoot)).toEqual([]);
+    expect(
+      connection.sqlite
+        .prepare(
+          "SELECT count(*) AS count FROM course_pack_lifecycle_events WHERE operation_id = ?",
+        )
+        .get("install-pack"),
+    ).toEqual({ count: 1 });
+    for (const mismatchBody of [
+      {
+        operationId: "install-pack",
+        action: "open-as-draft",
+        expectedContentHash: preview.preview.contentHash,
+      },
+      {
+        operationId: "install-pack",
+        action: "install",
+        expectedContentHash: `sha256:${"e".repeat(64)}`,
+      },
+    ] as const) {
+      const operationMismatch = await app.request(
+        `/api/course-packs/validations/${preview.validationId}/commit`,
+        jsonRequest(mismatchBody),
+      );
+      expect(operationMismatch.status).toBe(409);
+      expect(await operationMismatch.json()).toMatchObject({
+        code: "conflict",
+      });
+    }
+    const otherValidation = await app.request(
+      "/api/course-packs/validate",
+      jsonRequest(pack),
+    );
+    const otherPreview = (await otherValidation.json()) as {
+      validationId: string;
+      preview: { contentHash: string };
+    };
+    const validationMismatch = await app.request(
+      `/api/course-packs/validations/${otherPreview.validationId}/commit`,
+      jsonRequest({
+        operationId: "install-pack",
+        action: "install",
+        expectedContentHash: otherPreview.preview.contentHash,
+      }),
+    );
+    expect(validationMismatch.status).toBe(409);
+    expect(await validationMismatch.json()).toMatchObject({ code: "conflict" });
+    expect(await readdir(stagingRoot)).toHaveLength(1);
+    const freshOperationReplay = await app.request(
+      `/api/course-packs/validations/${otherPreview.validationId}/commit`,
+      jsonRequest({
+        operationId: "install-pack-after-response-loss",
+        action: "install",
+        expectedContentHash: otherPreview.preview.contentHash,
+      }),
+    );
+    expect(freshOperationReplay.status).toBe(200);
+    expect(await freshOperationReplay.json()).toMatchObject({
+      result: {
+        revisionId: pack.revision.revisionKey,
+        installed: false,
+        idempotent: true,
+      },
+    });
+    expect(await readdir(stagingRoot)).toEqual([]);
+    const lostResponseReplay = await app.request(
+      `/api/course-packs/validations/${otherPreview.validationId}/commit`,
+      jsonRequest({
+        operationId: "install-pack-after-response-loss",
+        action: "install",
+        expectedContentHash: otherPreview.preview.contentHash,
+      }),
+    );
+    expect(lostResponseReplay.status).toBe(200);
+    expect(await lostResponseReplay.json()).toMatchObject({
+      result: { installed: false, idempotent: true },
+    });
     expect(
       (
         await app.request(
@@ -683,6 +776,32 @@ describe("Course Pack HTTP lifecycle", () => {
       body: "{}",
     });
     expect(response.status).toBe(413);
+  });
+
+  it("stages malformed JSON as bounded diagnostics without retaining source bytes", async () => {
+    const { app, connection, stagingRoot } = await fixture();
+    const response = await app.request("/api/course-packs/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: '{"format":',
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      valid: false;
+      report: { diagnostics: Array<{ code: string }> };
+    };
+    expect(body.valid).toBe(false);
+    expect(body.report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "PACK_JSON_INVALID_JSON" }),
+      ]),
+    );
+    expect(await readdir(stagingRoot)).toEqual([]);
+    expect(
+      connection.sqlite
+        .prepare("SELECT count(*) AS count FROM course_pack_manifests")
+        .get(),
+    ).toEqual({ count: 0 });
   });
 
   it("atomically claims a staged validation before mixed-action commits", async () => {
