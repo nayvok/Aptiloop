@@ -3,7 +3,7 @@
 **Review date:** 2026-08-12  
 **Baseline:** `f05971cf6468a9e9faa95a61ff304daac32d5cfb` (`docs: align design guidance with compact compositions`)  
 **Implementation commit:** `fd8155f` (`feat(web): harden Core Alpha learning UX`)
-**Reviewed state:** final observed worktree on `codex/core-alpha-ui-ux-docs` before the documentation-only commit  
+**Reviewed state:** final observed worktree on `codex/core-alpha-ui-ux-docs` before the final evidence commit
 **Status:** Review artifact; not implementation or release evidence
 
 ## Executive Summary
