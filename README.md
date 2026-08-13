@@ -12,10 +12,6 @@ The current repository contains the runnable Aptiloop application, its local SQL
   <img src="docs/readme/course-overview-desktop.jpg" width="900" alt="Aptiloop Course overview with the next lesson, deterministic progress, and finite learning stages" />
 </p>
 
-<p align="center">
-  <img src="docs/readme/lesson-duration-mobile.jpg" width="390" alt="Aptiloop lesson on a mobile viewport with approximate-duration chips and content clearing the bottom navigation" />
-</p>
-
 <p align="center"><sub>A current disposable local profile in Russian; no provider credential, account data, or private path is shown.</sub></p>
 
 **Implemented baseline**

@@ -25,7 +25,9 @@ import {
   normalizeProviderLoginEvent,
   normalizeProviderLoginPrompt,
 } from "../src/provider-management.js";
+import { LocalPiCredentialStore } from "../src/local-pi-credential-store.js";
 import { ProviderRuntime } from "../src/provider-runtime.js";
+import type { WindowsCredentialProtection } from "../src/windows-dpapi.js";
 
 const promptId = "88a6558f-d070-478e-adbc-18678089cb43";
 const githubPrompt = {
@@ -41,6 +43,21 @@ const openAiPrompt = {
     { id: "device_code", label: "Device code login (headless)" },
   ],
 } as const;
+
+const testWindowsProtection: WindowsCredentialProtection = {
+  async protect(plaintext) {
+    return Buffer.from(
+      plaintext.map((value, index) => value ^ ((index * 31 + 0xa5) & 0xff)),
+    );
+  },
+  async unprotect(protectedBytes) {
+    return Buffer.from(
+      protectedBytes.map(
+        (value, index) => value ^ ((index * 31 + 0xa5) & 0xff),
+      ),
+    );
+  },
+};
 
 describe("provider login boundary", () => {
   it("maps the exact GitHub prompt to the optional app-owned prompt", () => {
@@ -455,6 +472,10 @@ describe("provider login boundary", () => {
         repository,
         projectRoot: root,
         connectionProviders,
+        credentialStore: new LocalPiCredentialStore(root, {
+          platform: "win32",
+          windowsProtection: testWindowsProtection,
+        }),
       });
 
       await management.ensureLoaded();
