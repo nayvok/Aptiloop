@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved Core Alpha target
+Superseded by [ADR 0010](0010-apache-2-project-license.md). The status recorded at the time was **Approved Core Alpha target**.
 
 ## Date
 

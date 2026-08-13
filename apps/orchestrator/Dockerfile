@@ -39,6 +39,8 @@ RUN npm ci --omit=dev --workspace=@aptiloop/orchestrator \
     test ! -e node_modules/vitest
 
 FROM node:24.15.0-bookworm-slim@sha256:4e6b70dd6cbfc88c8157ba19aa3d9f9cce6ba4703576d55459e45efcbc9c5f5d AS runner
+LABEL org.opencontainers.image.source="https://github.com/nayvok/Aptiloop"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=8787
@@ -64,9 +66,16 @@ RUN apt-get update && \
 COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY --from=builder --chown=aptiloop:aptiloop /app/apps/orchestrator/dist ./apps/orchestrator/dist
 COPY --from=builder /app/packages/database/migrations ./packages/database/migrations
+COPY --from=builder /app/LICENSE /app/NOTICE /app/THIRD_PARTY_NOTICES.md ./
+COPY --from=production-dependencies /app/node_modules/@hono/node-server/LICENSE ./third-party-licenses/hono-node-server-LICENSE
+COPY --from=production-dependencies /app/node_modules/hono/LICENSE ./third-party-licenses/hono-LICENSE
+COPY --from=production-dependencies /app/node_modules/zod/LICENSE ./third-party-licenses/zod-LICENSE
 RUN ORCHESTRATOR_BIND_MODE=invalid node apps/orchestrator/dist/server.js 2>&1 | \
       grep -F "ORCHESTRATOR_BIND_MODE must be direct or container-loopback-published"
 
+# Project notices and available direct runtime dependency license texts are
+# retained in /app. THIRD_PARTY_NOTICES.md identifies upstream terms for npm
+# packages whose published archives do not include a standalone license file.
 # Development curriculum and exercise fixtures are intentionally absent. A
 # fresh production profile is empty, and unknown trusted-template IDs fail
 # explicitly instead of acquiring executable content from a Course Pack.

@@ -119,7 +119,7 @@ The historical non-review Codex/OpenCode authority and provider-override paths w
 - Avoid unnecessary allocations, copies, and abstraction layers.
 - Update every caller during a contract change; do not leave silent aliases or fallback paths unless an approved migration requires them.
 - Do not add production dependencies without checking security, license, runtime support, and lockfile impact.
-- The repository currently has no granted project license. Do not add license text or infer redistribution rights without an approved legal decision.
+- The owner-approved project license is Apache-2.0 for first-party repository materials owned or controlled by Copyright 2026 Yan Yushkov (`nayvok`) and which he has authority to license, unless a file or directory states otherwise. Do not extend that grant to user/imported Courses, private/user data, credentials, exports, third-party components, or future proprietary modules.
 
 ## Verification discipline
 

@@ -60,7 +60,10 @@ Historical documents preserve decision and migration context. They are not curre
 - [Local data portability](data-portability.md) — explicit local-profile export and create-only offline restore without credentials or workspace files.
 - [Core Alpha migration strategy](migration/core-alpha-migration-strategy.md)
 - [M2 migration and recovery record](migration/m2-course-foundations-runbook.md) — dated M2 evidence and cutoff-specific recovery; not a substitute for the current migration strategy.
-- [Core Alpha licensing plan](licensing/core-alpha-licensing-plan.md) — engineering inventory and owner disposition, not legal advice or a license grant.
+- [Project licensing boundary](licensing/core-alpha-licensing-plan.md) — applied Apache-2.0 scope, exclusions, and remaining artifact obligations.
+- [Contribution terms](../CONTRIBUTING.md)
+- [Third-party notices](../THIRD_PARTY_NOTICES.md)
+- [Name and branding](../TRADEMARKS.md)
 
 ## Architecture decisions
 

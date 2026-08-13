@@ -4,7 +4,7 @@
 
 **Approved Core Alpha target**
 
-This document defines the complete authoring contract. The implemented mechanisms support local user-authored and explicitly imported Courses, while repository fixtures remain development-only. Aptiloop intentionally distributes no bundled Course; any future first-party/sample Course, legal approval, and public distribution authorization remain separate decisions.
+This document defines the complete authoring contract. The implemented mechanisms support local user-authored and explicitly imported Courses, while repository fixtures remain development-only. Aptiloop intentionally distributes no bundled Course; any future first-party/sample Course retains separate provenance, content terms, safety, and distribution approval.
 
 ## Implemented baseline
 
@@ -329,9 +329,9 @@ Course material, Source Snapshots, Capsules, Drafts, protected answers, and pers
 
 Authors record origin, authorship/ownership claim, license/terms claim, acquisition date, and transformation notes for source/content resources. Aptiloop validates presence and consistency; it does not certify that a claim is legally correct.
 
-**Approved Core Alpha target**
+**Implemented baseline**
 
-Project licensing uses the owner-approved engineering direction of AGPL-3.0-only for the integrated app/server and Apache-2.0 only for newly separated reusable SDK packages after boundaries/ownership are verified. Content/fixtures require separate terms, and third-party notices/SBOM/trademark policy require professional legal review. This target alone authorizes neither license text nor any future Aptiloop-supplied first-party/sample Course.
+Copyright 2026 Yan Yushkov (`nayvok`). First-party repository materials that the copyright holder owns or controls and has authority to license are available under Apache-2.0, unless stated otherwise. User-authored and imported Courses remain owned and licensed by their respective authors; importing, editing, or exporting them does not place them under the project license. Private data, credentials, exports, and third-party components are likewise outside the project grant. Third-party artifact compliance and any future Aptiloop-supplied Course require their own review. No proprietary Aptiloop module exists; any future proprietary module must be new and clearly separate.
 
 ## Baseline migration
 

@@ -20,7 +20,7 @@ The current repository contains the runnable Aptiloop application, its local SQL
 
 **Implemented baseline**
 
-Aptiloop intentionally ships without bundled Courses: each learner creates a personal Course or explicitly imports a trusted Course Pack. This public source repository is the supported clone-and-run distribution; it is not a tagged Core Alpha release and currently grants no project license.
+Aptiloop intentionally ships without bundled Courses: each learner creates a personal Course or explicitly imports a trusted Course Pack. This public source repository is the supported clone-and-run distribution and is licensed under Apache-2.0; it is not a tagged Core Alpha release.
 
 ## Start locally
 
@@ -122,7 +122,7 @@ Important boundaries:
 
 **Approved Core Alpha target**
 
-A tagged Core Alpha release still requires professional legal review, approved license/notices/trademark artifacts, artifact authorization, and owner sign-off. The source branch may be published without implying those approvals or a license grant. A first-party or sample Course would require separate content, provenance, safety, licensing, and ownership approval, but no such Course is part of the product distribution. A fresh authenticated OpenCode Zen Tutor request is recorded as working-tree evidence; it does not certify every provider, role, or recovery path.
+A tagged Core Alpha release still requires third-party notice and trademark review, artifact authorization, and owner sign-off. The applied Apache-2.0 project license is independent from those release gates. A first-party or sample Course would require separate content, provenance, safety, licensing, and ownership approval, but no such Course is part of the product distribution. A fresh authenticated OpenCode Zen Tutor request is recorded as working-tree evidence; it does not certify every provider, role, or recovery path.
 
 See the [current roadmap](ROADMAP.md), [2026-08-12 UI/UX and runtime hardening audit](docs/audits/2026-08-12-ui-ux-runtime-hardening.md), and [production-readiness polish evidence](docs/audits/2026-08-13-production-readiness-polish.md) for the precise evidence boundary.
 
@@ -177,9 +177,14 @@ Read [Development](docs/development.md) before changing behavior and [Repository
 - [Current database operations](docs/migration/current-database-operations.md)
 - [Local data portability](docs/data-portability.md)
 - [Roadmap](ROADMAP.md)
+- [Contributing](CONTRIBUTING.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
+- [Name and branding](TRADEMARKS.md)
 
 ## License
 
 **Implemented baseline**
 
-The repository currently grants no project license. `private: true` prevents accidental npm publication; it is not a license grant.
+Copyright 2026 Yan Yushkov (`nayvok`). First-party materials in this repository that the copyright holder has authority to license are available under the [Apache License 2.0](LICENSE), unless a file or directory states otherwise.
+
+The covered first-party materials include source code, tests, documentation, translations, development fixtures, and project-created visual assets. The project license does not grant rights to user-authored or imported Courses, private or learner data, credentials, local databases, backups, exports, or third-party components. Those materials retain their owners and applicable terms. Aptiloop currently contains no proprietary module; any future proprietary module must be new, optional, and clearly separate from the Apache-2.0 project. Apache-2.0 does not grant rights to use Aptiloop branding to present a fork as official. See [NOTICE](NOTICE), [Third-party notices](THIRD_PARTY_NOTICES.md), [Contribution terms](CONTRIBUTING.md), and [Name and branding](TRADEMARKS.md).

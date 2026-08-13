@@ -1,0 +1,18 @@
+Aptiloop
+Copyright 2026 Yan Yushkov (nayvok)
+
+This product includes software developed for Aptiloop.
+
+Apache License 2.0 applies to first-party materials in this repository that
+Yan Yushkov has authority to license, unless a file or directory states
+otherwise. This includes first-party source code, tests, documentation,
+translations, development fixtures, and project-created visual assets.
+
+Third-party components retain their own licenses and notices. User-created
+or imported Courses, learner data, credentials, databases, backups, and
+exports are not part of the Aptiloop Work solely because Aptiloop processes
+or stores them.
+
+The Apache License 2.0 does not grant permission to use the Aptiloop name or
+branding except for reasonable and customary attribution and description of
+the Work's origin.

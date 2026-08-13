@@ -23,7 +23,7 @@ Pending-disclosure recovery for Course Designer and Interview has integration an
 
 The current baseline has valuable seams to preserve incrementally: Next.js → Hono boundaries, strict shared contracts, SQLite repositories and forward-only migrations, immutable Course and Pack revisions, M2-guarded session snapshots and quarantine compatibility, M4 append-only kernel facts and canonical projections, M5 trusted environment/check IDs, constrained M6 provider roles/tools, isolated exercise attempts, bounded process execution, Git-diff freshness, read-only review, and restart-safe manual/designer flows.
 
-The baseline is not an accepted Core Alpha release merely because M1–M11 and the M12 technical preflight exist. Professional legal review, approved license/notices/trademark artifacts, tagged-artifact authorization, and owner sign-off remain release-blocking. Publishing the source branch is a separate owner-authorized action and grants no license. Bundled Course content is not a release requirement: a fresh profile intentionally starts empty, and the learner creates a personal Course or explicitly imports a trusted Course Pack. Any future first-party/sample Course and its Source Snapshots/Knowledge Capsules require separate content, provenance, safety, licensing, and ownership approval. Independently isolated untrusted execution and public/remote deployment remain **Future** where classified elsewhere. M11 retains compatibility tables and unresolved migration quarantine rows as preserved history, not valid target facts; destructive removal requires a separate owner-approved migration gate.
+The baseline is not an accepted Core Alpha release merely because M1–M11 and the M12 technical preflight exist. Apache-2.0 is applied to covered first-party repository materials, while third-party artifact compliance, content/fixture provenance, tagged-artifact authorization, and owner sign-off remain release-blocking. Bundled Course content is not a release requirement: a fresh profile intentionally starts empty, and the learner creates a personal Course or explicitly imports a trusted Course Pack. User/imported Courses are outside the project license. Any future first-party/sample Course and its Source Snapshots/Knowledge Capsules require separate content, provenance, safety, licensing, and ownership approval. Independently isolated untrusted execution and public/remote deployment remain **Future** where classified elsewhere. M11 retains compatibility tables and unresolved migration quarantine rows as preserved history, not valid target facts; destructive removal requires a separate owner-approved migration gate.
 
 ## Objective
 
@@ -190,7 +190,7 @@ Core Alpha is not approved until evidence closes all of these gates:
 | Studio           | Manual authoring is complete; typed AI proposals are optional; validate/preview/apply/publish are separate gates.                          |
 | Localization     | `en-US` and `ru-RU` UI plus independent Course locale behavior pass on desktop and mobile.                                                 |
 | Quality          | Fast verification, E2E, migration rehearsal, and required local/provider/editor smokes pass.                                               |
-| Legal            | Project/content/package license boundaries, provenance, notices/SBOM, trademarks, and counsel review are approved.                         |
+| Legal            | Apache-2.0 project scope, content/package boundaries, provenance, notices/SBOM, trademarks, and artifact review are complete.              |
 
 ## Core Alpha release matrix
 
@@ -313,8 +313,12 @@ The following dated disposition attaches the observed M12 evidence to every fixe
 |  49 | Passed locally        | Boundary suites and fresh dependency policy passed with no unresolved High finding.                                                                                                                                                      |
 |  50 | Passed locally        | Exact loopback topologies, bind policy, named-volume persistence, secret/content inspection, quiesced backup/restore/rollback, execution labels, and operator runbook were exercised.                                                    |
 
-M12 is therefore **not accepted** and no Core Alpha release candidate was published. Technical preflight and working-tree Tutor smoke evidence are recorded, but row 39 is not commit-bound or comprehensive role/recovery evidence. The typed due-Review executor never fabricates a `/session` CTA from source-session identity. Release acceptance also remains blocked by professional legal review, approved license text, third-party notices, content/fixture terms, trademark policy, artifact authorization, and owner sign-off. No license grant or public-distribution approval is implied.
+M12 is therefore **not accepted** and no Core Alpha release candidate was published. Technical preflight and working-tree Tutor smoke evidence are recorded, but row 39 is not commit-bound or comprehensive role/recovery evidence. The typed due-Review executor never fabricates a `/session` CTA from source-session identity. Release acceptance also remains blocked by third-party notices, content/fixture terms, trademark policy, artifact authorization, and owner sign-off. This dated gate conclusion predates the Apache-2.0 decision in ADR 0010; the project license is now applied, but that later change does not retroactively close the other gates.
 
 **Approved Core Alpha target**
 
-Visual direction A, Calm Workshop. The engineering licensing direction is approved, while license application and public distribution remain deferred pending professional legal review.
+Visual direction A, Calm Workshop.
+
+**Implemented baseline**
+
+ADR 0010 applies Apache-2.0 to first-party repository materials owned or controlled by Copyright 2026 Yan Yushkov (`nayvok`) and which he has authority to license, unless stated otherwise. User/imported Courses, private data, credentials, exports, and third-party components are outside that grant. No proprietary Aptiloop module exists; any future proprietary module must be new and clearly separate.
