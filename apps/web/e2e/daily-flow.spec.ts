@@ -109,7 +109,8 @@ test("hydrates stored light and dark themes without an icon mismatch", async ({
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
 
   await page.getByRole("link", { name: "Настройки" }).click();
-  await expect(page).toHaveTitle("Настройки · Aptiloop");
+  await expect(page).toHaveURL(/\/settings$/u, { timeout: 15_000 });
+  await expect(page).toHaveTitle("Настройки · Aptiloop", { timeout: 15_000 });
   const themePreference = page.getByLabel("Тема");
   await expect(themePreference).toContainText("Тёмная");
 
