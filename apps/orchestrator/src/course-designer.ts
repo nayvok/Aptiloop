@@ -1172,7 +1172,7 @@ async function runDesignerTurn(
   let completedContent: string | null = null;
   try {
     signal.throwIfAborted();
-    const session = await state.providerRuntime.runSetup(
+    await state.providerRuntime.runOwnedSetup(
       (setupSignal) =>
         dispatch.provider.createSession(
           {
@@ -1194,12 +1194,22 @@ async function runDesignerTurn(
           setupSignal,
         ),
       signal,
+      (session) => dispatch.provider.cancelSession(session.id),
+      (ownedSession) => {
+        providerSessionId = ownedSession.id;
+      },
     );
-    providerSessionId = session.id;
+    const ownedSessionId = providerSessionId;
+    if (!ownedSessionId) {
+      throw new ProviderHubError(
+        "provider_error",
+        "Course Designer provider session ownership failed",
+      );
+    }
     signal.throwIfAborted();
     for await (const event of state.providerRuntime.stream(
       dispatch,
-      providerSessionId,
+      ownedSessionId,
       signal,
       "json",
     )) {
@@ -1236,7 +1246,7 @@ async function runDesignerTurn(
       );
     }
     signal.throwIfAborted();
-    return { proposal, providerSessionId };
+    return { proposal, providerSessionId: ownedSessionId };
   } catch (error) {
     if (signal.aborted) {
       state.connection.sqlite
@@ -1256,11 +1266,6 @@ async function runDesignerTurn(
       signal.aborted ? "cancelled" : "failed",
       signal.aborted ? "cancelled" : providerFailureCode(error),
     );
-    if (providerSessionId && signal.aborted) {
-      await dispatch.provider
-        .cancelSession(providerSessionId)
-        .catch(() => undefined);
-    }
     if (error instanceof SyntaxError) {
       throw new AgentProviderError(
         "invalid_output",
@@ -1270,6 +1275,12 @@ async function runDesignerTurn(
       );
     }
     throw error;
+  } finally {
+    if (providerSessionId) {
+      await dispatch.provider
+        .cancelSession(providerSessionId)
+        .catch(() => undefined);
+    }
   }
 }
 
@@ -2012,9 +2023,6 @@ export function registerCourseDesignerRoutes(
                 "cancelled",
                 "cancelled",
               );
-              await dispatch.provider
-                .cancelSession(turn.providerSessionId)
-                .catch(() => undefined);
             } else {
               state.providerRuntime.finishDispatch(
                 dispatch,

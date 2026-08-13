@@ -141,7 +141,6 @@ class ProposalProvider implements AgentProvider {
     this.createInputs.push(input);
     if (signal) this.createSignals.push(signal);
     await this.createSessionGate;
-    signal?.throwIfAborted();
     const session: AgentSession = {
       id: `session:${this.createInputs.length}`,
       providerId: this.id,
@@ -317,7 +316,7 @@ describe("Course Designer", () => {
     expect(runtime.mock.createSignals).toHaveLength(1);
     expect(runtime.mock.createSignals[0]?.aborted).toBe(true);
     expect(runtime.mock.activeSessionIds.size).toBe(0);
-    expect(runtime.mock.cancelCalls).toEqual([]);
+    expect(runtime.mock.cancelCalls).toEqual(["session:1"]);
     expect(
       runtime.connection.sqlite
         .prepare(

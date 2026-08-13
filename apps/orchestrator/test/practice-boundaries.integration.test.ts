@@ -104,7 +104,6 @@ class FencedReviewProvider implements AgentProvider {
     this.createInputs.push(input);
     if (signal) this.createSignals.push(signal);
     await this.createSessionGate;
-    signal?.throwIfAborted();
     const session: AgentSession = {
       id: "private-review-provider-handle",
       providerId: this.id,
@@ -1165,7 +1164,7 @@ describe("practice execution and reviewer boundaries", () => {
     expect(provider.createSignals).toHaveLength(1);
     expect(provider.createSignals[0]?.aborted).toBe(true);
     expect(provider.activeSessionIds.size).toBe(0);
-    expect(provider.cancelCalls).toEqual([]);
+    expect(provider.cancelCalls).toEqual(["private-review-provider-handle"]);
     expect(
       current.state.connection.sqlite
         .prepare("SELECT count(*) AS count FROM reviews")
@@ -1185,6 +1184,52 @@ describe("practice execution and reviewer boundaries", () => {
         )
         .get(),
     ).toEqual({ status: "cancelled", failureCode: "cancelled" });
+  }, 30_000);
+
+  it("cancels an owned reviewer session when conversation creation fails", async () => {
+    const provider = new FencedReviewProvider();
+    const current = runtime({ mock: provider });
+    const { attemptId, workspacePath } = await createAttempt(current);
+    writeFileSync(
+      path.join(workspacePath, "src", "normalize-profile.ts"),
+      passingImplementation,
+      "utf8",
+    );
+    const check = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/checks`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          operationId: "review-conversation-failure-check",
+          checkIds: ["apt.compat.node24.npm-test.v1"],
+        }),
+      },
+    );
+    expect(await check.json()).toMatchObject({ status: "passed" });
+    current.state.repository.createConversation = async () => {
+      throw new Error("injected conversation failure");
+    };
+
+    const response = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      {
+        method: "POST",
+        body: JSON.stringify({ operationId: "review-conversation-failure" }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(provider.cancelCalls).toEqual(["private-review-provider-handle"]);
+    expect(provider.activeSessionIds.size).toBe(0);
+    expect(provider.streamCalls).toBe(0);
+    expect(current.state.providerSessions.size).toBe(0);
+    expect(
+      current.state.connection.sqlite
+        .prepare("SELECT count(*) AS count FROM reviews")
+        .get(),
+    ).toEqual({ count: 0 });
   }, 30_000);
 
   it("rejects a completed reviewer result aborted before the authoritative review commit", async () => {

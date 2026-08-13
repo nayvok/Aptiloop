@@ -160,6 +160,18 @@ describe("PiAgentProvider", () => {
       type: "message.completed",
       content: "Pi response",
     });
+    const secondEvents = await collect(
+      provider.streamMessage({
+        sessionId: session.id,
+        message: "Review one more bounded evidence item.",
+        responseFormat: "text",
+      }),
+    );
+    expect(secondEvents.map((event) => event.type)).toEqual([
+      "message.delta",
+      "message.completed",
+      "session.completed",
+    ]);
     await expect(provider.getStatus()).resolves.toMatchObject({
       state: "connected",
       message: expect.stringContaining("Last authenticated request succeeded"),

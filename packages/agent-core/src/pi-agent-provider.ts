@@ -280,7 +280,7 @@ export class PiAgentProvider implements AgentProvider {
         reason,
       });
       if (event) queue.push(event);
-      stored.session.status = reason === "completed" ? "completed" : reason;
+      stored.session.status = reason === "completed" ? "active" : reason;
       queue.close();
     };
     const unsubscribe = stored.agent.subscribe((event: PiAgentEvent) => {
@@ -362,6 +362,7 @@ export class PiAgentProvider implements AgentProvider {
     stored.session.status = "cancelled";
     stored.agent.abort();
     await stored.agent.waitForIdle();
+    this.#sessions.delete(sessionId);
   }
 }
 

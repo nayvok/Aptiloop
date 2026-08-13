@@ -75,6 +75,7 @@ const LEGACY_SYNTHETIC_CONNECTION_IDS = [
   "conn:pi:openai",
   "conn:pi:opencode-zen",
 ] as const;
+const ABORTED_SETUP_CLEANUP_TIMEOUT_MS = 5_000;
 
 export interface DevelopmentProviderFixture {
   readonly connection: ProviderConnection;
@@ -636,6 +637,7 @@ export class ProviderRuntime {
   async runSetup<T>(
     operation: (signal: AbortSignal) => Promise<T>,
     signal?: AbortSignal,
+    onAbortedResult?: (result: T) => Promise<void> | void,
   ): Promise<T> {
     const combined = signal
       ? AbortSignal.any([signal, this.#shutdownController.signal])
@@ -643,7 +645,36 @@ export class ProviderRuntime {
     return this.#trackSetup(async () => {
       combined.throwIfAborted();
       const result = await operation(combined);
+      if (combined.aborted) {
+        await cleanupAbortedSetupResult(result, onAbortedResult);
+        combined.throwIfAborted();
+      }
+      return result;
+    });
+  }
+
+  async runOwnedSetup<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal | undefined,
+    cleanup: (result: T) => Promise<void> | void,
+    owner: (result: T, signal: AbortSignal) => Promise<void> | void,
+  ): Promise<T> {
+    const combined = signal
+      ? AbortSignal.any([signal, this.#shutdownController.signal])
+      : this.#shutdownController.signal;
+    return this.#trackSetup(async () => {
       combined.throwIfAborted();
+      const result = await operation(combined);
+      if (combined.aborted) {
+        await cleanupAbortedSetupResult(result, cleanup);
+        combined.throwIfAborted();
+      }
+      try {
+        await owner(result, combined);
+      } catch (error) {
+        await cleanupAbortedSetupResult(result, cleanup);
+        throw error;
+      }
       return result;
     });
   }
@@ -1095,4 +1126,26 @@ function sameEntityIds(
     leftKeys.length === rightKeys.length &&
     leftKeys.every((key) => left[key] === right[key])
   );
+}
+
+async function cleanupAbortedSetupResult<T>(
+  result: T,
+  cleanup: ((result: T) => Promise<void> | void) | undefined,
+): Promise<void> {
+  if (!cleanup) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ABORTED_SETUP_CLEANUP_TIMEOUT_MS);
+    timer.unref();
+  });
+  try {
+    await Promise.race([
+      Promise.resolve()
+        .then(() => cleanup(result))
+        .catch(() => undefined),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

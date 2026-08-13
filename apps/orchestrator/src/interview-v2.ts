@@ -986,7 +986,7 @@ async function requestQuestion(
     state.providerRuntime.finishDispatch(dispatch, status, failureCode);
   };
   try {
-    const providerSession = await state.providerRuntime.runSetup(
+    const providerSession = await state.providerRuntime.runOwnedSetup(
       (setupSignal) =>
         provider.createSession(
           {
@@ -998,8 +998,11 @@ async function requestQuestion(
           setupSignal,
         ),
       signal,
+      (session) => provider.cancelSession(session.id),
+      (ownedSession) => {
+        providerSessionId = ownedSession.id;
+      },
     );
-    providerSessionId = providerSession.id;
     if (
       providerSession.providerId !== dispatch.connection.adapterId ||
       providerSession.role !== "interviewer" ||

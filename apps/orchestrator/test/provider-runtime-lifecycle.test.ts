@@ -113,4 +113,72 @@ describe("provider connection lifecycle", () => {
       });
     },
   );
+
+  it("cleans a late setup result exactly once before rejecting ownership", async () => {
+    const runtime = createRuntime();
+    const controller = new AbortController();
+    const activeHandles = new Set<string>();
+    const cancelCalls: string[] = [];
+    let resolveAllocated!: (value: { id: string }) => void;
+    const allocated = new Promise<{ id: string }>((resolve) => {
+      resolveAllocated = resolve;
+    });
+    let ownedHandle: { id: string } | undefined;
+    const pending = runtime.runOwnedSetup(
+      async () => allocated,
+      controller.signal,
+      async (result) => {
+        cancelCalls.push(result.id);
+        activeHandles.delete(result.id);
+      },
+      (result) => {
+        ownedHandle = result;
+      },
+    );
+
+    const handle = { id: "late-session" };
+    activeHandles.add(handle.id);
+    resolveAllocated(handle);
+    queueMicrotask(() => controller.abort());
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(cancelCalls).toEqual([handle.id]);
+    expect(activeHandles.size).toBe(0);
+    expect(ownedHandle).toBeUndefined();
+  });
+
+  it("adopts a setup result before its promise continuation can abort", async () => {
+    const runtime = createRuntime();
+    const controller = new AbortController();
+    const activeHandles = new Set<string>();
+    const cancelCalls: string[] = [];
+    let ownedHandle: { id: string } | undefined;
+    let resolveOwned!: (value: { id: string }) => void;
+    const ownedResult = new Promise<{ id: string }>((resolve) => {
+      resolveOwned = resolve;
+    });
+    const pending = runtime.runOwnedSetup(
+      async () => {
+        const handle = { id: "owned-session" };
+        activeHandles.add(handle.id);
+        return handle;
+      },
+      controller.signal,
+      async (result) => {
+        cancelCalls.push(result.id);
+        activeHandles.delete(result.id);
+      },
+      (result) => {
+        ownedHandle = result;
+        resolveOwned(result);
+      },
+    );
+
+    await ownedResult;
+    queueMicrotask(() => controller.abort());
+    await expect(pending).resolves.toEqual({ id: "owned-session" });
+    expect(ownedHandle).toEqual({ id: "owned-session" });
+    expect(cancelCalls).toEqual([]);
+    expect(activeHandles).toEqual(new Set(["owned-session"]));
+  });
 });

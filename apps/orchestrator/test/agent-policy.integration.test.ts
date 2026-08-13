@@ -905,6 +905,105 @@ describe("M1 agent policy boundary", () => {
     runtimes.splice(runtimes.indexOf(current), 1);
   });
 
+  it.each(["createConversation", "addMessage"] as const)(
+    "drains a shutdown-gated new-session %s before closing SQLite",
+    async (phase) => {
+      let markSetupStarted!: () => void;
+      const setupStarted = new Promise<void>((resolve) => {
+        markSetupStarted = resolve;
+      });
+      let releaseSetup!: () => void;
+      const setupRelease = new Promise<void>((resolve) => {
+        releaseSetup = resolve;
+      });
+      const lifecycle: string[] = [];
+      let conversationsAtClose: number | undefined;
+      const mock = new ScriptedProvider({
+        onCancel: () => {
+          lifecycle.push("provider-cancelled");
+        },
+      });
+      const current = runtime({ providers: { mock } });
+      const closeDatabase = current.state.connection.close.bind(
+        current.state.connection,
+      );
+      vi.spyOn(current.state.connection, "close").mockImplementation(() => {
+        conversationsAtClose = (
+          current.state.connection.sqlite
+            .prepare(
+              "SELECT count(*) AS count FROM agent_conversations WHERE role = 'teacher'",
+            )
+            .get() as { count: number }
+        ).count;
+        lifecycle.push("database-closed");
+        closeDatabase();
+      });
+      if (phase === "createConversation") {
+        const createConversation =
+          current.state.repository.createConversation.bind(
+            current.state.repository,
+          );
+        vi.spyOn(
+          current.state.repository,
+          "createConversation",
+        ).mockImplementationOnce(async (input) => {
+          lifecycle.push("repository-started");
+          markSetupStarted();
+          await setupRelease;
+          return createConversation(input);
+        });
+      } else {
+        const addMessage = current.state.repository.addMessage.bind(
+          current.state.repository,
+        );
+        vi.spyOn(current.state.repository, "addMessage").mockImplementationOnce(
+          async (input) => {
+            lifecycle.push("repository-started");
+            markSetupStarted();
+            await setupRelease;
+            return addMessage(input);
+          },
+        );
+      }
+      const sessionId = await startActiveVersionedSession(
+        current,
+        `agent-policy-shutdown-${phase}`,
+      );
+      const responsePromise = request(current.app, "/api/agent/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          role: "teacher",
+          sessionId,
+          message: "Wait during repository setup",
+        }),
+      });
+      await setupStarted;
+
+      current.beginShutdown();
+      const closePromise = current.close();
+      expect(lifecycle).toEqual(["repository-started"]);
+      releaseSetup();
+      const response = await responsePromise;
+      lifecycle.push("handler-settled");
+      await closePromise;
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: safeCancellation });
+      expect(mock.cancelCalls).toEqual([providerHandle]);
+      expect(current.state.providerSessions.size).toBe(0);
+      expect(current.state.activeProviderTurns.size).toBe(0);
+      expect(current.state.activeProviderTurnReservations.size).toBe(0);
+      expect(conversationsAtClose).toBe(0);
+      expect(lifecycle).toEqual([
+        "repository-started",
+        "provider-cancelled",
+        "database-closed",
+        "handler-settled",
+      ]);
+      runtimes.splice(runtimes.indexOf(current), 1);
+    },
+  );
+
   it("aborts and drains initial provider inspection before closing SQLite", async () => {
     let markInspectionStarted!: () => void;
     const inspectionStarted = new Promise<void>((resolve) => {

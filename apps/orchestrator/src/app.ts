@@ -685,7 +685,7 @@ export function createApp(options: AppOptions = {}) {
     }
     state.activeProviderTurnReservations.set(key, turnId);
 
-    let storedSession: ProviderSessionRecord;
+    let storedSession: ProviderSessionRecord | undefined;
     let createdProviderSession:
       { provider: AgentProvider; providerSessionId: string } | undefined;
     let createdSessionRecord: ProviderSessionRecord | undefined;
@@ -872,9 +872,25 @@ export function createApp(options: AppOptions = {}) {
       if (existingSession) {
         storedSession = existingSession;
         reusedSessionRecord = existingSession;
+        await state.providerRuntime.runSetup(async (setupSignal) => {
+          try {
+            setupSignal.throwIfAborted();
+            await state.repository.addMessage({
+              conversationId: existingSession.conversationId,
+              role: "user",
+              content: body.message,
+              idempotencyKey: setupUserMessageIdempotencyKey,
+            });
+            setupSignal.throwIfAborted();
+          } catch (error) {
+            if (setupSignal.aborted) setupAborted = true;
+            await cleanupFailedSetup();
+            throw error;
+          }
+        }, requestSignal);
       } else {
-        const session = await state.providerRuntime
-          .runSetup(
+        await state.providerRuntime
+          .runOwnedSetup(
             (signal) =>
               provider.createSession(
                 {
@@ -888,50 +904,70 @@ export function createApp(options: AppOptions = {}) {
                 signal,
               ),
             requestSignal,
+            (session) => provider.cancelSession(session.id),
+            async (ownedSession, setupSignal) => {
+              try {
+                if (
+                  ownedSession.providerId !== providerId ||
+                  ownedSession.role !== body.role ||
+                  ownedSession.modelId !== modelId
+                ) {
+                  throw new Error(safeAgentFailureMessage);
+                }
+                createdProviderSession = {
+                  provider,
+                  providerSessionId: ownedSession.id,
+                };
+                setupSignal.throwIfAborted();
+                const conversation = await state.repository.createConversation({
+                  learningSessionId: body.sessionId ?? null,
+                  role: body.role,
+                  providerId,
+                  modelId,
+                  providerSessionId: null,
+                });
+                createdConversationId = conversation.id;
+                setupSignal.throwIfAborted();
+                await state.repository.addMessage({
+                  conversationId: conversation.id,
+                  role: "user",
+                  content: body.message,
+                  idempotencyKey: setupUserMessageIdempotencyKey,
+                });
+                setupSignal.throwIfAborted();
+                const adoptedSession: ProviderSessionRecord = {
+                  providerId,
+                  provider,
+                  providerSessionId: ownedSession.id,
+                  conversationId: conversation.id,
+                };
+                storedSession = adoptedSession;
+                createdSessionRecord = adoptedSession;
+                state.providerSessions.set(key, adoptedSession);
+              } catch (error) {
+                if (setupSignal.aborted) setupAborted = true;
+                try {
+                  if (createdConversationId) {
+                    state.connection.sqlite
+                      .prepare("DELETE FROM agent_conversations WHERE id = ?")
+                      .run(createdConversationId);
+                  }
+                } finally {
+                  createdConversationId = undefined;
+                  createdProviderSession = undefined;
+                  createdSessionRecord = undefined;
+                }
+                throw error;
+              }
+            },
           )
           .catch(() => {
             throw new Error(safeAgentFailureMessage);
           });
-        createdProviderSession = {
-          provider,
-          providerSessionId: session.id,
-        };
         if (setupAborted || requestSignal.aborted) {
           throw new Error(safeAgentCancellationMessage);
         }
-        if (
-          session.providerId !== providerId ||
-          session.role !== body.role ||
-          session.modelId !== modelId
-        ) {
-          throw new Error(safeAgentFailureMessage);
-        }
-        const conversation = await state.repository.createConversation({
-          learningSessionId: body.sessionId ?? null,
-          role: body.role,
-          providerId,
-          modelId,
-          providerSessionId: null,
-        });
-        createdConversationId = conversation.id;
-        if (setupAborted || requestSignal.aborted) {
-          throw new Error(safeAgentCancellationMessage);
-        }
-        storedSession = {
-          providerId,
-          provider,
-          providerSessionId: session.id,
-          conversationId: conversation.id,
-        };
-        createdSessionRecord = storedSession;
-        state.providerSessions.set(key, storedSession);
       }
-      await state.repository.addMessage({
-        conversationId: storedSession.conversationId,
-        role: "user",
-        content: body.message,
-        idempotencyKey: setupUserMessageIdempotencyKey,
-      });
       if (setupAborted || requestSignal.aborted) {
         throw new Error(safeAgentCancellationMessage);
       }
@@ -949,8 +985,18 @@ export function createApp(options: AppOptions = {}) {
       throw error;
     }
 
-    const providerSessionId = storedSession.providerSessionId;
-    const conversationId = storedSession.conversationId;
+    const activeSession = storedSession;
+    if (!activeSession) {
+      requestSignal.removeEventListener("abort", onSetupAbort);
+      await cleanupFailedSetup();
+      finishDispatch("failed", "provider_error");
+      throw new ProviderHubError(
+        "provider_error",
+        "Provider session was not adopted",
+      );
+    }
+    const providerSessionId = activeSession.providerSessionId;
+    const conversationId = activeSession.conversationId;
     if (setupAborted || requestSignal.aborted) {
       requestSignal.removeEventListener("abort", onSetupAbort);
       await cleanupFailedSetup();
@@ -966,7 +1012,7 @@ export function createApp(options: AppOptions = {}) {
     }
     try {
       context.header("X-Aptiloop-Agent-Turn-Id", turnId);
-      state.activeProviderTurns.set(turnId, { key, session: storedSession });
+      state.activeProviderTurns.set(turnId, { key, session: activeSession });
       return streamSSE(context, async (stream) => {
         let assistantContent = "";
         let terminalReason: "completed" | "failed" | "cancelled" | undefined;
@@ -1099,7 +1145,7 @@ export function createApp(options: AppOptions = {}) {
           if (terminalReason === "cancelled") {
             status = "cancelled";
             assistantContent = safeAgentCancellationMessage;
-            evictProviderSession(state, key, storedSession);
+            evictProviderSession(state, key, activeSession);
           } else if (terminalReason === "completed") {
             if (!messageCompleted) throw new Error(safeAgentFailureMessage);
             status = "completed";
@@ -1136,10 +1182,10 @@ export function createApp(options: AppOptions = {}) {
             await cancelAndEvictProviderSession(
               state,
               key,
-              storedSession,
-            ).catch(() => evictProviderSession(state, key, storedSession));
+              activeSession,
+            ).catch(() => evictProviderSession(state, key, activeSession));
           } else {
-            evictProviderSession(state, key, storedSession);
+            evictProviderSession(state, key, activeSession);
           }
           finishDispatch(
             status,
@@ -1187,11 +1233,11 @@ export function createApp(options: AppOptions = {}) {
           }
         } finally {
           const activeTurn = state.activeProviderTurns.get(turnId);
-          if (activeTurn?.session === storedSession) {
+          if (activeTurn?.session === activeSession) {
             state.activeProviderTurns.delete(turnId);
           }
           if (status !== "completed") {
-            evictProviderSession(state, key, storedSession);
+            evictProviderSession(state, key, activeSession);
           }
           releaseAgentTurnReservation(state, key, turnId);
         }
@@ -1199,7 +1245,7 @@ export function createApp(options: AppOptions = {}) {
     } catch (error) {
       requestSignal.removeEventListener("abort", onSetupAbort);
       const activeTurn = state.activeProviderTurns.get(turnId);
-      if (activeTurn?.session === storedSession) {
+      if (activeTurn?.session === activeSession) {
         state.activeProviderTurns.delete(turnId);
       }
       await cleanupFailedSetup();
@@ -2939,6 +2985,8 @@ async function requestExerciseReview(
     modelId,
   ]);
   let storedSession = state.providerSessions.get(key);
+  let provisionalSession:
+    { provider: AgentProvider; providerSessionId: string } | undefined;
   let turnId: string | undefined;
   let terminalReason: "completed" | "failed" | "cancelled" | undefined;
   let providerStreamStarted = false;
@@ -2953,6 +3001,13 @@ async function requestExerciseReview(
     state.providerRuntime.finishDispatch(dispatch, status, failureCode);
   };
   const cancelTurn = async () => {
+    if (provisionalSession) {
+      const pending = provisionalSession;
+      provisionalSession = undefined;
+      await pending.provider
+        .cancelSession(pending.providerSessionId)
+        .catch(() => undefined);
+    }
     if (storedSession) {
       await cancelAndEvictProviderSession(state, key, storedSession).catch(
         () => {
@@ -3001,7 +3056,7 @@ async function requestExerciseReview(
   try {
     throwIfCancelled();
     if (!storedSession) {
-      const session = await state.providerRuntime.runSetup(
+      await state.providerRuntime.runOwnedSetup(
         (signal) =>
           provider.createSession(
             {
@@ -3016,45 +3071,106 @@ async function requestExerciseReview(
             signal,
           ),
         input.signal,
+        (session) => provider.cancelSession(session.id),
+        async (ownedSession, setupSignal) => {
+          let conversationId: string | undefined;
+          try {
+            if (
+              ownedSession.providerId !== providerId ||
+              ownedSession.role !== "reviewer" ||
+              ownedSession.modelId !== modelId
+            ) {
+              throw new ProviderHubError(
+                "invalid_output",
+                "Reviewer provider returned mismatched session metadata",
+              );
+            }
+            provisionalSession = {
+              provider,
+              providerSessionId: ownedSession.id,
+            };
+            setupSignal.throwIfAborted();
+            const conversation = await state.repository.createConversation({
+              learningSessionId: input.attempt.sessionId,
+              role: "reviewer",
+              providerId,
+              modelId,
+              providerSessionId: null,
+            });
+            conversationId = conversation.id;
+            setupSignal.throwIfAborted();
+            await state.repository.addMessage({
+              conversationId,
+              role: "user",
+              content: reviewPrompt,
+            });
+            setupSignal.throwIfAborted();
+            const adoptedSession: ProviderSessionRecord = {
+              providerId,
+              provider,
+              providerSessionId: ownedSession.id,
+              conversationId,
+            };
+            storedSession = adoptedSession;
+            state.providerSessions.set(key, adoptedSession);
+            provisionalSession = undefined;
+          } catch (error) {
+            try {
+              if (conversationId) {
+                state.connection.sqlite
+                  .prepare("DELETE FROM agent_conversations WHERE id = ?")
+                  .run(conversationId);
+              }
+            } finally {
+              provisionalSession = undefined;
+            }
+            throw error;
+          }
+        },
       );
       if (input.signal.aborted) {
-        await provider.cancelSession(session.id).catch(() => undefined);
+        await cancelTurn();
         throwIfCancelled();
       }
-      if (
-        session.providerId !== providerId ||
-        session.role !== "reviewer" ||
-        session.modelId !== modelId
-      ) {
-        await provider.cancelSession(session.id).catch(() => undefined);
-        throw new ProviderHubError(
-          "invalid_output",
-          "Reviewer provider returned mismatched session metadata",
-        );
-      }
-      const conversation = await state.repository.createConversation({
-        learningSessionId: input.attempt.sessionId,
-        role: "reviewer",
-        providerId,
-        modelId,
-        providerSessionId: null,
-      });
-      storedSession = {
-        providerId,
-        provider,
-        providerSessionId: session.id,
-        conversationId: conversation.id,
-      };
-      state.providerSessions.set(key, storedSession);
+    } else {
+      await state.providerRuntime.runSetup(async (setupSignal) => {
+        let messageId: string | undefined;
+        try {
+          setupSignal.throwIfAborted();
+          const message = await state.repository.addMessage({
+            conversationId: storedSession!.conversationId,
+            role: "user",
+            content: reviewPrompt,
+          });
+          messageId = message.id;
+          setupSignal.throwIfAborted();
+        } catch (error) {
+          if (messageId) {
+            state.connection.sqlite
+              .prepare("DELETE FROM agent_messages WHERE id = ?")
+              .run(messageId);
+          }
+          if (storedSession) {
+            const failedSession = storedSession;
+            await cancelAndEvictProviderSession(
+              state,
+              key,
+              failedSession,
+            ).catch(() => evictProviderSession(state, key, failedSession));
+            storedSession = undefined;
+          }
+          throw error;
+        }
+      }, input.signal);
     }
 
     throwIfCancelled();
-    await state.repository.addMessage({
-      conversationId: storedSession.conversationId,
-      role: "user",
-      content: reviewPrompt,
-    });
-    throwIfCancelled();
+    if (!storedSession) {
+      throw new ProviderHubError(
+        "provider_error",
+        "Reviewer provider session was not adopted",
+      );
+    }
     let rawResponse = "";
     let messageCompleted = false;
     turnId = randomUUID();
