@@ -25,6 +25,7 @@ The Core Alpha boundary is deliberately narrow:
 ```mermaid
 graph TD
   WEB[apps/web] --> SHARED[packages/shared]
+  WEB --> AUTHOR[packages/course-authoring-kit]
   ORCH[apps/orchestrator] --> SHARED
   ORCH --> CURR[packages/curriculum]
   ORCH --> DB[packages/database]
@@ -32,19 +33,21 @@ graph TD
   ORCH --> EX[packages/exercise-core]
   ORCH --> AGENT[packages/agent-core]
   ORCH --> PROMPTS[packages/prompt-library]
-  ORCH --> CODEX[packages/codex-provider]
   ORCH --> OC[packages/opencode-provider]
+  DB --> AUTHOR
   DB --> CURR
+  DB --> LEARN
   DB --> SHARED
+  AUTHOR --> LEARN
+  AUTHOR --> SHARED
   AGENT --> SHARED
   PROMPTS --> SHARED
-  CODEX --> AGENT
+  CODEX[packages/codex-provider] --> AGENT
   CODEX --> SHARED
   OC --> AGENT
-  TESTING[packages/testing] --> SHARED
 ```
 
-**Implemented baseline.** `apps/web` imports only `@aptiloop/shared` among internal packages (`apps/web/package.json`). `apps/orchestrator` composes every domain and adapter package and registers separate versioned learning, authoring, and interview route modules. `packages/database` depends on curriculum and shared contracts. `learning-core`, `curriculum`, and `exercise-core` have no browser authority; package dependencies preserve the server-owned database, provider, filesystem, Git, and process boundaries.
+**Implemented baseline.** `apps/web` imports browser-safe contracts from `@aptiloop/shared` and the typed `@aptiloop/course-authoring-kit/authoring-assets` subpath (`apps/web/package.json`). That Authoring Kit subpath exposes package-owned generated JSON artifacts without granting the browser filesystem, validation-service, or publication authority. `apps/orchestrator` composes the active domain packages, Provider Hub, prompt library, and the retained OpenCode endpoint validator through its config-only export; it also registers separate versioned learning, authoring, and interview route modules. `packages/database` depends on Course authoring, curriculum, learning, and shared contracts. The retained legacy provider packages are migration inputs rather than active orchestrator dependencies. `learning-core`, `curriculum`, and `exercise-core` have no browser authority; package dependencies preserve the server-owned database, provider, filesystem, Git, and process boundaries.
 
 **Implemented baseline.** The principal request path is browser presentation → Hono orchestrator → repositories/pure rules/adapters. The orchestrator composition root (`apps/orchestrator/src/app.ts`) opens and migrates SQLite, creates provider adapters, and owns provider sessions and exercise roots. Curriculum seeding is limited to explicit development or disposable-database composition; production does not seed development Course content.
 
@@ -62,7 +65,7 @@ graph TD
 
 **Implemented baseline — M2 persistence boundary.** `packages/shared/src/course.ts` defines the strict Course/revision/section/lesson/activity/source/capsule/adaptation/session-context/evidence/review contracts. `packages/learning-core/src/activity-graph.ts` performs deterministic finite-graph/reference/type validation. `packages/database` owns the SQLite schema, additive migration/backfill, exact admission, quarantine/provenance inventory, and repository boundary. `apps/orchestrator/src/learning-v2.ts` exposes Course-scoped list/path operations and binds new/resumed sessions to an exact Course/revision/lesson/snapshot. The browser supplies entity and operation IDs only; database, filesystem, process, provider, and migration authority remain server-owned.
 
-**Implemented baseline — current schema boundary.** Fresh and explicitly migrated databases converge on the exact `0000`–`0019` contract described in [the data model](docs/data-model.md). `0018_learner_course_state_trigger_guard` ensures that only an active session on a published target Course revision can advance learner state; completed and compatibility-only contexts remain readable without changing the selected/current target. `0019_provider_connection_retirement` adds a provider tombstone so active configuration can be removed without deleting historical evidence. Exact predecessor stages are accepted only by the explicitly authorized, backup-bound additive migration path; ordinary startup does not upgrade them. A missing target session context is readable only through exact `m2-v1` quarantine provenance for its source revision, lesson, and stored snapshot. Dated active-database inventories and hashes belong to migration/audit evidence rather than this architecture contract.
+**Implemented baseline — current schema boundary.** Fresh and explicitly migrated databases converge on the exact `0000`–`0020` contract described in [the data model](docs/data-model.md). `0018_learner_course_state_trigger_guard` ensures that only an active session on a published target Course revision can advance learner state; completed and compatibility-only contexts remain readable without changing the selected/current target. `0019_provider_connection_retirement` adds a provider tombstone so active configuration can be removed without deleting historical evidence. `0020_adaptation_branch_lifecycle` preserves archived branch identities and their learning history, enforces one learner-active personal branch per Course, validates exact immutable upstream base and personal head ownership, and pins each immutable session context plus its Kernel writes to a revision-compatible branch. Open-as-draft uses a distinct archived authoring branch and cannot change learner scope. Revision activation is rejected while the Course has an active session; after completion, Course and learner cursors rotate transactionally while historical replay continues through the archived pinned branch. Exact predecessor stages are accepted only by the explicitly authorized, backup-bound additive migration path; ordinary startup does not upgrade them. A missing target session context is readable only through exact `m2-v1` quarantine provenance for its source revision, lesson, and stored snapshot. Dated active-database inventories and hashes belong to migration/audit evidence rather than this architecture contract.
 
 **Implemented baseline — M10 Course Designer boundary.** `packages/shared/src/curriculum.ts` owns the strict finite workflow/request/diagnostic/proposal/diff contracts. `apps/orchestrator/src/course-designer.ts` persists idempotent state transitions and audit events, resolves the exact `course-designer` RoleProfile through Provider Hub, exposes only bounded Draft/approved-source/proposal tools, validates stable target IDs and deterministic diagnostics, and applies accepted changes transactionally only to the selected Draft. `course_draft_proposal_attribution` is immutable and records provider, connection, model, prompt template/version, disclosure identity, before/after diffs, approved-source provenance, and validation. A pending external disclosure is recoverable only for its exact Course version, workflow, and authoring operation; reload recovery reprojects server-owned workflow data and never depends on a browser-stored provider payload. Confirmation, rejection, revision, Apply, and Publish are separate operations; only `curriculum-editor.ts` can mark a validating workflow `PUBLISHED` after the existing manual publication gate. Migration `0016_course_designer_workflow` remains the additive M10 boundary beneath the current M11 schema.
 
@@ -131,6 +134,8 @@ Rules:
 ## Implemented incremental migration boundary
 
 **Implemented baseline.** Additive migrations introduced Course/immutable revision records, finite Activities, Source Snapshots/Capsules, Course Pack V1, Learning Kernel facts/projections, Execution Fabric identity, Provider Hub/disclosures, Course Designer workflow state, personal adaptation, and per-Course learner state beside preserved compatibility history. Target reads/writes use those repositories; legacy fixed-completion mutations are retired; unmatched meaning remains quarantined rather than guessed; browser/provider authority has moved behind app-owned services, the Learning Kernel, Provider Hub, and typed tools.
+
+**Implemented baseline.** Skills, Mistakes, Review scheduling, progression, and mastery read only exact selected Course/revision/branch/session Learning Kernel projections. Persisted projection caches are canonical-byte checked and replayed against their append-only fact frontier before use. Summary presentation evidence carries Kernel model/version/hash/frontier provenance; pre-envelope Summary rows are accepted only when their historical clock reconstructs the same exact frontier. Trusted checks alone supply implementation correctness; an accepted Reviewer receipt records participation and its advisory result cannot alter Summary mastery, mistakes, strengths, or gaps. The preserved `topics`, `mastery_*`, `mistakes`, and `flashcards` tables are compatibility history, not parallel domain authority; no active product route writes them, and new Summary operations no longer dual-write them. Retired legacy GET routes redirect to Kernel-backed resources, while obsolete flashcard mutations fail with `410`.
 
 **Approved Core Alpha target.** Move residual handler SQL behind repositories and remove compatibility endpoints/columns only after verified backups, persisted-data fixtures, parity evidence, and complete caller/row accounting. This does not authorize destructive history removal or a second architecture. Package/file renames remain optional cleanup rather than a migration stage.
 

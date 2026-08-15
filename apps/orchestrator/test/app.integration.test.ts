@@ -629,21 +629,69 @@ describe("orchestrator vertical flow", () => {
   });
 
   it("streams normalized mock events only through explicit development composition", async () => {
-    const { app } = runtime({
+    const { app, state } = runtime({
       developmentMode: true,
       providers: { mock: new MockAgentProvider() },
       developmentProviderFixture: testDevelopmentProviderFixture,
     });
+    const learningPath = z
+      .object({
+        curriculum: z.object({
+          weeks: z.array(
+            z.object({ days: z.array(z.object({ id: z.string() })) }),
+          ),
+        }),
+      })
+      .parse(await (await request(app, "/api/learning/path")).json());
+    const dayId = learningPath.curriculum.weeks[0]?.days[0]?.id;
+    expect(dayId).toBeTruthy();
+    const started = await request(app, "/api/learning/sessions/v2", {
+      method: "POST",
+      body: JSON.stringify({
+        dayId,
+        operationId: "app-integration-mock-tutor-session",
+      }),
+    });
+    expect(started.status).toBe(201);
+    const session = z
+      .object({
+        session: z.object({
+          id: z.string(),
+          snapshot: z.object({
+            units: z.array(
+              z.object({ id: z.string(), type: z.string() }).passthrough(),
+            ),
+          }),
+        }),
+      })
+      .parse(await started.json()).session;
+    const tutorUnit = session.snapshot.units.find(
+      (unit) => unit.type === "teacher-dialogue",
+    );
+    expect(tutorUnit).toBeTruthy();
+    state.repository.updateUnitProgress({
+      sessionId: session.id,
+      unitId: tutorUnit!.id,
+      status: "in_progress",
+    });
     const response = await request(app, "/api/agent/stream", {
       method: "POST",
-      body: JSON.stringify({ role: "teacher", message: "Мой ответ" }),
+      body: JSON.stringify({
+        role: "teacher",
+        sessionId: session.id,
+        unitId: tutorUnit!.id,
+        message: "Мой ответ",
+      }),
     });
-    expect(response.status).toBe(200);
+    expect(response.status, await response.clone().text()).toBe(200);
     const body = await response.text();
     expect(body).toContain('"type":"message.delta"');
     expect(body).toContain('"content"');
 
-    const history = await request(app, "/api/agent/history?role=teacher");
+    const history = await request(
+      app,
+      `/api/agent/history?role=teacher&sessionId=${encodeURIComponent(session.id)}`,
+    );
     expect(history.status).toBe(200);
     const historyBody = (await history.json()) as {
       messages: Array<{ role: string; content: string }>;

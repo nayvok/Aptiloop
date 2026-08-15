@@ -575,7 +575,7 @@ describe("authorized M2 active migration", () => {
     if (!candidate?.health.opened)
       throw new Error("Migrated fixture did not open");
     expect(candidate.health.migrations.ids.at(-1)).toBe(
-      "0019_provider_connection_retirement",
+      "0020_adaptation_branch_lifecycle",
     );
     expect(candidate.health.m2).toMatchObject({
       present: true,
@@ -658,7 +658,7 @@ describe("authorized M2 active migration", () => {
     expect(first).toContain("migrated with verified recovery backup");
     expect(second).toContain("already current; no migration performed");
     expect(migrated.health.migrations.ids.at(-1)).toBe(
-      "0019_provider_connection_retirement",
+      "0020_adaptation_branch_lifecycle",
     );
     expect(replayed.health.logicalSha256).toBe(logicalAfterFirst);
     expect(sha256File(fixture.backup)).toBe(fixture.backupSha256);
@@ -705,7 +705,7 @@ describe("authorized M2 active migration", () => {
       throw new Error("Retirement-migrated fixture did not open");
     }
     expect(after.health.migrations.ids.at(-1)).toBe(
-      "0019_provider_connection_retirement",
+      "0020_adaptation_branch_lifecycle",
     );
     const migrated = new DatabaseSync(fixture.source, { readOnly: true });
     try {
@@ -873,7 +873,7 @@ describe("authorized M2 active migration", () => {
       throw new Error("Hardened fixture did not open");
     }
     expect(candidate.health.migrations.ids.at(-1)).toBe(
-      "0019_provider_connection_retirement",
+      "0020_adaptation_branch_lifecycle",
     );
     expect(candidate.health.m2.runs).toMatchObject({
       m2V3Rows: 1,
@@ -921,7 +921,7 @@ describe("authorized M2 active migration", () => {
       throw new Error("Post-hardening fixture did not open");
     }
     expect(candidate.health.migrations.ids.at(-1)).toBe(
-      "0019_provider_connection_retirement",
+      "0020_adaptation_branch_lifecycle",
     );
     expect(candidate.health.m2.runs).toMatchObject({
       m2V4Rows: 1,

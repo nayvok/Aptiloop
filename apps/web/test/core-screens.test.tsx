@@ -438,6 +438,7 @@ describe("core learning screens", () => {
         latestReview: {
           id: "review-1",
           status: "changes_requested",
+          completionEligible: false,
           summary: "Проверь пустой массив",
           findings: [
             {

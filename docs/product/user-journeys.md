@@ -8,7 +8,7 @@ This document defines the complete user journeys and their release boundaries.
 
 **Implemented baseline**
 
-M1–M11 implement the application journeys around development Course fixtures and user-owned Course flows, and the dated 2026-08-12 UI/UX/runtime hardening plus production-readiness polish record the current reviewed baseline. The 2026-08-10 M12 technical preflight is historical evidence for its earlier tree, while a fresh authenticated OpenCode Zen Tutor request is working-tree evidence only. A normal fresh profile intentionally contains no Course and offers Create Course / Import Course Pack; release authorization remains outside the implemented journey evidence.
+M1–M11 implement the application journeys around development Course fixtures and user-owned Course flows, and the dated 2026-08-12 UI/UX/runtime hardening plus 2026-08-13 production-readiness polish record the current reviewed baseline. The 2026-08-10 M12 technical preflight is historical evidence for its earlier tree, while a fresh authenticated OpenCode Zen Tutor request is working-tree evidence only. A normal fresh profile intentionally contains no Course and offers Create Course / Import Course Pack; release authorization remains outside the implemented journey evidence.
 
 ## Actors
 

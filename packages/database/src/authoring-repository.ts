@@ -10,6 +10,7 @@ import {
   type CourseLocale,
 } from "@aptiloop/shared";
 
+import { adaptationBranchIdForRevision } from "./adaptation-branch.js";
 import { withTransaction, type DatabaseConnection } from "./database.js";
 import type {
   CurriculumDayV2,
@@ -821,6 +822,82 @@ export function publishDraftCurriculumVersionWithinTransaction(
       graph.version.curriculumId,
     );
   if (hasCourseProjection) {
+    const activeBranch = connection.sqlite
+      .prepare(
+        `SELECT id, base_revision_id, head_revision_id
+         FROM adaptation_branches
+         WHERE course_id = ? AND status = 'active'
+         ORDER BY id`,
+      )
+      .all(graph.version.curriculumId) as Array<{
+      id: string;
+      base_revision_id: string;
+      head_revision_id: string | null;
+    }>;
+    if (activeBranch.length > 1) {
+      throw new Error(
+        "Course has ambiguous active personal adaptation branches",
+      );
+    }
+    if (
+      activeBranch.length === 1 &&
+      activeBranch[0]!.base_revision_id !== input.versionId &&
+      activeBranch[0]!.head_revision_id !== input.versionId
+    ) {
+      connection.sqlite
+        .prepare(
+          `UPDATE adaptation_branches
+           SET status = 'archived', updated_at = ?
+           WHERE course_id = ? AND id = ? AND status = 'active'`,
+        )
+        .run(
+          input.courseUpdatedAt ?? input.publishedAt,
+          graph.version.curriculumId,
+          activeBranch[0]!.id,
+        );
+    }
+    const matchingBranch = connection.sqlite
+      .prepare(
+        `SELECT id FROM adaptation_branches
+         WHERE course_id = ? AND base_revision_id = ?
+         ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, id`,
+      )
+      .get(graph.version.curriculumId, input.versionId) as
+      { id: string } | undefined;
+    if (matchingBranch) {
+      connection.sqlite
+        .prepare(
+          `UPDATE adaptation_branches
+           SET status = 'active', updated_at = ?
+           WHERE course_id = ? AND id = ? AND status = 'archived'`,
+        )
+        .run(
+          input.courseUpdatedAt ?? input.publishedAt,
+          graph.version.curriculumId,
+          matchingBranch.id,
+        );
+    } else {
+      const branchId = adaptationBranchIdForRevision(
+        graph.version.curriculumId,
+        input.versionId,
+      );
+      connection.sqlite
+        .prepare(
+          `INSERT INTO adaptation_branches
+           (id, course_id, owner, base_revision_id, head_revision_id, status,
+            created_at, updated_at)
+           VALUES (?, ?, 'local', ?, NULL, 'active', ?, ?)`,
+        )
+        .run(
+          branchId,
+          graph.version.curriculumId,
+          input.versionId,
+          input.courseUpdatedAt ?? input.publishedAt,
+          input.courseUpdatedAt ?? input.publishedAt,
+        );
+    }
+  }
+  if (hasCourseProjection) {
     const target = connection.sqlite
       .prepare(
         `SELECT status, content_hash FROM course_revisions
@@ -928,7 +1005,7 @@ export class CurriculumAuthoringRepository {
     return this.#getVersion(versionId);
   }
 
-  async addWeek(input: AddWeekInput): Promise<CurriculumWeek> {
+  addWeek(input: AddWeekInput): CurriculumWeek {
     return this.#addWeek(input);
   }
 
@@ -962,13 +1039,13 @@ export class CurriculumAuthoringRepository {
     );
   }
 
-  async updateWeek(input: {
+  updateWeek(input: {
     versionId: string;
     targetStableId: string;
     title?: string;
     description?: string | null;
     orderIndex?: number;
-  }): Promise<CurriculumWeek> {
+  }): CurriculumWeek {
     this.#assertDraft(input.versionId);
     const current = this.#connection.sqlite
       .prepare(
@@ -999,7 +1076,7 @@ export class CurriculumAuthoringRepository {
     );
   }
 
-  async addDay(input: AddDayInput): Promise<CurriculumDayV2> {
+  addDay(input: AddDayInput): CurriculumDayV2 {
     return this.#addDay(input);
   }
 
@@ -1049,7 +1126,7 @@ export class CurriculumAuthoringRepository {
     );
   }
 
-  async updateDay(input: {
+  updateDay(input: {
     versionId: string;
     targetStableId: string;
     title?: string;
@@ -1062,7 +1139,7 @@ export class CurriculumAuthoringRepository {
     outOfScope?: unknown[];
     topics?: unknown[];
     orderIndex?: number;
-  }): Promise<CurriculumDayV2> {
+  }): CurriculumDayV2 {
     this.#assertDraft(input.versionId);
     const current = this.#connection.sqlite
       .prepare(
@@ -1110,7 +1187,7 @@ export class CurriculumAuthoringRepository {
     );
   }
 
-  async addUnit(input: AddUnitInput): Promise<CurriculumUnit> {
+  addUnit(input: AddUnitInput): CurriculumUnit {
     return this.#addUnit(input);
   }
 
@@ -1174,7 +1251,7 @@ export class CurriculumAuthoringRepository {
     );
   }
 
-  async updateUnit(input: {
+  updateUnit(input: {
     versionId: string;
     targetStableId: string;
     type?: string;
@@ -1193,7 +1270,7 @@ export class CurriculumAuthoringRepository {
     depthLevel?: string | null;
     payload?: Record<string, unknown>;
     orderIndex?: number;
-  }): Promise<CurriculumUnit> {
+  }): CurriculumUnit {
     this.#assertDraft(input.versionId);
     const current = this.#connection.sqlite
       .prepare(
@@ -1321,7 +1398,7 @@ export class CurriculumAuthoringRepository {
     );
   }
 
-  async getVersionGraph(versionId: string): Promise<CurriculumVersionGraph> {
+  getVersionGraph(versionId: string): CurriculumVersionGraph {
     return loadVersionGraph(this.#connection, versionId);
   }
 
@@ -1345,10 +1422,10 @@ export class CurriculumAuthoringRepository {
     );
   }
 
-  async cloneRevision(
+  cloneRevision(
     sourceVersionId: string,
     input: { title?: string; description?: string | null } = {},
-  ): Promise<CurriculumVersion> {
+  ): CurriculumVersion {
     return withTransaction(this.#connection, () => {
       const graph = loadVersionGraph(this.#connection, sourceVersionId);
       const versionId = this.#id();

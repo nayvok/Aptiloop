@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -641,7 +642,7 @@ describe("restart-safe interview v2", () => {
     ]);
   });
   it("writes interview unit progress into the linked learning session on finish", async () => {
-    const { state } = createState();
+    const { state, root } = createState();
     const app = createTestApp(state);
     const now = Date.now();
     const snapshotCore: Omit<SessionSnapshot, "contentHash"> = {
@@ -786,6 +787,9 @@ describe("restart-safe interview v2", () => {
                  'interview-day-v2', ?, ?, ?)`,
       )
       .run(snapshotHash, snapshotJson, now);
+    const snapshotBytesHash = createHash("sha256")
+      .update(snapshotJson)
+      .digest("hex");
     state.connection.sqlite
       .prepare(
         `INSERT INTO learner_state
@@ -810,10 +814,9 @@ describe("restart-safe interview v2", () => {
 
     const started = await request(app, "/api/interviews/v2", {
       operationId: "setup-linked",
-      topics: ["closures"],
-      difficulty: "interview-ready",
       questionCount: 3,
       learningSessionId: "session-interview-1",
+      unitId: "unit-interview-1",
     });
     expect(started.status).toBe(201);
     const startedBody = (await started.json()) as {
@@ -822,6 +825,78 @@ describe("restart-safe interview v2", () => {
     };
     const { id } = startedBody;
     expect(startedBody.learningSessionId).toBe("session-interview-1");
+    expect(startedBody).toMatchObject({
+      setup: { topics: ["closures"], difficulty: "foundation" },
+    });
+    const rejectedTopicOverride = await request(app, "/api/interviews/v2", {
+      operationId: "setup-linked-topic-override",
+      topics: ["unapproved-topic"],
+      difficulty: "deep-dive",
+      questionCount: 3,
+      learningSessionId: "session-interview-1",
+      unitId: "unit-interview-1",
+    });
+    expect(rejectedTopicOverride.status).toBe(400);
+    expect(
+      state.connection.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM interview_sessions WHERE id != ?",
+        )
+        .get(id),
+    ).toEqual({ count: 0 });
+    const rejectedUnit = await request(app, "/api/interviews/v2", {
+      operationId: "setup-linked-wrong-unit",
+      questionCount: 3,
+      learningSessionId: "session-interview-1",
+      unitId: "unit-interview-wrong",
+    });
+    expect(rejectedUnit.status).toBe(400);
+    const storedBinding = state.connection.sqlite
+      .prepare(
+        "SELECT result_json AS resultJson FROM interview_sessions WHERE id = ?",
+      )
+      .get(id) as { resultJson: string };
+    expect(JSON.parse(storedBinding.resultJson)).toMatchObject({
+      setup: {
+        courseBinding: {
+          learningSessionId: "session-interview-1",
+          unitId: "unit-interview-1",
+          courseId: "interview-curriculum",
+          revisionId: "interview-version",
+          lessonId: "interview-day-v2",
+          snapshotId: "interview-snapshot",
+          snapshotHash,
+          snapshotBytesHash,
+        },
+      },
+    });
+    const restartedConnection = openDatabase(path.join(root, "test.sqlite"), {
+      fileMustExist: true,
+    });
+    connections.push(restartedConnection);
+    const restartedState: InterviewV2State = {
+      ...state,
+      connection: restartedConnection,
+      providerRuntime: new ProviderRuntime({
+        connection: restartedConnection,
+        providers: {
+          mock: new MockAgentProvider(),
+          codex: new MockAgentProvider(),
+          opencode: new MockAgentProvider(),
+          pi: new MockAgentProvider(),
+        },
+        developmentMode: true,
+        developmentFixture: testDevelopmentProviderFixture,
+      }),
+      interviewReservations: { start: false, interviewIds: new Set() },
+    };
+    const restartedRead = await request(
+      createTestApp(restartedState),
+      `/api/interviews/v2/${id}?learningSessionId=session-interview-1`,
+    );
+    expect(restartedRead.status).toBe(200);
+    restartedConnection.close();
+    connections.splice(connections.indexOf(restartedConnection), 1);
 
     const scopedCurrent = await request(
       app,

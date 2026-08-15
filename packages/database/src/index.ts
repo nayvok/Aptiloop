@@ -1,4 +1,5 @@
 export * from "./active-database.js";
+export * from "./adaptation-branch.js";
 export * from "./approved-backup.js";
 export * from "./authoring-repository.js";
 export * from "./backup.js";

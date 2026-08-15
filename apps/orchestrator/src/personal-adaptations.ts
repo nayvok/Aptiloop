@@ -1,8 +1,10 @@
 import {
+  adaptationBranchIdForRevision,
   CurriculumAuthoringRepository,
   hashCanonicalJson,
   publicationContent,
   synchronizeDraftCourseProjectionWithinTransaction,
+  withTransaction,
   type CurriculumVersionGraph,
   type DatabaseConnection,
 } from "@aptiloop/database";
@@ -272,14 +274,41 @@ function activeBranch(
   connection: DatabaseConnection,
   courseId: string,
 ): AdaptationBranchRow | null {
-  return (
-    (connection.sqlite
-      .prepare(
-        `SELECT * FROM adaptation_branches
-         WHERE course_id = ? AND status = 'active' ORDER BY id LIMIT 1`,
-      )
-      .get(courseId) as unknown as AdaptationBranchRow | undefined) ?? null
-  );
+  const branches = connection.sqlite
+    .prepare(
+      `SELECT * FROM adaptation_branches
+       WHERE course_id = ? AND status = 'active' ORDER BY id`,
+    )
+    .all(courseId) as unknown as AdaptationBranchRow[];
+  if (branches.length > 1) {
+    throw new AdaptationError(
+      409,
+      "ambiguous_adaptation_branch",
+      "Course has more than one active personal adaptation branch",
+    );
+  }
+  return branches[0] ?? null;
+}
+
+function branchById(
+  connection: DatabaseConnection,
+  courseId: string,
+  branchId: string,
+): AdaptationBranchRow {
+  const branch = connection.sqlite
+    .prepare(
+      `SELECT * FROM adaptation_branches
+       WHERE course_id = ? AND id = ?`,
+    )
+    .get(courseId, branchId) as unknown as AdaptationBranchRow | undefined;
+  if (!branch) {
+    throw new AdaptationError(
+      409,
+      "missing_branch",
+      "Personal adaptation branch does not exist",
+    );
+  }
+  return branch;
 }
 
 function ensureBranch(
@@ -287,8 +316,21 @@ function ensureBranch(
   source: VersionMetadataRow,
 ): AdaptationBranchRow {
   const existing = activeBranch(connection, source.curriculum_id);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.base_revision_id !== source.id) {
+      throw new AdaptationError(
+        409,
+        "adaptation_base_conflict",
+        "Active personal adaptation is based on another upstream revision",
+      );
+    }
+    return existing;
+  }
   const now = Date.now();
+  const branchId = adaptationBranchIdForRevision(
+    source.curriculum_id,
+    source.id,
+  );
   connection.sqlite
     .prepare(
       `INSERT INTO adaptation_branches
@@ -296,7 +338,7 @@ function ensureBranch(
         created_at, updated_at)
        VALUES (?, ?, 'local', ?, NULL, 'active', ?, ?)`,
     )
-    .run(source.curriculum_id, source.curriculum_id, source.id, now, now);
+    .run(branchId, source.curriculum_id, source.id, now, now);
   return activeBranch(connection, source.curriculum_id)!;
 }
 
@@ -340,7 +382,7 @@ function priorOperation(
   return row;
 }
 
-async function clonePersonalDraft(
+function clonePersonalDraft(
   connection: DatabaseConnection,
   input: {
     sourceVersionId: string;
@@ -351,7 +393,7 @@ async function clonePersonalDraft(
     title?: string;
     strategy?: "use-upstream" | "keep-personal";
   },
-): Promise<VersionMetadataRow> {
+): VersionMetadataRow {
   const retried = priorOperation(connection, {
     operationId: input.operationId,
     courseId: input.baseRevision.curriculum_id,
@@ -361,9 +403,8 @@ async function clonePersonalDraft(
   if (retried) return retried;
 
   const repository = new CurriculumAuthoringRepository(connection);
-  connection.sqlite.exec("BEGIN IMMEDIATE");
-  try {
-    const draft = await repository.cloneRevision(input.sourceVersionId, {
+  return withTransaction(connection, () => {
+    const draft = repository.cloneRevision(input.sourceVersionId, {
       ...(input.title ? { title: input.title } : {}),
     });
     const result = connection.sqlite
@@ -396,12 +437,8 @@ async function clonePersonalDraft(
         draft.id,
         Date.now(),
       );
-    connection.sqlite.exec("COMMIT");
     return versionMetadata(connection, draft.id);
-  } catch (error) {
-    connection.sqlite.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
 function entityMap(graph: CurriculumVersionGraph): Map<string, string> {
@@ -478,7 +515,19 @@ function changedKeys(
 
 async function comparison(connection: DatabaseConnection, courseId: string) {
   const versions = courseVersions(connection, courseId);
-  const branch = activeBranch(connection, courseId);
+  const personal =
+    versions.find(
+      (version) =>
+        version.branch_kind === "personal" && version.status === "draft",
+    ) ??
+    versions.find(
+      (version) =>
+        version.branch_kind === "personal" && version.status === "published",
+    ) ??
+    null;
+  const branch = personal?.adaptation_branch_id
+    ? branchById(connection, courseId, personal.adaptation_branch_id)
+    : activeBranch(connection, courseId);
   const upstream =
     versions.find(
       (version) =>
@@ -521,11 +570,8 @@ async function comparison(connection: DatabaseConnection, courseId: string) {
     };
   }
   const base = versionMetadata(connection, branch.base_revision_id);
-  const personal =
-    versions.find(
-      (version) =>
-        version.branch_kind === "personal" && version.status === "draft",
-    ) ??
+  const branchPersonal =
+    personal ??
     (branch.head_revision_id
       ? versionMetadata(connection, branch.head_revision_id)
       : null);
@@ -533,7 +579,9 @@ async function comparison(connection: DatabaseConnection, courseId: string) {
   const [baseGraph, upstreamGraph, personalGraph] = await Promise.all([
     repository.getVersionGraph(base.id),
     repository.getVersionGraph(upstream.id),
-    personal ? repository.getVersionGraph(personal.id) : Promise.resolve(null),
+    branchPersonal
+      ? repository.getVersionGraph(branchPersonal.id)
+      : Promise.resolve(null),
   ]);
   const upstreamChanges = changedKeys(
     entityMap(baseGraph),
@@ -555,7 +603,7 @@ async function comparison(connection: DatabaseConnection, courseId: string) {
     branch,
     base,
     upstream,
-    personal,
+    personal: branchPersonal,
     baseDraftHash: authoringDraftHash(baseGraph),
     upstreamDraftHash: authoringDraftHash(upstreamGraph),
     personalDraftHash: personalGraph ? authoringDraftHash(personalGraph) : null,
@@ -563,10 +611,10 @@ async function comparison(connection: DatabaseConnection, courseId: string) {
   };
 }
 
-export async function publishPersonalAdaptation(
+export function publishPersonalAdaptation(
   connection: DatabaseConnection,
   versionId: string,
-): Promise<ReturnType<typeof versionDto>> {
+): ReturnType<typeof versionDto> {
   const metadata = versionMetadata(connection, versionId);
   if (metadata.branch_kind !== "personal" || metadata.status !== "draft") {
     throw new AdaptationError(
@@ -576,9 +624,8 @@ export async function publishPersonalAdaptation(
     );
   }
   const repository = new CurriculumAuthoringRepository(connection);
-  connection.sqlite.exec("BEGIN IMMEDIATE");
-  try {
-    const graph = await repository.getVersionGraph(versionId);
+  return withTransaction(connection, () => {
+    const graph = repository.getVersionGraph(versionId);
     synchronizeDraftCourseProjectionWithinTransaction(connection, graph);
     inheritCoursePackActivityMetadata(
       connection,
@@ -609,7 +656,7 @@ export async function publishPersonalAdaptation(
       .prepare(
         `UPDATE adaptation_branches
          SET head_revision_id = ?, updated_at = ?
-         WHERE id = ? AND course_id = ? AND status = 'active'`,
+         WHERE id = ? AND course_id = ?`,
       )
       .run(
         versionId,
@@ -617,12 +664,8 @@ export async function publishPersonalAdaptation(
         metadata.adaptation_branch_id,
         metadata.curriculum_id,
       );
-    connection.sqlite.exec("COMMIT");
     return versionDto(versionMetadata(connection, versionId));
-  } catch (error) {
-    connection.sqlite.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
 export function isPersonalAdaptation(
@@ -685,7 +728,7 @@ export function registerPersonalAdaptationRoutes(
         );
       }
       const branch = ensureBranch(state.connection, source);
-      const draft = await clonePersonalDraft(state.connection, {
+      const draft = clonePersonalDraft(state.connection, {
         sourceVersionId: source.id,
         baseRevision: source,
         branch,
@@ -756,7 +799,7 @@ export function registerPersonalAdaptationRoutes(
           input.strategy === "use-upstream"
             ? current.upstream.id
             : current.personal!.id;
-        const draft = await clonePersonalDraft(state.connection, {
+        const draft = clonePersonalDraft(state.connection, {
           sourceVersionId,
           baseRevision: current.upstream,
           branch: current.branch,

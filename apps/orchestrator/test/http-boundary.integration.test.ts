@@ -7,7 +7,8 @@ import type {
   DatabaseConnection,
   LearningRepository,
 } from "@aptiloop/database";
-import { afterEach, describe, expect, it } from "vitest";
+import { openDatabase } from "@aptiloop/database";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Hono } from "hono";
 
 import { createApp, type AppOptions } from "../src/app.js";
@@ -15,6 +16,7 @@ import { seedDevelopmentDatabase } from "./development-database-fixture.js";
 
 interface TestRuntime {
   app: Hono;
+  databasePath: string;
   state: {
     connection: DatabaseConnection;
     repository: LearningRepository;
@@ -55,22 +57,29 @@ const settingsMutation = { theme: "dark" } as const;
 
 function productionRuntime(
   startupConfig: NonNullable<AppOptions["startupConfig"]> = directStartup,
+  overrides: Pick<
+    AppOptions,
+    "httpResourceLimits" | "httpAdmissionTestHooks"
+  > = {},
 ): TestRuntime {
   const root = mkdtempSync(path.join(tmpdir(), "aptiloop-http-boundary-"));
   roots.push(root);
   const previousNodeEnvironment = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
   try {
+    const databasePath = path.join(root, "test.sqlite");
     const created = createApp({
       projectRoot: path.resolve("../.."),
-      databasePath: path.join(root, "test.sqlite"),
+      databasePath,
       databaseMode: "disposable",
       developmentDatabaseInitializer: seedDevelopmentDatabase,
       webOrigin,
       startupConfig,
+      ...overrides,
     });
-    runtimes.push(created);
-    return created;
+    const runtime = { ...created, databasePath };
+    runtimes.push(runtime);
+    return runtime;
   } finally {
     if (previousNodeEnvironment === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnvironment;
@@ -477,6 +486,325 @@ describe("production HTTP boundary", () => {
       ).status,
     ).toBe(415);
     expect(missingClient.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("rejects declared and chunked oversized JSON before parsing", async () => {
+    const { app } = productionRuntime(directStartup, {
+      httpResourceLimits: {
+        maxRequestBodyBytes: 1_024,
+        maxConcurrentRequests: 2,
+        maxConcurrentStreams: 1,
+      },
+    });
+    const declaredOversizeHeaders = new Headers(browserMutationHeaders);
+    declaredOversizeHeaders.set("Content-Length", "1025");
+    const declaredOversize = await apiRequest(
+      app,
+      directAuthority,
+      "/api/settings",
+      {
+        method: "PUT",
+        headers: declaredOversizeHeaders,
+        body: "{}",
+      },
+    );
+    expect(declaredOversize.status).toBe(413);
+    expect(await declaredOversize.json()).toEqual({
+      error: "Request body exceeds 1024 bytes",
+    });
+
+    const chunkedHeaders = new Headers(browserMutationHeaders);
+    const chunkedRequest = new Request(
+      `http://${directAuthority}/api/settings`,
+      {
+        method: "PUT",
+        headers: {
+          ...Object.fromEntries(chunkedHeaders),
+          Host: directAuthority,
+        },
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(" ".repeat(700)));
+            controller.enqueue(new TextEncoder().encode(" ".repeat(325)));
+            controller.close();
+          },
+        }),
+        duplex: "half",
+      } as RequestInit,
+    );
+    const chunkedOversize = await app.fetch(chunkedRequest);
+    expect(chunkedOversize.status).toBe(413);
+    expect(await chunkedOversize.json()).toEqual({
+      error: "Request body exceeds 1024 bytes",
+    });
+  });
+
+  it("accepts a JSON body immediately below the byte budget", async () => {
+    const { app } = productionRuntime(directStartup, {
+      httpResourceLimits: {
+        maxRequestBodyBytes: 1_024,
+        maxConcurrentRequests: 2,
+        maxConcurrentStreams: 1,
+      },
+    });
+    const prefix = JSON.stringify(settingsMutation);
+    const body = `${prefix}${" ".repeat(1_023 - Buffer.byteLength(prefix))}`;
+    expect(Buffer.byteLength(body)).toBe(1_023);
+
+    const accepted = await apiRequest(app, directAuthority, "/api/settings", {
+      method: "PUT",
+      headers: browserMutationHeaders,
+      body,
+    });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toEqual({ saved: true });
+  });
+
+  it("keeps browser-boundary failures ahead of body admission", async () => {
+    const { app } = productionRuntime(directStartup, {
+      httpResourceLimits: {
+        maxRequestBodyBytes: 1_024,
+        maxConcurrentRequests: 2,
+        maxConcurrentStreams: 1,
+      },
+    });
+    const headers = new Headers({
+      "Content-Length": "9999999",
+      "Content-Type": "application/json",
+      Origin: webOrigin,
+    });
+    const response = await apiRequest(app, directAuthority, "/api/settings", {
+      method: "PUT",
+      headers,
+      body: "{}",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "Local browser client marker is required",
+    });
+  });
+
+  it("bounds concurrent requests and releases capacity after completion", async () => {
+    let entered = 0;
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const { app } = productionRuntime(directStartup, {
+      httpResourceLimits: {
+        maxConcurrentRequests: 2,
+        maxConcurrentStreams: 1,
+        retryAfterSeconds: 3,
+      },
+      httpAdmissionTestHooks: {
+        afterAcquire: async () => {
+          entered += 1;
+          await gate;
+        },
+      },
+    });
+
+    const first = apiRequest(app, directAuthority, "/api/settings");
+    const second = apiRequest(app, directAuthority, "/api/settings");
+    await vi.waitFor(() => expect(entered).toBe(2));
+    const rejected = await apiRequest(app, directAuthority, "/api/settings");
+    expect(rejected.status).toBe(429);
+    expect(rejected.headers.get("Retry-After")).toBe("3");
+    expect(await rejected.json()).toEqual({
+      error: "HTTP request capacity is exhausted",
+    });
+
+    openGate();
+    expect((await first).status).toBe(200);
+    expect((await second).status).toBe(200);
+    expect(
+      (await apiRequest(app, directAuthority, "/api/settings")).status,
+    ).toBe(200);
+  });
+
+  it("holds request capacity until cancelled work exits, then releases it", async () => {
+    let firstAdmission = true;
+    let entered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const { app } = productionRuntime(directStartup, {
+      httpResourceLimits: {
+        maxConcurrentRequests: 1,
+        maxConcurrentStreams: 1,
+      },
+      httpAdmissionTestHooks: {
+        afterAcquire: async () => {
+          if (!firstAdmission) return;
+          firstAdmission = false;
+          entered();
+          await gate;
+        },
+      },
+    });
+
+    const abortController = new AbortController();
+    const cancelled = apiRequest(app, directAuthority, "/api/settings", {
+      signal: abortController.signal,
+    });
+    await firstEntered;
+    abortController.abort();
+    const afterCancel = await apiRequest(app, directAuthority, "/api/settings");
+    expect(afterCancel.status).toBe(429);
+    expect(await afterCancel.json()).toEqual({
+      error: "HTTP request capacity is exhausted",
+    });
+    openGate();
+    await cancelled;
+    expect(
+      (await apiRequest(app, directAuthority, "/api/settings")).status,
+    ).toBe(200);
+
+    const malformed = await apiRequest(app, directAuthority, "/api/settings", {
+      method: "PUT",
+      headers: browserMutationHeaders,
+      body: "{",
+    });
+    expect(malformed.status).toBe(400);
+    expect(
+      (await apiRequest(app, directAuthority, "/api/settings")).status,
+    ).toBe(200);
+  });
+
+  it("drains admitted mutation work before closing the database", async () => {
+    let entered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    let firstAdmission = true;
+    const runtime = productionRuntime(directStartup, {
+      httpAdmissionTestHooks: {
+        afterAcquire: async () => {
+          if (!firstAdmission) return;
+          firstAdmission = false;
+          entered();
+          await gate;
+        },
+      },
+    });
+
+    const mutationRequest = apiRequest(
+      runtime.app,
+      directAuthority,
+      "/api/settings",
+      {
+        method: "PUT",
+        headers: browserMutationHeaders,
+        body: JSON.stringify({ theme: "dark" }),
+      },
+    );
+    await firstEntered;
+
+    let closed = false;
+    const close = runtime.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    expect(
+      runtime.state.connection.sqlite.prepare("SELECT 1 AS open").get(),
+    ).toEqual({ open: 1 });
+    const rejectedDuringShutdown = await apiRequest(
+      runtime.app,
+      directAuthority,
+      "/api/settings",
+    );
+    expect(rejectedDuringShutdown.status).toBe(503);
+
+    openGate();
+    expect((await mutationRequest).status).toBe(200);
+    await close;
+    expect(closed).toBe(true);
+
+    const reopened = openDatabase(runtime.databasePath);
+    try {
+      expect(
+        reopened.sqlite
+          .prepare(
+            "SELECT value_json AS valueJson FROM application_settings WHERE key = 'theme'",
+          )
+          .get(),
+      ).toEqual({ valueJson: '"dark"' });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it("does not reflect or log malformed JSON body content", async () => {
+    const { app } = productionRuntime();
+    const sentinel = "PRIVATE_MALFORMED_BODY_SENTINEL";
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    try {
+      const response = await apiRequest(app, directAuthority, "/api/settings", {
+        method: "PUT",
+        headers: browserMutationHeaders,
+        body: `{"theme":"dark","value":"${sentinel}`,
+      });
+      const responseText = await response.text();
+
+      expect(response.status).toBe(400);
+      expect(JSON.parse(responseText)).toEqual({
+        error: "Invalid JSON request body",
+      });
+      expect(responseText).not.toContain(sentinel);
+      expect(JSON.stringify(consoleError.mock.calls)).not.toContain(sentinel);
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("returns an opaque diagnostic for unexpected failures", async () => {
+    const runtime = productionRuntime();
+    const sentinel = "PRIVATE_UNEXPECTED_ERROR_SENTINEL";
+    vi.spyOn(runtime.state.repository, "setSettings").mockRejectedValueOnce(
+      new Error(sentinel),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    try {
+      const response = await saveSettings(runtime.app, directAuthority);
+      const responseText = await response.text();
+      const responseBody = JSON.parse(responseText) as {
+        error: string;
+        diagnosticId: string;
+      };
+
+      expect(response.status).toBe(500);
+      expect(responseBody).toEqual({
+        error: "Internal server error",
+        diagnosticId: expect.any(String),
+      });
+      expect(responseBody.diagnosticId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+      );
+      expect(responseText).not.toContain(sentinel);
+      expect(consoleError).toHaveBeenCalledWith("orchestrator_request_failed", {
+        diagnosticId: responseBody.diagnosticId,
+        errorName: "Error",
+      });
+      expect(JSON.stringify(consoleError.mock.calls)).not.toContain(sentinel);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("keeps authority-checked GETs and health requests functional", async () => {

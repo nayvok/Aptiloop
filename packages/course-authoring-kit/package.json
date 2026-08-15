@@ -8,6 +8,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./authoring-assets": {
+      "types": "./src/authoring-assets.ts",
+      "import": "./src/authoring-assets.ts"
     }
   },
   "bin": {

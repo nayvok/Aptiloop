@@ -38,6 +38,16 @@ import { DayPlanRail, DayPlanSheet } from "@/components/day-plan";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Field,
   FieldGroup,
   FieldLabel,
@@ -516,7 +526,8 @@ const daySummarySchema = z
         quizScore: z.number().min(0).max(1),
         maxHintLevel: z.number().int().min(0).max(5),
         exerciseTestsPassed: z.boolean(),
-        reviewStatus: z.enum(["passed", "changes_requested"]).nullable(),
+        reviewReceiptAccepted: z.boolean(),
+        reviewStatus: z.null(),
         correctionCycleCount: z.number().int().nonnegative(),
       })
       .passthrough(),
@@ -2032,9 +2043,20 @@ function TeacherDialogueUnit({
   const [providerError, setProviderError] =
     useState<FailurePresentation | null>(null);
   const [streamStatus, setStreamStatus] = useState("");
+  const [pendingDisclosure, setPendingDisclosure] = useState<{
+    operationId: string;
+    message: string;
+    summary: string;
+  } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+    },
+    [],
+  );
   const history = useQuery({
-    queryKey: ["agent-history", "teacher", session.id],
+    queryKey: ["agent-history", "teacher", session.id, unit.id],
     queryFn: async () =>
       z
         .object({
@@ -2051,7 +2073,7 @@ function TeacherDialogueUnit({
         .passthrough()
         .parse(
           await api<unknown>(
-            `/learning/sessions/v2/${encodeURIComponent(session.id)}/teacher-transcript`,
+            `/learning/sessions/v2/${encodeURIComponent(session.id)}/units/${encodeURIComponent(unit.id)}/teacher-transcript`,
           ),
         ),
   });
@@ -2075,9 +2097,48 @@ function TeacherDialogueUnit({
     payload.revisionAttemptIds.length >= requiredTurns;
   const answeringFollowUp = payload.revisionAttemptIds.length === 1;
 
-  async function sendRevision() {
+  async function sendRevision(disclosureOperationId?: string) {
     const text = revision.trim();
     if (!text || streaming) return;
+    const tutorMessage = answeringFollowUp
+      ? `${opening}\n\nLearner first attempt:\n${firstDraft}\n\nLearner response to Tutor follow-up:\n${text}`
+      : `${opening}\n\nLearner first attempt:\n${firstDraft}\n\nLearner refined explanation:\n${text}`;
+    if (!disclosureOperationId) {
+      const preparation = z
+        .discriminatedUnion("required", [
+          z.object({ required: z.literal(false) }),
+          z.object({
+            required: z.literal(true),
+            disclosure: z.object({
+              operationId: idSchema,
+              scope: z.object({
+                destination: z.string(),
+                payloadCategories: z.array(z.string()),
+                byteCount: z.number(),
+              }),
+            }),
+          }),
+        ])
+        .parse(
+          await api<unknown>("/ai/disclosures", {
+            method: "POST",
+            body: JSON.stringify({
+              role: "teacher",
+              sessionId: session.id,
+              unitId: unit.id,
+              message: tutorMessage,
+            }),
+          }),
+        );
+      if (preparation.required) {
+        setPendingDisclosure({
+          operationId: preparation.disclosure.operationId,
+          message: tutorMessage,
+          summary: `${preparation.disclosure.scope.destination}; ${preparation.disclosure.scope.payloadCategories.join(", ")}; ${preparation.disclosure.scope.byteCount.toLocaleString()} bytes`,
+        });
+        return;
+      }
+    }
     setProviderError(null);
     setStreaming(true);
     setStreamStatus(t("session.tutor.generating"));
@@ -2096,18 +2157,20 @@ function TeacherDialogueUnit({
     ]);
     let assistantContent = "";
     let terminalReason: "completed" | "failed" | "cancelled" | null = null;
+    let terminalTurnId: string | null = null;
     let streamReportedError = false;
     try {
       stream: for await (const event of streamAgent(
         {
           role: "teacher",
           sessionId: session.id,
-          message: answeringFollowUp
-            ? `${opening}\n\nLearner first attempt:\n${firstDraft}\n\nLearner response to Tutor follow-up:\n${text}`
-            : `${opening}\n\nLearner first attempt:\n${firstDraft}\n\nLearner refined explanation:\n${text}`,
+          unitId: unit.id,
+          message: tutorMessage,
+          ...(disclosureOperationId ? { disclosureOperationId } : {}),
         },
         controller.signal,
       )) {
+        terminalTurnId ??= event.turnId;
         switch (event.type) {
           case "message.delta":
             assistantContent += event.content;
@@ -2183,7 +2246,10 @@ function TeacherDialogueUnit({
       const nextPayload = {
         ...payload,
         turnCount: payload.turnCount + 1,
-        revisionAttemptIds: [...payload.revisionAttemptIds, userMessage.id],
+        revisionAttemptIds: [
+          ...payload.revisionAttemptIds,
+          terminalTurnId ?? userMessage.id,
+        ],
       };
       const updated = await patchUnit(
         unit,
@@ -2196,7 +2262,7 @@ function TeacherDialogueUnit({
       draft.clear({ type: "teacher-dialogue", revision: "" });
       setStreamStatus(t("session.tutor.received"));
       await queryClient.invalidateQueries({
-        queryKey: ["agent-history", "teacher", session.id],
+        queryKey: ["agent-history", "teacher", session.id, unit.id],
         refetchType: "none",
       });
     } catch (error) {
@@ -2216,12 +2282,62 @@ function TeacherDialogueUnit({
         setStreamStatus(t("session.tutor.unavailable"));
       }
     } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
       setStreaming(false);
     }
   }
 
   return (
     <div className="flex flex-col gap-6">
+      <AlertDialog open={pendingDisclosure !== null}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("session.tutor.disclosureTitle")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDisclosure?.summary ?? ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                const disclosure = pendingDisclosure;
+                setPendingDisclosure(null);
+                if (disclosure) {
+                  void api(
+                    `/ai/disclosures/${encodeURIComponent(disclosure.operationId)}/cancel`,
+                    {
+                      method: "POST",
+                      body: JSON.stringify({}),
+                    },
+                  );
+                }
+              }}
+            >
+              {t("session.tutor.disclosureCancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const disclosure = pendingDisclosure;
+                if (!disclosure) return;
+                setPendingDisclosure(null);
+                void api(
+                  `/ai/disclosures/${encodeURIComponent(disclosure.operationId)}/approve`,
+                  {
+                    method: "POST",
+                    body: JSON.stringify({}),
+                  },
+                ).then(() => sendRevision(disclosure.operationId));
+              }}
+            >
+              {t("session.tutor.disclosureApprove")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="flex min-w-0 flex-col gap-1.5 border-y border-border/60 py-4 text-sm leading-6 sm:py-5">
         <p className="font-semibold">{t("session.tutor.task")}</p>
         <p className="max-w-[68ch] break-words text-muted-foreground [overflow-wrap:anywhere]">

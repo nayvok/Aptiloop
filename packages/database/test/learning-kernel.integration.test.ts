@@ -42,32 +42,15 @@ async function setupFixture() {
   });
   const context = connection.sqlite
     .prepare(
-      `SELECT course_id, revision_id, lesson_id
+      `SELECT course_id, revision_id, lesson_id, adaptation_branch_id
        FROM session_course_contexts WHERE session_id = ?`,
     )
     .get(session.session.id) as {
     course_id: string;
     revision_id: string;
     lesson_id: string;
+    adaptation_branch_id: string;
   };
-  let branch = connection.sqlite
-    .prepare(
-      `SELECT id FROM adaptation_branches
-       WHERE course_id = ? AND status = 'active'
-       ORDER BY id LIMIT 1`,
-    )
-    .get(context.course_id) as { id: string } | undefined;
-  if (!branch) {
-    connection.sqlite
-      .prepare(
-        `INSERT INTO adaptation_branches
-         (id, course_id, owner, base_revision_id, head_revision_id, status,
-          created_at, updated_at)
-         VALUES ('kernel-test-branch', ?, 'local', ?, NULL, 'active', 2000, 2000)`,
-      )
-      .run(context.course_id, context.revision_id);
-    branch = { id: "kernel-test-branch" };
-  }
   const activity = connection.sqlite
     .prepare(
       `SELECT activity.id, lesson.topics_json
@@ -86,7 +69,7 @@ async function setupFixture() {
   const scope: LearningKernelScope = {
     courseId: context.course_id,
     revisionId: context.revision_id,
-    branchId: branch.id,
+    branchId: context.adaptation_branch_id,
     sessionId: session.session.id,
   };
   return { connection, scope, activityId: activity.id, knowledgeNodeId };
@@ -226,6 +209,116 @@ describe("LearningKernelRepository", () => {
         .prepare("SELECT count(*) AS count FROM learning_kernel_projections")
         .get(),
     ).toEqual({ count: 0 });
+  });
+
+  it("fails closed when the stored projection diverges from replayed facts", async () => {
+    const setup = await setupFixture();
+    const repository = createLearningKernelRepository(setup.connection, {
+      now: () => Date.parse("2026-08-10T09:00:10.000Z"),
+    });
+    repository.accept(setup.scope, {
+      operationId: "kernel-divergence-operation",
+      factId: "kernel-divergence-fact",
+      observedAt: "2026-08-10T09:00:00.000Z",
+      provenance: learner,
+      body: evidence(setup.activityId, setup.knowledgeNodeId, "unverified", []),
+    });
+    const stored = repository.readProjection(setup.scope);
+    if (!stored) throw new Error("Stored projection fixture is unavailable");
+    const divergent = {
+      ...stored,
+      summary: {
+        ...stored.summary,
+        gapReasonCodes: ["tampered:legacy-read-model"],
+      },
+    };
+    setup.connection.sqlite
+      .prepare(
+        `UPDATE learning_kernel_projections
+         SET projection_json = ? WHERE session_id = ?`,
+      )
+      .run(canonicalLearningKernelJson(divergent), setup.scope.sessionId);
+
+    expect(() => repository.readProjection(setup.scope)).toThrow(
+      "Stored Learning Kernel projection diverges from append-only facts",
+    );
+  });
+
+  it("replays an exact historical frontier after later facts are appended", async () => {
+    const setup = await setupFixture();
+    const repository = createLearningKernelRepository(setup.connection, {
+      now: () => Date.parse("2026-08-10T09:00:10.000Z"),
+    });
+    const first = repository.accept(setup.scope, {
+      operationId: "kernel-frontier-first-operation",
+      factId: "kernel-frontier-first-fact",
+      observedAt: "2026-08-10T09:00:00.000Z",
+      provenance: learner,
+      body: evidence(setup.activityId, setup.knowledgeNodeId, "unverified", []),
+    });
+    repository.accept(setup.scope, {
+      operationId: "kernel-frontier-second-operation",
+      factId: "kernel-frontier-second-fact",
+      observedAt: "2026-08-10T09:00:01.000Z",
+      provenance: evaluator,
+      body: evidence(setup.activityId, setup.knowledgeNodeId, "correct", [
+        "kernel-frontier-first-fact",
+      ]),
+    });
+
+    const replayed = repository.reprojectFrontier(
+      setup.scope,
+      first.projection.observedAt,
+      first.projection.summary.sourceFactIds,
+    );
+    expect(canonicalLearningKernelJson(replayed)).toBe(
+      canonicalLearningKernelJson(first.projection),
+    );
+    expect(() =>
+      repository.reprojectFrontier(setup.scope, first.projection.observedAt, [
+        "kernel-frontier-second-fact",
+      ]),
+    ).toThrow();
+  });
+
+  it("reconstructs only facts proven accepted before a legacy boundary", async () => {
+    const setup = await setupFixture();
+    let acceptedAt = Date.parse("2026-08-10T09:00:10.000Z");
+    const repository = createLearningKernelRepository(setup.connection, {
+      now: () => acceptedAt,
+    });
+    repository.accept(setup.scope, {
+      operationId: "kernel-accepted-frontier-first-operation",
+      factId: "kernel-accepted-frontier-first-fact",
+      observedAt: "2026-08-10T09:00:00.000Z",
+      provenance: learner,
+      body: evidence(setup.activityId, setup.knowledgeNodeId, "unverified", []),
+    });
+    acceptedAt += 2;
+    repository.accept(setup.scope, {
+      operationId: "kernel-accepted-frontier-later-operation",
+      factId: "kernel-accepted-frontier-later-fact",
+      observedAt: "2026-08-10T09:00:00.000Z",
+      provenance: learner,
+      body: evidence(setup.activityId, setup.knowledgeNodeId, "unverified", []),
+    });
+
+    expect(
+      repository.readAcceptedFactFrontier(
+        setup.scope,
+        "2026-08-10T09:00:00.000Z",
+        acceptedAt - 1,
+      ),
+    ).toEqual(["kernel-accepted-frontier-first-fact"]);
+    expect(() =>
+      repository.readAcceptedFactFrontier(
+        setup.scope,
+        "2026-08-10T09:00:00.000Z",
+        acceptedAt,
+      ),
+    ).toThrow(
+      "Learning Kernel accepted frontier is ambiguous at the persisted boundary",
+    );
   });
 });
 

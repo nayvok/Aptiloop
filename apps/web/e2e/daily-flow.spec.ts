@@ -541,9 +541,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
     page,
     "Решение близко, но один краевой случай требует ещё одной попытки.",
   );
-  await expect(
-    page.getByRole("button", { name: "Принять проверку и продолжить" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Продолжить" })).toBeVisible();
 
   await writeFile(
     learnerFile,
@@ -557,9 +555,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
     page,
     "Цикл исправлений завершён: протестированное изменение теперь соответствует контракту упражнения.",
   );
-  await page
-    .getByRole("button", { name: "Принять проверку и продолжить" })
-    .click();
+  await page.getByRole("button", { name: "Продолжить" }).click();
   await expect(page).toHaveURL(/\/session\?id=/u);
 
   await startUnit(page);

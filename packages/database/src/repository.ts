@@ -34,7 +34,6 @@ import {
 } from "./authoring-repository.js";
 import {
   agentConversations,
-  agentMessages,
   answerAttempts,
   applicationSettings,
   curriculumDays,
@@ -47,6 +46,7 @@ import {
   providerConfigurations,
   questions,
   topics,
+  type agentMessages,
   type AnswerAttempt,
   type Flashcard,
   type LearningSession,
@@ -787,9 +787,7 @@ export class LearningRepository {
     return current ? this.getVersionedSession(current.id) : null;
   }
 
-  async getVersionedSession(
-    sessionId: string,
-  ): Promise<VersionedSessionDetail> {
+  getVersionedSession(sessionId: string): VersionedSessionDetail {
     const sessionRow = this.#connection.sqlite
       .prepare("SELECT * FROM learning_sessions WHERE id = ?")
       .get(sessionId) as
@@ -882,12 +880,12 @@ export class LearningRepository {
     };
   }
 
-  async updateUnitProgress(input: {
+  updateUnitProgress(input: {
     sessionId: string;
     unitId: string;
     status: UnitStatus;
     progress?: UnitProgressPayload;
-  }): Promise<VersionedSessionDetail["unitProgress"][number]> {
+  }): VersionedSessionDetail["unitProgress"][number] {
     const now = this.#now();
     const unitRow = this.#connection.sqlite
       .prepare(
@@ -931,7 +929,7 @@ export class LearningRepository {
       );
     if (result.changes !== 1)
       throw new Error("Unknown active session unit progress");
-    const detail = await this.getVersionedSession(input.sessionId);
+    const detail = this.getVersionedSession(input.sessionId);
     const progress = detail.unitProgress.find(
       (item) => item.unitId === input.unitId,
     );
@@ -939,9 +937,9 @@ export class LearningRepository {
     return progress;
   }
 
-  async recordVersionedUnitEvidence(
+  recordVersionedUnitEvidence(
     input: RecordVersionedUnitEvidenceInput,
-  ): Promise<VersionedUnitEvidenceRecord> {
+  ): VersionedUnitEvidenceRecord {
     const sessionId = validateEvidenceIdentifier(input.sessionId, "Session ID");
     const unitId = validateEvidenceIdentifier(input.unitId, "Unit ID");
     const operationId = validateEvidenceIdentifier(
@@ -1040,10 +1038,10 @@ export class LearningRepository {
     });
   }
 
-  async listVersionedUnitEvidence(
+  listVersionedUnitEvidence(
     sessionIdInput: string,
     filter: ListVersionedUnitEvidenceFilter = {},
-  ): Promise<VersionedUnitEvidenceRecord[]> {
+  ): VersionedUnitEvidenceRecord[] {
     const sessionId = validateEvidenceIdentifier(sessionIdInput, "Session ID");
     const unitId =
       filter.unitId === undefined
@@ -1534,13 +1532,13 @@ export class LearningRepository {
     return row;
   }
 
-  async addMessage(input: {
+  addMessage(input: {
     conversationId: string;
     role: string;
     content: string;
     status?: string;
     idempotencyKey?: string;
-  }) {
+  }): typeof agentMessages.$inferSelect {
     const now = this.#now();
     const id = withTransaction(this.#connection, () => {
       if (input.idempotencyKey) {
@@ -1582,11 +1580,15 @@ export class LearningRepository {
         .run(now, input.conversationId);
       return newId;
     });
-    const [row] = await this.#connection.db
-      .select()
-      .from(agentMessages)
-      .where(eq(agentMessages.id, id))
-      .limit(1);
+    const row = this.#connection.sqlite
+      .prepare(
+        `SELECT id, conversation_id AS conversationId, role, content,
+                tool_events_json AS toolEventsJson,
+                raw_event_json AS rawEventJson, status, sequence,
+                idempotency_key AS idempotencyKey, created_at AS createdAt
+         FROM agent_messages WHERE id = ?`,
+      )
+      .get(id) as typeof agentMessages.$inferSelect | undefined;
     if (!row) throw new Error("Failed to save message");
     return row;
   }

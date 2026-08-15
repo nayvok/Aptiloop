@@ -23,7 +23,6 @@ describe("route title privacy boundary", () => {
     ["/skills", "nav.skills"],
     ["/settings", "nav.settings"],
     ["/settings/developer-tools", "ui.developerTools.title"],
-    ["/chat", "chat.page.title"],
   ])("maps %s to the static label %s", (pathname, expected) => {
     expect(resolveRouteTitleKey(pathname)).toBe(expected);
   });
@@ -84,6 +83,7 @@ describe("route title privacy boundary", () => {
     expect(resolveRouteTitleKey("/courses/import///")).toBe(
       "courses.import.title",
     );
+    expect(resolveRouteTitleKey("/chat")).toBeNull();
     expect(
       resolveRouteTitleKey("/not-an-aptiloop-route/private-id"),
     ).toBeNull();

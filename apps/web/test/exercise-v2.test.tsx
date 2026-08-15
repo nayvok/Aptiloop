@@ -110,6 +110,7 @@ function exerciseState(options?: {
         ? {
             id: "review-v1",
             status: review,
+            completionEligible: true,
             summary:
               review === "passed" ? "Решение принято" : "Нужно исправление",
             findings: review === "passed" ? [] : [finding()],
@@ -257,7 +258,7 @@ describe("restart-safe v2 practice", () => {
       sessionId: "session-b",
       title: "Session B exercise",
     };
-    apiMock.mockImplementation((requestPath: string) => {
+    apiMock.mockImplementation((requestPath: string, _init?: RequestInit) => {
       if (requestPath === "/exercises/current?sessionId=session-v2") {
         return Promise.resolve(sessionA);
       }
@@ -526,11 +527,20 @@ describe("restart-safe v2 practice", () => {
 
     apiMock.mockResolvedValue(exerciseState({ review: "changes_requested" }));
     const correctionStage = renderWithQuery(<ExerciseClient />);
-    const rerunTests = await screen.findByRole("button", {
-      name: "Запустить тесты",
+    const acceptAdvisoryReview = await screen.findByRole("button", {
+      name: "Продолжить",
     });
-    expect(rerunTests).toHaveAttribute("aria-current", "step");
-    expect(rerunTests).toHaveAttribute("data-variant", "default");
+    expect(
+      screen.getByText("Совет Reviewer: нужны изменения"),
+    ).toBeInTheDocument();
+    await toggleReviewerDisclosure();
+    expect(
+      screen.getByText(
+        "Квитанция доказательств проверена. Можно продолжить независимо от рекомендательного вердикта.",
+      ),
+    ).toBeInTheDocument();
+    expect(acceptAdvisoryReview).toHaveAttribute("aria-current", "step");
+    expect(acceptAdvisoryReview).toHaveAttribute("data-variant", "default");
     expect(
       screen.getByRole("button", { name: "Запросить проверку" }),
     ).toHaveAttribute("data-variant", "ghost");
@@ -544,8 +554,15 @@ describe("restart-safe v2 practice", () => {
     apiMock.mockResolvedValue(exerciseState({ review: "passed" }));
     const acceptanceStage = renderWithQuery(<ExerciseClient />);
     const accept = await screen.findByRole("button", {
-      name: "Принять проверку и продолжить",
+      name: "Продолжить",
     });
+    expect(screen.getByText("Совет Reviewer: пройдено")).toBeInTheDocument();
+    await toggleReviewerDisclosure();
+    expect(
+      screen.getByText(
+        "Квитанция доказательств проверена. Можно продолжить независимо от рекомендательного вердикта.",
+      ),
+    ).toBeInTheDocument();
     expect(accept).toHaveAttribute("aria-current", "step");
     expect(accept).toHaveAttribute("data-variant", "default");
     expect(
@@ -560,12 +577,16 @@ describe("restart-safe v2 practice", () => {
     ).toHaveLength(1);
   });
 
-  it("requires a new diff, passing test, and review after changes_requested", async () => {
+  it("keeps changes_requested advisory while deterministic receipt permits completion", async () => {
     let diffReads = 0;
     let reviews = 0;
-    apiMock.mockImplementation((requestPath: string) => {
+    apiMock.mockImplementation((requestPath: string, init?: RequestInit) => {
       if (requestPath.includes("/exercises/current")) {
-        return Promise.resolve(exerciseState());
+        return Promise.resolve(
+          reviews === 0
+            ? exerciseState()
+            : exerciseState({ review: "changes_requested" }),
+        );
       }
       if (requestPath.endsWith("/diff")) {
         diffReads += 1;
@@ -594,6 +615,7 @@ describe("restart-safe v2 practice", () => {
         return Promise.resolve({
           id: `review-v${reviews}`,
           status: reviews === 1 ? "changes_requested" : "passed",
+          completionEligible: true,
           summary:
             reviews === 1 ? "Исправьте empty case" : "Исправление принято",
           findings: reviews === 1 ? [finding()] : [],
@@ -606,6 +628,12 @@ describe("restart-safe v2 practice", () => {
           },
         });
       }
+      if (
+        requestPath.includes("/learning/sessions/v2/") &&
+        init?.method === "PATCH"
+      ) {
+        return Promise.resolve({ session: { id: "session-v2" } });
+      }
       throw new Error(`Unexpected API path: ${requestPath}`);
     });
     renderWithQuery(<ExerciseClient />);
@@ -613,29 +641,18 @@ describe("restart-safe v2 practice", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Запросить проверку" }),
     );
-    expect(await screen.findByText("Нужны изменения")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Совет Reviewer: нужны изменения"),
+    ).toBeInTheDocument();
     await toggleReviewerDisclosure();
     expect(await screen.findByText("Исправьте empty case")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Принять проверку и продолжить" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Запросить проверку" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Продолжить" })).toBeEnabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Запустить тесты" }));
-    await toggleEvidenceDisclosure();
-    expect(
-      await screen.findByText("+ corrected learner change"),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Запросить проверку" }));
-    expect(await screen.findByText("Принято")).toBeInTheDocument();
-    await toggleReviewerDisclosure();
-    expect(await screen.findByText("Исправление принято")).toBeInTheDocument();
-    expect(reviews).toBe(2);
-    expect(
-      screen.getByRole("button", { name: "Принять проверку и продолжить" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Продолжить" })).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
+    expect(reviews).toBe(1);
   });
 
   it("completes exercise and review with only server-issued evidence IDs", async () => {
@@ -660,7 +677,7 @@ describe("restart-safe v2 practice", () => {
     renderWithQuery(<ExerciseClient />);
     fireEvent.click(
       await screen.findByRole("button", {
-        name: "Принять проверку и продолжить",
+        name: "Продолжить",
       }),
     );
 
@@ -778,6 +795,7 @@ describe("restart-safe v2 practice", () => {
     resolveReview({
       id: "late-review",
       status: "passed",
+      completionEligible: true,
       summary: "late reviewer output",
       findings: [],
       strengths: ["late"],
@@ -795,7 +813,7 @@ describe("restart-safe v2 practice", () => {
     ).toBeVisible();
     expect(screen.queryByText("late reviewer output")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Принять проверку и продолжить" }),
+      screen.queryByRole("button", { name: "Продолжить" }),
     ).not.toBeInTheDocument();
   });
 

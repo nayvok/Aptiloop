@@ -5,7 +5,6 @@ COPY package.json package-lock.json ./
 COPY apps/orchestrator/package.json apps/orchestrator/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/agent-core/package.json packages/agent-core/package.json
-COPY packages/codex-provider/package.json packages/codex-provider/package.json
 COPY packages/course-authoring-kit/package.json packages/course-authoring-kit/package.json
 COPY packages/curriculum/package.json packages/curriculum/package.json
 COPY packages/database/package.json packages/database/package.json
@@ -14,7 +13,6 @@ COPY packages/learning-core/package.json packages/learning-core/package.json
 COPY packages/opencode-provider/package.json packages/opencode-provider/package.json
 COPY packages/prompt-library/package.json packages/prompt-library/package.json
 COPY packages/shared/package.json packages/shared/package.json
-COPY packages/testing/package.json packages/testing/package.json
 
 FROM workspace-manifests AS build-dependencies
 RUN npm ci --no-audit --no-fund

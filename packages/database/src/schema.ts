@@ -1310,6 +1310,9 @@ export const adaptationBranches = sqliteTable(
       table.status,
       table.id,
     ),
+    uniqueIndex("adaptation_branches_one_active_course_uq")
+      .on(table.courseId)
+      .where(sql`${table.status} = 'active'`),
   ],
 );
 
@@ -1322,6 +1325,9 @@ export const sessionCourseContexts = sqliteTable(
     courseId: text("course_id").notNull(),
     revisionId: text("revision_id").notNull(),
     lessonId: text("lesson_id").notNull(),
+    adaptationBranchId: text("adaptation_branch_id")
+      .notNull()
+      .references(() => adaptationBranches.id, { onDelete: "restrict" }),
     sessionSnapshotId: text("session_snapshot_id")
       .notNull()
       .unique()
@@ -1341,6 +1347,11 @@ export const sessionCourseContexts = sqliteTable(
       table.courseId,
       table.revisionId,
       table.lessonId,
+      table.sessionId,
+    ),
+    index("session_course_contexts_adaptation_branch_idx").on(
+      table.courseId,
+      table.adaptationBranchId,
       table.sessionId,
     ),
   ],

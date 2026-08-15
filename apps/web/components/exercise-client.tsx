@@ -113,6 +113,7 @@ const reviewSchema = z
   .object({
     id: idSchema,
     status: z.enum(["passed", "changes_requested"]),
+    completionEligible: z.boolean(),
     summary: z.string().min(1),
     findings: z.array(findingSchema),
     strengths: z.array(z.string().min(1)),
@@ -680,6 +681,7 @@ export function ExerciseClient() {
         review: reviewSchema.parse({
           id: parsed.id,
           status: parsed.status,
+          completionEligible: parsed.completionEligible,
           summary: parsed.summary,
           findings: parsed.findings,
           strengths: parsed.strengths,
@@ -780,7 +782,7 @@ export function ExerciseClient() {
         !exerciseUnitId ||
         !reviewUnitId ||
         !review ||
-        review.status !== "passed" ||
+        !review.completionEligible ||
         !test ||
         test.status !== "passed" ||
         !test.workspaceCurrent
@@ -979,15 +981,13 @@ export function ExerciseClient() {
   const currentPracticeAction:
     "attempt" | "diff" | "tests" | "review" | "acceptance" = !attemptId
     ? "attempt"
-    : review?.status === "passed"
+    : review?.completionEligible
       ? "acceptance"
-      : review?.status === "changes_requested"
-        ? "tests"
-        : !diff?.changed
-          ? "diff"
-          : !testsCurrent
-            ? "tests"
-            : "review";
+      : !diff?.changed
+        ? "diff"
+        : !testsCurrent
+          ? "tests"
+          : "review";
   const nextAction = t(
     !attemptId
       ? "practice.nextAction.createAttempt"
@@ -1001,9 +1001,9 @@ export function ExerciseClient() {
               ? "practice.nextAction.retestChangedWorkspace"
               : !review
                 ? "practice.nextAction.requestReview"
-                : review.status === "changes_requested"
-                  ? "practice.nextAction.applyFindings"
-                  : "practice.nextAction.accepted",
+                : review.completionEligible
+                  ? "practice.nextAction.evidenceVerified"
+                  : "practice.nextAction.applyFindings",
   );
   const error =
     attempt.error ??
@@ -1335,7 +1335,7 @@ export function ExerciseClient() {
                     )}
                   </Button>
                 )}
-                {review?.status === "passed" ? (
+                {review?.completionEligible ? (
                   <Button
                     data-slot="exercise-action-acceptance"
                     className="h-auto w-full min-w-0 max-w-full whitespace-normal break-words py-2 text-center sm:w-auto"
@@ -1516,6 +1516,14 @@ export function ExerciseClient() {
                     <p className="min-w-0 break-words text-sm leading-6 [overflow-wrap:anywhere]">
                       {review.summary}
                     </p>
+                    {review.completionEligible ? (
+                      <p
+                        role="status"
+                        className="min-w-0 break-words border-y border-success/40 py-4 text-sm leading-6 text-success-foreground [overflow-wrap:anywhere]"
+                      >
+                        {t("practice.reviewer.receiptVerified")}
+                      </p>
+                    ) : null}
                     {review.evidenceBundle ? (
                       <div className="min-w-0 border-y border-border/70 py-3">
                         <p className="break-words text-xs font-medium [overflow-wrap:anywhere]">

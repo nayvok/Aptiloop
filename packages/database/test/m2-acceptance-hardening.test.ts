@@ -340,6 +340,9 @@ describe("M2 acceptance hardening migration", () => {
     const connection = currentConnection();
     insertLegacyScopes(connection);
     connection.sqlite.exec(`
+      UPDATE curricula
+      SET active_version_id = 'accepted-version', updated_at = 2
+      WHERE id = 'legacy-course';
       INSERT INTO curriculum_days
         (id, slug, week_number, day_number, title, summary, estimated_minutes,
          goals_json, sources_json, created_at, updated_at)
@@ -348,24 +351,24 @@ describe("M2 acceptance hardening migration", () => {
         (id, day_id, status, current_step, idempotency_key, started_at,
          completed_at, updated_at, curriculum_day_v2_id)
       VALUES ('snapshot-session', 'old-day', 'active', 'study', NULL, 1, NULL,
-              1, 'draft-day');
+              1, 'accepted-day');
     `);
     const contentHash = "e".repeat(64);
     const envelope = {
       schemaVersion: 2,
       contentHash,
       curriculumId: "legacy-course",
-      curriculumVersionId: "draft-version",
-      curriculumRevision: 1,
-      day: { id: "draft-day" },
+      curriculumVersionId: "accepted-version",
+      curriculumRevision: 2,
+      day: { id: "accepted-day" },
     };
     const insert = connection.sqlite.prepare(
       `INSERT INTO session_snapshots
          (id, session_id, schema_version, curriculum_id,
           curriculum_version_id, curriculum_day_id, content_hash,
           snapshot_json, created_at)
-       VALUES (?, 'snapshot-session', 2, 'legacy-course', 'draft-version',
-               'draft-day', ?, ?, 1)`,
+       VALUES (?, 'snapshot-session', 2, 'legacy-course', 'accepted-version',
+               'accepted-day', ?, ?, 1)`,
     );
     expect(() =>
       insert.run(

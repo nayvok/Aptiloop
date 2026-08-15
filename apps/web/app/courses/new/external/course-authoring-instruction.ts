@@ -1,6 +1,8 @@
-import authoringKitPackage from "../../../../../../packages/course-authoring-kit/package.json";
-import coursePackV1Schema from "../../../../../../packages/course-authoring-kit/schema/course-pack-v1.schema.json";
-import coursePackV1AuthoringTemplate from "../../../../../../packages/course-authoring-kit/templates/course-pack-v1-authoring-template.json";
+import {
+  courseAuthoringKitPackageIdentity,
+  coursePackV1AuthoringTemplate,
+  coursePackV1JsonSchema,
+} from "@aptiloop/course-authoring-kit/authoring-assets";
 
 import { AuthoringBriefSchema, type AuthoringBrief } from "../authoring-brief";
 
@@ -15,7 +17,7 @@ export function createCourseAuthoringInstruction(
   input: AuthoringBrief,
 ): string {
   const brief = AuthoringBriefSchema.parse(input);
-  const schema = prettyJson(coursePackV1Schema);
+  const schema = prettyJson(coursePackV1JsonSchema);
   const template = prettyJson(coursePackV1AuthoringTemplate);
 
   return `---
@@ -27,9 +29,9 @@ description: Create one declarative Aptiloop Course Pack V1 JSON document from a
 
 This self-contained instruction is version-matched to the Course Pack V1 artifacts bundled with Aptiloop. Aptiloop has not contacted, selected, or verified the external model that receives this file.
 
-- Authoring Kit package: \`${authoringKitPackage.name}@${authoringKitPackage.version}\`
-- JSON Schema identity: \`${coursePackV1Schema.$id}\`
-- Course Pack format/version: \`${coursePackV1Schema.properties.format.const}\` / \`${coursePackV1Schema.properties.formatVersion.const}\`
+- Authoring Kit package: \`${courseAuthoringKitPackageIdentity.name}@${courseAuthoringKitPackageIdentity.version}\`
+- JSON Schema identity: \`${coursePackV1JsonSchema.$id}\`
+- Course Pack format/version: \`${coursePackV1JsonSchema.properties.format.const}\` / \`${coursePackV1JsonSchema.properties.formatVersion.const}\`
 
 ## Your task
 

@@ -81,7 +81,20 @@ function reduce(
   facts: readonly LearningKernelFact[],
   value: LearningKernelCommand,
 ) {
-  return reduceLearningKernel({ scope, activities, facts, command: value });
+  return reduceWithActivities(activities, facts, value);
+}
+
+function reduceWithActivities(
+  activityDefinitions: readonly LearningKernelActivity[],
+  facts: readonly LearningKernelFact[],
+  value: LearningKernelCommand,
+) {
+  return reduceLearningKernel({
+    scope,
+    activities: activityDefinitions,
+    facts,
+    command: value,
+  });
 }
 
 function scheduledReviewFixture() {
@@ -155,6 +168,114 @@ function reviewCompletion(
 }
 
 describe("Learning Kernel", () => {
+  it("preserves deterministic mastery output when evidence is indexed across nodes and dimensions", () => {
+    const indexedActivities: LearningKernelActivity[] = [
+      {
+        id: "activity-indexed",
+        optional: false,
+        prerequisiteUnitIds: [],
+        knowledgeNodeIds: ["node-a", "node-b", "node-unverified"],
+      },
+    ];
+    const indexedEvidence = (
+      id: string,
+      occurredAt: string,
+      provenance: LearningKernelFactProvenance,
+      knowledgeNodeIds: readonly string[],
+      dimension: "understanding" | "debugging",
+      evidenceType: "recall" | "debugging",
+      outcome: "unverified" | "incorrect" | "correct",
+      basisFactIds: readonly string[],
+    ): LearningKernelFact => ({
+      schemaVersion: 1,
+      id,
+      operationId: `operation-${id}`,
+      ...scope,
+      occurredAt,
+      provenance,
+      body: {
+        type: "evidence",
+        activityId: "activity-indexed",
+        knowledgeNodeIds,
+        dimension,
+        evidenceType,
+        outcome,
+        hintLevel: 0,
+        basisFactIds,
+        ...(outcome === "incorrect" ? { errorFamily: "wrong-branch" } : {}),
+      },
+    });
+    const facts = [
+      indexedEvidence(
+        "fact-00-attempt",
+        "2026-08-10T09:00:00.000Z",
+        learner,
+        ["node-a", "node-b", "node-unverified"],
+        "understanding",
+        "recall",
+        "unverified",
+        [],
+      ),
+      indexedEvidence(
+        "fact-01-understanding",
+        "2026-08-10T09:00:01.000Z",
+        evaluator,
+        ["node-a", "node-b"],
+        "understanding",
+        "recall",
+        "correct",
+        ["fact-00-attempt"],
+      ),
+      indexedEvidence(
+        "fact-02-debugging",
+        "2026-08-10T09:00:02.000Z",
+        evaluator,
+        ["node-a"],
+        "debugging",
+        "debugging",
+        "incorrect",
+        ["fact-00-attempt"],
+      ),
+    ];
+
+    const projection = projectLearningKernel({
+      scope,
+      activities: indexedActivities,
+      facts,
+      observedAt: "2026-08-10T10:00:00.000Z",
+    });
+
+    expect(Object.keys(projection.masteryByKnowledgeNode)).toEqual([
+      "node-a",
+      "node-b",
+      "node-unverified",
+    ]);
+    expect(
+      projection.masteryByKnowledgeNode["node-a"]?.understanding,
+    ).toMatchObject({
+      state: { score: 0.488 },
+      sourceFactIds: ["fact-01-understanding"],
+    });
+    expect(
+      projection.masteryByKnowledgeNode["node-a"]?.debugging,
+    ).toMatchObject({
+      state: { score: 0 },
+      sourceFactIds: ["fact-02-debugging"],
+    });
+    expect(
+      projection.masteryByKnowledgeNode["node-b"]?.understanding.sourceFactIds,
+    ).toEqual(["fact-01-understanding"]);
+    expect(
+      projection.masteryByKnowledgeNode["node-unverified"]?.understanding,
+    ).toMatchObject({
+      state: { score: 0 },
+      sourceFactIds: [],
+    });
+    expect(projection.projectionHash).toBe(
+      "sha256:9adbf0d65e5817f7ed8a3aae4c4ff1e434539a0721bd49287b2b69dd3e244599",
+    );
+  });
+
   it("keeps learner narrative unverified until persisted evaluator evidence arrives", () => {
     const attempt = reduce(
       [],
@@ -415,6 +536,322 @@ describe("Learning Kernel", () => {
       ]),
     );
     expect(corrected.projection.reviewItems).toHaveLength(2);
+  });
+
+  it("rejects a same-time correction that sorts before its target", () => {
+    const attempt = reduce(
+      [],
+      command(
+        "operation-attempt",
+        "fact-attempt",
+        "2026-08-10T09:00:00.000Z",
+        learner,
+        evidence("unverified", []),
+      ),
+    );
+    const target = reduce(
+      attempt.facts,
+      command(
+        "operation-target",
+        "z-target",
+        "2026-08-10T09:00:01.000Z",
+        evaluator,
+        evidence("incorrect", ["fact-attempt"], "wrong-key"),
+      ),
+    );
+
+    expect(() =>
+      reduce(
+        target.facts,
+        command(
+          "operation-correction",
+          "a-correction",
+          "2026-08-10T09:00:01.000Z",
+          evaluator,
+          {
+            type: "correction",
+            supersedesFactId: "z-target",
+            replacement: evidence(
+              "correct",
+              ["fact-attempt"],
+              "wrong-key",
+            ) as Extract<LearningKernelFactBody, { type: "evidence" }>,
+          },
+        ),
+      ),
+    ).toThrow("Correction precedes its target: z-target");
+  });
+
+  it("replays a legacy same-time correction under pinned baseline-1 bytes", () => {
+    const legacyFacts: LearningKernelFact[] = [
+      {
+        schemaVersion: 1,
+        ...scope,
+        id: "fact-attempt",
+        operationId: "operation-attempt",
+        occurredAt: "2026-08-10T09:00:00.000Z",
+        provenance: learner,
+        body: evidence("unverified", []),
+      },
+      {
+        schemaVersion: 1,
+        ...scope,
+        id: "z-target",
+        operationId: "operation-target",
+        occurredAt: "2026-08-10T09:00:01.000Z",
+        provenance: evaluator,
+        body: evidence("incorrect", ["fact-attempt"], "wrong-key"),
+      },
+      {
+        schemaVersion: 1,
+        ...scope,
+        id: "a-correction",
+        operationId: "operation-correction",
+        occurredAt: "2026-08-10T09:00:01.000Z",
+        provenance: evaluator,
+        body: {
+          type: "correction",
+          supersedesFactId: "z-target",
+          replacement: evidence("correct", ["fact-attempt"], "wrong-key"),
+        },
+      },
+    ];
+
+    const projection = projectLearningKernel({
+      scope,
+      activities,
+      facts: legacyFacts,
+      observedAt: "2026-08-10T10:00:00.000Z",
+    });
+
+    expect(projection.modelVersion).toBe("baseline-1");
+    expect(projection.factFrontier).toEqual([
+      "fact-attempt",
+      "a-correction",
+      "z-target",
+    ]);
+    expect(projection.projectionHash).toBe(
+      "sha256:f057ba08206d8bdde4b8e81e1a06c4e853a17679d7d2b5c0182c69e6ee2a12e6",
+    );
+  });
+
+  it("replays a legacy correction identity mismatch but rejects it as a new command", () => {
+    const semanticActivities = activities.map((activity) =>
+      activity.id === "activity-recall"
+        ? { ...activity, knowledgeNodeIds: ["node-1", "node-2"] }
+        : activity,
+    );
+    const attempt = reduceWithActivities(
+      semanticActivities,
+      [],
+      command(
+        "operation-legacy-attempt",
+        "fact-legacy-attempt",
+        "2026-08-10T09:00:00.000Z",
+        learner,
+        evidence("unverified", []),
+      ),
+    );
+    const target = reduceWithActivities(
+      semanticActivities,
+      attempt.facts,
+      command(
+        "operation-legacy-target",
+        "fact-legacy-target",
+        "2026-08-10T09:00:01.000Z",
+        evaluator,
+        evidence("incorrect", ["fact-legacy-attempt"], "wrong-key"),
+      ),
+    );
+    const mismatchedReplacement = {
+      ...evidence("correct", ["fact-legacy-attempt"], "wrong-key"),
+      knowledgeNodeIds: ["node-2"],
+    } satisfies LearningKernelEvidenceBody;
+    const correction = command(
+      "operation-legacy-correction",
+      "fact-legacy-correction",
+      "2026-08-10T09:00:02.000Z",
+      evaluator,
+      {
+        type: "correction",
+        supersedesFactId: "fact-legacy-target",
+        replacement: mismatchedReplacement,
+      },
+    );
+
+    expect(() =>
+      reduceWithActivities(semanticActivities, target.facts, correction),
+    ).toThrow("Correction replacement must preserve evidence identity");
+
+    const legacyFact: LearningKernelFact = {
+      schemaVersion: 1,
+      ...scope,
+      id: correction.factId,
+      operationId: correction.operationId,
+      occurredAt: correction.observedAt,
+      provenance: correction.provenance,
+      body: correction.body,
+    };
+    expect(() =>
+      projectLearningKernel({
+        scope,
+        activities: semanticActivities,
+        facts: [...target.facts, legacyFact],
+        observedAt: correction.observedAt,
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts a same-time correction that sorts after its target", () => {
+    const attempt = reduce(
+      [],
+      command(
+        "operation-attempt",
+        "fact-attempt",
+        "2026-08-10T09:00:00.000Z",
+        learner,
+        evidence("unverified", []),
+      ),
+    );
+    const target = reduce(
+      attempt.facts,
+      command(
+        "operation-target",
+        "a-target",
+        "2026-08-10T09:00:01.000Z",
+        evaluator,
+        evidence("incorrect", ["fact-attempt"], "wrong-key"),
+      ),
+    );
+    const corrected = reduce(
+      target.facts,
+      command(
+        "operation-correction",
+        "z-correction",
+        "2026-08-10T09:00:01.000Z",
+        evaluator,
+        {
+          type: "correction",
+          supersedesFactId: "a-target",
+          replacement: evidence(
+            "correct",
+            ["fact-attempt"],
+            "wrong-key",
+          ) as Extract<LearningKernelFactBody, { type: "evidence" }>,
+        },
+      ),
+    );
+
+    expect(corrected.facts.map((fact) => fact.id)).toEqual([
+      "fact-attempt",
+      "a-target",
+      "z-correction",
+    ]);
+    expect(
+      corrected.projection.masteryByKnowledgeNode["node-1"]?.understanding.state
+        .score,
+    ).toBe(0.488);
+  });
+
+  it.each([
+    ["activity", { activityId: "activity-apply" }],
+    ["knowledge nodes", { knowledgeNodeIds: ["node-2"] }],
+    ["dimension", { dimension: "implementation" }],
+    ["evidence type", { evidenceType: "explanation" }],
+  ] as const)(
+    "rejects a correction that changes the target evidence %s",
+    (_field, replacementOverride) => {
+      const semanticActivities = activities.map((activity) =>
+        activity.id === "activity-recall"
+          ? { ...activity, knowledgeNodeIds: ["node-1", "node-2"] }
+          : activity,
+      );
+      const attempt = reduceWithActivities(
+        semanticActivities,
+        [],
+        command(
+          "operation-semantic-attempt",
+          "fact-semantic-attempt",
+          "2026-08-10T09:00:00.000Z",
+          learner,
+          evidence("unverified", []),
+        ),
+      );
+      const target = reduceWithActivities(
+        semanticActivities,
+        attempt.facts,
+        command(
+          "operation-semantic-target",
+          "fact-semantic-target",
+          "2026-08-10T09:00:01.000Z",
+          evaluator,
+          evidence("incorrect", ["fact-semantic-attempt"], "wrong-key"),
+        ),
+      );
+      const replacement = {
+        ...evidence("correct", ["fact-semantic-attempt"], "wrong-key"),
+        ...replacementOverride,
+      } as Extract<LearningKernelFactBody, { type: "evidence" }>;
+
+      expect(() =>
+        reduceWithActivities(
+          semanticActivities,
+          target.facts,
+          command(
+            "operation-semantic-correction",
+            "fact-semantic-correction",
+            "2026-08-10T09:00:02.000Z",
+            evaluator,
+            {
+              type: "correction",
+              supersedesFactId: "fact-semantic-target",
+              replacement,
+            },
+          ),
+        ),
+      ).toThrow("Correction replacement must preserve evidence identity");
+    },
+  );
+
+  it("enforces canonical ordering for same-time evidence basis facts", () => {
+    const attempt = reduce(
+      [],
+      command(
+        "operation-attempt",
+        "m-attempt",
+        "2026-08-10T09:00:00.000Z",
+        learner,
+        evidence("unverified", []),
+      ),
+    );
+
+    expect(() =>
+      reduce(
+        attempt.facts,
+        command(
+          "operation-evaluate-before",
+          "a-evaluation",
+          "2026-08-10T09:00:00.000Z",
+          evaluator,
+          evidence("correct", ["m-attempt"]),
+        ),
+      ),
+    ).toThrow("Evidence basis fact is unavailable or not earlier: m-attempt");
+
+    const accepted = reduce(
+      attempt.facts,
+      command(
+        "operation-evaluate-after",
+        "z-evaluation",
+        "2026-08-10T09:00:00.000Z",
+        evaluator,
+        evidence("correct", ["m-attempt"]),
+      ),
+    );
+    expect(accepted.facts.map((fact) => fact.id)).toEqual([
+      "m-attempt",
+      "z-evaluation",
+    ]);
   });
 
   it("lets only the learner dismiss a pending deterministic review item", () => {

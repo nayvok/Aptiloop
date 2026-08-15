@@ -1755,6 +1755,140 @@ describe("CurriculumEditorClient", () => {
     expect(screen.getByText("Keep this request")).toBeInTheDocument();
   });
 
+  it("aborts only an active Designer generation when the panel unmounts", async () => {
+    const draft = version("draft-unmount-designer", 1, "draft");
+    const workflow = {
+      id: "course-designer-workflow:unmount",
+      versionId: draft.id,
+      state: "CURRICULUM_PROPOSAL",
+      recoveryState: null,
+      request: {
+        goal: "Keep this request",
+        targetOutcome: "Keep this outcome",
+        currentLevel: "Beginner",
+        constraints: [],
+        sources: [],
+        activityPreferences: [],
+        runtimeRequirements: [],
+      },
+      diagnostic: { questions: [], answers: {}, skipped: false },
+      revisionRequests: [],
+      activeProposalId: null,
+      authoringOperationId: "workflow:unmount",
+      failureCode: null,
+      failureMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    let activeSignal: AbortSignal | undefined;
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) {
+        return { versions: [listItem(draft)] };
+      }
+      if (path === `/curriculum-editor/versions/${draft.id}` && !init) {
+        return { curriculum: { version: draft, weeks: [] } };
+      }
+      if (path.endsWith("/designer/workflows") && !init) {
+        return { workflows: [workflow] };
+      }
+      if (path.endsWith("/designer/proposals") && !init) {
+        return { proposals: [] };
+      }
+      if (path.endsWith("/disclosures") && !init) {
+        return { pendingDisclosure: null };
+      }
+      if (path.endsWith("/disclosures") && init?.method === "POST") {
+        return { required: false };
+      }
+      if (path.endsWith("/generate") && init?.method === "POST") {
+        activeSignal = init.signal ?? undefined;
+        return await new Promise((_, reject) => {
+          init.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    const rendered = renderEditor(
+      <CurriculumEditorClient
+        initialVersionId={draft.id}
+        initialMode="designer"
+      />,
+    );
+    const generate = await screen.findByRole("button", {
+      name: "Сгенерировать предложение",
+    });
+    await waitFor(() => expect(generate).toBeEnabled());
+    fireEvent.click(generate);
+    await waitFor(() => expect(activeSignal).toBeDefined());
+    expect(activeSignal?.aborted).toBe(false);
+
+    rendered.unmount();
+
+    expect(activeSignal?.aborted).toBe(true);
+  });
+
+  it("does not abort an idle Designer panel during unmount", async () => {
+    const draft = version("draft-idle-designer", 1, "draft");
+    const workflow = {
+      id: "course-designer-workflow:idle",
+      versionId: draft.id,
+      state: "CURRICULUM_PROPOSAL",
+      recoveryState: null,
+      request: {
+        goal: "Keep this request",
+        targetOutcome: "Keep this outcome",
+        currentLevel: "Beginner",
+        constraints: [],
+        sources: [],
+        activityPreferences: [],
+        runtimeRequirements: [],
+      },
+      diagnostic: { questions: [], answers: {}, skipped: false },
+      revisionRequests: [],
+      activeProposalId: null,
+      authoringOperationId: "workflow:idle",
+      failureCode: null,
+      failureMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/curriculum-editor/versions" && !init) {
+        return { versions: [listItem(draft)] };
+      }
+      if (path === `/curriculum-editor/versions/${draft.id}` && !init) {
+        return { curriculum: { version: draft, weeks: [] } };
+      }
+      if (path.endsWith("/designer/workflows") && !init) {
+        return { workflows: [workflow] };
+      }
+      if (path.endsWith("/designer/proposals") && !init) {
+        return { proposals: [] };
+      }
+      if (path.endsWith("/disclosures") && !init) {
+        return { pendingDisclosure: null };
+      }
+      throw new Error(`Unexpected API call ${path}`);
+    });
+
+    const rendered = renderEditor(
+      <CurriculumEditorClient
+        initialVersionId={draft.id}
+        initialMode="designer"
+      />,
+    );
+    await screen.findByRole("button", { name: "Сгенерировать предложение" });
+
+    rendered.unmount();
+
+    expect(fetchMock.mock.calls.some(([, init]) => init?.signal)).toBe(false);
+  });
+
   it("creates a personal adaptation without replacing upstream", async () => {
     const upstream = version("upstream-1", 1, "published");
     const personal = {

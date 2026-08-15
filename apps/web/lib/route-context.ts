@@ -146,9 +146,6 @@ export function resolveRouteContext(
     return section("/skills", "nav.skills");
   }
 
-  if (isAtOrBelow(pathname, "/chat")) {
-    return section("/settings", "nav.settings", "chat.page.title");
-  }
   if (isAtOrBelow(pathname, "/settings/developer-tools")) {
     return section("/settings", "nav.settings", "ui.developerTools.title");
   }

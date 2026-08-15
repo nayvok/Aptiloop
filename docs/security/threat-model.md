@@ -86,7 +86,7 @@ Trust transitions are:
 - **Attack path:** a browser supplies role/provider/model fields or an unavailable external provider attempts to fall back to Mock.
 - **Impact:** an unapproved provider/model could receive private context, use higher authority, create misleading provenance, or incur unapproved cost.
 - **Existing mitigation:** Provider Hub owns exact RoleProfile/connection/model resolution and readiness. Browser schemas reject overrides; AI Off, auth, capability, disclosure, model, and transport failures remain explicit without provider/model/Mock substitution.
-- **Source fix:** complete for active Chat, Interview, Review, and Course Designer callers.
+- **Source fix:** complete for lesson-scoped Tutor, Interview, Review, and Course Designer callers.
 - **Required test:** reject role/provider/model overrides and unavailable external profiles; prove no provider call/session and no fallback; persist only app-owned provenance.
 - **Gate:** each real provider/model still requires its own observed authenticated smoke before readiness is claimed as evidence.
 
@@ -167,15 +167,15 @@ Trust transitions are:
 - **Required test:** CI runs the policy after `npm ci`, uploads audit/SBOM artifacts even if later gates fail, and rejects synthetic production High/Critical, full-tree graph-dev-only High/Critical, malformed metadata, and mixed-scope residual High/Critical evidence.
 - **Gate:** every current release candidate requires a fresh observed audit. Any future exception requires an explicit owner and expiry.
 
-### SEC-HTTP-001 — Incomplete request size/rate/schema guards
+### SEC-HTTP-001 — Request size and concurrency exhaustion
 
-- **Rank/status:** Low; **Approved Core Alpha target**.
-- **Attack path:** oversized or highly concurrent JSON reaches `req.json()` without a pre-parse byte/rate budget; test mode bypasses the fixed client header; chat/settings schemas strip unknown fields instead of rejecting them.
-- **Impact:** local availability pressure, untested production request-shape behavior, and contract ambiguity that can hide attempted authority fields.
-- **Existing mitigation:** mutations enforce exact Origin, `X-Aptiloop-Client=web`, and JSON media type; API responses are no-store; forwarded-header ambiguity is rejected and never authorizes; chat/provider schemas reject authority fields; most versioned learning/interview/practice/authoring schemas are strict and bounded.
-- **Source fix:** add a pre-parse byte limit, bounded concurrency/rate policy appropriate to loopback, production-equivalent header composition in tests, and closed strict schemas where rejection is the contract.
-- **Required test:** oversized/chunked bodies, concurrency/rate threshold, missing/wrong client header in production mode, and unknown chat/settings fields fail with bounded explicit errors.
-- **Gate:** request-boundary documentation may claim only controls exercised in production-equivalent tests.
+- **Rank/status:** Low; **Implemented baseline**.
+- **Attack path:** oversized or highly concurrent JSON attempts to reach `req.json()`, or long-lived Tutor streams attempt to retain process capacity.
+- **Impact:** local memory, CPU, connection, and availability pressure.
+- **Existing mitigation:** mutations first enforce exact request authority, Origin, `X-Aptiloop-Client=web`, and JSON media type. Accepted JSON mutations are then read under a 1,048,576-byte pre-parse budget even when `Content-Length` is missing or transfer is chunked. The process admits 16 concurrent API requests total and 4 concurrent Tutor SSE responses; rejected capacity receives `429` plus `Retry-After: 1`. Admission is released on synchronous completion, errors, once cancelled request work actually exits, completed stream consumption, or stream cancellation. Shutdown closes admission to new API work and drains every admitted handler or stream before SQLite closes; a bounded drain timeout rejects `close()` instead of deliberately closing SQLite while late work remains. Course Pack validation keeps its stricter raw-byte parse path at the same 1 MiB ceiling.
+- **Observed test:** production-mode boundary tests cover declared oversize, chunked oversize, a just-under-limit JSON body, invalid/missing browser headers retaining their earlier status, the concurrency threshold, `Retry-After`, release after failure or after cancelled work exits, and database-close ordering around a gated ordinary mutation. Focused admission tests cover stream-class separation, shutdown rejection, bounded drain timeout, and release after completed/cancelled stream consumption.
+- **Residual:** this is a fixed process-wide concurrency ceiling, not a per-client token bucket; it limits local resource amplification but is not authentication and is not a supported defense for LAN/public exposure. Provider turns and trusted execution retain their separate duration/output/cancellation budgets.
+- **Gate:** preserve the 1 MiB/16-request/4-stream defaults or review any change together with production-equivalent boundary tests and the single-user loopback profile.
 
 ### SEC-WEB-001 — Markdown external-fetch privacy
 

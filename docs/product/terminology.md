@@ -92,7 +92,7 @@ Migration mapping:
 | Flashcards                               | Review                                                                          |
 | Interview                                | Review or an in-Course activity                                                 |
 | Curriculum Editor                        | Adaptive Studio under Courses; the retained Settings route redirects to Courses |
-| Agent Playground / Developer tools       | Diagnostics/development surface, never learner primary navigation               |
+| Developer tools                          | Diagnostics/development surface, never learner primary navigation               |
 
 Routes and database columns may keep legacy names during an explicit migration. UI and normative docs should not expose those internal compatibility names as the new product model.
 

@@ -23,6 +23,7 @@ import {
   type AgentSession,
   type CreateAgentSessionInput,
   type ReviewResult,
+  type StreamAgentMessageInput,
 } from "@aptiloop/shared";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -60,6 +61,7 @@ type ReviewerEventScript = (
 class FencedReviewProvider implements AgentProvider {
   readonly id: "mock" | "pi";
   readonly createInputs: CreateAgentSessionInput[] = [];
+  readonly streamInputs: StreamAgentMessageInput[] = [];
   readonly cancelCalls: string[] = [];
   readonly createSignals: AbortSignal[] = [];
   readonly activeSessionIds = new Set<string>();
@@ -105,7 +107,10 @@ class FencedReviewProvider implements AgentProvider {
     if (signal) this.createSignals.push(signal);
     await this.createSessionGate;
     const session: AgentSession = {
-      id: "private-review-provider-handle",
+      id:
+        this.createInputs.length === 1
+          ? "private-review-provider-handle"
+          : `private-review-provider-handle:${this.createInputs.length}`,
       providerId: this.id,
       role: input.role,
       modelId: input.modelId,
@@ -117,24 +122,27 @@ class FencedReviewProvider implements AgentProvider {
     return session;
   }
 
-  async *streamMessage(): AsyncIterable<AgentEvent> {
+  async *streamMessage(
+    input: StreamAgentMessageInput,
+  ): AsyncIterable<AgentEvent> {
     this.streamCalls += 1;
+    this.streamInputs.push(input);
     const timestamp = new Date().toISOString();
     const raw = this.response;
     if (this.script) {
-      yield* this.script("private-review-provider-handle", raw);
+      yield* this.script(input.sessionId, raw);
       return;
     }
     yield {
       type: "message.completed",
-      sessionId: "private-review-provider-handle",
+      sessionId: input.sessionId,
       sequence: 0,
       timestamp,
       content: raw,
     };
     yield {
       type: "session.completed",
-      sessionId: "private-review-provider-handle",
+      sessionId: input.sessionId,
       sequence: 1,
       timestamp,
       reason: "completed",
@@ -667,7 +675,8 @@ describe("practice execution and reviewer boundaries", () => {
 
   it("uses the configured mock reviewer, persists structured output, and leaves the diff exact", async () => {
     const current = runtime();
-    const { attemptId, workspacePath } = await createAttempt(current);
+    const { attemptId, sessionId, workspacePath } =
+      await createAttempt(current);
     const learnerFile = path.join(workspacePath, "src", "normalize-profile.ts");
     writeFileSync(learnerFile, passingImplementation, "utf8");
 
@@ -756,11 +765,68 @@ describe("practice execution and reviewer boundaries", () => {
     );
     expect(await retriedReview.json()).toMatchObject({
       id: reviewBody.id,
+      completionEligible: true,
+      evidenceBundle,
+    });
+    writeFileSync(
+      learnerFile,
+      `${passingImplementation}\n// stale idempotent review retry\n`,
+      "utf8",
+    );
+    const staleRetry = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      {
+        method: "POST",
+        body: JSON.stringify({ operationId: "first-review-operation" }),
+      },
+    );
+    expect(staleRetry.status).toBe(409);
+    expect(await staleRetry.json()).toEqual({
+      error: "Review operation evidence is stale for current workspace",
+    });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          "SELECT count(*) AS count FROM reviews WHERE exercise_attempt_id = ?",
+        )
+        .get(attemptId),
+    ).toEqual({ count: 1 });
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT count(*) AS count FROM agent_conversations
+           WHERE learning_session_id = ? AND role = 'reviewer'`,
+        )
+        .get(sessionId),
+    ).toEqual({ count: 1 });
+    const staleState = (await (
+      await request(
+        current.app,
+        `/api/exercises/current?sessionId=${sessionId}`,
+      )
+    ).json()) as { latestReview?: unknown };
+    expect(staleState.latestReview).toBeUndefined();
+
+    writeFileSync(learnerFile, passingImplementation, "utf8");
+    const restoredRetry = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      {
+        method: "POST",
+        body: JSON.stringify({ operationId: "first-review-operation" }),
+      },
+    );
+    expect(restoredRetry.status).toBe(200);
+    expect(await restoredRetry.json()).toMatchObject({
+      id: reviewBody.id,
+      completionEligible: true,
       evidenceBundle,
     });
     const reviewResult: Record<string, unknown> = { ...reviewBody };
     delete reviewResult.id;
     delete reviewResult.evidenceBundle;
+    delete reviewResult.completionEligible;
     const result = ReviewResultSchema.parse(reviewResult);
     expect(result.status).toBe("changes_requested");
     const persisted = current.state.connection.sqlite
@@ -778,7 +844,7 @@ describe("practice execution and reviewer boundaries", () => {
     expect(persisted).toMatchObject({
       providerId: "mock",
       modelId: "mock-deterministic",
-      status: result.status,
+      status: "accepted",
     });
     expect(ReviewResultSchema.parse(JSON.parse(persisted.resultJson))).toEqual(
       result,
@@ -1396,7 +1462,10 @@ describe("practice execution and reviewer boundaries", () => {
     );
     expect(boundedReview.status).toBe(400);
     expect(await boundedReview.json()).toEqual({ error: safeAgentFailure });
-    expect(provider.cancelCalls).toEqual(["private-review-provider-handle"]);
+    expect(provider.cancelCalls).toEqual([
+      "private-review-provider-handle",
+      "private-review-provider-handle:2",
+    ]);
     expect(
       current.state.connection.sqlite
         .prepare("SELECT count(*) AS count FROM reviews")
@@ -1407,7 +1476,8 @@ describe("practice execution and reviewer boundaries", () => {
         .prepare(
           `SELECT content, status, tool_events_json AS toolEventsJson,
                   raw_event_json AS rawEventJson
-           FROM agent_messages WHERE role = 'assistant'
+           FROM agent_messages
+           WHERE role = 'assistant' AND status = 'failed'
            ORDER BY sequence DESC LIMIT 1`,
         )
         .get(),
@@ -1417,6 +1487,104 @@ describe("practice execution and reviewer boundaries", () => {
       toolEventsJson: "[]",
       rawEventJson: null,
     });
+  }, 30_000);
+
+  it("isolates sequential reviewer operations in fresh provider sessions", async () => {
+    const provider = new FencedReviewProvider();
+    const current = runtime({ mock: provider });
+    const { attemptId, workspacePath } = await createAttempt(current);
+    const learnerFile = path.join(workspacePath, "src", "normalize-profile.ts");
+
+    writeFileSync(learnerFile, passingImplementation, "utf8");
+    const firstCheckOperationId = "isolated-review-first-check";
+    expect(
+      await (
+        await request(
+          current.app,
+          `/api/exercise-attempts/${attemptId}/checks`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              operationId: firstCheckOperationId,
+              checkIds: ["apt.compat.node24.npm-test.v1"],
+            }),
+          },
+        )
+      ).json(),
+    ).toMatchObject({ status: "passed" });
+    const firstReview = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      {
+        method: "POST",
+        body: JSON.stringify({ operationId: "isolated-review-first" }),
+      },
+    );
+    expect(firstReview.status).toBe(200);
+
+    writeFileSync(
+      learnerFile,
+      `${passingImplementation}\n// second isolated review\n`,
+      "utf8",
+    );
+    const secondCheckOperationId = "isolated-review-second-check";
+    expect(
+      await (
+        await request(
+          current.app,
+          `/api/exercise-attempts/${attemptId}/checks`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              operationId: secondCheckOperationId,
+              checkIds: ["apt.compat.node24.npm-test.v1"],
+            }),
+          },
+        )
+      ).json(),
+    ).toMatchObject({ status: "passed" });
+    const secondReview = await request(
+      current.app,
+      `/api/exercise-attempts/${attemptId}/reviews`,
+      {
+        method: "POST",
+        body: JSON.stringify({ operationId: "isolated-review-second" }),
+      },
+    );
+    expect(secondReview.status).toBe(200);
+
+    expect(provider.createInputs).toHaveLength(2);
+    expect(provider.createInputs[0]?.systemPrompt).toBe(
+      provider.createInputs[1]?.systemPrompt,
+    );
+    expect(provider.createInputs.map((input) => input.metadata)).toEqual([
+      expect.objectContaining({ reviewOperationId: "isolated-review-first" }),
+      expect.objectContaining({ reviewOperationId: "isolated-review-second" }),
+    ]);
+    expect(provider.streamInputs).toHaveLength(2);
+    expect(provider.streamInputs.map((input) => input.sessionId)).toEqual([
+      "private-review-provider-handle",
+      "private-review-provider-handle:2",
+    ]);
+    expect(provider.streamInputs[0]?.message).toContain(firstCheckOperationId);
+    expect(provider.streamInputs[1]?.message).toContain(secondCheckOperationId);
+    expect(provider.streamInputs[1]?.message).not.toContain(
+      firstCheckOperationId,
+    );
+    expect(provider.cancelCalls).toEqual([
+      "private-review-provider-handle",
+      "private-review-provider-handle:2",
+    ]);
+    expect(provider.activeSessionIds.size).toBe(0);
+    expect(current.state.providerSessions.size).toBe(0);
+    expect(
+      current.state.connection.sqlite
+        .prepare(
+          `SELECT count(*) AS count FROM agent_conversations
+           WHERE role = 'reviewer'`,
+        )
+        .get(),
+    ).toEqual({ count: 2 });
   }, 30_000);
 
   it("requires exact disclosure approval before an external reviewer request", async () => {

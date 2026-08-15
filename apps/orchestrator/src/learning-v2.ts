@@ -9,15 +9,12 @@ import {
   type DatabaseConnection,
   type LearningRepository,
   type VersionedSessionDetail,
-  withAsyncTransaction,
   withTransaction,
   type LearningKernelRepository,
 } from "@aptiloop/database";
 import {
-  applyMasteryEvidenceBatch,
   canonicalLearningKernelJson,
   createUnitProgression,
-  createEmptyMasteryProfile,
   learningKernelSha256,
   projectCompletedLessonProgress,
   deriveDaySummary,
@@ -32,13 +29,11 @@ import {
   type LearningKernelFactProvenance,
   type LearningKernelScope,
   type DaySummary,
-  type EvidenceType,
   type HintLevel,
   type LearningKernelProjection,
   type LearningKernelReviewItem,
   type LessonProgressionStatus,
   type MasteryDimension,
-  type MasteryProfile,
   type UnitDefinition,
   type UnitProgressionEvent,
 } from "@aptiloop/learning-core";
@@ -71,6 +66,14 @@ import {
   assertLearningRevisionMutationAllowed,
   assertLearningSessionMutationAllowed,
 } from "./learning-session-policy.js";
+import {
+  tutorTurnMessageKey,
+  tutorUnitMessagePrefix,
+} from "./tutor-message-scope.js";
+import {
+  hasAuthoritativeAcceptedReview,
+  type PersistedReviewAuthorityBinding,
+} from "./review-authority.js";
 
 interface VersionedLearningState {
   connection: DatabaseConnection;
@@ -229,12 +232,34 @@ const daySummarySchema = z
         quizScore: z.number().min(0).max(1),
         maxHintLevel: z.number().int().min(0).max(5),
         exerciseTestsPassed: z.boolean(),
-        reviewStatus: z.enum(["passed", "changes_requested"]).nullable(),
-        correctionCycleCount: z.number().int().nonnegative(),
+        reviewReceiptAccepted: z.boolean().optional(),
+        reviewStatus: z.null(),
+        correctionCycleCount: z.literal(0),
       })
       .strict(),
   })
   .strict();
+
+const canonicalSummaryAuthoritySchema = z
+  .object({
+    scope: z
+      .object({
+        courseId: z.string().min(1),
+        revisionId: z.string().min(1),
+        branchId: z.string().min(1),
+        sessionId: z.string().min(1),
+      })
+      .strict(),
+    modelVersion: z.literal("baseline-1"),
+    observedAt: z.iso.datetime(),
+    projectionHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+    sourceFactIds: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+
+type CanonicalSummaryAuthority = z.infer<
+  typeof canonicalSummaryAuthoritySchema
+>;
 
 export function registerVersionedLearningRoutes(
   app: Hono,
@@ -571,10 +596,15 @@ export function registerVersionedLearningRoutes(
   );
 
   app.get(
-    "/api/learning/sessions/v2/:id/teacher-transcript",
+    "/api/learning/sessions/v2/:id/units/:unitId/teacher-transcript",
     async (context) => {
       const sessionId = context.req.param("id");
-      await requireVerifiedSessionDetail(state, sessionId);
+      const unitId = context.req.param("unitId");
+      const detail = await requireVerifiedSessionDetail(state, sessionId);
+      const unit = detail.snapshot.units.find((item) => item.id === unitId);
+      if (!unit || unit.type !== "teacher-dialogue") {
+        throw new Error("Unknown teacher-dialogue unit");
+      }
       const messages = state.connection.sqlite
         .prepare(
           `SELECT m.id, m.role, m.content
@@ -582,9 +612,10 @@ export function registerVersionedLearningRoutes(
            JOIN agent_conversations c ON c.id = m.conversation_id
            WHERE c.learning_session_id = ? AND c.role = 'teacher'
              AND m.role IN ('user', 'assistant') AND m.status = 'completed'
+             AND m.idempotency_key LIKE ? ESCAPE '\\'
            ORDER BY c.created_at ASC, m.sequence ASC`,
         )
-        .all(sessionId) as Array<{
+        .all(sessionId, `${tutorUnitMessagePrefix(unitId)}%`) as Array<{
         id: string;
         role: "user" | "assistant";
         content: string;
@@ -603,13 +634,13 @@ export function registerVersionedLearningRoutes(
 
   app.post(
     "/api/learning/sessions/v2/:id/units/:unitId/recall-attempts",
-    async (context) =>
-      withAsyncTransaction(state.connection, async () => {
-        const body = recallAttemptSchema.parse(await context.req.json());
+    async (context) => {
+      const body = recallAttemptSchema.parse(await context.req.json());
+      const result = withTransaction(state.connection, () => {
         const sessionId = context.req.param("id");
         const unitId = context.req.param("unitId");
         const unit = requireEvidenceTarget(
-          await state.repository.getVersionedSession(sessionId),
+          state.repository.getVersionedSession(sessionId),
           unitId,
           "recall",
         );
@@ -618,7 +649,7 @@ export function registerVersionedLearningRoutes(
         ) {
           throw new Error("Unknown recall question");
         }
-        const recorded = await state.repository.recordVersionedUnitEvidence({
+        const recorded = state.repository.recordVersionedUnitEvidence({
           sessionId,
           unitId,
           evidenceType: "recall-attempt",
@@ -641,10 +672,10 @@ export function registerVersionedLearningRoutes(
             hintLevel: readLegacyHintLevel(state.connection, sessionId, unitId),
           },
         });
-        const attempts = await state.repository.listVersionedUnitEvidence(
-          sessionId,
-          { unitId, evidenceType: "recall-attempt" },
-        );
+        const attempts = state.repository.listVersionedUnitEvidence(sessionId, {
+          unitId,
+          evidenceType: "recall-attempt",
+        });
         const firstByQuestion = firstRecallEvidenceByQuestion(unit, attempts);
         const first = firstByQuestion.get(body.questionId);
         if (!first) throw new Error("Persisted recall attempt disappeared");
@@ -661,7 +692,7 @@ export function registerVersionedLearningRoutes(
             : [];
         });
         const legacyFirst = answers[0];
-        await state.repository.updateUnitProgress({
+        state.repository.updateUnitProgress({
           sessionId,
           unitId,
           status: "in_progress",
@@ -672,32 +703,34 @@ export function registerVersionedLearningRoutes(
             draft: legacyFirst?.draft ?? "",
           },
         });
-        return context.json(
-          {
-            evidence: {
-              id: recorded.id,
-              isFirstAttempt: recorded.id === first.id,
-              questionId: body.questionId,
-            },
-            session: await toLearnerSession(
-              state,
-              await state.repository.getVersionedSession(sessionId),
-            ),
+        return {
+          evidence: {
+            id: recorded.id,
+            isFirstAttempt: recorded.id === first.id,
+            questionId: body.questionId,
           },
-          201,
-        );
-      }),
+          detail: state.repository.getVersionedSession(sessionId),
+        };
+      });
+      return context.json(
+        {
+          evidence: result.evidence,
+          session: await toLearnerSession(state, result.detail),
+        },
+        201,
+      );
+    },
   );
 
   app.post(
     "/api/learning/sessions/v2/:id/units/:unitId/quiz-attempts",
-    async (context) =>
-      withAsyncTransaction(state.connection, async () => {
-        const body = quizAttemptSchema.parse(await context.req.json());
+    async (context) => {
+      const body = quizAttemptSchema.parse(await context.req.json());
+      const result = withTransaction(state.connection, () => {
         const sessionId = context.req.param("id");
         const unitId = context.req.param("unitId");
         const unit = requireEvidenceTarget(
-          await state.repository.getVersionedSession(sessionId),
+          state.repository.getVersionedSession(sessionId),
           unitId,
           "quiz",
         );
@@ -726,7 +759,7 @@ export function registerVersionedLearningRoutes(
             body.operationId,
             answer.questionId,
           );
-          const evidence = await state.repository.recordVersionedUnitEvidence({
+          const evidence = state.repository.recordVersionedUnitEvidence({
             sessionId,
             unitId,
             evidenceType: "quiz-answer",
@@ -773,10 +806,10 @@ export function registerVersionedLearningRoutes(
             evidenceId: evidence.id,
           });
         }
-        const evidence = await state.repository.listVersionedUnitEvidence(
-          sessionId,
-          { unitId, evidenceType: "quiz-answer" },
-        );
+        const evidence = state.repository.listVersionedUnitEvidence(sessionId, {
+          unitId,
+          evidenceType: "quiz-answer",
+        });
         const latestByQuestion = new Map(
           evidence
             .filter((item) => item.questionId !== null)
@@ -790,7 +823,7 @@ export function registerVersionedLearningRoutes(
           attemptedQuestionIds.length === 0
             ? null
             : correctQuestionIds.length / attemptedQuestionIds.length;
-        await state.repository.updateUnitProgress({
+        state.repository.updateUnitProgress({
           sessionId,
           unitId,
           status: "in_progress",
@@ -801,39 +834,41 @@ export function registerVersionedLearningRoutes(
             score,
           },
         });
-        return context.json(
-          {
-            attempt: {
-              operationId: body.operationId,
-              score,
-              results: submitted.map(({ questionId, correct }) => ({
-                questionId,
-                correct,
-              })),
-            },
-            session: await toLearnerSession(
-              state,
-              await state.repository.getVersionedSession(sessionId),
-            ),
+        return {
+          attempt: {
+            operationId: body.operationId,
+            score,
+            results: submitted.map(({ questionId, correct }) => ({
+              questionId,
+              correct,
+            })),
           },
-          201,
-        );
-      }),
+          detail: state.repository.getVersionedSession(sessionId),
+        };
+      });
+      return context.json(
+        {
+          attempt: result.attempt,
+          session: await toLearnerSession(state, result.detail),
+        },
+        201,
+      );
+    },
   );
 
   app.post(
     "/api/learning/sessions/v2/:id/units/:unitId/code-reading-attempts",
-    async (context) =>
-      withAsyncTransaction(state.connection, async () => {
-        const body = codeReadingAttemptSchema.parse(await context.req.json());
+    async (context) => {
+      const body = codeReadingAttemptSchema.parse(await context.req.json());
+      const result = withTransaction(state.connection, () => {
         const sessionId = context.req.param("id");
         const unitId = context.req.param("unitId");
         const unit = requireEvidenceTarget(
-          await state.repository.getVersionedSession(sessionId),
+          state.repository.getVersionedSession(sessionId),
           unitId,
           "code-reading",
         );
-        const evidence = await state.repository.recordVersionedUnitEvidence({
+        const evidence = state.repository.recordVersionedUnitEvidence({
           sessionId,
           unitId,
           evidenceType: "code-reading-attempt",
@@ -859,7 +894,7 @@ export function registerVersionedLearningRoutes(
             hintLevel: readLegacyHintLevel(state.connection, sessionId, unitId),
           },
         });
-        await state.repository.updateUnitProgress({
+        state.repository.updateUnitProgress({
           sessionId,
           unitId,
           status: "in_progress",
@@ -870,17 +905,19 @@ export function registerVersionedLearningRoutes(
             verbalFix: body.verbalFix,
           },
         });
-        return context.json(
-          {
-            evidence: { id: evidence.id },
-            session: await toLearnerSession(
-              state,
-              await state.repository.getVersionedSession(sessionId),
-            ),
-          },
-          201,
-        );
-      }),
+        return {
+          evidence: { id: evidence.id },
+          detail: state.repository.getVersionedSession(sessionId),
+        };
+      });
+      return context.json(
+        {
+          evidence: result.evidence,
+          session: await toLearnerSession(state, result.detail),
+        },
+        201,
+      );
+    },
   );
 
   app.get(
@@ -889,9 +926,15 @@ export function registerVersionedLearningRoutes(
       const sessionId = context.req.param("id");
       const unitId = context.req.param("unitId");
       const detail = await requireVerifiedSessionDetail(state, sessionId);
-      const persisted = readPersistedSummary(state.connection, detail, unitId);
+      const persisted = readPersistedSummary(
+        state.connection,
+        kernelRepository,
+        detail,
+        unitId,
+      );
       return context.json({
         summary: persisted.summary,
+        authority: persisted.authority,
         evidence: { id: persisted.evidenceId },
         session: await toLearnerSession(state, detail),
       });
@@ -904,67 +947,112 @@ export function registerVersionedLearningRoutes(
       const body = summaryRequestSchema.parse(await context.req.json());
       const sessionId = context.req.param("id");
       const unitId = context.req.param("unitId");
-      const detail = await state.repository.getVersionedSession(sessionId);
-      requireCurrentSummaryTarget(detail, unitId);
+      const result = withTransaction(state.connection, () => {
+        const detail = state.repository.getVersionedSession(sessionId);
+        requireCurrentSummaryTarget(detail, unitId);
 
-      const operationId = summaryOperationId(body.operationId);
-      const existing = state.connection.sqlite
-        .prepare(
-          `SELECT id, session_id, unit_id, payload_json
-           FROM versioned_unit_evidence
-           WHERE operation_id = ? AND evidence_type = 'summary'`,
-        )
-        .get(operationId) as
-        | {
-            id: string;
-            session_id: string;
-            unit_id: string;
-            payload_json: string;
-          }
-        | undefined;
-
-      let summary: DaySummary;
-      let evidenceId: string;
-      if (existing) {
-        if (existing.session_id !== sessionId || existing.unit_id !== unitId) {
+        const operationId = summaryOperationId(body.operationId);
+        const existingByOperation = state.connection.sqlite
+          .prepare(
+            `SELECT id, session_id, unit_id, payload_json
+             FROM versioned_unit_evidence
+             WHERE operation_id = ? AND evidence_type = 'summary'`,
+          )
+          .get(operationId) as
+          | {
+              id: string;
+              session_id: string;
+              unit_id: string;
+              payload_json: string;
+            }
+          | undefined;
+        const existingForUnit = state.connection.sqlite
+          .prepare(
+            `SELECT id, session_id, unit_id, payload_json
+             FROM versioned_unit_evidence
+             WHERE session_id = ? AND unit_id = ? AND evidence_type = 'summary'
+             ORDER BY created_at, id`,
+          )
+          .all(sessionId, unitId) as Array<{
+          id: string;
+          session_id: string;
+          unit_id: string;
+          payload_json: string;
+        }>;
+        if (existingForUnit.length > 1) {
+          throw new Error(
+            "Summary evidence identity is ambiguous for this unit",
+          );
+        }
+        if (
+          existingByOperation &&
+          (existingByOperation.session_id !== sessionId ||
+            existingByOperation.unit_id !== unitId)
+        ) {
           throw new Error(
             "Operation ID is already associated with a different summary",
           );
         }
-        summary = parsePersistedSummary(existing.payload_json);
-        evidenceId = existing.id;
-      } else {
-        const topicIds = ensureSnapshotTopics(
-          state.connection,
-          detail.snapshot.day.topics,
+        const existing = existingByOperation ?? existingForUnit[0];
+        if (
+          existingByOperation &&
+          existingForUnit[0] &&
+          existingByOperation.id !== existingForUnit[0].id
+        ) {
+          throw new Error(
+            "Summary evidence identity conflicts with operation ID",
+          );
+        }
+
+        if (existing) {
+          const persisted = parsePersistedSummary(existing.payload_json);
+          return {
+            summary: persisted.summary,
+            authority: verifyPersistedSummaryAuthority(
+              kernelRepository,
+              detail,
+              persisted.authority ??
+                projectCanonicalSummaryAuthority(
+                  kernelRepository,
+                  detail,
+                  persisted.summary.occurredAt,
+                  readSummaryEvidenceCreatedAt(state.connection, existing.id),
+                ),
+            ),
+            evidenceId: existing.id,
+          };
+        }
+
+        const topicIds = resolveSummaryKnowledgeNodeIds(
+          kernelRepository,
+          detail,
         );
-        summary = await derivePersistedDaySummary(
+        const summary = derivePersistedDaySummary(
           state.connection,
           state.repository,
           detail,
           topicIds,
         );
-        const evidence = await state.repository.recordVersionedUnitEvidence({
+        const authority = projectCanonicalSummaryAuthority(
+          kernelRepository,
+          detail,
+          summary.occurredAt,
+        );
+        const evidence = state.repository.recordVersionedUnitEvidence({
           sessionId,
           unitId,
           evidenceType: "summary",
           operationId,
-          payload: { summary },
+          payload: { summary, authority },
         });
-        evidenceId = evidence.id;
-      }
+        return { summary, authority, evidenceId: evidence.id };
+      });
 
-      persistSummaryArtifacts(
-        state.connection,
-        detail,
-        unitId,
-        evidenceId,
-        summary,
-      );
       return context.json(
         {
-          summary,
-          evidence: { id: evidenceId },
+          summary: result.summary,
+          authority: result.authority,
+          evidence: { id: result.evidenceId },
           session: await toLearnerSession(
             state,
             await state.repository.getVersionedSession(sessionId),
@@ -975,12 +1063,12 @@ export function registerVersionedLearningRoutes(
     },
   );
 
-  app.patch("/api/learning/sessions/v2/:id/units/:unitId", async (context) =>
-    withAsyncTransaction(state.connection, async () => {
-      const body = updateUnitSchema.parse(await context.req.json());
+  app.patch("/api/learning/sessions/v2/:id/units/:unitId", async (context) => {
+    const body = updateUnitSchema.parse(await context.req.json());
+    const result = withTransaction(state.connection, () => {
       const sessionId = context.req.param("id");
       const unitId = context.req.param("unitId");
-      const detail = await state.repository.getVersionedSession(sessionId);
+      const detail = state.repository.getVersionedSession(sessionId);
       if (detail.session.status !== "active") {
         throw new Error("Only an active session can change unit progress");
       }
@@ -996,11 +1084,14 @@ export function registerVersionedLearningRoutes(
       }
       const payload = isServerOwnedEvidenceUnit(unit.type)
         ? current.payload
-        : (body.payload ?? current.payload);
+        : unit.type === "summary" && body.status === "completed"
+          ? body.payload
+          : (body.payload ?? current.payload);
+      if (!payload) throw new Error("Unit progress payload is required");
 
       if (body.status === current.status) {
         if (current.status === "completed") {
-          await assertCompletionCriteria(
+          assertCompletionCriteria(
             state.connection,
             state.repository,
             sessionId,
@@ -1008,24 +1099,22 @@ export function registerVersionedLearningRoutes(
             payload,
             detail.unitProgress,
             detail.snapshot.units,
+            kernelRepository,
           );
         }
-        await state.repository.updateUnitProgress({
+        state.repository.updateUnitProgress({
           sessionId,
           unitId,
           status: current.status,
           progress: payload,
         });
-        const unchanged = await state.repository.getVersionedSession(sessionId);
-        return context.json({
-          session: await toLearnerSession(state, unchanged),
-        });
+        return state.repository.getVersionedSession(sessionId);
       }
 
       const event = transitionEvent(current.status, body.status, unitId);
       if (!event) throw new Error("Unit transition is not allowed");
       if (event.type === "complete") {
-        await assertCompletionCriteria(
+        assertCompletionCriteria(
           state.connection,
           state.repository,
           sessionId,
@@ -1033,6 +1122,7 @@ export function registerVersionedLearningRoutes(
           payload,
           detail.unitProgress,
           detail.snapshot.units,
+          kernelRepository,
         );
       }
       const definitions = toDefinitions(detail.snapshot.units);
@@ -1065,10 +1155,10 @@ export function registerVersionedLearningRoutes(
         observedAt: observedAt(),
         source: { current, target: body.status, payload },
       });
-      const updated = await state.repository.getVersionedSession(sessionId);
-      return context.json({ session: await toLearnerSession(state, updated) });
-    }),
-  );
+      return state.repository.getVersionedSession(sessionId);
+    });
+    return context.json({ session: await toLearnerSession(state, result) });
+  });
 }
 
 interface PathCourseTarget {
@@ -2854,9 +2944,14 @@ function requireCurrentSummaryTarget(
 
 function readPersistedSummary(
   connection: DatabaseConnection,
+  kernelRepository: LearningKernelRepository,
   detail: VersionedSessionDetail,
   unitId: string,
-): { summary: DaySummary; evidenceId: string } {
+): {
+  summary: DaySummary;
+  authority: CanonicalSummaryAuthority;
+  evidenceId: string;
+} {
   const unit = detail.snapshot.units.find(
     (candidate) => candidate.id === unitId,
   );
@@ -2882,17 +2977,31 @@ function readPersistedSummary(
   }
   const evidence = connection.sqlite
     .prepare(
-      `SELECT id, payload_json FROM versioned_unit_evidence
+      `SELECT id, payload_json, created_at FROM versioned_unit_evidence
        WHERE id = ? AND session_id = ? AND unit_id = ?
          AND evidence_type = 'summary'`,
     )
     .get(progress.payload.summaryId, detail.session.id, unitId) as
-    { id: string; payload_json: string } | undefined;
+    { id: string; payload_json: string; created_at: number } | undefined;
   if (!evidence) {
     throw new Error("Summary evidence not found for this session unit");
   }
+  const persisted = parsePersistedSummary(evidence.payload_json);
+  const authority =
+    persisted.authority ??
+    projectCanonicalSummaryAuthority(
+      kernelRepository,
+      detail,
+      persisted.summary.occurredAt,
+      evidence.created_at,
+    );
   return {
-    summary: parsePersistedSummary(evidence.payload_json),
+    summary: persisted.summary,
+    authority: verifyPersistedSummaryAuthority(
+      kernelRepository,
+      detail,
+      authority,
+    ),
     evidenceId: evidence.id,
   };
 }
@@ -2901,65 +3010,143 @@ function summaryOperationId(operationId: string): string {
   return `summary:${createHash("sha256").update(operationId).digest("hex")}`;
 }
 
-function parsePersistedSummary(payloadJson: string): DaySummary {
+function parsePersistedSummary(payloadJson: string): {
+  summary: DaySummary;
+  authority: CanonicalSummaryAuthority | null;
+} {
   const payload = z
-    .object({ summary: daySummarySchema })
+    .object({
+      summary: daySummarySchema,
+      authority: canonicalSummaryAuthoritySchema.optional(),
+    })
     .strict()
     .parse(JSON.parse(payloadJson));
-  return payload.summary as DaySummary;
+  return {
+    summary: payload.summary as DaySummary,
+    authority: payload.authority ?? null,
+  };
 }
 
-function ensureSnapshotTopics(
-  connection: DatabaseConnection,
-  titles: readonly string[],
-): string[] {
-  const now = Date.now();
-  const result: string[] = [];
-  connection.sqlite.exec("BEGIN IMMEDIATE");
-  try {
-    for (const exactTitle of [...new Set(titles)].sort((left, right) =>
-      left.localeCompare(right, "ru"),
-    )) {
-      const existing = connection.sqlite
-        .prepare("SELECT id FROM topics WHERE title = ? ORDER BY id LIMIT 1")
-        .get(exactTitle) as { id: string } | undefined;
-      if (existing) {
-        result.push(existing.id);
-        continue;
-      }
-      const digest = createHash("sha256").update(exactTitle).digest("hex");
-      const id = `topic-v2-${digest.slice(0, 24)}`;
-      const slug = `topic-v2-${digest}`;
-      connection.sqlite
-        .prepare(
-          `INSERT OR IGNORE INTO topics
-           (id, slug, title, description, created_at, updated_at)
-           VALUES (?, ?, ?, NULL, ?, ?)`,
-        )
-        .run(id, slug, exactTitle, now, now);
-      const persisted = connection.sqlite
-        .prepare("SELECT id FROM topics WHERE title = ? ORDER BY id LIMIT 1")
-        .get(exactTitle) as { id: string } | undefined;
-      if (!persisted) throw new Error("Snapshot topic could not be persisted");
-      result.push(persisted.id);
-    }
-    connection.sqlite.exec("COMMIT");
-    return result;
-  } catch (error) {
-    connection.sqlite.exec("ROLLBACK");
-    throw error;
+function projectCanonicalSummaryAuthority(
+  kernelRepository: LearningKernelRepository,
+  detail: VersionedSessionDetail,
+  observedAt: string,
+  acceptedBefore?: number,
+): CanonicalSummaryAuthority {
+  const scope = kernelRepository.resolveSessionScope(detail.session.id);
+  if (
+    scope.courseId !== detail.snapshot.curriculumId ||
+    scope.revisionId !== detail.snapshot.curriculumVersionId ||
+    scope.sessionId !== detail.session.id
+  ) {
+    throw new Error("Summary Kernel authority does not match session scope");
   }
+  const sourceFactIds =
+    acceptedBefore === undefined
+      ? kernelRepository
+          .readFacts(scope)
+          .filter(
+            (fact) => Date.parse(fact.occurredAt) <= Date.parse(observedAt),
+          )
+          .map((fact) => fact.id)
+      : [
+          ...kernelRepository.readAcceptedFactFrontier(
+            scope,
+            observedAt,
+            acceptedBefore,
+          ),
+        ];
+  if (sourceFactIds.length === 0) {
+    throw new Error("Summary Kernel authority has an empty fact frontier");
+  }
+  const projection = kernelRepository.reprojectFrontier(
+    scope,
+    observedAt,
+    sourceFactIds,
+  );
+  return {
+    scope,
+    modelVersion: projection.summary.modelVersion,
+    observedAt: projection.observedAt,
+    projectionHash: projection.summary.projectionHash,
+    sourceFactIds: [...projection.summary.sourceFactIds],
+  };
 }
 
-async function derivePersistedDaySummary(
+function readSummaryEvidenceCreatedAt(
+  connection: DatabaseConnection,
+  evidenceId: string,
+): number {
+  const row = connection.sqlite
+    .prepare(
+      `SELECT created_at FROM versioned_unit_evidence
+       WHERE id = ? AND evidence_type = 'summary'`,
+    )
+    .get(evidenceId) as { created_at: number } | undefined;
+  if (!row) throw new Error("Summary evidence acceptance boundary is missing");
+  return row.created_at;
+}
+
+function verifyPersistedSummaryAuthority(
+  kernelRepository: LearningKernelRepository,
+  detail: VersionedSessionDetail,
+  authority: CanonicalSummaryAuthority,
+): CanonicalSummaryAuthority {
+  const scope = kernelRepository.resolveSessionScope(detail.session.id);
+  if (
+    authority.scope.courseId !== scope.courseId ||
+    authority.scope.revisionId !== scope.revisionId ||
+    authority.scope.branchId !== scope.branchId ||
+    authority.scope.sessionId !== scope.sessionId
+  ) {
+    throw new Error("Persisted Summary authority belongs to another scope");
+  }
+  const projection = kernelRepository.reprojectFrontier(
+    scope,
+    authority.observedAt,
+    authority.sourceFactIds,
+  );
+  if (
+    projection.summary.modelVersion !== authority.modelVersion ||
+    projection.observedAt !== authority.observedAt ||
+    projection.summary.projectionHash !== authority.projectionHash ||
+    !sameStringSequence(
+      projection.summary.sourceFactIds,
+      authority.sourceFactIds,
+    )
+  ) {
+    throw new Error(
+      "Persisted Summary authority diverges from the Learning Kernel",
+    );
+  }
+  return authority;
+}
+
+function resolveSummaryKnowledgeNodeIds(
+  kernelRepository: LearningKernelRepository,
+  detail: VersionedSessionDetail,
+): string[] {
+  const scope = kernelRepository.resolveSessionScope(detail.session.id);
+  const knowledgeNodeIds = [
+    ...new Set(
+      kernelRepository
+        .listActivities(scope)
+        .flatMap((activity) => activity.knowledgeNodeIds),
+    ),
+  ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  if (knowledgeNodeIds.length === 0) {
+    throw new Error("Summary requires exact Course knowledge-node scope");
+  }
+  return knowledgeNodeIds;
+}
+
+function derivePersistedDaySummary(
   connection: DatabaseConnection,
   repository: LearningRepository,
   detail: VersionedSessionDetail,
   topicIds: readonly string[],
-): Promise<DaySummary> {
-  const allEvidence = await repository.listVersionedUnitEvidence(
-    detail.session.id,
-  );
+): DaySummary {
+  const allEvidence = repository.listVersionedUnitEvidence(detail.session.id);
   const recallAttempted = allEvidence.some(
     (item) => item.evidenceType === "recall-attempt",
   );
@@ -2987,26 +3174,11 @@ async function derivePersistedDaySummary(
       ? exerciseProgress.payload.attemptId
       : null;
   const test = attemptId ? latestTestRun(connection, attemptId) : null;
-  const review = connection.sqlite
-    .prepare(
-      `SELECT status FROM reviews
-       WHERE session_id = ?
-         AND (? IS NULL OR exercise_attempt_id = ?)
-       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-    )
-    .get(detail.session.id, attemptId, attemptId) as
-    { status: string } | undefined;
-  const reviewStatus =
-    review?.status === "passed" || review?.status === "changes_requested"
-      ? review.status
-      : null;
-  const correctionRow = connection.sqlite
-    .prepare(
-      `SELECT count(*) AS count FROM reviews
-       WHERE session_id = ? AND status = 'changes_requested'
-         AND (? IS NULL OR exercise_attempt_id = ?)`,
-    )
-    .get(detail.session.id, attemptId, attemptId) as { count: number };
+  const review = attemptId
+    ? latestReviewAuthorityBinding(connection, detail.session.id, attemptId)
+    : null;
+  const reviewReceiptAccepted =
+    review !== null && hasAuthoritativeAcceptedReview(review);
   const hintRow = connection.sqlite
     .prepare(
       "SELECT COALESCE(MAX(level), 0) AS level FROM hint_usages_v2 WHERE session_id = ?",
@@ -3023,282 +3195,10 @@ async function derivePersistedDaySummary(
     quizScore: quiz.payload.score,
     incorrectQuestionIds,
     codeReadingAttempted,
+    exerciseAttempted: attemptId !== null,
     exerciseTestsPassed: test?.status === "passed",
-    reviewStatus,
-    correctionCycleCount: correctionRow.count,
+    reviewReceiptAccepted,
   });
-}
-
-function persistSummaryArtifacts(
-  connection: DatabaseConnection,
-  detail: VersionedSessionDetail,
-  unitId: string,
-  summaryEvidenceId: string,
-  summary: DaySummary,
-): void {
-  const observedAt = Date.parse(summary.occurredAt);
-  const topicIds = [
-    ...new Set(summary.masteryEvidence.map((item) => item.topicId)),
-  ];
-  const primaryTopicId = topicIds[0];
-  if (!primaryTopicId) {
-    throw new Error("Summary requires at least one persisted topic");
-  }
-
-  connection.sqlite.exec("BEGIN IMMEDIATE");
-  try {
-    for (const topicId of topicIds) {
-      let profile = reconstructMasteryProfile(connection, topicId);
-      const evidence = summary.masteryEvidence
-        .filter((item) => item.topicId === topicId)
-        .sort(
-          (left, right) =>
-            Date.parse(left.occurredAt) - Date.parse(right.occurredAt) ||
-            left.id.localeCompare(right.id),
-        );
-      for (const item of evidence) {
-        const sourceId = `${summaryEvidenceId}:${item.id}`;
-        const exists = connection.sqlite
-          .prepare(
-            `SELECT 1 FROM mastery_evidence
-             WHERE session_id = ? AND topic_id = ? AND dimension = ?
-               AND evidence_type = ? AND source_id = ?`,
-          )
-          .get(detail.session.id, topicId, item.dimension, item.type, sourceId);
-        if (exists) continue;
-
-        const before = profile[item.dimension].score;
-        profile = applyMasteryEvidenceBatch(profile, [item]);
-        const state = profile[item.dimension];
-        const currentScore = readMasteryScore(
-          connection,
-          topicId,
-          item.dimension,
-        );
-        const evidenceCount = (currentScore?.evidenceCount ?? 0) + 1;
-        connection.sqlite
-          .prepare(
-            `INSERT INTO mastery_evidence
-             (id, session_id, topic_id, dimension, evidence_type, source_id,
-              delta, score_after, observed_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            deterministicId("mastery-evidence", sourceId),
-            detail.session.id,
-            topicId,
-            item.dimension,
-            item.type,
-            sourceId,
-            Math.round((state.score - before) * 100),
-            Math.round(state.score * 100),
-            Date.parse(item.occurredAt),
-          );
-        connection.sqlite
-          .prepare(
-            `INSERT INTO mastery_scores
-             (id, topic_id, dimension, score, confidence, evidence_count,
-              evidence_types_json, last_evidence_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(topic_id, dimension) DO UPDATE SET
-               score = excluded.score,
-               confidence = excluded.confidence,
-               evidence_count = excluded.evidence_count,
-               evidence_types_json = excluded.evidence_types_json,
-               last_evidence_at = excluded.last_evidence_at,
-               updated_at = excluded.updated_at`,
-          )
-          .run(
-            deterministicId("mastery-score", `${topicId}:${item.dimension}`),
-            topicId,
-            item.dimension,
-            Math.round(state.score * 100),
-            Math.min(100, evidenceCount * 15),
-            evidenceCount,
-            JSON.stringify(state.successfulEvidenceTypes),
-            state.lastEvidenceAt ? Date.parse(state.lastEvidenceAt) : null,
-            observedAt,
-          );
-      }
-    }
-
-    const mistakeIds = new Map<string, string>();
-    for (const candidate of summary.mistakeCandidates) {
-      const existing = connection.sqlite
-        .prepare(
-          `SELECT id, source_id FROM mistakes
-           WHERE fingerprint = ? ORDER BY first_seen_at, id LIMIT 1`,
-        )
-        .get(candidate.fingerprint) as
-        { id: string; source_id: string } | undefined;
-      if (!existing) {
-        const id = deterministicId("mistake", candidate.fingerprint);
-        connection.sqlite
-          .prepare(
-            `INSERT INTO mistakes
-             (id, session_id, topic_id, source_type, source_id, summary,
-              correction, fingerprint, occurrence_count, first_seen_at,
-              last_seen_at, resolved_at)
-             VALUES (?, ?, ?, 'summary', ?, ?, ?, ?, 1, ?, ?, NULL)`,
-          )
-          .run(
-            id,
-            detail.session.id,
-            primaryTopicId,
-            summaryEvidenceId,
-            candidate.summary,
-            candidate.correction,
-            candidate.fingerprint,
-            observedAt,
-            observedAt,
-          );
-        mistakeIds.set(candidate.fingerprint, id);
-      } else {
-        if (existing.source_id !== summaryEvidenceId) {
-          connection.sqlite
-            .prepare(
-              `UPDATE mistakes SET occurrence_count = occurrence_count + 1,
-               source_type = 'summary', source_id = ?, summary = ?,
-               correction = ?, last_seen_at = ?, resolved_at = NULL
-               WHERE id = ?`,
-            )
-            .run(
-              summaryEvidenceId,
-              candidate.summary,
-              candidate.correction,
-              observedAt,
-              existing.id,
-            );
-        }
-        mistakeIds.set(candidate.fingerprint, existing.id);
-      }
-    }
-
-    for (const card of summary.flashcardCandidates) {
-      const key = `summary:${summaryEvidenceId}:${createHash("sha256")
-        .update(`${card.front}\0${card.back}`)
-        .digest("hex")}`;
-      connection.sqlite
-        .prepare(
-          `INSERT OR IGNORE INTO flashcards
-           (id, topic_id, source_mistake_id, front, back, status, due_at,
-            interval_days, ease_factor, review_count, idempotency_key,
-            created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'candidate', NULL, 0, 250, 0, ?, ?, ?)`,
-        )
-        .run(
-          deterministicId("flashcard", key),
-          primaryTopicId,
-          card.sourceFingerprint
-            ? (mistakeIds.get(card.sourceFingerprint) ?? null)
-            : null,
-          card.front,
-          card.back,
-          key,
-          observedAt,
-          observedAt,
-        );
-    }
-
-    const progressResult = connection.sqlite
-      .prepare(
-        `UPDATE unit_progress SET progress_json = ?, updated_at = ?
-         WHERE session_id = ? AND unit_id = ? AND unit_type = 'summary'
-           AND status = 'in_progress'
-           AND EXISTS (
-             SELECT 1 FROM learning_sessions session
-             WHERE session.id = unit_progress.session_id
-               AND session.status = 'active'
-           )`,
-      )
-      .run(
-        JSON.stringify({ type: "summary", summaryId: summaryEvidenceId }),
-        observedAt,
-        detail.session.id,
-        unitId,
-      );
-    if (progressResult.changes !== 1) {
-      throw new Error("Summary progress could not be persisted");
-    }
-    connection.sqlite.exec("COMMIT");
-  } catch (error) {
-    connection.sqlite.exec("ROLLBACK");
-    throw error;
-  }
-}
-
-function reconstructMasteryProfile(
-  connection: DatabaseConnection,
-  topicId: string,
-): MasteryProfile {
-  let profile = createEmptyMasteryProfile();
-  const rows = connection.sqlite
-    .prepare(
-      `SELECT dimension, score, evidence_types_json AS evidenceTypesJson,
-              last_evidence_at AS lastEvidenceAt
-       FROM mastery_scores WHERE topic_id = ?`,
-    )
-    .all(topicId) as Array<{
-    dimension: MasteryDimension;
-    score: number;
-    evidenceTypesJson: string;
-    lastEvidenceAt: number | null;
-  }>;
-  for (const row of rows) {
-    if (!(row.dimension in profile)) continue;
-    const evidenceTypes = z
-      .array(
-        z.enum([
-          "recall",
-          "explanation",
-          "code_reading",
-          "implementation",
-          "debugging",
-          "interview",
-        ]),
-      )
-      .parse(JSON.parse(row.evidenceTypesJson)) as EvidenceType[];
-    const lastEvidenceAt =
-      row.lastEvidenceAt === null
-        ? null
-        : new Date(row.lastEvidenceAt).toISOString();
-    profile = {
-      ...profile,
-      [row.dimension]: {
-        score: Math.max(0, Math.min(5, row.score / 100)),
-        successfulEvidenceTypes: evidenceTypes,
-        successfulEvidenceDays:
-          evidenceTypes.length > 0 && lastEvidenceAt
-            ? [lastEvidenceAt.slice(0, 10)]
-            : [],
-        errorOccurrences: {},
-        lastEvidenceAt,
-      },
-    };
-  }
-  return profile;
-}
-
-function readMasteryScore(
-  connection: DatabaseConnection,
-  topicId: string,
-  dimension: MasteryDimension,
-): { evidenceCount: number } | null {
-  return (
-    (connection.sqlite
-      .prepare(
-        `SELECT evidence_count AS evidenceCount FROM mastery_scores
-         WHERE topic_id = ? AND dimension = ?`,
-      )
-      .get(topicId, dimension) as { evidenceCount: number } | undefined) ?? null
-  );
-}
-
-function deterministicId(namespace: string, value: string): string {
-  return `${namespace}-${createHash("sha256")
-    .update(`${namespace}\0${value}`)
-    .digest("hex")
-    .slice(0, 32)}`;
 }
 
 function assertPersistedSummaryEvidence(
@@ -3622,7 +3522,7 @@ function transitionEvent(
   return null;
 }
 
-async function assertCompletionCriteria(
+function assertCompletionCriteria(
   connection: DatabaseConnection,
   repository: LearningRepository,
   sessionId: string,
@@ -3630,9 +3530,22 @@ async function assertCompletionCriteria(
   payload: UnitProgressPayload,
   allProgress: readonly UnitProgress[],
   allUnits: readonly CurriculumUnit[],
-): Promise<void> {
+  kernelRepository: LearningKernelRepository,
+): void {
   if (unit.type === "summary") {
     assertPersistedSummaryEvidence(connection, sessionId, unit.id, payload);
+    const summaryDetail = repository.getVersionedSession(sessionId);
+    readPersistedSummary(
+      connection,
+      kernelRepository,
+      {
+        ...summaryDetail,
+        unitProgress: summaryDetail.unitProgress.map((progress) =>
+          progress.unitId === unit.id ? { ...progress, payload } : progress,
+        ),
+      },
+      unit.id,
+    );
   }
   const failures = [];
   for (const criterion of unit.completionCriteria) {
@@ -3652,13 +3565,13 @@ async function assertCompletionCriteria(
       case "attempts":
         failed =
           unit.type === "recall"
-            ? !(await hasPersistedRecallEvidence(
+            ? !hasPersistedRecallEvidence(
                 repository,
                 sessionId,
                 unit,
                 payload,
                 criterion.minimum,
-              ))
+              )
             : unit.type === "interview"
               ? !(
                   "interviewSessionId" in payload &&
@@ -3669,7 +3582,10 @@ async function assertCompletionCriteria(
                   payload.reportId !== "" &&
                   countCompletedInterviewAnswers(
                     connection,
+                    sessionId,
+                    unit.id,
                     payload.interviewSessionId,
+                    payload.reportId,
                   ) >= (criterion.minimum ?? 1)
                 )
               : evidenceAttemptCount(unit, payload) < criterion.minimum;
@@ -3678,13 +3594,14 @@ async function assertCompletionCriteria(
         failed = !hasPersistedTeacherDialogue(
           connection,
           sessionId,
+          unit.id,
           payload,
           criterion.minimumTurns,
           criterion.requiresRevision,
         );
         break;
       case "score":
-        failed = !(await hasPersistedQuizEvidence(
+        failed = !hasPersistedQuizEvidence(
           connection,
           repository,
           sessionId,
@@ -3692,7 +3609,7 @@ async function assertCompletionCriteria(
           payload,
           criterion.minimum,
           criterion.minimumAttempts,
-        ));
+        );
         break;
       case "fields":
         failed =
@@ -3700,12 +3617,12 @@ async function assertCompletionCriteria(
             (field) => !hasEvidenceField(payload, field),
           ) ||
           (unit.type === "code-reading" &&
-            !(await hasPersistedCodeReadingEvidence(
+            !hasPersistedCodeReadingEvidence(
               repository,
               sessionId,
               unit,
               payload,
-            )));
+            ));
         break;
       case "exercise":
         failed = !hasExerciseEvidence(
@@ -3732,23 +3649,120 @@ async function assertCompletionCriteria(
 
 const interviewStoredSetupSchema = z.object({
   schemaVersion: z.literal(1),
-  setup: z.object({ conversationId: z.string().trim().min(1) }).passthrough(),
+  setup: z.object({
+    conversationId: z.string().trim().min(1),
+    learningSessionId: z.string().trim().min(1),
+    courseBinding: z.object({
+      learningSessionId: z.string().trim().min(1),
+      unitId: z.string().trim().min(1),
+      courseId: z.string().trim().min(1),
+      revisionId: z.string().trim().min(1),
+      lessonId: z.string().trim().min(1),
+      snapshotId: z.string().trim().min(1),
+      snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+      snapshotBytesHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    }),
+  }),
+  report: z
+    .object({
+      interviewId: z.string().trim().min(1),
+      status: z.literal("completed"),
+    })
+    .passthrough(),
 });
 
 function countCompletedInterviewAnswers(
   connection: DatabaseConnection,
+  learningSessionId: string,
+  unitId: string,
   interviewSessionId: string,
+  reportId: string,
 ): number {
   const row = connection.sqlite
     .prepare(
-      "SELECT result_json AS resultJson FROM interview_sessions WHERE id = ?",
+      `SELECT interview.learning_session_id AS learningSessionId,
+              interview.status,
+              interview.result_json AS resultJson,
+              snapshot.id AS snapshotId,
+              snapshot.content_hash AS snapshotHash,
+              snapshot.snapshot_json AS snapshotJson,
+              context.course_id AS courseId,
+              context.revision_id AS revisionId,
+              context.lesson_id AS lessonId,
+              context.snapshot_hash AS contextSnapshotHash,
+              context.snapshot_bytes_hash AS snapshotBytesHash
+       FROM interview_sessions interview
+       JOIN session_snapshots snapshot
+         ON snapshot.session_id = interview.learning_session_id
+       JOIN session_course_contexts context
+         ON context.session_id = interview.learning_session_id
+       JOIN unit_progress progress
+         ON progress.session_id = interview.learning_session_id
+        AND progress.unit_id = ? AND progress.unit_type = 'interview'
+       WHERE interview.id = ?`,
     )
-    .get(interviewSessionId) as { resultJson: string | null } | undefined;
-  if (!row?.resultJson) return 0;
+    .get(unitId, interviewSessionId) as
+    | {
+        learningSessionId: string;
+        status: string;
+        resultJson: string | null;
+        snapshotId: string;
+        snapshotHash: string;
+        snapshotJson: string;
+        courseId: string;
+        revisionId: string;
+        lessonId: string;
+        contextSnapshotHash: string;
+        snapshotBytesHash: string;
+      }
+    | undefined;
+  if (
+    !row?.resultJson ||
+    row.status !== "completed" ||
+    row.learningSessionId !== learningSessionId ||
+    reportId !== interviewSessionId
+  ) {
+    return 0;
+  }
   const parsed = interviewStoredSetupSchema.safeParse(
     JSON.parse(row.resultJson),
   );
   if (!parsed.success) return 0;
+  const binding = parsed.data.setup.courseBinding;
+  if (
+    parsed.data.setup.learningSessionId !== learningSessionId ||
+    parsed.data.report.interviewId !== interviewSessionId ||
+    binding.learningSessionId !== learningSessionId ||
+    binding.unitId !== unitId ||
+    binding.courseId !== row.courseId ||
+    binding.revisionId !== row.revisionId ||
+    binding.lessonId !== row.lessonId ||
+    binding.snapshotId !== row.snapshotId ||
+    binding.snapshotHash !== row.snapshotHash ||
+    binding.snapshotHash !== row.contextSnapshotHash ||
+    binding.snapshotBytesHash !== row.snapshotBytesHash ||
+    createHash("sha256").update(row.snapshotJson).digest("hex") !==
+      binding.snapshotBytesHash
+  ) {
+    return 0;
+  }
+  const snapshot = SessionSnapshotSchema.safeParse(
+    JSON.parse(row.snapshotJson),
+  );
+  if (!snapshot.success) return 0;
+  const { contentHash, ...snapshotCore } = snapshot.data;
+  const unit = snapshot.data.units.find((candidate) => candidate.id === unitId);
+  if (
+    !unit ||
+    unit.type !== "interview" ||
+    contentHash !== binding.snapshotHash ||
+    hashCanonicalJson(snapshotCore) !== binding.snapshotHash ||
+    snapshot.data.curriculumId !== binding.courseId ||
+    snapshot.data.curriculumVersionId !== binding.revisionId ||
+    snapshot.data.day.id !== binding.lessonId
+  ) {
+    return 0;
+  }
   const count = connection.sqlite
     .prepare(
       `SELECT COUNT(*) AS count FROM agent_messages
@@ -3795,34 +3809,39 @@ function hasEvidenceField(
 function hasPersistedTeacherDialogue(
   connection: DatabaseConnection,
   sessionId: string,
+  unitId: string,
   payload: UnitProgressPayload,
   minimumTurns: number,
   requiresRevision: boolean,
 ): boolean {
   if (payload.type !== "teacher-dialogue") return false;
   const requiredTurns = Math.max(minimumTurns, requiresRevision ? 2 : 1);
-  if (
-    payload.turnCount < requiredTurns ||
-    payload.revisionAttemptIds.length < requiredTurns
-  ) {
+  const turnIds = [...new Set(payload.revisionAttemptIds)];
+  if (payload.turnCount < requiredTurns || turnIds.length < requiredTurns) {
     return false;
   }
-  const counts = connection.sqlite
-    .prepare(
-      `SELECT
+  const completedTurnCount = turnIds.filter((turnId) => {
+    const counts = connection.sqlite
+      .prepare(
+        `SELECT
          SUM(CASE WHEN m.role = 'user' THEN 1 ELSE 0 END) AS learner_turns,
          SUM(CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END) AS teacher_turns
        FROM agent_messages m
        JOIN agent_conversations c ON c.id = m.conversation_id
        WHERE c.learning_session_id = ? AND c.role = 'teacher'
-         AND m.role IN ('user', 'assistant') AND m.status = 'completed'`,
-    )
-    .get(sessionId) as
-    { learner_turns: number | null; teacher_turns: number | null } | undefined;
-  return (
-    (counts?.learner_turns ?? 0) >= requiredTurns &&
-    (counts?.teacher_turns ?? 0) >= requiredTurns
-  );
+         AND m.status = 'completed'
+         AND m.idempotency_key IN (?, ?)`,
+      )
+      .get(
+        sessionId,
+        tutorTurnMessageKey(unitId, turnId, "user"),
+        tutorTurnMessageKey(unitId, turnId, "assistant"),
+      ) as
+      | { learner_turns: number | null; teacher_turns: number | null }
+      | undefined;
+    return counts?.learner_turns === 1 && counts.teacher_turns === 1;
+  }).length;
+  return completedTurnCount >= requiredTurns;
 }
 
 function learnerTeacherMessage(content: string): string {
@@ -3837,15 +3856,15 @@ function learnerTeacherMessage(content: string): string {
   return content;
 }
 
-async function hasPersistedRecallEvidence(
+function hasPersistedRecallEvidence(
   repository: LearningRepository,
   sessionId: string,
   unit: CurriculumUnit,
   payload: UnitProgressPayload,
   minimum: number,
-): Promise<boolean> {
+): boolean {
   if (payload.type !== "recall") return false;
-  const evidence = await repository.listVersionedUnitEvidence(sessionId, {
+  const evidence = repository.listVersionedUnitEvidence(sessionId, {
     unitId: unit.id,
     evidenceType: "recall-attempt",
   });
@@ -3890,7 +3909,7 @@ function firstRecallEvidenceByQuestion(
   return firstByQuestion;
 }
 
-async function hasPersistedQuizEvidence(
+function hasPersistedQuizEvidence(
   connection: DatabaseConnection,
   repository: LearningRepository,
   sessionId: string,
@@ -3898,7 +3917,7 @@ async function hasPersistedQuizEvidence(
   payload: UnitProgressPayload,
   minimumScore: number,
   minimumAttempts: number,
-): Promise<boolean> {
+): boolean {
   if (payload.type !== "quiz") return false;
   const privateUnit = requirePrivateUnit(
     readPrivateSnapshot(connection, sessionId),
@@ -3908,7 +3927,7 @@ async function hasPersistedQuizEvidence(
   const allowedQuestions = new Set(
     privateUnit.questions.map((question) => question.id),
   );
-  const evidence = await repository.listVersionedUnitEvidence(sessionId, {
+  const evidence = repository.listVersionedUnitEvidence(sessionId, {
     unitId: unit.id,
     evidenceType: "quiz-answer",
   });
@@ -3936,14 +3955,14 @@ async function hasPersistedQuizEvidence(
   );
 }
 
-async function hasPersistedCodeReadingEvidence(
+function hasPersistedCodeReadingEvidence(
   repository: LearningRepository,
   sessionId: string,
   unit: CurriculumUnit,
   payload: UnitProgressPayload,
-): Promise<boolean> {
+): boolean {
   if (payload.type !== "code-reading") return false;
-  const evidence = await repository.listVersionedUnitEvidence(sessionId, {
+  const evidence = repository.listVersionedUnitEvidence(sessionId, {
     unitId: unit.id,
     evidenceType: "code-reading-attempt",
   });
@@ -3993,19 +4012,49 @@ function latestTestRun(
   );
 }
 
-function latestPassedReview(
+function latestAcceptedReviewReceipt(
   connection: DatabaseConnection,
   sessionId: string,
   attemptId: string,
-): { id: string; status: string } | null {
-  const review = connection.sqlite
-    .prepare(
-      `SELECT id, status FROM reviews
-       WHERE session_id = ? AND exercise_attempt_id = ?
-       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-    )
-    .get(sessionId, attemptId) as { id: string; status: string } | undefined;
-  return review?.status === "passed" ? review : null;
+): { id: string } | null {
+  const review = latestReviewAuthorityBinding(connection, sessionId, attemptId);
+  return review && hasAuthoritativeAcceptedReview(review)
+    ? { id: review.id }
+    : null;
+}
+
+function latestReviewAuthorityBinding(
+  connection: DatabaseConnection,
+  sessionId: string,
+  attemptId: string,
+): ({ id: string } & PersistedReviewAuthorityBinding) | null {
+  return (
+    (connection.sqlite
+      .prepare(
+        `SELECT r.id, r.status AS reviewStatus,
+              r.result_json AS resultJson,
+              b.bundle_sha256 AS bundleSha256,
+              b.bundle_json AS bundleJson,
+              b.test_run_id AS bundleTestRunId,
+              b.workspace_snapshot_hash AS bundleWorkspaceSnapshotHash,
+              b.diff_fingerprint AS bundleDiffFingerprint,
+              t.id AS testRunId, t.operation_id AS testOperationId,
+              t.status AS testStatus, t.check_id AS testCheckId,
+              t.environment_id AS testEnvironmentId,
+              t.environment_pack_digest AS testEnvironmentPackDigest,
+              t.backend_id AS testBackendId,
+              t.input_snapshot_hash AS testInputSnapshotHash,
+              t.diff_fingerprint AS testDiffFingerprint,
+              t.diff_truncated AS testDiffTruncated
+       FROM reviews r
+       LEFT JOIN review_evidence_bundles b ON b.review_id = r.id
+       LEFT JOIN test_runs t ON t.id = b.test_run_id
+       WHERE r.session_id = ? AND r.exercise_attempt_id = ?
+       ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1`,
+      )
+      .get(sessionId, attemptId) as
+      ({ id: string } & PersistedReviewAuthorityBinding) | undefined) ?? null
+  );
 }
 
 function hasExerciseEvidence(
@@ -4036,7 +4085,7 @@ function hasExerciseEvidence(
       return false;
     }
     if (acceptedReviewRequired) {
-      const latestReview = latestPassedReview(
+      const latestReview = latestAcceptedReviewReceipt(
         connection,
         sessionId,
         attempt.id,
@@ -4081,7 +4130,11 @@ function hasExerciseEvidence(
   ) {
     return false;
   }
-  const latestReview = latestPassedReview(connection, sessionId, attempt.id);
+  const latestReview = latestAcceptedReviewReceipt(
+    connection,
+    sessionId,
+    attempt.id,
+  );
   return Boolean(
     latestReview &&
     latestReview.id === payload.reviewId &&

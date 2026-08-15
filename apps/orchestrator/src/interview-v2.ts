@@ -4,12 +4,17 @@ import {
   ProviderHubError,
   type ResolvedProviderTurn,
 } from "@aptiloop/agent-core";
-import type { DatabaseConnection } from "@aptiloop/database";
+import {
+  canonicalJson,
+  hashCanonicalJson,
+  type DatabaseConnection,
+} from "@aptiloop/database";
 import { getLatestPrompt } from "@aptiloop/prompt-library";
 import {
   InterviewDisclosureContinuationSchema,
   InterviewPendingDisclosureSchema,
   type AiDisclosure,
+  SessionSnapshotSchema,
   type InterviewDisclosureContinuation,
   type InterviewPendingDisclosure,
 } from "@aptiloop/shared";
@@ -24,6 +29,7 @@ import { z } from "zod";
 
 const OperationIdSchema = z.string().trim().min(8).max(200);
 const LearningSessionIdSchema = z.string().trim().min(1);
+const UnitIdSchema = z.string().trim().min(1);
 const TopicSchema = z.string().trim().min(1).max(120);
 const DifficultySchema = z.enum(["foundation", "interview-ready", "deep-dive"]);
 const InterviewReadQuerySchema = z
@@ -55,16 +61,49 @@ const InterviewPendingDisclosureQuerySchema = z
     }
   });
 
-export const InterviewSetupRequestSchema = z
+const InterviewSetupBaseSchema = z.object({
+  operationId: OperationIdSchema,
+  questionCount: z.number().int().min(1).max(12),
+  disclosureOperationId: OperationIdSchema.optional(),
+});
+
+const StandaloneInterviewSetupRequestSchema = InterviewSetupBaseSchema.extend({
+  topics: z.array(TopicSchema).min(1).max(12),
+  difficulty: DifficultySchema,
+}).strict();
+
+const LinkedInterviewSetupRequestSchema = InterviewSetupBaseSchema.extend({
+  learningSessionId: LearningSessionIdSchema,
+  unitId: UnitIdSchema,
+}).strict();
+
+export const InterviewSetupRequestSchema = z.union([
+  StandaloneInterviewSetupRequestSchema,
+  LinkedInterviewSetupRequestSchema,
+]);
+
+const InterviewCourseBindingSchema = z
   .object({
-    operationId: OperationIdSchema,
-    topics: z.array(TopicSchema).min(1).max(12),
-    difficulty: DifficultySchema,
-    questionCount: z.number().int().min(1).max(12),
-    learningSessionId: LearningSessionIdSchema.optional(),
-    disclosureOperationId: OperationIdSchema.optional(),
+    learningSessionId: LearningSessionIdSchema,
+    unitId: UnitIdSchema,
+    courseId: z.string().trim().min(1),
+    revisionId: z.string().trim().min(1),
+    lessonId: z.string().trim().min(1),
+    snapshotId: z.string().trim().min(1),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    snapshotBytesHash: z.string().regex(/^[a-f0-9]{64}$/u),
   })
   .strict();
+type InterviewCourseBinding = z.infer<typeof InterviewCourseBindingSchema>;
+
+interface ResolvedInterviewSetup {
+  readonly operationId: string;
+  readonly topics: string[];
+  readonly difficulty: z.infer<typeof DifficultySchema>;
+  readonly questionCount: number;
+  readonly learningSessionId?: string;
+  readonly courseBinding?: InterviewCourseBinding;
+}
 
 export const InterviewAnswerRequestSchema = z
   .object({
@@ -85,6 +124,7 @@ const StoredSetupSchema = z.object({
   difficulty: DifficultySchema,
   questionCount: z.number().int().min(1).max(12),
   learningSessionId: LearningSessionIdSchema.optional(),
+  courseBinding: InterviewCourseBindingSchema.optional(),
   conversationId: z.string().min(1),
 });
 
@@ -184,7 +224,8 @@ export function registerInterviewV2Routes(
           );
         }
         const stored = parseStoredState(existingByOperation);
-        assertSameSetup(stored.setup, body);
+        assertStoredCourseBinding(state, stored.setup);
+        assertSameSetupRequest(stored.setup, body);
         if (existingByOperation.status === "setup") {
           try {
             const selection = await readStoredInterviewerSelection(
@@ -221,6 +262,7 @@ export function registerInterviewV2Routes(
         );
       }
 
+      const requestedSetup = resolveInterviewSetup(state, body);
       const current = findCurrentInterview(state);
       if (current) {
         return context.json(
@@ -231,13 +273,7 @@ export function registerInterviewV2Routes(
         );
       }
 
-      const learningSessionId = body.learningSessionId ?? null;
-      if (learningSessionId) {
-        assertCourseScopedSessionSideEffectAllowed(
-          state.connection,
-          learningSessionId,
-        );
-      }
+      const learningSessionId = requestedSetup.learningSessionId ?? null;
 
       let selection: ResolvedProviderTurn;
       try {
@@ -250,7 +286,7 @@ export function registerInterviewV2Routes(
       const now = Date.now();
       const stored = StoredStateSchema.parse({
         schemaVersion: 1,
-        setup: { ...body, conversationId },
+        setup: { ...requestedSetup, conversationId },
       });
 
       state.connection.sqlite.exec("BEGIN IMMEDIATE");
@@ -506,6 +542,7 @@ export function registerInterviewV2Routes(
         );
       }
       const stored = parseStoredState(interview);
+      assertStoredCourseBinding(state, stored.setup);
       if (
         (stored.setup.learningSessionId ?? null) !== interview.learningSessionId
       ) {
@@ -649,6 +686,7 @@ export function registerInterviewV2Routes(
         );
       }
       const stored = parseStoredState(interview);
+      assertStoredCourseBinding(state, stored.setup);
       if (interview.status === "completed" && stored.report) {
         return context.json({
           interview: readPublicInterview(state, interview.id),
@@ -716,14 +754,12 @@ function upsertInterviewUnitProgress(
   interviewId: string,
 ): void {
   if (!learningSessionId) return;
-  const unit = state.connection.sqlite
-    .prepare(
-      `SELECT unit_id AS unitId FROM unit_progress
-       WHERE session_id = ? AND unit_type = 'interview'
-       ORDER BY rowid ASC LIMIT 1`,
-    )
-    .get(learningSessionId) as { unitId: string } | undefined;
-  if (!unit) return;
+  const interview = readInterviewRow(state, interviewId);
+  const stored = parseStoredState(interview);
+  const binding = assertStoredCourseBinding(state, stored.setup);
+  if (!binding) {
+    throw new Error("Standalone interviews cannot update Course progress");
+  }
   state.connection.sqlite
     .prepare(
       `UPDATE unit_progress
@@ -743,7 +779,7 @@ function upsertInterviewUnitProgress(
       }),
       Date.now(),
       learningSessionId,
-      unit.unitId,
+      binding.unitId,
     );
 }
 
@@ -1250,6 +1286,199 @@ function readKnownLearningSessionId(
   return row ? LearningSessionIdSchema.parse(row.id) : null;
 }
 
+function resolveInterviewSetup(
+  state: InterviewV2State,
+  request: z.infer<typeof InterviewSetupRequestSchema>,
+): ResolvedInterviewSetup {
+  if (!("learningSessionId" in request)) {
+    return {
+      operationId: request.operationId,
+      topics: request.topics,
+      difficulty: request.difficulty,
+      questionCount: request.questionCount,
+    };
+  }
+  assertCourseScopedSessionSideEffectAllowed(
+    state.connection,
+    request.learningSessionId,
+  );
+  const row = state.connection.sqlite
+    .prepare(
+      `SELECT session.current_step AS currentStep,
+              progress.status AS progressStatus,
+              snapshot.id AS snapshotId,
+              snapshot.content_hash AS snapshotHash,
+              snapshot.snapshot_json AS snapshotJson,
+              context.course_id AS courseId,
+              context.revision_id AS revisionId,
+              context.lesson_id AS lessonId,
+              context.snapshot_hash AS contextSnapshotHash,
+              context.snapshot_bytes_hash AS snapshotBytesHash
+       FROM learning_sessions session
+       JOIN session_snapshots snapshot ON snapshot.session_id = session.id
+       JOIN session_course_contexts context ON context.session_id = session.id
+       JOIN unit_progress progress
+         ON progress.session_id = session.id AND progress.unit_id = ?
+       WHERE session.id = ? AND session.status = 'active'`,
+    )
+    .get(request.unitId, request.learningSessionId) as
+    | {
+        currentStep: string;
+        progressStatus: string;
+        snapshotId: string;
+        snapshotHash: string;
+        snapshotJson: string;
+        courseId: string;
+        revisionId: string;
+        lessonId: string;
+        contextSnapshotHash: string;
+        snapshotBytesHash: string;
+      }
+    | undefined;
+  if (!row) throw new Error("Unknown linked Interview unit");
+  const snapshot = SessionSnapshotSchema.parse(JSON.parse(row.snapshotJson));
+  const { contentHash, ...snapshotCore } = snapshot;
+  const unit = snapshot.units.find(
+    (candidate) => candidate.id === request.unitId,
+  );
+  if (
+    !unit ||
+    unit.type !== "interview" ||
+    unit.payload.type !== "interview" ||
+    row.progressStatus !== "in_progress" ||
+    row.currentStep !== unit.stableId ||
+    snapshot.curriculumId !== row.courseId ||
+    snapshot.curriculumVersionId !== row.revisionId ||
+    snapshot.day.id !== row.lessonId ||
+    contentHash !== row.snapshotHash ||
+    row.contextSnapshotHash !== row.snapshotHash ||
+    hashCanonicalJson(snapshotCore) !== row.snapshotHash ||
+    createHash("sha256").update(row.snapshotJson).digest("hex") !==
+      row.snapshotBytesHash ||
+    canonicalJson(snapshot) !== row.snapshotJson
+  ) {
+    throw new Error(
+      "Linked Interview scope is not an exact current snapshot unit",
+    );
+  }
+  const target = state.connection.sqlite
+    .prepare(
+      `SELECT activity_type AS activityType, stable_id AS stableId
+       FROM course_activities
+       WHERE course_id = ? AND revision_id = ? AND lesson_id = ? AND id = ?`,
+    )
+    .get(row.courseId, row.revisionId, row.lessonId, unit.id) as
+    { activityType: string; stableId: string } | undefined;
+  if (
+    !target ||
+    target.activityType !== "interview" ||
+    target.stableId !== unit.stableId
+  ) {
+    throw new Error(
+      "Linked Interview unit is not mapped to this Course revision",
+    );
+  }
+  return {
+    operationId: request.operationId,
+    topics: [...unit.payload.topics],
+    difficulty: unit.depthLevel,
+    questionCount: request.questionCount,
+    learningSessionId: request.learningSessionId,
+    courseBinding: InterviewCourseBindingSchema.parse({
+      learningSessionId: request.learningSessionId,
+      unitId: unit.id,
+      courseId: row.courseId,
+      revisionId: row.revisionId,
+      lessonId: row.lessonId,
+      snapshotId: row.snapshotId,
+      snapshotHash: row.snapshotHash,
+      snapshotBytesHash: row.snapshotBytesHash,
+    }),
+  };
+}
+
+function assertStoredCourseBinding(
+  state: InterviewV2State,
+  setup: StoredState["setup"],
+): InterviewCourseBinding | null {
+  if (!setup.learningSessionId) {
+    if (setup.courseBinding) {
+      throw new Error(
+        "Standalone interview contains a Course evidence binding",
+      );
+    }
+    return null;
+  }
+  const binding = setup.courseBinding;
+  if (!binding || binding.learningSessionId !== setup.learningSessionId) {
+    throw new Error("Linked interview is missing its Course evidence binding");
+  }
+  const row = state.connection.sqlite
+    .prepare(
+      `SELECT snapshot.id AS snapshotId,
+              snapshot.content_hash AS snapshotHash,
+              snapshot.snapshot_json AS snapshotJson,
+              context.course_id AS courseId,
+              context.revision_id AS revisionId,
+              context.lesson_id AS lessonId,
+              context.snapshot_hash AS contextSnapshotHash,
+              context.snapshot_bytes_hash AS snapshotBytesHash
+       FROM session_snapshots snapshot
+       JOIN session_course_contexts context ON context.session_id = snapshot.session_id
+       JOIN unit_progress progress
+         ON progress.session_id = snapshot.session_id AND progress.unit_id = ?
+       WHERE snapshot.session_id = ? AND progress.unit_type = 'interview'`,
+    )
+    .get(binding.unitId, binding.learningSessionId) as
+    | {
+        snapshotId: string;
+        snapshotHash: string;
+        snapshotJson: string;
+        courseId: string;
+        revisionId: string;
+        lessonId: string;
+        contextSnapshotHash: string;
+        snapshotBytesHash: string;
+      }
+    | undefined;
+  if (
+    !row ||
+    row.snapshotId !== binding.snapshotId ||
+    row.snapshotHash !== binding.snapshotHash ||
+    row.contextSnapshotHash !== binding.snapshotHash ||
+    row.snapshotBytesHash !== binding.snapshotBytesHash ||
+    row.courseId !== binding.courseId ||
+    row.revisionId !== binding.revisionId ||
+    row.lessonId !== binding.lessonId ||
+    createHash("sha256").update(row.snapshotJson).digest("hex") !==
+      binding.snapshotBytesHash
+  ) {
+    throw new Error(
+      "Linked interview Course evidence binding is stale or invalid",
+    );
+  }
+  const snapshot = SessionSnapshotSchema.parse(JSON.parse(row.snapshotJson));
+  const { contentHash, ...snapshotCore } = snapshot;
+  const unit = snapshot.units.find(
+    (candidate) => candidate.id === binding.unitId,
+  );
+  if (
+    !unit ||
+    unit.type !== "interview" ||
+    unit.payload.type !== "interview" ||
+    contentHash !== binding.snapshotHash ||
+    hashCanonicalJson(snapshotCore) !== binding.snapshotHash ||
+    snapshot.curriculumId !== binding.courseId ||
+    snapshot.curriculumVersionId !== binding.revisionId ||
+    snapshot.day.id !== binding.lessonId ||
+    JSON.stringify(unit.payload.topics) !== JSON.stringify(setup.topics) ||
+    unit.depthLevel !== setup.difficulty
+  ) {
+    throw new Error("Linked interview setup does not match its immutable unit");
+  }
+  return binding;
+}
+
 function findInterviewByOperation(
   state: InterviewV2State,
   operationId: string,
@@ -1422,18 +1651,44 @@ async function readStoredInterviewerSelection(
 
 function assertSameSetup(
   stored: StoredState["setup"],
-  request: z.infer<typeof InterviewSetupRequestSchema>,
+  request: ResolvedInterviewSetup,
 ): void {
   if (
     stored.difficulty !== request.difficulty ||
     stored.questionCount !== request.questionCount ||
     stored.learningSessionId !== request.learningSessionId ||
+    JSON.stringify(stored.courseBinding ?? null) !==
+      JSON.stringify(request.courseBinding ?? null) ||
     JSON.stringify(stored.topics) !== JSON.stringify(request.topics)
   ) {
     throw new Error(
       "operationId was already used with different interview setup.",
     );
   }
+}
+
+function assertSameSetupRequest(
+  stored: StoredState["setup"],
+  request: z.infer<typeof InterviewSetupRequestSchema>,
+): void {
+  if ("learningSessionId" in request) {
+    if (
+      stored.learningSessionId !== request.learningSessionId ||
+      stored.courseBinding?.unitId !== request.unitId ||
+      stored.questionCount !== request.questionCount
+    ) {
+      throw new Error(
+        "operationId was already used with different interview setup.",
+      );
+    }
+    return;
+  }
+  assertSameSetup(stored, {
+    operationId: request.operationId,
+    topics: request.topics,
+    difficulty: request.difficulty,
+    questionCount: request.questionCount,
+  });
 }
 
 function countRole(transcript: MessageRow[], role: "user" | "assistant") {

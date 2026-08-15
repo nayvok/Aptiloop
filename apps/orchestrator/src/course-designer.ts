@@ -8,6 +8,7 @@ import {
 import {
   CurriculumAuthoringRepository,
   ProviderHubRepository,
+  withTransaction,
   type CurriculumVersionGraph,
   type DatabaseConnection,
 } from "@aptiloop/database";
@@ -949,15 +950,9 @@ function transitionWorkflow(
       `Action requires ${expectedState}; workflow is ${row.state}`,
     );
   }
-  connection.sqlite.exec("BEGIN IMMEDIATE");
-  try {
-    const updated = transitionWithinTransaction(connection, row, input);
-    connection.sqlite.exec("COMMIT");
-    return updated;
-  } catch (error) {
-    connection.sqlite.exec("ROLLBACK");
-    throw error;
-  }
+  return withTransaction(connection, () =>
+    transitionWithinTransaction(connection, row, input),
+  );
 }
 
 function createDiagnostic(
@@ -1326,13 +1321,13 @@ function persistAttribution(
     );
 }
 
-async function applyChange(
+function applyChange(
   repository: CurriculumAuthoringRepository,
   versionId: string,
   change: CourseDraftProposal["changes"][number],
-): Promise<void> {
+): void {
   if (change.kind === "add-week") {
-    await repository.addWeek({
+    repository.addWeek({
       versionId,
       stableId: change.stableId,
       title: change.title,
@@ -1346,7 +1341,7 @@ async function applyChange(
     return;
   }
   if (change.kind === "update-week") {
-    await repository.updateWeek({
+    repository.updateWeek({
       versionId,
       targetStableId: change.targetStableId,
       ...(change.title !== undefined ? { title: change.title } : {}),
@@ -1360,7 +1355,7 @@ async function applyChange(
     return;
   }
 
-  const graph = await repository.getVersionGraph(versionId);
+  const graph = repository.getVersionGraph(versionId);
   if (change.kind === "add-day") {
     const parent = graph.weeks.find(
       (week) => week.stableId === change.parentStableId,
@@ -1372,7 +1367,7 @@ async function applyChange(
         `Week ${change.parentStableId} does not exist`,
       );
     }
-    await repository.addDay({
+    repository.addDay({
       versionId,
       weekId: parent.id,
       stableId: change.stableId,
@@ -1400,7 +1395,7 @@ async function applyChange(
     return;
   }
   if (change.kind === "update-day") {
-    await repository.updateDay({
+    repository.updateDay({
       versionId,
       targetStableId: change.targetStableId,
       ...(change.title !== undefined ? { title: change.title } : {}),
@@ -1431,7 +1426,7 @@ async function applyChange(
     return;
   }
   if (change.kind === "update-unit") {
-    await repository.updateUnit({
+    repository.updateUnit({
       versionId,
       targetStableId: change.targetStableId,
       ...(change.type !== undefined ? { type: change.type } : {}),
@@ -1488,7 +1483,7 @@ async function applyChange(
       `Day ${change.parentStableId} does not exist`,
     );
   }
-  await repository.addUnit({
+  repository.addUnit({
     versionId,
     dayId: parent.id,
     stableId: change.stableId,
@@ -1604,8 +1599,7 @@ export function registerCourseDesignerRoutes(
         if (existing) return { workflow: workflowDto(existing) };
         const now = Date.now();
         const id = `course-designer:${randomUUID()}`;
-        state.connection.sqlite.exec("BEGIN IMMEDIATE");
-        try {
+        withTransaction(state.connection, () => {
           state.connection.sqlite
             .prepare(
               `INSERT INTO course_designer_workflows
@@ -1632,11 +1626,7 @@ export function registerCourseDesignerRoutes(
                VALUES (?, ?, 'created', NULL, 'DRAFT_REQUEST', '{}', ?)`,
             )
             .run(id, input.operationId, now);
-          state.connection.sqlite.exec("COMMIT");
-        } catch (error) {
-          state.connection.sqlite.exec("ROLLBACK");
-          throw error;
-        }
+        });
         return { workflow: workflowDto(readWorkflow(state.connection, id)) };
       }),
   );
@@ -1750,8 +1740,7 @@ export function registerCourseDesignerRoutes(
               );
             }
             const proposalId = row.active_proposal_id;
-            state.connection.sqlite.exec("BEGIN IMMEDIATE");
-            try {
+            withTransaction(state.connection, () => {
               if (proposalId) {
                 state.connection.sqlite
                   .prepare(
@@ -1776,11 +1765,7 @@ export function registerCourseDesignerRoutes(
                   ? { proposalId, revisionRequest: input.revisionRequest }
                   : { proposalId },
               });
-              state.connection.sqlite.exec("COMMIT");
-            } catch (error) {
-              state.connection.sqlite.exec("ROLLBACK");
-              throw error;
-            }
+            });
           } else {
             row = readWorkflow(state.connection, row.id);
           }
@@ -1972,8 +1957,7 @@ export function registerCourseDesignerRoutes(
               parseJson(proposal.proposal_json),
             );
             const validation = validateProposal(graph, parsedProposal);
-            state.connection.sqlite.exec("BEGIN IMMEDIATE");
-            try {
+            withTransaction(state.connection, () => {
               state.providerRuntime.assertDispatchCommitAllowed(dispatch);
               context.req.raw.signal.throwIfAborted();
               persistAttribution(state.connection, {
@@ -1996,11 +1980,7 @@ export function registerCourseDesignerRoutes(
               });
               state.providerRuntime.assertDispatchCommitAllowed(dispatch);
               context.req.raw.signal.throwIfAborted();
-              state.connection.sqlite.exec("COMMIT");
-            } catch (error) {
-              state.connection.sqlite.exec("ROLLBACK");
-              throw error;
-            }
+            });
             state.providerRuntime.finishDispatch(dispatch, "completed");
             return {
               workflow: workflowDto(row),
@@ -2141,44 +2121,44 @@ export function registerCourseDesignerRoutes(
           );
         }
 
-        state.connection.sqlite.exec("BEGIN IMMEDIATE");
         try {
-          for (const change of proposal.changes) {
-            await applyChange(repository, versionId, change);
-          }
-          state.connection.sqlite
-            .prepare(
-              `UPDATE course_draft_proposals
-               SET status = 'applied', reviewed_at = ?
-               WHERE id = ? AND status = 'proposed'`,
-            )
-            .run(Date.now(), row.id);
-          const curriculum = await repository.getVersionGraph(versionId);
-          const report = authoringValidationReport(curriculum);
-          workflow = transitionWithinTransaction(state.connection, workflow, {
-            operationId: input.operationId,
-            eventType: "proposal-compiled",
-            toState: "VALIDATION",
-            payload: {
-              proposalId,
-              validationHash: report.validationHash,
-              valid: report.valid,
-              errors: report.errors,
-              warnings: report.warnings,
-            },
+          const result = withTransaction(state.connection, () => {
+            for (const change of proposal.changes) {
+              applyChange(repository, versionId, change);
+            }
+            state.connection.sqlite
+              .prepare(
+                `UPDATE course_draft_proposals
+                 SET status = 'applied', reviewed_at = ?
+                 WHERE id = ? AND status = 'proposed'`,
+              )
+              .run(Date.now(), row.id);
+            const curriculum = repository.getVersionGraph(versionId);
+            const report = authoringValidationReport(curriculum);
+            workflow = transitionWithinTransaction(state.connection, workflow, {
+              operationId: input.operationId,
+              eventType: "proposal-compiled",
+              toState: "VALIDATION",
+              payload: {
+                proposalId,
+                validationHash: report.validationHash,
+                valid: report.valid,
+                errors: report.errors,
+                warnings: report.warnings,
+              },
+            });
+            return { curriculum, report };
           });
-          state.connection.sqlite.exec("COMMIT");
           const updated = state.connection.sqlite
             .prepare("SELECT * FROM course_draft_proposals WHERE id = ?")
             .get(row.id) as unknown as ProposalRow;
           return {
             workflow: workflowDto(workflow),
             proposal: proposalDto(state.connection, updated),
-            curriculum,
-            validation: report,
+            curriculum: result.curriculum,
+            validation: result.report,
           };
         } catch (error) {
-          state.connection.sqlite.exec("ROLLBACK");
           failWorkflow(
             state.connection,
             workflow,

@@ -184,6 +184,26 @@ describe("deterministic mastery", () => {
     );
   });
 
+  it("uses portable code-unit ordering for equal-time evidence IDs", () => {
+    const occurredAt = "2026-07-01T09:00:00.000Z";
+    const result = applyMasteryEvidenceBatch(createEmptyMasteryProfile(), [
+      {
+        ...correctImplementation,
+        id: "ä",
+        outcome: "correct",
+        occurredAt,
+      },
+      {
+        ...correctImplementation,
+        id: "z",
+        outcome: "incorrect",
+        occurredAt,
+      },
+    ]);
+
+    expect(result.implementation.score).toBe(0.65);
+  });
+
   it("rejects malformed dates and empty error keys", () => {
     expect(() =>
       applyMasteryEvidence(createEmptyMasteryProfile(), {

@@ -246,15 +246,20 @@ describe("Course Pack import", () => {
     );
   });
 
-  it("does not misreport a library request failure as missing storage", async () => {
-    apiMock.mockRejectedValue(new Error("Safe QA injected failure"));
+  it("does not expose a private library failure or misreport it as missing storage", async () => {
+    const privateFailure =
+      "SQLITE_ERROR at C:\\Users\\yan\\private\\database.sqlite sk-super-secret-sentinel";
+    apiMock.mockRejectedValue(new Error(privateFailure));
 
     renderWithQuery(<CoursePackImportClient />);
 
     expect(
       await screen.findByText("Не удалось получить данные"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Safe QA injected failure")).toBeInTheDocument();
+    expect(
+      screen.getByText("Не удалось загрузить локальную библиотеку курсов."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(privateFailure)).not.toBeInTheDocument();
     expect(
       screen.queryByText("Локальное хранилище курсов недоступно"),
     ).not.toBeInTheDocument();

@@ -17,9 +17,9 @@ const baseInput: DaySummaryInput = {
   quizScore: 0.75,
   incorrectQuestionIds: [],
   codeReadingAttempted: true,
+  exerciseAttempted: true,
   exerciseTestsPassed: true,
-  reviewStatus: "passed",
-  correctionCycleCount: 0,
+  reviewReceiptAccepted: true,
 };
 
 describe("deriveDaySummary", () => {
@@ -60,35 +60,31 @@ describe("deriveDaySummary", () => {
     );
   });
 
-  it("requires passed tests and passed review for correct implementation", () => {
+  it("derives implementation evidence only from trusted tests on an exercise attempt", () => {
     const cases = [
       {
+        exerciseAttempted: true,
         exerciseTestsPassed: true,
-        reviewStatus: "passed" as const,
         outcome: "correct",
       },
       {
-        exerciseTestsPassed: true,
-        reviewStatus: null,
-        outcome: "partial",
-      },
-      {
+        exerciseAttempted: true,
         exerciseTestsPassed: false,
-        reviewStatus: "passed" as const,
         outcome: "partial",
       },
       {
-        exerciseTestsPassed: true,
-        reviewStatus: "changes_requested" as const,
-        outcome: "incorrect",
+        exerciseAttempted: false,
+        exerciseTestsPassed: false,
+        outcome: undefined,
       },
     ];
 
     for (const item of cases) {
       const summary = deriveDaySummary({
         ...baseInput,
+        exerciseAttempted: item.exerciseAttempted,
         exerciseTestsPassed: item.exerciseTestsPassed,
-        reviewStatus: item.reviewStatus,
+        reviewReceiptAccepted: item.exerciseAttempted,
       });
       expect(
         summary.masteryEvidence.find(
@@ -98,27 +94,39 @@ describe("deriveDaySummary", () => {
     }
   });
 
-  it("credits debugging only after a correction cycle and accepted review", () => {
-    const initialPass = deriveDaySummary(baseInput);
-    const correctedPass = deriveDaySummary({
+  it("does not emit phantom implementation credit without an exercise attempt", () => {
+    const summary = deriveDaySummary({
       ...baseInput,
-      correctionCycleCount: 1,
-    });
-    const changesRequested = deriveDaySummary({
-      ...baseInput,
-      reviewStatus: "changes_requested",
-      correctionCycleCount: 2,
-    });
-    const notReviewed = deriveDaySummary({
-      ...baseInput,
-      reviewStatus: null,
-      correctionCycleCount: 2,
+      exerciseAttempted: false,
+      exerciseTestsPassed: false,
+      reviewReceiptAccepted: false,
     });
 
-    expect(debuggingOutcome(initialPass)).toBe("partial");
-    expect(debuggingOutcome(correctedPass)).toBe("correct");
-    expect(debuggingOutcome(changesRequested)).toBe("incorrect");
-    expect(debuggingOutcome(notReviewed)).toBeUndefined();
+    expect(
+      summary.masteryEvidence.some(
+        (evidence) => evidence.dimension === "implementation",
+      ),
+    ).toBe(false);
+    expect(summary.metrics.attemptedActivityCount).toBe(4);
+  });
+
+  it("treats a Reviewer receipt as participation without emitting correctness evidence", () => {
+    const reviewed = deriveDaySummary(baseInput);
+    const notReviewed = deriveDaySummary({
+      ...baseInput,
+      reviewReceiptAccepted: false,
+    });
+
+    expect(reviewed.masteryEvidence).toEqual(notReviewed.masteryEvidence);
+    expect(reviewed.strengths).toEqual(notReviewed.strengths);
+    expect(reviewed.gaps).toEqual(notReviewed.gaps);
+    expect(reviewed.mistakeCandidates).toEqual(notReviewed.mistakeCandidates);
+    expect(reviewed.metrics.attemptedActivityCount).toBe(
+      notReviewed.metrics.attemptedActivityCount + 1,
+    );
+    expect(reviewed.metrics.reviewReceiptAccepted).toBe(true);
+    expect(reviewed.metrics.reviewStatus).toBeNull();
+    expect(reviewed.metrics.correctionCycleCount).toBe(0);
   });
 
   it("passes the maximum hint level to every evidence item without changing outcomes", () => {
@@ -152,7 +160,7 @@ describe("deriveDaySummary", () => {
       recallAttempted: false,
       teacherRevision: false,
       codeReadingAttempted: false,
-      reviewStatus: null,
+      reviewReceiptAccepted: false,
     });
 
     expect(summary.masteryEvidence).toEqual([]);
@@ -166,7 +174,6 @@ describe("deriveDaySummary", () => {
       topicIds: ["values", "scope", "values"],
       quizScore: 0.4,
       incorrectQuestionIds: ["question-b", "question-a", "question-a"],
-      reviewStatus: "changes_requested",
     };
     const first = deriveDaySummary(input);
     const second = deriveDaySummary(input);
@@ -176,12 +183,11 @@ describe("deriveDaySummary", () => {
       first.masteryEvidence.length,
     );
     expect(first.metrics.topicCount).toBe(2);
-    expect(first.mistakeCandidates).toHaveLength(3);
+    expect(first.mistakeCandidates).toHaveLength(2);
     expect(first.flashcardCandidates).toHaveLength(2);
     expect(first.mistakeCandidates.map((item) => item.sourceId)).toEqual([
       "question-a",
       "question-b",
-      "session-day-1",
     ]);
   });
 
@@ -205,21 +211,13 @@ describe("deriveDaySummary", () => {
       deriveDaySummary({ ...baseInput, maxHintLevel: 6 as 5 }),
     ).toThrow(/maxHintLevel/);
     expect(() =>
-      deriveDaySummary({ ...baseInput, correctionCycleCount: -1 }),
-    ).toThrow(/correctionCycleCount/);
-    expect(() =>
       deriveDaySummary({ ...baseInput, occurredAt: "2026-08-01" }),
     ).toThrow(/occurredAt/);
     expect(() =>
       deriveDaySummary({ ...baseInput, topicIds: ["scope", " "] }),
     ).toThrow(/IDs/);
+    expect(() =>
+      deriveDaySummary({ ...baseInput, exerciseAttempted: false }),
+    ).toThrow(/exerciseAttempted/);
   });
 });
-
-function debuggingOutcome(
-  summary: ReturnType<typeof deriveDaySummary>,
-): string | undefined {
-  return summary.masteryEvidence.find(
-    (evidence) => evidence.dimension === "debugging",
-  )?.outcome;
-}

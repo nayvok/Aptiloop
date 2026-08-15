@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -12,10 +16,13 @@ import {
   coursePackSourceBytesHash,
   CourseFoundationRepository,
   CoursePackRepository,
+  createLearningRepository,
   migrateDatabase,
+  openM1WritableDatabase,
   openDatabase,
   type DatabaseConnection,
 } from "../src/index.js";
+import { validateM1WritableDatabasePath } from "../src/cli/path.js";
 
 const connections: DatabaseConnection[] = [];
 const encoder = new TextEncoder();
@@ -418,7 +425,7 @@ describe("CoursePackRepository", () => {
     ]);
   });
 
-  it("rebases only an empty adaptation branch and preserves occupied branches", () => {
+  it("keeps learner activation separate from revision-scoped authoring branches", () => {
     const database = connection();
     let id = 0;
     const repository = new CoursePackRepository(database, {
@@ -459,8 +466,8 @@ describe("CoursePackRepository", () => {
         )
         .all(firstPack.course.courseKey),
     ).toEqual([
-      { base_revision_id: firstPack.revision.revisionKey, status: "archived" },
-      { base_revision_id: secondPack.revision.revisionKey, status: "active" },
+      { base_revision_id: firstPack.revision.revisionKey, status: "active" },
+      { base_revision_id: secondPack.revision.revisionKey, status: "archived" },
     ]);
     expect(
       database.sqlite
@@ -480,18 +487,16 @@ describe("CoursePackRepository", () => {
     thirdPack.revision.revisionNumber = 3;
     thirdPack.revision.parentRevisionKey = secondPack.revision.revisionKey;
     const third = finalizedAndValidated(thirdPack);
-    expect(() =>
-      repository.install({
-        operationId: "open-third-pack",
-        validationId: "55555555-5555-4555-8555-555555555553",
-        action: "open-as-draft",
-        sourceBytesHash: coursePackSourceBytesHash(third.sourceBytes),
-        pack: third.validation.pack,
-        canonicalJson: third.validation.canonicalJson,
-        report: third.validation.report,
-      }),
-    ).toThrow(/must be integrated/u);
-    expect(repository.read(thirdPack.revision.revisionKey)).toBeNull();
+    const thirdOpened = repository.install({
+      operationId: "open-third-pack",
+      validationId: "55555555-5555-4555-8555-555555555553",
+      action: "open-as-draft",
+      sourceBytesHash: coursePackSourceBytesHash(third.sourceBytes),
+      pack: third.validation.pack,
+      canonicalJson: third.validation.canonicalJson,
+      report: third.validation.report,
+    });
+    expect(thirdOpened.revisionStatus).toBe("draft");
     expect(
       database.sqlite
         .prepare(
@@ -499,7 +504,19 @@ describe("CoursePackRepository", () => {
            WHERE course_id = ? AND base_revision_id = ?`,
         )
         .get(firstPack.course.courseKey, secondPack.revision.revisionKey),
-    ).toEqual({ status: "active" });
+    ).toEqual({ status: "archived" });
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT base_revision_id, status FROM adaptation_branches
+           WHERE course_id = ? ORDER BY base_revision_id`,
+        )
+        .all(firstPack.course.courseKey),
+    ).toEqual([
+      { base_revision_id: firstPack.revision.revisionKey, status: "active" },
+      { base_revision_id: secondPack.revision.revisionKey, status: "archived" },
+      { base_revision_id: thirdPack.revision.revisionKey, status: "archived" },
+    ]);
     expect(database.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual(
       [],
     );
@@ -589,6 +606,98 @@ describe("CoursePackRepository", () => {
         )
         .run(pack.revision.revisionKey),
     ).toThrow("Course Pack manifest is immutable");
+  });
+
+  it("selects a deterministic remaining Course after uninstall and passes exact-current admission", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "aptiloop-course-uninstall-selection-"),
+    );
+    const dataDirectory = join(projectRoot, ".data");
+    const databasePath = join(dataDirectory, "dev-learning-harness.sqlite");
+    mkdirSync(dataDirectory);
+
+    try {
+      const database = openDatabase(databasePath);
+      migrateDatabase(database);
+      let id = 0;
+      const now = Date.UTC(2026, 7, 13);
+      const repository = new CoursePackRepository(database, {
+        now: () => now,
+        id: () => `selection-event-${++id}`,
+      });
+      const firstPack = createDevelopmentCoursePackFixture();
+      const secondPack = structuredClone(firstPack);
+      secondPack.course.courseKey = "another-deterministic-course";
+      secondPack.course.title = "Another deterministic Course";
+      secondPack.revision.revisionKey = "another-deterministic-course/v1";
+
+      for (const [index, pack] of [
+        firstPack,
+        finalizeCoursePack(secondPack),
+      ].entries()) {
+        const current = validated(pack);
+        repository.install({
+          operationId: `install-selection-course-${index}`,
+          validationId: `77777777-7777-4777-8777-77777777777${index}`,
+          action: "install",
+          sourceBytesHash: coursePackSourceBytesHash(current.sourceBytes),
+          pack: current.validation.pack,
+          canonicalJson: current.validation.canonicalJson,
+          report: current.validation.report,
+        });
+      }
+
+      const learning = createLearningRepository(database, {
+        now: () => now,
+      });
+      await learning.selectCourse({
+        courseId: firstPack.course.courseKey,
+        revisionId: firstPack.revision.revisionKey,
+      });
+      await learning.selectCourse({
+        courseId: secondPack.course.courseKey,
+        revisionId: secondPack.revision.revisionKey,
+      });
+
+      repository.uninstall({
+        operationId: "uninstall-selected-course",
+        revisionId: secondPack.revision.revisionKey,
+        confirmRevisionKey: secondPack.revision.revisionKey,
+      });
+      expect(
+        database.sqlite
+          .prepare(
+            `SELECT course_id, active_revision_id, is_selected
+             FROM learner_course_states ORDER BY course_id`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          course_id: firstPack.course.courseKey,
+          active_revision_id: firstPack.revision.revisionKey,
+          is_selected: 1,
+        },
+      ]);
+      database.close();
+
+      const reopened = openM1WritableDatabase(databasePath, {
+        revalidateTarget: () =>
+          validateM1WritableDatabasePath(databasePath, { projectRoot }),
+      });
+      try {
+        expect(reopened.migrationAdmission?.kind).toBe("current");
+        await expect(
+          createLearningRepository(reopened).getSelectedCourseTarget(),
+        ).resolves.toEqual({
+          courseId: firstPack.course.courseKey,
+          revisionId: firstPack.revision.revisionKey,
+        });
+      } finally {
+        reopened.close();
+      }
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });
 

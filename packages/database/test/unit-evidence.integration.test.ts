@@ -142,7 +142,7 @@ describe("versioned unit evidence repository", () => {
       correctness: 0.75,
     });
     expect(retried).toEqual(first);
-    await expect(
+    expect(() =>
       setup.learning.recordVersionedUnitEvidence({
         sessionId: setup.session.session.id,
         unitId: recall.id,
@@ -152,7 +152,7 @@ describe("versioned unit evidence repository", () => {
         payload: { answer: "different" },
         correctness: 0.75,
       }),
-    ).rejects.toThrow(/operation id.*different/i);
+    ).toThrow(/operation id.*different/i);
 
     await setup.learning.recordVersionedUnitEvidence({
       sessionId: setup.session.session.id,
@@ -178,7 +178,7 @@ describe("versioned unit evidence repository", () => {
     const quiz = unitOfType(setup, "quiz");
     activateUnit(setup, quiz.id);
 
-    await expect(
+    expect(() =>
       setup.learning.recordVersionedUnitEvidence({
         sessionId: setup.session.session.id,
         unitId: quiz.id,
@@ -186,8 +186,8 @@ describe("versioned unit evidence repository", () => {
         operationId: "wrong-type",
         payload: { answer: "x" },
       }),
-    ).rejects.toThrow(/requires a recall unit/i);
-    await expect(
+    ).toThrow(/requires a recall unit/i);
+    expect(() =>
       setup.learning.recordVersionedUnitEvidence({
         sessionId: setup.session.session.id,
         unitId: recall.id,
@@ -195,7 +195,7 @@ describe("versioned unit evidence repository", () => {
         operationId: "locked-unit",
         payload: { answer: "x" },
       }),
-    ).rejects.toThrow(/in-progress unit/i);
+    ).toThrow(/in-progress unit/i);
 
     setup.connection.sqlite
       .prepare(
@@ -212,7 +212,7 @@ describe("versioned unit evidence repository", () => {
     const second = await setup.learning.startOrResumeVersionedSession({
       dayId: secondDay.id,
     });
-    await expect(
+    expect(() =>
       setup.learning.recordVersionedUnitEvidence({
         sessionId: second.session.id,
         unitId: recall.id,
@@ -220,7 +220,7 @@ describe("versioned unit evidence repository", () => {
         operationId: "cross-session",
         payload: { answer: "x" },
       }),
-    ).rejects.toThrow(/not a unit in the versioned session/i);
+    ).toThrow(/not a unit in the versioned session/i);
   });
 
   it("validates correctness, identifiers, JSON shape, and payload size", async () => {
@@ -233,36 +233,36 @@ describe("versioned unit evidence repository", () => {
       evidenceType: "recall-attempt" as const,
     };
 
-    await expect(
+    expect(() =>
       setup.learning.recordVersionedUnitEvidence({
         ...base,
         operationId: "invalid-correctness",
         payload: {},
         correctness: 1.01,
       }),
-    ).rejects.toThrow(/between 0 and 1/i);
-    await expect(
+    ).toThrow(/between 0 and 1/i);
+    expect(() =>
       setup.learning.recordVersionedUnitEvidence({
         ...base,
         operationId: "invalid-question",
         questionId: " ",
         payload: {},
       }),
-    ).rejects.toThrow(/question id/i);
-    await expect(
+    ).toThrow(/question id/i);
+    expect(() =>
       setup.learning.recordVersionedUnitEvidence({
         ...base,
         operationId: "invalid-json",
         payload: { answer: undefined },
       }),
-    ).rejects.toThrow(/non-json/i);
-    await expect(
+    ).toThrow(/non-json/i);
+    expect(() =>
       setup.learning.recordVersionedUnitEvidence({
         ...base,
         operationId: "oversize",
         payload: { answer: "x".repeat(50_001) },
       }),
-    ).rejects.toThrow(/exceeds 50000 bytes/i);
+    ).toThrow(/exceeds 50000 bytes/i);
   });
 
   it("persists across restart and permits completed-session reads only", async () => {
@@ -290,7 +290,7 @@ describe("versioned unit evidence repository", () => {
       expect(
         await repository.listVersionedUnitEvidence(setup.session.session.id),
       ).toEqual([stored]);
-      await expect(
+      expect(() =>
         repository.recordVersionedUnitEvidence({
           sessionId: setup.session.session.id,
           unitId: summary.id,
@@ -298,7 +298,7 @@ describe("versioned unit evidence repository", () => {
           operationId: "summary-after-completion",
           payload: { reflection: "Too late" },
         }),
-      ).rejects.toThrow(/requires an active session/i);
+      ).toThrow(/requires an active session/i);
     } finally {
       reopened.close();
     }

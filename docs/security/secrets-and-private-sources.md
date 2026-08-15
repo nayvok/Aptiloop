@@ -1,6 +1,6 @@
 # Secrets, Private Sources, and Local Data Lifecycle
 
-**Document status:** **Approved Core Alpha target** with an evidenced **Implemented baseline** for local credential management, minimized provider persistence, and scoped disclosure across active Chat, Interview, Review, and Course Designer callers.
+**Document status:** **Approved Core Alpha target** with an evidenced **Implemented baseline** for local credential management, minimized provider persistence, and scoped disclosure across lesson-scoped Tutor, Interview, Review, and Course Designer callers.
 
 ## 1. Data classes
 
@@ -63,7 +63,7 @@ Remaining gaps: learner/AI/private operational data and POSIX/Linux credential s
 
 - **Attack path:** Tutor/Designer/Evaluator/Reviewer context builder automatically includes private sources, broad history, code, paths, or answers when a real provider is selected.
 - **Impact:** unapproved external disclosure, provider retention, and possible contractual/privacy breach.
-- **Existing mitigation:** **Implemented baseline.** Provider Hub dispatch must match approved role, connection, provider, model, payload hash, status, and expiry, then consumes the approval once. Chat, Interview, Review, and Course Designer show destination/categories/exclusions without persisting the outbound payload in browser storage. Interview recovery uses exact persisted domain scope. Course Designer recovery is revision/workflow-scoped and may return a stale preview after Draft mutation, but current-payload hashing rejects it before provider work.
+- **Existing mitigation:** **Implemented baseline.** Provider Hub dispatch must match approved role, connection, provider, model, payload hash, status, and expiry, then consumes the approval once. Lesson-scoped Tutor, Interview, Review, and Course Designer show destination/categories/exclusions without persisting the outbound payload in browser storage. Interview recovery uses exact persisted domain scope. Course Designer recovery is revision/workflow-scoped and may return a stale preview after Draft mutation, but current-payload hashing rejects it before provider work.
 - **Source fix:** **Approved Core Alpha target.** Compare destination and entity IDs during dispatch and rederive Course Designer recovery payload/scope before returning the preview; retain minimum context and exact recovery scope for every new caller.
 - **Test:** default requests exclude unrelated private classes; cancellation sends nothing; changing provider/model/payload requires a new action; reload cannot dispatch a cross-scope, stale, or terminal disclosure.
 

@@ -16,9 +16,10 @@ export interface DaySummaryInput {
   readonly quizScore: number;
   readonly incorrectQuestionIds: readonly string[];
   readonly codeReadingAttempted: boolean;
+  readonly exerciseAttempted: boolean;
   readonly exerciseTestsPassed: boolean;
-  readonly reviewStatus: "passed" | "changes_requested" | null;
-  readonly correctionCycleCount: number;
+  /** A validated Reviewer receipt proves participation, never correctness. */
+  readonly reviewReceiptAccepted: boolean;
 }
 
 export interface MistakeCandidate {
@@ -49,8 +50,11 @@ export interface DaySummaryMetrics {
   readonly quizScore: number;
   readonly maxHintLevel: HintLevel;
   readonly exerciseTestsPassed: boolean;
-  readonly reviewStatus: "passed" | "changes_requested" | null;
-  readonly correctionCycleCount: number;
+  readonly reviewReceiptAccepted: boolean;
+  /** @deprecated Reviewer output is advisory; retained as a fixed DTO field. */
+  readonly reviewStatus: null;
+  /** @deprecated Reviewer output is advisory; retained as a fixed DTO field. */
+  readonly correctionCycleCount: 0;
 }
 
 export interface DaySummary {
@@ -159,27 +163,16 @@ function buildEvidenceTemplates(
     });
   }
 
-  const implementationOutcome = toImplementationOutcome(input);
-  templates.push({
-    activity: "implementation",
-    dimension: "implementation",
-    type: "implementation",
-    outcome: implementationOutcome,
-    ...(implementationOutcome === "correct"
-      ? {}
-      : { errorKey: "implementation-not-verified" }),
-  });
-
-  const debuggingOutcome = toDebuggingOutcome(input);
-  if (debuggingOutcome !== null) {
+  if (input.exerciseAttempted) {
+    const implementationOutcome = toImplementationOutcome(input);
     templates.push({
-      activity: "debugging",
-      dimension: "debugging",
-      type: "debugging",
-      outcome: debuggingOutcome,
-      ...(debuggingOutcome === "correct"
+      activity: "implementation",
+      dimension: "implementation",
+      type: "implementation",
+      outcome: implementationOutcome,
+      ...(implementationOutcome === "correct"
         ? {}
-        : { errorKey: "review-not-resolved" }),
+        : { errorKey: "implementation-not-verified" }),
     });
   }
 
@@ -214,13 +207,8 @@ function buildStrengths(
   if (quizOutcome === "correct") {
     strengths.push("Квиз пройден на уровне уверенного понимания.");
   }
-  if (input.exerciseTestsPassed && input.reviewStatus === "passed") {
-    strengths.push(
-      "Реализация прошла разрешённые проверки и проверку решения.",
-    );
-  }
-  if (input.correctionCycleCount > 0 && input.reviewStatus === "passed") {
-    strengths.push("Замечания проверки решения устранены в цикле исправлений.");
+  if (input.exerciseTestsPassed) {
+    strengths.push("Реализация прошла разрешённые проверки.");
   }
   return strengths;
 }
@@ -252,22 +240,8 @@ function buildGaps(
       "Чтение кода выполнено, но без отдельной проверки корректности засчитано частично.",
     );
   }
-  if (!input.exerciseTestsPassed || input.reviewStatus !== "passed") {
-    gaps.push(
-      "Реализация ещё не подтверждена одновременно тестами и проверкой решения.",
-    );
-  }
-  if (input.reviewStatus === "changes_requested") {
-    gaps.push(
-      "Проверка решения запросила изменения; нужен новый цикл исправления и проверки.",
-    );
-  } else if (
-    input.reviewStatus === "passed" &&
-    input.correctionCycleCount === 0
-  ) {
-    gaps.push(
-      "Отдельное подтверждение навыка по debugging пока не подтверждено исправлением.",
-    );
+  if (!input.exerciseTestsPassed) {
+    gaps.push("Реализация ещё не подтверждена разрешёнными проверками.");
   }
   return gaps;
 }
@@ -284,17 +258,7 @@ function buildMistakeCandidates(
     sourceId: questionId,
   }));
 
-  if (input.reviewStatus !== "changes_requested") return quizMistakes;
-  return [
-    ...quizMistakes,
-    {
-      fingerprint: `mistake-review-${fingerprint(input.sessionId)}`,
-      summary: "Проверка решения запросила изменения в реализации.",
-      correction:
-        "Исправить замечания во внешнем редакторе, повторить разрешённые тесты и review.",
-      sourceId: input.sessionId,
-    },
-  ];
+  return quizMistakes;
 }
 
 function buildMetrics(
@@ -313,13 +277,14 @@ function buildMetrics(
       Number(input.teacherRevision) +
       1 +
       Number(input.codeReadingAttempted) +
-      1 +
-      Number(input.reviewStatus !== null),
+      Number(input.exerciseAttempted) +
+      Number(input.reviewReceiptAccepted),
     quizScore: input.quizScore,
     maxHintLevel: input.maxHintLevel,
     exerciseTestsPassed: input.exerciseTestsPassed,
-    reviewStatus: input.reviewStatus,
-    correctionCycleCount: input.correctionCycleCount,
+    reviewReceiptAccepted: input.reviewReceiptAccepted,
+    reviewStatus: null,
+    correctionCycleCount: 0,
   };
 }
 
@@ -342,17 +307,7 @@ function toQuizOutcome(score: number): EvidenceOutcome {
 }
 
 function toImplementationOutcome(input: DaySummaryInput): EvidenceOutcome {
-  if (input.exerciseTestsPassed && input.reviewStatus === "passed") {
-    return "correct";
-  }
-  if (input.reviewStatus === "changes_requested") return "incorrect";
-  return "partial";
-}
-
-function toDebuggingOutcome(input: DaySummaryInput): EvidenceOutcome | null {
-  if (input.reviewStatus === null) return null;
-  if (input.reviewStatus === "changes_requested") return "incorrect";
-  return input.correctionCycleCount > 0 ? "correct" : "partial";
+  return input.exerciseTestsPassed ? "correct" : "partial";
 }
 
 function countOutcome(
@@ -398,10 +353,12 @@ function assertInput(input: DaySummaryInput): void {
     throw new RangeError("quizScore must be between 0 and 1");
   }
   if (
-    !Number.isInteger(input.correctionCycleCount) ||
-    input.correctionCycleCount < 0
+    !input.exerciseAttempted &&
+    (input.exerciseTestsPassed || input.reviewReceiptAccepted)
   ) {
-    throw new RangeError("correctionCycleCount must be a non-negative integer");
+    throw new TypeError(
+      "exercise results require exerciseAttempted to be true",
+    );
   }
 }
 

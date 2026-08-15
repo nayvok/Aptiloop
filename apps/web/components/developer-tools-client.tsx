@@ -1,15 +1,8 @@
 "use client";
 
-import {
-  ChatCircleDotsIcon,
-  ShieldCheckIcon,
-  WrenchIcon,
-} from "@phosphor-icons/react";
-import Link from "next/link";
+import { ShieldCheckIcon, WrenchIcon } from "@phosphor-icons/react";
 
 import { PageHeader } from "@/components/page-header";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 
 export function DeveloperToolsClient() {
@@ -21,43 +14,6 @@ export function DeveloperToolsClient() {
         title={t("ui.developerTools.title")}
         description={t("ui.developerTools.description")}
       />
-
-      <section
-        data-slot="developer-tool"
-        aria-labelledby="agent-playground-title"
-        className="rounded-[18px] bg-surface-raised p-5 shadow-[0_16px_45px_oklch(0_0_0/0.07)] sm:p-7"
-      >
-        <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
-          <div className="flex min-w-0 gap-3">
-            <ChatCircleDotsIcon
-              aria-hidden
-              className="mt-1 size-5 shrink-0 text-activity-ai"
-            />
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2
-                  id="agent-playground-title"
-                  className="text-lg font-semibold tracking-[-0.015em]"
-                >
-                  {t("ui.developerTools.playgroundTitle")}
-                </h2>
-                <Badge variant="secondary">
-                  {t("ui.developerTools.compatibilityBadge")}
-                </Badge>
-              </div>
-              <p className="mt-2 max-w-[68ch] text-sm leading-6 text-muted-foreground">
-                {t("ui.developerTools.playgroundDescription")}
-              </p>
-            </div>
-          </div>
-          <Button asChild className="w-full shrink-0 sm:w-auto">
-            <Link href="/chat">
-              <ChatCircleDotsIcon aria-hidden data-icon="inline-start" />
-              {t("ui.developerTools.openPlayground")}
-            </Link>
-          </Button>
-        </div>
-      </section>
 
       <section
         aria-labelledby="developer-boundary-title"

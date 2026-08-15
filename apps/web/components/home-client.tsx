@@ -21,7 +21,7 @@ import {
   learningPathSchema,
 } from "@/lib/learning-path";
 import { PageHeader } from "@/components/page-header";
-import { EmptyState, QueryError } from "@/components/query-state";
+import { EmptyState, SafeQueryError } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/ui/loading-state";
@@ -212,9 +212,7 @@ export function HomeClient({
     if (isRevisionPreview) {
       return (
         <RevisionFailureState
-          {...(query.error instanceof Error
-            ? { diagnostic: query.error.message }
-            : {})}
+          error={query.error}
           retry={() => void query.refetch()}
         />
       );
@@ -222,11 +220,9 @@ export function HomeClient({
     return (
       <div data-slot="home" className="flex flex-col gap-6 lg:gap-8">
         <HomePageHeader />
-        <QueryError
-          message={t("home.unavailable")}
-          {...(query.error instanceof Error
-            ? { diagnostic: query.error.message }
-            : {})}
+        <SafeQueryError
+          error={query.error}
+          operation="home.load"
           retry={() => void query.refetch()}
         />
       </div>
@@ -250,11 +246,9 @@ export function HomeClient({
       return (
         <div data-slot="home" className="flex flex-col gap-6 lg:gap-8">
           <HomePageHeader />
-          <QueryError
-            message={t("home.coursesUnavailable")}
-            {...(courseCollection.error instanceof Error
-              ? { diagnostic: courseCollection.error.message }
-              : {})}
+          <SafeQueryError
+            error={courseCollection.error}
+            operation="home.courses.load"
             retry={() => void courseCollection.refetch()}
           />
         </div>
@@ -308,7 +302,12 @@ export function HomeClient({
       course.id !== selectionTarget.courseId ||
       course.version.id !== selectionTarget.revisionId)
   ) {
-    return <RevisionFailureState retry={() => void query.refetch()} />;
+    return (
+      <RevisionFailureState
+        error={new Error("invalid-revision-context")}
+        retry={() => void query.refetch()}
+      />
+    );
   }
 
   const days = course.weeks.flatMap((week) => week.days);
@@ -698,10 +697,10 @@ function BackToCourses() {
 }
 
 function RevisionFailureState({
-  diagnostic,
+  error,
   retry,
 }: {
-  diagnostic?: string;
+  error: unknown;
   retry: () => void;
 }) {
   const { t } = useI18n();
@@ -712,10 +711,10 @@ function RevisionFailureState({
     >
       <RevisionPageHeader />
       <div data-slot="course-revision-preview-error">
-        <QueryError
+        <SafeQueryError
           title={t("courses.current.revisionUnavailable")}
-          message={t("courses.library.selectionUnknownHelp")}
-          {...(diagnostic ? { diagnostic } : {})}
+          error={error}
+          operation="home.load"
           retry={retry}
         />
       </div>

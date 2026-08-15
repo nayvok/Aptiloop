@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -21,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createApp } from "../src/app.js";
+import { tutorTurnMessageKey } from "../src/tutor-message-scope.js";
 import { seedDevelopmentDatabase } from "./development-database-fixture.js";
 
 const runtimes: Array<ReturnType<typeof createApp>> = [];
@@ -284,6 +286,133 @@ function unitProgressPayload(session: LearnerSession, unitId: string) {
   return progress.payload;
 }
 
+function insertAuthoritativeReviewReceipt(
+  state: ReturnType<typeof createApp>["state"],
+  input: {
+    reviewId: string;
+    sessionId: string;
+    exerciseAttemptId: string;
+    testRunId: string;
+    testOperationId: string;
+    createdAt: number;
+  },
+) {
+  const workspaceSnapshotHash = `sha256:${createHash("sha256")
+    .update(`${input.reviewId}:workspace`, "utf8")
+    .digest("hex")}`;
+  const diffFingerprint = createHash("sha256")
+    .update(`${input.reviewId}:diff`, "utf8")
+    .digest("hex");
+  const checkId = "apt.compat.node24.npm-test.v1";
+  const environmentId = "apt.compat.node24.local.v1";
+  const environmentPackDigest =
+    "sha256:8a714b40eb7d8c64ea6ef2844577bbffd509f7edf7225b2bd26bd2656a0b68b8";
+  const backendId = "local-native";
+  const gitDiff = [
+    "diff --git a/src/example.ts b/src/example.ts",
+    "--- a/src/example.ts",
+    "+++ b/src/example.ts",
+    "@@ -1 +1 @@",
+    "-export const value = 1;",
+    "+export const value = 2;",
+    "",
+  ].join("\n");
+  const resultJson = JSON.stringify({
+    status: "passed",
+    summary: "The bounded evidence was reviewed.",
+    findings: [],
+    strengths: [],
+    suggestedMasteryChanges: [],
+  });
+  const bundleJson = JSON.stringify({
+    schemaVersion: 1,
+    kind: "apt.review-evidence.v1",
+    task: "Review the bounded learner diff.",
+    exercise: {
+      prompt: "Update the example value.",
+      acceptanceCriteria: [],
+      constraints: [],
+      approvedTopicIds: [],
+    },
+    workspace: { inputSnapshotHash: workspaceSnapshotHash },
+    evidence: {
+      gitDiff,
+      diffTruncated: false,
+      trustedCheck: {
+        operationId: input.testOperationId,
+        checkId,
+        environmentId,
+        environmentPackDigest,
+        backendId,
+        inputSnapshotHash: workspaceSnapshotHash,
+        status: "passed",
+      },
+    },
+  });
+  const bundleSha256 = `sha256:${createHash("sha256")
+    .update(bundleJson, "utf8")
+    .digest("hex")}`;
+
+  const updatedTest = state.connection.sqlite
+    .prepare(
+      `UPDATE test_runs
+       SET status = 'passed', exit_code = 0, diff_fingerprint = ?,
+           diff_truncated = 0, check_id = ?, environment_id = ?,
+           environment_pack_digest = ?, backend_id = ?,
+           input_snapshot_hash = ?, result_json = ?
+       WHERE id = ? AND exercise_attempt_id = ?`,
+    )
+    .run(
+      diffFingerprint,
+      checkId,
+      environmentId,
+      environmentPackDigest,
+      backendId,
+      workspaceSnapshotHash,
+      JSON.stringify({ schemaVersion: 1, status: "passed" }),
+      input.testRunId,
+      input.exerciseAttemptId,
+    );
+  if (updatedTest.changes !== 1) {
+    throw new Error(`Missing trusted test fixture: ${input.testRunId}`);
+  }
+
+  state.connection.sqlite
+    .prepare(
+      `INSERT INTO reviews
+       (id, session_id, exercise_attempt_id, provider_id, model_id, status,
+        result_json, raw_response, created_at, completed_at)
+       VALUES (?, ?, ?, 'mock', 'mock-reviewer', 'accepted', ?, NULL, ?, ?)`,
+    )
+    .run(
+      input.reviewId,
+      input.sessionId,
+      input.exerciseAttemptId,
+      resultJson,
+      input.createdAt,
+      input.createdAt,
+    );
+  state.connection.sqlite
+    .prepare(
+      `INSERT INTO review_evidence_bundles
+       (id, review_id, exercise_attempt_id, test_run_id,
+        workspace_snapshot_hash, diff_fingerprint, bundle_sha256, bundle_json,
+        created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      `${input.reviewId}-bundle`,
+      input.reviewId,
+      input.exerciseAttemptId,
+      input.testRunId,
+      workspaceSnapshotHash,
+      diffFingerprint,
+      bundleSha256,
+      bundleJson,
+      input.createdAt,
+    );
+}
+
 function privateSnapshot(
   connection: ReturnType<typeof createApp>["state"]["connection"],
   sessionId: string,
@@ -395,9 +524,39 @@ async function completePrecedingDaysForDaySeven(
 function insertCompletedInterviewEvidence(
   state: ReturnType<typeof createApp>["state"],
   sessionId: string,
+  unitId: string,
   interviewId: string,
   answerCount: number,
 ) {
+  const authority = state.connection.sqlite
+    .prepare(
+      `SELECT snapshot.id AS snapshotId,
+              snapshot.content_hash AS snapshotHash,
+              snapshot.snapshot_json AS snapshotJson,
+              context.course_id AS courseId,
+              context.revision_id AS revisionId,
+              context.lesson_id AS lessonId,
+              context.snapshot_bytes_hash AS snapshotBytesHash
+       FROM session_snapshots snapshot
+       JOIN session_course_contexts context ON context.session_id = snapshot.session_id
+       WHERE snapshot.session_id = ?`,
+    )
+    .get(sessionId) as {
+    snapshotId: string;
+    snapshotHash: string;
+    snapshotJson: string;
+    courseId: string;
+    revisionId: string;
+    lessonId: string;
+    snapshotBytesHash: string;
+  };
+  const snapshot = SessionSnapshotSchema.parse(
+    JSON.parse(authority.snapshotJson),
+  );
+  const interviewUnit = snapshot.units.find((unit) => unit.id === unitId);
+  if (!interviewUnit || interviewUnit.payload.type !== "interview") {
+    throw new Error("Missing Interview unit fixture");
+  }
   const conversationId = `${interviewId}-conversation`;
   state.connection.sqlite
     .prepare(
@@ -412,12 +571,26 @@ function insertCompletedInterviewEvidence(
         schemaVersion: 1,
         setup: {
           conversationId,
-          topics: [],
-          difficulty: "interview-ready",
+          learningSessionId: sessionId,
+          topics: interviewUnit.payload.topics,
+          difficulty: interviewUnit.depthLevel,
           questionCount: 3,
           operationId: `${interviewId}-operation`,
+          courseBinding: {
+            learningSessionId: sessionId,
+            unitId,
+            courseId: authority.courseId,
+            revisionId: authority.revisionId,
+            lessonId: authority.lessonId,
+            snapshotId: authority.snapshotId,
+            snapshotHash: authority.snapshotHash,
+            snapshotBytesHash: authority.snapshotBytesHash,
+          },
         },
-        report: { status: "completed" },
+        report: {
+          interviewId,
+          status: "completed",
+        },
       }),
     );
   state.connection.sqlite
@@ -902,7 +1075,11 @@ describe("versioned learning API", () => {
       method: "POST",
       body: JSON.stringify(submitBody),
     });
-    expect(rejected.status).toBe(400);
+    expect(rejected.status).toBe(500);
+    expect(await rejected.json()).toMatchObject({
+      error: "Internal server error",
+      diagnosticId: expect.any(String),
+    });
     expect(
       runtime.state.connection.sqlite
         .prepare(
@@ -1050,6 +1227,7 @@ describe("versioned learning API", () => {
     insertCompletedInterviewEvidence(
       runtime.state,
       session.id,
+      interviewUnit.id,
       "day7-real-interview",
       3,
     );
@@ -1075,6 +1253,7 @@ describe("versioned learning API", () => {
     insertCompletedInterviewEvidence(
       runtime.state,
       session.id,
+      interviewUnit.id,
       "day7-incomplete-interview",
       2,
     );
@@ -1096,6 +1275,7 @@ describe("versioned learning API", () => {
     insertCompletedInterviewEvidence(
       runtime.state,
       session.id,
+      interviewUnit.id,
       "day7-no-report-interview",
       3,
     );
@@ -1167,7 +1347,7 @@ describe("versioned learning API", () => {
           `INSERT INTO agent_messages
            (id, conversation_id, role, content, tool_events_json, raw_event_json,
             status, sequence, idempotency_key, created_at)
-           VALUES (?, ?, ?, ?, '[]', NULL, 'completed', ?, NULL, ?)`,
+           VALUES (?, ?, ?, ?, '[]', NULL, 'completed', ?, ?, ?)`,
         );
         insert.run(
           "day7-teacher-user-1",
@@ -1175,6 +1355,7 @@ describe("versioned learning API", () => {
           "user",
           "Первый ответ",
           1,
+          tutorTurnMessageKey(unit.id, "day7-turn-1", "user"),
           1001,
         );
         insert.run(
@@ -1183,6 +1364,7 @@ describe("versioned learning API", () => {
           "assistant",
           "Уточните",
           2,
+          tutorTurnMessageKey(unit.id, "day7-turn-1", "assistant"),
           1002,
         );
         insert.run(
@@ -1191,6 +1373,7 @@ describe("versioned learning API", () => {
           "user",
           "Уточнённый ответ",
           3,
+          tutorTurnMessageKey(unit.id, "day7-turn-2", "user"),
           1003,
         );
         insert.run(
@@ -1199,13 +1382,14 @@ describe("versioned learning API", () => {
           "assistant",
           "Достаточно",
           4,
+          tutorTurnMessageKey(unit.id, "day7-turn-2", "assistant"),
           1004,
         );
         payload = {
           type: "teacher-dialogue",
           conversationId,
           turnCount: 2,
-          revisionAttemptIds: ["day7-teacher-user-1", "day7-teacher-user-2"],
+          revisionAttemptIds: ["day7-turn-1", "day7-turn-2"],
         };
       }
 
@@ -1289,15 +1473,14 @@ describe("versioned learning API", () => {
       if (unit.type === "review") {
         if (!exerciseAttemptId) throw new Error("Exercise evidence is missing");
         const now = Date.now();
-        runtime.state.connection.sqlite
-          .prepare(
-            `INSERT INTO reviews
-           (id, session_id, exercise_attempt_id, provider_id, model_id, status,
-            result_json, raw_response, created_at, completed_at)
-           VALUES ('day7-review', ?, ?, 'mock', 'mock-reviewer', 'passed',
-                   '{"status":"passed","findings":[]}', NULL, ?, ?)`,
-          )
-          .run(session.id, exerciseAttemptId, now, now);
+        insertAuthoritativeReviewReceipt(runtime.state, {
+          reviewId: "day7-review",
+          sessionId: session.id,
+          exerciseAttemptId,
+          testRunId: "day7-test-run",
+          testOperationId: "day7-test-operation",
+          createdAt: now,
+        });
         payload = {
           type: "review",
           reviewId: "day7-review",
@@ -1310,6 +1493,7 @@ describe("versioned learning API", () => {
         insertCompletedInterviewEvidence(
           runtime.state,
           session.id,
+          unit.id,
           "day7-full-interview",
           3,
         );
@@ -1326,9 +1510,13 @@ describe("versioned learning API", () => {
           body: JSON.stringify({ operationId: "day7-summary" }),
         });
         expect(response.status).toBe(201);
-        session = ((await response.json()) as { session: LearnerSession })
-          .session;
-        payload = unitProgressPayload(session, unit.id);
+        const summaryBody = (await response.json()) as {
+          evidence: { id: string };
+        };
+        payload = {
+          type: "summary",
+          summaryId: summaryBody.evidence.id,
+        };
       }
 
       const complete = await request(runtime.app, endpoint, {
@@ -1339,7 +1527,10 @@ describe("versioned learning API", () => {
           payload,
         }),
       });
-      expect(complete.status, `complete ${unit.stableId}`).toBe(200);
+      expect(
+        complete.status,
+        `complete ${unit.stableId}: ${await complete.clone().text()}`,
+      ).toBe(200);
       session = ((await complete.json()) as { session: LearnerSession })
         .session;
     }
@@ -2849,7 +3040,7 @@ describe("versioned learning API", () => {
           `INSERT INTO agent_messages
            (id, conversation_id, role, content, tool_events_json,
             raw_event_json, status, sequence, idempotency_key, created_at)
-           VALUES (?, ?, ?, ?, '[]', NULL, 'completed', ?, NULL, ?)`,
+           VALUES (?, ?, ?, ?, '[]', NULL, 'completed', ?, ?, ?)`,
         );
         insertMessage.run(
           "teacher-user-1",
@@ -2857,6 +3048,7 @@ describe("versioned learning API", () => {
           "user",
           "Первое уточнённое объяснение",
           1,
+          tutorTurnMessageKey(unit.id, "turn-1", "user"),
           1001,
         );
         insertMessage.run(
@@ -2865,13 +3057,42 @@ describe("versioned learning API", () => {
           "assistant",
           "Почему это следует из общей ссылки?",
           2,
+          tutorTurnMessageKey(unit.id, "turn-1", "assistant"),
           1002,
+        );
+        const siblingUnitId = `${unit.id}:advanced`;
+        insertMessage.run(
+          "teacher-sibling-user",
+          conversationId,
+          "user",
+          "sibling-unit-user-sentinel",
+          30,
+          tutorTurnMessageKey(siblingUnitId, "sibling-turn", "user"),
+          1003,
+        );
+        insertMessage.run(
+          "teacher-sibling-assistant",
+          conversationId,
+          "assistant",
+          "sibling-unit-assistant-sentinel",
+          31,
+          tutorTurnMessageKey(siblingUnitId, "sibling-turn", "assistant"),
+          1004,
+        );
+        insertMessage.run(
+          "teacher-legacy-user",
+          conversationId,
+          "user",
+          "legacy-raw-prefix-sentinel",
+          32,
+          `tutor-unit:${unit.id}:agent-turn:legacy-turn:user`,
+          1005,
         );
         const firstTurnPayload = {
           type: "teacher-dialogue",
           conversationId,
           turnCount: 1,
-          revisionAttemptIds: ["teacher-user-1"],
+          revisionAttemptIds: ["turn-1"],
         };
         const incomplete = await request(
           restartedRuntime.app,
@@ -2887,12 +3108,31 @@ describe("versioned learning API", () => {
         );
         expect(incomplete.status).toBe(400);
 
+        const siblingCompletion = await request(
+          restartedRuntime.app,
+          `/api/learning/sessions/v2/${session.id}/units/${unit.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              operationId: `day1-sibling-teacher-${unit.id}`,
+              status: "completed",
+              payload: {
+                ...firstTurnPayload,
+                turnCount: 2,
+                revisionAttemptIds: ["turn-1", "sibling-turn"],
+              },
+            }),
+          },
+        );
+        expect(siblingCompletion.status).toBe(400);
+
         insertMessage.run(
           "teacher-user-2",
           conversationId,
           "user",
           "Ответ ученика на уточнение Teacher",
           3,
+          tutorTurnMessageKey(unit.id, "turn-2", "user"),
           1003,
         );
         insertMessage.run(
@@ -2901,20 +3141,22 @@ describe("versioned learning API", () => {
           "assistant",
           "Теперь причинная цепочка полная.",
           4,
+          tutorTurnMessageKey(unit.id, "turn-2", "assistant"),
           1004,
         );
         payload = {
           ...firstTurnPayload,
           turnCount: 2,
-          revisionAttemptIds: ["teacher-user-1", "teacher-user-2"],
+          revisionAttemptIds: ["turn-1", "turn-2"],
         };
 
         const transcript = await request(
           restartedRuntime.app,
-          `/api/learning/sessions/v2/${session.id}/teacher-transcript`,
+          `/api/learning/sessions/v2/${session.id}/units/${unit.id}/teacher-transcript`,
         );
         expect(transcript.status).toBe(200);
-        expect(await transcript.json()).toMatchObject({
+        const transcriptBody = await transcript.json();
+        expect(transcriptBody).toMatchObject({
           messages: [
             { id: "teacher-user-1", role: "user" },
             { id: "teacher-assistant-1", role: "assistant" },
@@ -2922,6 +3164,9 @@ describe("versioned learning API", () => {
             { id: "teacher-assistant-2", role: "assistant" },
           ],
         });
+        const transcriptText = JSON.stringify(transcriptBody);
+        expect(transcriptText).not.toContain("sibling-unit");
+        expect(transcriptText).not.toContain("legacy-raw-prefix-sentinel");
       }
 
       if (unit.type === "quiz") {
@@ -3099,21 +3344,14 @@ describe("versioned learning API", () => {
                      '{"status":"passed","findings":[]}', NULL, ?, ?)`,
           )
           .run(oldReviewId, session.id, exerciseArtifacts.attemptId, now, now);
-        restartedRuntime.state.connection.sqlite
-          .prepare(
-            `INSERT INTO reviews
-             (id, session_id, exercise_attempt_id, provider_id, model_id, status,
-              result_json, raw_response, created_at, completed_at)
-             VALUES (?, ?, ?, 'mock', 'mock-reviewer', 'changes_requested',
-                     '{"status":"changes_requested","findings":[]}', NULL, ?, ?)`,
-          )
-          .run(
-            reviewId,
-            session.id,
-            exerciseArtifacts.attemptId,
-            now + 1,
-            now + 1,
-          );
+        insertAuthoritativeReviewReceipt(restartedRuntime.state, {
+          reviewId,
+          sessionId: session.id,
+          exerciseAttemptId: exerciseArtifacts.attemptId,
+          testRunId: exerciseArtifacts.testRunId,
+          testOperationId: "day1-latest-test-operation",
+          createdAt: now + 1,
+        });
         const staleReviewEvidence = await request(
           restartedRuntime.app,
           `/api/learning/sessions/v2/${session.id}/units/${unit.id}`,
@@ -3132,12 +3370,6 @@ describe("versioned learning API", () => {
           },
         );
         expect(staleReviewEvidence.status).toBe(400);
-        restartedRuntime.state.connection.sqlite
-          .prepare(
-            `UPDATE reviews SET status = 'passed',
-             result_json = '{"status":"passed","findings":[]}' WHERE id = ?`,
-          )
-          .run(reviewId);
         payload = {
           type: "review",
           reviewId,

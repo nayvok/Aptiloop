@@ -2,11 +2,11 @@
 
 import { CheckIcon } from "@phosphor-icons/react";
 import { CourseEntityIdSchema } from "@aptiloop/shared";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 
 import { ReviewQueueClient } from "@/components/flashcards-client";
-import { InterviewClient } from "@/components/interview-client";
 import { MistakesClient } from "@/components/mistakes-client";
 import { PageHeader } from "@/components/page-header";
 import { ReviewActivityClient } from "@/components/review-activity-client";
@@ -84,6 +84,16 @@ export function ReviewPageSkeleton({
     </div>
   );
 }
+
+const InterviewClient = dynamic(
+  () =>
+    import("@/components/interview-client").then(
+      (module) => module.InterviewClient,
+    ),
+  {
+    loading: () => <ReviewPageSkeleton label="interview.loading" compact />,
+  },
+);
 
 export function ReviewClient() {
   const pathname = usePathname();
@@ -232,13 +242,15 @@ export function ReviewClient() {
             <ReviewQueueClient />
           </TabsContent>
           <TabsContent value="interviews" className="mt-0 min-w-0">
-            <Suspense
-              fallback={
-                <ReviewPageSkeleton label="interview.loading" compact />
-              }
-            >
-              <InterviewClient embedded />
-            </Suspense>
+            {active === "interviews" ? (
+              <Suspense
+                fallback={
+                  <ReviewPageSkeleton label="interview.loading" compact />
+                }
+              >
+                <InterviewClient embedded />
+              </Suspense>
+            ) : null}
           </TabsContent>
         </Tabs>
       )}

@@ -4,6 +4,7 @@ import {
   CourseIdentityConflictError,
   CurriculumAuthoringRepository,
   hashCanonicalJson,
+  withTransaction,
   type CurriculumVersionGraph,
   type DatabaseConnection,
 } from "@aptiloop/database";
@@ -519,22 +520,17 @@ function assertGraphContracts(graph: CurriculumVersionGraph): void {
   }
 }
 
-async function updateUnitAndValidate(
+function updateUnitAndValidate(
   state: CurriculumEditorState,
   versionId: string,
   mutation: () => void,
-): Promise<CurriculumVersionGraph> {
-  state.connection.sqlite.exec("BEGIN IMMEDIATE");
-  try {
+): CurriculumVersionGraph {
+  return withTransaction(state.connection, () => {
     mutation();
-    const graph = await editorRepository(state).getVersionGraph(versionId);
+    const graph = editorRepository(state).getVersionGraph(versionId);
     assertGraphContracts(graph);
-    state.connection.sqlite.exec("COMMIT");
     return toEditorDto(graph);
-  } catch (error) {
-    state.connection.sqlite.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
 function json(value: unknown): string {
@@ -659,8 +655,7 @@ function markDesignerWorkflowsPublished(
     .all(versionId) as unknown as Array<{ id: string }>;
   if (rows.length === 0) return;
   const now = Date.now();
-  connection.sqlite.exec("BEGIN IMMEDIATE");
-  try {
+  withTransaction(connection, () => {
     const update = connection.sqlite.prepare(
       `UPDATE course_designer_workflows
        SET state = 'PUBLISHED', recovery_state = NULL, updated_at = ?
@@ -682,11 +677,7 @@ function markDesignerWorkflowsPublished(
         );
       }
     }
-    connection.sqlite.exec("COMMIT");
-  } catch (error) {
-    connection.sqlite.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
 function comparableAuthoringEntities(
@@ -1166,7 +1157,7 @@ export function registerCurriculumEditorRoutes(
         status === "published"
           ? graph.version
           : isPersonalAdaptation(state.connection, versionId)
-            ? await publishPersonalAdaptation(state.connection, versionId)
+            ? publishPersonalAdaptation(state.connection, versionId)
             : await repository.publishVersion(versionId);
       markDesignerWorkflowsPublished(
         state.connection,
@@ -1486,7 +1477,7 @@ export function registerCurriculumEditorRoutes(
         const input = await readBody(context, updateUnitSchema);
         const versionId = routeId(context, "versionId");
         const unitId = routeId(context, "unitId");
-        const graph = await updateUnitAndValidate(state, versionId, () =>
+        const graph = updateUnitAndValidate(state, versionId, () =>
           updateEntity(
             state.connection,
             "curriculum_units",

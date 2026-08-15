@@ -18,7 +18,7 @@ import {
   migrateDatabase,
   openDatabase,
   openM1WritableDatabase,
-  withAsyncTransaction,
+  withTransaction,
   type CourseFoundationRepository,
   type DatabaseConnection,
   type DatabaseMigrationAdmissionCapability,
@@ -41,8 +41,7 @@ import {
   type ExecutionResult,
   type TrustedExecutionFabric,
 } from "@aptiloop/exercise-core";
-import { exportFlashcards } from "@aptiloop/learning-core";
-import { validateOpenCodeEndpoint } from "@aptiloop/opencode-provider";
+import { validateOpenCodeEndpoint } from "@aptiloop/opencode-provider/config";
 import { getLatestPrompt } from "@aptiloop/prompt-library";
 import {
   AgentRoleSchema,
@@ -70,6 +69,17 @@ import {
   createApiRequestBoundary,
 } from "./http-boundary.js";
 import {
+  HttpRequestAdmission,
+  RequestBodyAdmissionError,
+  readBoundedRequestBody,
+  requestWithReplayedBody,
+  resolveHttpResourceLimits,
+  responseWithRelease,
+  responseWithTrackedWork,
+  trackedWorkForResponse,
+  type HttpResourceLimitOverrides,
+} from "./http-resource-admission.js";
+import {
   parseOrchestratorStartupConfig,
   type OrchestratorStartupConfig,
 } from "./startup-boundary.js";
@@ -79,6 +89,10 @@ import {
   legacyLearningMutationError,
   LegacyLearningMutationError,
 } from "./learning-session-policy.js";
+import {
+  hasAuthoritativeAcceptedReview,
+  validateReviewResultAgainstEvidence,
+} from "./review-authority.js";
 import {
   ProviderRuntime,
   providerFailureCode,
@@ -93,6 +107,10 @@ import {
   SetProviderApiKeySchema,
 } from "./provider-management.js";
 import { loadRootDevelopmentEnvironment } from "./root-environment.js";
+import {
+  tutorTurnMessageKey,
+  tutorUnitMessagePrefix,
+} from "./tutor-message-scope.js";
 
 const sourceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const defaultOpenCodeEndpoint = "http://127.0.0.1:4096";
@@ -110,13 +128,26 @@ const mutationMethods: Readonly<Record<string, true>> = {
   POST: true,
   PUT: true,
 };
-const dimensions = [
-  "understanding",
-  "explanation",
-  "codeReading",
-  "implementation",
-  "debugging",
-  "interview",
+const knownClientFailurePrefixes = [
+  "Course ",
+  "Current ",
+  "Evidence ",
+  "Exercise ",
+  "Learning ",
+  "New ",
+  "No ",
+  "Only ",
+  "Path ",
+  "Persisted ",
+  "Review ",
+  "Session ",
+  "Snapshot ",
+  "Stored ",
+  "Summary ",
+  "This ",
+  "Unit ",
+  "Unknown ",
+  "Versioned ",
 ] as const;
 const stepLabels = [
   ["review", "Повторение"],
@@ -149,6 +180,11 @@ export interface AppOptions {
   executionFabric?: TrustedExecutionFabric;
   exerciseAttemptsRoot?: string;
   startupConfig?: OrchestratorStartupConfig;
+  httpResourceLimits?: HttpResourceLimitOverrides;
+  /** @internal Deterministic HTTP admission seams for disposable tests. */
+  httpAdmissionTestHooks?: {
+    afterAcquire?: () => Promise<void> | void;
+  };
   /** @internal Deterministic cancellation fence seams. */
   cancellationTestHooks?: {
     afterTrustedCheckRun?: () => Promise<void> | void;
@@ -212,11 +248,25 @@ interface ReviewRecord {
   createdAt: number;
   bundleId: string | null;
   evidenceSha256: string | null;
+  bundleJson: string | null;
+  bundleTestRunId: string | null;
   workspaceSnapshotHash: string | null;
+  bundleDiffFingerprint: string | null;
+  testRunId: string | null;
+  testOperationId: string | null;
+  testStatus: string | null;
+  testCheckId: string | null;
+  testEnvironmentId: string | null;
+  testEnvironmentPackDigest: string | null;
+  testBackendId: string | null;
+  testInputSnapshotHash: string | null;
+  testDiffFingerprint: string | null;
+  testDiffTruncated: number | null;
 }
 
 interface ProviderSessionRecord {
   providerId: ProviderId;
+  connectionId: string;
   provider: AgentProvider;
   providerSessionId: string;
   conversationId: string;
@@ -327,8 +377,9 @@ const aiSettingsMutationSchema = z
 
 const chatSchema = z
   .object({
-    role: AgentRoleSchema.default("teacher"),
-    sessionId: z.string().min(1).optional(),
+    role: z.literal("teacher"),
+    sessionId: z.string().trim().min(1).max(200),
+    unitId: z.string().trim().min(1).max(200),
     message: z.string().trim().min(1).max(50_000),
     disclosureOperationId: z.string().trim().min(1).max(200).optional(),
   })
@@ -443,6 +494,13 @@ export function createApp(options: AppOptions = {}) {
     startupConfig,
     allowedWebOrigin,
   );
+  const httpResourceLimits = resolveHttpResourceLimits(
+    options.httpResourceLimits,
+  );
+  const httpRequestAdmission = new HttpRequestAdmission(httpResourceLimits);
+  if (options.httpAdmissionTestHooks && databaseMode !== "disposable") {
+    throw new Error("HTTP admission test hooks require disposable mode");
+  }
   const courseDesignerTools = createCourseDesignerTools(connection);
   const providers = { ...options.providers };
   const connectionProviders = new Map<string, AgentProvider>(
@@ -510,26 +568,48 @@ export function createApp(options: AppOptions = {}) {
   const app = new Hono();
 
   app.onError((error, context) => {
-    if (error instanceof LegacyLearningMutationError) {
+    const unknownError: unknown = error;
+    if (unknownError instanceof LegacyLearningMutationError) {
       return context.json(legacyLearningMutationError, 410);
     }
-    if (error instanceof ProviderHubError) {
+    if (unknownError instanceof ProviderHubError) {
       const status =
-        error.failure.code === "disclosure_required" ||
-        error.failure.code === "disclosure_mismatch" ||
-        error.failure.code === "ai_disabled"
+        unknownError.failure.code === "disclosure_required" ||
+        unknownError.failure.code === "disclosure_mismatch" ||
+        unknownError.failure.code === "ai_disabled"
           ? 409
-          : error.failure.retryable
+          : unknownError.failure.retryable
             ? 503
             : 400;
-      return context.json(providerFailurePayload(error), status);
+      return context.json(providerFailurePayload(unknownError), status);
     }
+    if (isMalformedJsonError(unknownError)) {
+      return context.json({ error: "Invalid JSON request body" }, 400);
+    }
+    if (unknownError instanceof z.ZodError) {
+      return context.json({ error: "Request body is invalid" }, 400);
+    }
+    if (unknownError instanceof CourseSessionContextError) {
+      return context.json({ error: unknownError.message }, 409);
+    }
+    if (
+      unknownError instanceof Error &&
+      (unknownError.message === safeAgentFailureMessage ||
+        unknownError.message === safeAgentCancellationMessage ||
+        isKnownClientFailure(unknownError.message))
+    ) {
+      const status = /^unknown\b|\bnot found\b/iu.test(unknownError.message)
+        ? 404
+        : 400;
+      return context.json({ error: unknownError.message }, status);
+    }
+    const diagnosticId = randomUUID();
     console.error("orchestrator_request_failed", {
-      name: error.name,
-      message: error.message,
+      diagnosticId,
+      errorName:
+        unknownError instanceof Error ? unknownError.name : "NonErrorThrown",
     });
-    const status = /unknown|not found/iu.test(error.message) ? 404 : 400;
-    return context.json({ error: error.message }, status);
+    return context.json({ error: "Internal server error", diagnosticId }, 500);
   });
 
   app.use("/api/*", async (context, next) => {
@@ -557,7 +637,55 @@ export function createApp(options: AppOptions = {}) {
     if (isMutation && !isJsonContentType(context.req.header("Content-Type"))) {
       return context.json({ error: "JSON content type is required" }, 415);
     }
-    await next();
+
+    const requestClass =
+      context.req.path === "/api/agent/stream" ? "stream" : "request";
+    const releaseAdmission = httpRequestAdmission.tryAcquire(requestClass);
+    if (!releaseAdmission) {
+      context.header(
+        "Retry-After",
+        String(httpResourceLimits.retryAfterSeconds),
+      );
+      return context.json({ error: "HTTP request capacity is exhausted" }, 429);
+    }
+
+    const release = releaseAdmission;
+    let responseOwnsAdmission = false;
+    try {
+      await options.httpAdmissionTestHooks?.afterAcquire?.();
+      if (isMutation && context.req.path !== "/api/course-packs/validate") {
+        try {
+          const body = await readBoundedRequestBody(
+            context.req.raw,
+            httpResourceLimits.maxRequestBodyBytes,
+          );
+          context.req.raw = requestWithReplayedBody(context.req.raw, body);
+        } catch (error) {
+          if (error instanceof RequestBodyAdmissionError) {
+            return context.json({ error: error.message }, error.status);
+          }
+          throw error;
+        }
+      }
+      await next();
+      if (
+        requestClass === "stream" &&
+        context.res.headers
+          .get("Content-Type")
+          ?.toLowerCase()
+          .startsWith("text/event-stream")
+      ) {
+        const trackedWork = trackedWorkForResponse(context.res);
+        if (trackedWork) {
+          void trackedWork.then(release, release);
+        } else {
+          context.res = responseWithRelease(context.res, release);
+        }
+        responseOwnsAdmission = true;
+      }
+    } finally {
+      if (!responseOwnsAdmission) release();
+    }
   });
 
   app.get("/health/ready", (context) =>
@@ -568,24 +696,23 @@ export function createApp(options: AppOptions = {}) {
 
   app.post("/api/ai/disclosures", async (context) => {
     const body = disclosureRequestSchema.parse(await context.req.json());
-    const sessionRejection = await agentLearningSessionRejection(
-      state,
-      body.sessionId,
-    );
-    if (sessionRejection) {
+    const admission = await tutorLessonScopeAdmission(state, body, true);
+    if ("rejection" in admission) {
       return context.json(
-        { error: sessionRejection.error },
-        sessionRejection.status,
+        { error: admission.rejection.error },
+        admission.rejection.status,
       );
     }
     const preparation = await state.providerRuntime.prepareDisclosure({
       role: body.role,
-      payload: body.message,
-      payloadCategories: ["learner-message"],
-      ...(body.sessionId
-        ? { entityIds: { "learning-session": body.sessionId } }
-        : {}),
-      destinationPurpose: "optional learning assistance",
+      payload: admission.payload,
+      payloadCategories: [
+        "course-content",
+        "learner-message",
+        "learner-evidence",
+      ],
+      entityIds: admission.entityIds,
+      destinationPurpose: "lesson-scoped Tutor assistance",
     });
     return context.json(preparation);
   });
@@ -643,14 +770,11 @@ export function createApp(options: AppOptions = {}) {
 
   app.post("/api/agent/stream", async (context) => {
     const body = chatSchema.parse(await context.req.json());
-    const sessionRejection = await agentLearningSessionRejection(
-      state,
-      body.sessionId,
-    );
-    if (sessionRejection) {
+    const admission = await tutorLessonScopeAdmission(state, body, true);
+    if ("rejection" in admission) {
       return context.json(
-        { error: sessionRejection.error },
-        sessionRejection.status,
+        { error: admission.rejection.error },
+        admission.rejection.status,
       );
     }
     const requestSignal = context.req.raw.signal;
@@ -665,25 +789,51 @@ export function createApp(options: AppOptions = {}) {
     if (setupAborted) {
       return context.json({ error: safeAgentCancellationMessage }, 409);
     }
-    const inspection = await state.providerRuntime.inspectRole(
-      body.role,
-      requestSignal,
-    );
+    let inspection: Awaited<ReturnType<ProviderRuntime["inspectRole"]>>;
+    try {
+      inspection = await state.providerRuntime.inspectRole(
+        body.role,
+        requestSignal,
+      );
+    } catch (error) {
+      requestSignal.removeEventListener("abort", onSetupAbort);
+      if (
+        setupAborted ||
+        requestSignal.aborted ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return context.json({ error: safeAgentCancellationMessage }, 409);
+      }
+      throw error;
+    }
     const providerId = inspection.connection.adapterId;
     const modelId = inspection.modelId;
-    const key = JSON.stringify([
-      body.sessionId ?? null,
+    const reservationKey = JSON.stringify([
+      body.sessionId,
+      body.unitId,
       body.role,
       inspection.connection.connectionId,
       modelId,
     ]);
     const turnId = randomUUID();
-    const setupUserMessageIdempotencyKey = `agent-turn:${turnId}:user`;
-    const setupAssistantMessageIdempotencyKey = `agent-turn:${turnId}:assistant`;
-    if (state.activeProviderTurnReservations.has(key)) {
+    const useFreshProviderSession = inspection.connection.external;
+    const key = useFreshProviderSession
+      ? JSON.stringify([reservationKey, turnId])
+      : reservationKey;
+    const setupUserMessageIdempotencyKey = tutorTurnMessageKey(
+      body.unitId,
+      turnId,
+      "user",
+    );
+    const setupAssistantMessageIdempotencyKey = tutorTurnMessageKey(
+      body.unitId,
+      turnId,
+      "assistant",
+    );
+    if (state.activeProviderTurnReservations.has(reservationKey)) {
       return context.json({ error: activeAgentTurnConflictMessage }, 409);
     }
-    state.activeProviderTurnReservations.set(key, turnId);
+    state.activeProviderTurnReservations.set(reservationKey, turnId);
 
     let storedSession: ProviderSessionRecord | undefined;
     let createdProviderSession:
@@ -766,7 +916,7 @@ export function createApp(options: AppOptions = {}) {
               const terminalStatus = cancelled ? "cancelled" : "failed";
               let terminalPersisted = false;
               try {
-                await persistAgentResponse(state, {
+                persistAgentResponse(state, {
                   conversationId: reusedSessionRecord.conversationId,
                   content: terminalContent,
                   status: terminalStatus,
@@ -827,13 +977,13 @@ export function createApp(options: AppOptions = {}) {
           }
         } finally {
           try {
-            if (createdConversationId) {
+            if (createdConversationId && !reusedSessionRecord) {
               state.connection.sqlite
                 .prepare("DELETE FROM agent_conversations WHERE id = ?")
                 .run(createdConversationId);
             }
           } finally {
-            releaseAgentTurnReservation(state, key, turnId);
+            releaseAgentTurnReservation(state, reservationKey, turnId);
           }
         }
         if (transcriptPersistenceFailed || transcriptRollbackUnverified) {
@@ -848,14 +998,18 @@ export function createApp(options: AppOptions = {}) {
       }
       dispatch = await state.providerRuntime.resolveDispatch({
         role: body.role,
-        payload: body.message,
+        payload: admission.payload,
         signal: requestSignal,
         ...(body.disclosureOperationId
           ? { disclosureOperationId: body.disclosureOperationId }
           : {}),
-        metadata: body.sessionId ? { learningSessionId: body.sessionId } : {},
+        metadata: {
+          learningSessionId: body.sessionId,
+          learningUnitId: body.unitId,
+        },
       });
       const { provider } = dispatch;
+      const connectionId = dispatch.connection.connectionId;
       if (setupAborted || requestSignal.aborted) {
         throw new Error(safeAgentCancellationMessage);
       }
@@ -872,22 +1026,22 @@ export function createApp(options: AppOptions = {}) {
       if (existingSession) {
         storedSession = existingSession;
         reusedSessionRecord = existingSession;
-        await state.providerRuntime.runSetup(async (setupSignal) => {
-          try {
+        try {
+          await state.providerRuntime.runSetup(async (setupSignal) => {
             setupSignal.throwIfAborted();
-            await state.repository.addMessage({
+            state.repository.addMessage({
               conversationId: existingSession.conversationId,
               role: "user",
               content: body.message,
               idempotencyKey: setupUserMessageIdempotencyKey,
             });
             setupSignal.throwIfAborted();
-          } catch (error) {
-            if (setupSignal.aborted) setupAborted = true;
-            await cleanupFailedSetup();
-            throw error;
-          }
-        }, requestSignal);
+          }, requestSignal);
+        } catch (error) {
+          if (requestSignal.aborted) setupAborted = true;
+          await cleanupFailedSetup();
+          throw error;
+        }
       } else {
         await state.providerRuntime
           .runOwnedSetup(
@@ -897,9 +1051,10 @@ export function createApp(options: AppOptions = {}) {
                   role: body.role,
                   modelId,
                   systemPrompt: getLatestPrompt(body.role).systemPrompt,
-                  metadata: body.sessionId
-                    ? { learningSessionId: body.sessionId }
-                    : {},
+                  metadata: {
+                    learningSessionId: body.sessionId,
+                    learningUnitId: body.unitId,
+                  },
                 },
                 signal,
               ),
@@ -920,7 +1075,7 @@ export function createApp(options: AppOptions = {}) {
                 };
                 setupSignal.throwIfAborted();
                 const conversation = await state.repository.createConversation({
-                  learningSessionId: body.sessionId ?? null,
+                  learningSessionId: body.sessionId,
                   role: body.role,
                   providerId,
                   modelId,
@@ -928,7 +1083,7 @@ export function createApp(options: AppOptions = {}) {
                 });
                 createdConversationId = conversation.id;
                 setupSignal.throwIfAborted();
-                await state.repository.addMessage({
+                state.repository.addMessage({
                   conversationId: conversation.id,
                   role: "user",
                   content: body.message,
@@ -937,6 +1092,7 @@ export function createApp(options: AppOptions = {}) {
                 setupSignal.throwIfAborted();
                 const adoptedSession: ProviderSessionRecord = {
                   providerId,
+                  connectionId,
                   provider,
                   providerSessionId: ownedSession.id,
                   conversationId: conversation.id,
@@ -961,7 +1117,14 @@ export function createApp(options: AppOptions = {}) {
               }
             },
           )
-          .catch(() => {
+          .catch((error: unknown) => {
+            if (
+              setupAborted ||
+              requestSignal.aborted ||
+              (error instanceof DOMException && error.name === "AbortError")
+            ) {
+              throw new Error(safeAgentCancellationMessage);
+            }
             throw new Error(safeAgentFailureMessage);
           });
         if (setupAborted || requestSignal.aborted) {
@@ -1013,7 +1176,11 @@ export function createApp(options: AppOptions = {}) {
     try {
       context.header("X-Aptiloop-Agent-Turn-Id", turnId);
       state.activeProviderTurns.set(turnId, { key, session: activeSession });
-      return streamSSE(context, async (stream) => {
+      let finishResponseWork!: () => void;
+      const responseWork = new Promise<void>((resolve) => {
+        finishResponseWork = resolve;
+      });
+      const response = streamSSE(context, async (stream) => {
         let assistantContent = "";
         let terminalReason: "completed" | "failed" | "cancelled" | undefined;
         let status: "completed" | "failed" | "cancelled" = "failed";
@@ -1022,11 +1189,12 @@ export function createApp(options: AppOptions = {}) {
         const activeToolSummaries = new Map<string, AptiloopToolName>();
         let responsePersisted = false;
         let providerStreamCompleted = false;
-        const persistResponse = async () => {
-          await persistAgentResponse(state, {
+        const persistResponse = () => {
+          persistAgentResponse(state, {
             conversationId,
             content: assistantContent,
             status,
+            idempotencyKey: setupAssistantMessageIdempotencyKey,
           });
           responsePersisted = true;
         };
@@ -1038,7 +1206,7 @@ export function createApp(options: AppOptions = {}) {
             activeDispatch,
             providerSessionId,
             requestSignal,
-            body.role === "reviewer" ? "json" : "text",
+            "text",
           )) {
             if (requestSignal.aborted) {
               throw new ProviderHubError(
@@ -1154,7 +1322,7 @@ export function createApp(options: AppOptions = {}) {
           }
 
           state.providerRuntime.assertDispatchCommitAllowed(activeDispatch);
-          await persistResponse();
+          persistResponse();
           finishDispatch(status, status === "completed" ? null : "cancelled");
           if (status === "completed" && completedClientEvent) {
             await stream.writeSSE({
@@ -1195,7 +1363,7 @@ export function createApp(options: AppOptions = {}) {
           let persistenceFailed = false;
           if (!responsePersisted) {
             try {
-              await persistResponse();
+              persistResponse();
             } catch {
               persistenceFailed = true;
               status = "failed";
@@ -1236,12 +1404,23 @@ export function createApp(options: AppOptions = {}) {
           if (activeTurn?.session === activeSession) {
             state.activeProviderTurns.delete(turnId);
           }
-          if (status !== "completed") {
+          if (
+            useFreshProviderSession &&
+            state.providerSessions.get(key) === activeSession
+          ) {
+            await cancelAndEvictProviderSession(
+              state,
+              key,
+              activeSession,
+            ).catch(() => evictProviderSession(state, key, activeSession));
+          } else if (status !== "completed") {
             evictProviderSession(state, key, activeSession);
           }
-          releaseAgentTurnReservation(state, key, turnId);
+          releaseAgentTurnReservation(state, reservationKey, turnId);
+          finishResponseWork();
         }
       });
+      return responseWithTrackedWork(response, responseWork);
     } catch (error) {
       requestSignal.removeEventListener("abort", onSetupAbort);
       const activeTurn = state.activeProviderTurns.get(turnId);
@@ -1602,7 +1781,7 @@ export function createApp(options: AppOptions = {}) {
           .map((diagnostic) => diagnostic.message)
           .join("\n");
         const now = Date.now();
-        await withAsyncTransaction(state.connection, async () => {
+        withTransaction(state.connection, () => {
           context.req.raw.signal.throwIfAborted();
           state.connection.sqlite
             .prepare(
@@ -1714,22 +1893,49 @@ export function createApp(options: AppOptions = {}) {
       .parse(await context.req.json());
     const prior = state.connection.sqlite
       .prepare(
-        `SELECT r.id, r.exercise_attempt_id AS exerciseAttemptId,
+        `SELECT r.id, r.status AS reviewStatus,
+                r.exercise_attempt_id AS exerciseAttemptId,
                 r.result_json AS resultJson, b.id AS bundleId,
-                b.bundle_sha256 AS evidenceSha256,
-                b.workspace_snapshot_hash AS workspaceSnapshotHash
+                b.bundle_sha256 AS bundleSha256,
+                b.bundle_json AS bundleJson,
+                b.test_run_id AS bundleTestRunId,
+                b.workspace_snapshot_hash AS bundleWorkspaceSnapshotHash,
+                b.diff_fingerprint AS bundleDiffFingerprint,
+                t.id AS testRunId, t.operation_id AS testOperationId,
+                t.status AS testStatus, t.check_id AS testCheckId,
+                t.environment_id AS testEnvironmentId,
+                t.environment_pack_digest AS testEnvironmentPackDigest,
+                t.backend_id AS testBackendId,
+                t.input_snapshot_hash AS testInputSnapshotHash,
+                t.diff_fingerprint AS testDiffFingerprint,
+                t.diff_truncated AS testDiffTruncated
          FROM reviews r
          LEFT JOIN review_evidence_bundles b ON b.review_id = r.id
+         LEFT JOIN test_runs t ON t.id = b.test_run_id
          WHERE r.operation_id = ? LIMIT 1`,
       )
       .get(body.operationId) as
       | {
           id: string;
+          reviewStatus: string;
           exerciseAttemptId: string | null;
           resultJson: string | null;
           bundleId: string | null;
-          evidenceSha256: string | null;
-          workspaceSnapshotHash: string | null;
+          bundleSha256: string | null;
+          bundleJson: string | null;
+          bundleTestRunId: string | null;
+          bundleWorkspaceSnapshotHash: string | null;
+          bundleDiffFingerprint: string | null;
+          testRunId: string | null;
+          testOperationId: string | null;
+          testStatus: string | null;
+          testCheckId: string | null;
+          testEnvironmentId: string | null;
+          testEnvironmentPackDigest: string | null;
+          testBackendId: string | null;
+          testInputSnapshotHash: string | null;
+          testDiffFingerprint: string | null;
+          testDiffTruncated: number | null;
         }
       | undefined;
     if (prior) {
@@ -1739,14 +1945,39 @@ export function createApp(options: AppOptions = {}) {
           409,
         );
       }
+      const [currentDiff, currentSnapshot] = await Promise.all([
+        getExerciseDiff(attempt.workspacePath, {
+          expectedBaselineHash: attempt.baselineHash,
+        }),
+        snapshotCompleteWorkspace(attempt.workspacePath),
+      ]);
+      context.req.raw.signal.throwIfAborted();
+      const currentDiffFingerprint = fingerprintExerciseDiff(currentDiff);
+      const completionEligible = hasAuthoritativeAcceptedReview({
+        ...prior,
+        resultJson: prior.resultJson,
+      });
+      if (
+        !completionEligible ||
+        currentDiff.truncated ||
+        currentDiffFingerprint === null ||
+        currentDiffFingerprint !== prior.bundleDiffFingerprint ||
+        currentSnapshot.contentHash !== prior.bundleWorkspaceSnapshotHash
+      ) {
+        return context.json(
+          { error: "Review operation evidence is stale for current workspace" },
+          409,
+        );
+      }
       return context.json({
         id: prior.id,
         ...JSON.parse(prior.resultJson),
+        completionEligible,
         evidenceBundle: prior.bundleId
           ? {
               id: prior.bundleId,
-              sha256: prior.evidenceSha256,
-              workspaceSnapshotHash: prior.workspaceSnapshotHash,
+              sha256: prior.bundleSha256,
+              workspaceSnapshotHash: prior.bundleWorkspaceSnapshotHash,
             }
           : null,
       });
@@ -1796,6 +2027,7 @@ export function createApp(options: AppOptions = {}) {
     }
     const review = await requestExerciseReview(state, {
       attempt,
+      operationId: body.operationId,
       diff: before.patch,
       diffTruncated: before.truncated,
       workspaceSnapshotHash: beforeSnapshot.contentHash,
@@ -1803,6 +2035,7 @@ export function createApp(options: AppOptions = {}) {
       criteria: exercise.criteria,
       constraints: exercise.constraints,
       prompt: exercise.prompt,
+      approvedTopicIds: exercise.topics,
       signal: context.req.raw.signal,
       ...(body.previewDisclosure ? { previewDisclosure: true } : {}),
       ...(body.disclosureOperationId
@@ -1835,9 +2068,9 @@ export function createApp(options: AppOptions = {}) {
       const evidenceSha256 = `sha256:${createHash("sha256")
         .update(review.evidenceBundleJson)
         .digest("hex")}`;
-      await withAsyncTransaction(state.connection, async () => {
+      withTransaction(state.connection, () => {
         context.req.raw.signal.throwIfAborted();
-        await review.persistCompletedAssistant();
+        review.persistCompletedAssistant();
         context.req.raw.signal.throwIfAborted();
         state.connection.sqlite
           .prepare(
@@ -1853,7 +2086,7 @@ export function createApp(options: AppOptions = {}) {
             body.operationId,
             review.providerId,
             review.modelId,
-            review.result.status,
+            review.authorityStatus,
             JSON.stringify(review.result),
             null,
             now,
@@ -1880,10 +2113,11 @@ export function createApp(options: AppOptions = {}) {
           );
         context.req.raw.signal.throwIfAborted();
       });
-      review.finishCompleted();
+      await review.finishCompleted();
       return context.json({
         id: reviewId,
         ...review.result,
+        completionEligible: review.authorityStatus === "accepted",
         evidenceBundle: {
           id: bundleId,
           sha256: evidenceSha256,
@@ -1950,105 +2184,33 @@ export function createApp(options: AppOptions = {}) {
     });
   });
 
-  app.get("/api/knowledge", async (context) => {
-    const knowledge = await state.repository.getKnowledgeMap();
-    return context.json({
-      topics: knowledge.map((item) => {
-        const scores = Object.fromEntries(
-          dimensions.map((dimension) => {
-            const score = item.mastery.find(
-              (candidate) => candidate.dimension === dimension,
-            );
-            return [dimension, score ? score.score / 100 : 0];
-          }),
-        );
-        const evidenceCount = item.mastery.reduce(
-          (sum, score) => sum + score.evidenceCount,
-          0,
-        );
-        return {
-          id: item.topic.id,
-          title: item.topic.title,
-          group: item.topic.description ?? "JavaScript / React",
-          scores,
-          evidenceCount,
-          reviewDue: item.openMistakes > 0 || evidenceCount === 0,
-        };
-      }),
-    });
-  });
-
-  app.get("/api/mistakes", (context) =>
-    context.json({
-      mistakes: readMistakes(state.connection, 100).map((mistake) => ({
-        id: mistake.id,
-        topic: mistake.topic,
-        thought: mistake.summary,
-        correction: mistake.correction,
-        cause: mistake.sourceType,
-        repeated: mistake.occurrenceCount > 1,
-        reviewAt: new Date(
-          mistake.lastSeenAt + 24 * 60 * 60 * 1000,
-        ).toISOString(),
-      })),
-    }),
+  app.get("/api/knowledge", (context) =>
+    context.redirect("/api/learning/skills", 308),
   );
-
-  app.get("/api/flashcards", async (context) => {
-    const cards = await state.repository.listFlashcards();
-    return context.json({
-      flashcards: cards.map((card) => ({
-        id: card.id,
-        topic: card.topicId ?? "Без темы",
-        question: card.front,
-        answer: card.back,
-        status: toClientCardStatus(card.status),
-      })),
-    });
-  });
-
-  app.patch("/api/flashcards/:id", async (context) => {
-    const body = z
-      .object({ status: z.enum(["candidate", "approved", "rejected"]) })
-      .strict()
-      .parse(await context.req.json());
-    const card = await state.repository.updateFlashcard(
-      context.req.param("id"),
+  app.get("/api/mistakes", (context) =>
+    context.redirect("/api/learning/mistakes", 308),
+  );
+  app.get("/api/flashcards", (context) =>
+    context.redirect("/api/learning/reviews", 308),
+  );
+  app.patch("/api/flashcards/:id", (context) =>
+    context.json(
       {
-        status: body.status === "rejected" ? "archived" : body.status,
+        error:
+          "Legacy flashcard mutation is retired; use the deterministic Review workflow",
       },
-    );
-    return context.json({ id: card.id, saved: true });
-  });
-
-  app.get("/api/flashcards/export", async (context) => {
-    const format = z
-      .enum(["markdown", "csv", "tsv"])
-      .parse(context.req.query("format") ?? "markdown");
-    const cards = await state.repository.listFlashcards();
-    const body = exportFlashcards(
-      cards.map((card) => ({
-        id: card.id,
-        front: card.front,
-        back: card.back,
-        tags: card.topicId ? [card.topicId] : [],
-        status: toClientCardStatus(card.status),
-      })),
-      format,
-    );
-    const extension = format === "markdown" ? "md" : format;
-    context.header(
-      "Content-Type",
-      format === "markdown"
-        ? "text/markdown; charset=utf-8"
-        : "text/plain; charset=utf-8",
-    );
-    context.header(
-      "Content-Disposition",
-      `attachment; filename="flashcards.${extension}"`,
-    );
-    return context.body(body);
-  });
+      410,
+    ),
+  );
+  app.get("/api/flashcards/export", (context) =>
+    context.json(
+      {
+        error:
+          "Legacy flashcard export is retired; use the deterministic Review workflow",
+      },
+      410,
+    ),
+  );
 
   app.get("/api/settings", async (context) => {
     const settings = await readSettings(state);
@@ -2220,6 +2382,7 @@ export function createApp(options: AppOptions = {}) {
   const beginShutdown = () => {
     if (state.shuttingDown) return;
     state.shuttingDown = true;
+    httpRequestAdmission.beginShutdown();
     state.executionFabric.beginShutdown();
     state.providerRuntime.beginShutdown();
     state.providerManagement.beginShutdown();
@@ -2237,7 +2400,11 @@ export function createApp(options: AppOptions = {}) {
           state.providerManagement.close(),
         ]);
         await drainActiveExecutionOperations(state);
+        // Runtime shutdown settles active provider work first. Any remaining
+        // cached sessions are then cancelled exactly once while SQLite is open,
+        // before admitted HTTP handlers and response producers are drained.
         await cancelAndEvictProviderSessions(state);
+        await httpRequestAdmission.drain();
         const providers = Object.values(state.providers);
         await Promise.allSettled(
           providers.map((provider) =>
@@ -2316,31 +2483,63 @@ function isJsonContentType(contentType: string | undefined): boolean {
   );
 }
 
-async function agentLearningSessionRejection(
-  state: AppState,
-  sessionId: string | undefined,
-): Promise<{ status: 404 | 409; error: string } | null> {
-  if (sessionId === undefined) return null;
+function isKnownClientFailure(message: string): boolean {
+  return knownClientFailurePrefixes.some((prefix) =>
+    message.startsWith(prefix),
+  );
+}
 
+function isMalformedJsonError(error: unknown): error is SyntaxError {
+  return (
+    error instanceof SyntaxError &&
+    ("cause" in error || /\bJSON\b/iu.test(error.message))
+  );
+}
+
+interface TutorLessonScopeInput {
+  readonly role: "teacher";
+  readonly sessionId: string;
+  readonly unitId: string;
+  readonly message: string;
+}
+
+type TutorLessonScopeAdmission =
+  | {
+      readonly payload: string;
+      readonly entityIds: Readonly<Record<string, string>>;
+    }
+  | {
+      readonly rejection: {
+        readonly status: 404 | 409;
+        readonly error: string;
+      };
+    };
+
+async function tutorLessonScopeAdmission(
+  state: AppState,
+  input: TutorLessonScopeInput,
+  includePriorDialogue: boolean,
+): Promise<TutorLessonScopeAdmission> {
   let requested: Awaited<ReturnType<LearningRepository["getVersionedSession"]>>;
   try {
-    requested = await state.repository.getVersionedSession(sessionId);
+    requested = await state.repository.getVersionedSession(input.sessionId);
   } catch (error) {
     if (
       error instanceof Error &&
       error.message.startsWith("Unknown versioned learning session:")
     ) {
-      return { status: 404, error: error.message };
+      return { rejection: { status: 404, error: error.message } };
     }
     throw error;
   }
   if (requested.session.status !== "active") {
     return {
-      status: 409,
-      error: "Agent turns require an active versioned learning session",
+      rejection: {
+        status: 409,
+        error: "Tutor turns require an active versioned learning session",
+      },
     };
   }
-  // The explicit session owns its Course scope; another Course may remain active.
   try {
     assertCourseScopedSessionSideEffectAllowed(
       state.connection,
@@ -2348,11 +2547,133 @@ async function agentLearningSessionRejection(
     );
   } catch (error) {
     if (error instanceof CourseSessionContextError) {
-      return { status: 409, error: error.message };
+      return { rejection: { status: 409, error: error.message } };
     }
     throw error;
   }
-  return null;
+
+  const unit = requested.snapshot.units.find(
+    (candidate) => candidate.id === input.unitId,
+  );
+  if (!unit) {
+    return {
+      rejection: {
+        status: 404,
+        error: "Tutor unit does not belong to this session snapshot",
+      },
+    };
+  }
+  if (unit.payload.type !== "teacher-dialogue") {
+    return {
+      rejection: {
+        status: 409,
+        error: "Tutor turns require a teacher-dialogue unit",
+      },
+    };
+  }
+  const progress = requested.unitProgress.find(
+    (candidate) => candidate.unitId === unit.id,
+  );
+  if (
+    !progress ||
+    progress.unitType !== "teacher-dialogue" ||
+    progress.status !== "in_progress"
+  ) {
+    return {
+      rejection: {
+        status: 409,
+        error: "Tutor turns require an in-progress teacher-dialogue unit",
+      },
+    };
+  }
+
+  const sessionContext =
+    await state.courseFoundationRepository.getSessionContext(
+      requested.session.id,
+    );
+  if (!sessionContext) {
+    return {
+      rejection: {
+        status: 409,
+        error: "Tutor session is missing immutable Course context",
+      },
+    };
+  }
+  const priorDialogue = includePriorDialogue
+    ? readBoundedTutorDialogue(state, input.sessionId, input.unitId)
+    : [];
+  const payload = JSON.stringify({
+    schemaVersion: 1,
+    task: "answer-within-lesson-scope",
+    scope: {
+      course: {
+        id: sessionContext.courseId,
+        revisionId: sessionContext.revisionId,
+        title: requested.snapshot.curriculumTitle,
+      },
+      lesson: {
+        id: sessionContext.lessonId,
+        order: requested.snapshot.day.order,
+        title: requested.snapshot.day.title,
+        description: requested.snapshot.day.description,
+        goal: requested.snapshot.day.goal,
+        depthLevel: requested.snapshot.day.depthLevel,
+        expectedOutcomes: requested.snapshot.day.expectedOutcomes,
+        topics: requested.snapshot.day.topics,
+        outOfScope: requested.snapshot.day.outOfScope,
+      },
+      unit: {
+        id: unit.id,
+        stableId: unit.stableId,
+        title: unit.title,
+        description: unit.description,
+        objectives: unit.objectives,
+        depthLevel: unit.depthLevel,
+        openingPrompt: unit.payload.openingPrompt,
+      },
+    },
+    priorDialogue,
+    learnerMessage: input.message,
+  });
+  return {
+    payload,
+    entityIds: {
+      course: sessionContext.courseId,
+      revision: sessionContext.revisionId,
+      lesson: sessionContext.lessonId,
+      "learning-session": requested.session.id,
+      "learning-unit": unit.id,
+    },
+  };
+}
+
+function readBoundedTutorDialogue(
+  state: AppState,
+  sessionId: string,
+  unitId: string,
+): readonly { readonly role: "learner" | "tutor"; readonly content: string }[] {
+  const rows = state.connection.sqlite
+    .prepare(
+      `SELECT message.role, message.content
+       FROM agent_messages message
+       JOIN agent_conversations conversation
+         ON conversation.id = message.conversation_id
+       WHERE conversation.learning_session_id = ?
+         AND conversation.role = 'teacher'
+         AND message.status = 'completed'
+         AND message.role IN ('user', 'assistant')
+         AND message.idempotency_key LIKE ? ESCAPE '\\'
+       ORDER BY message.created_at DESC, message.sequence DESC
+       LIMIT 20`,
+    )
+    .all(sessionId, `${tutorUnitMessagePrefix(unitId)}%`) as Array<{
+    role: "user" | "assistant";
+    content: string;
+  }>;
+  return rows.reverse().map((row) => ({
+    role: row.role === "user" ? "learner" : "tutor",
+    content: row.content,
+  }));
 }
 
 function releaseAgentTurnReservation(
@@ -2386,24 +2707,13 @@ async function cancelProviderSessionsForConnection(
   connectionId: string,
 ): Promise<void> {
   const matches = [...state.providerSessions.entries()].filter(
-    ([key]) => providerSessionKeyConnectionId(key) === connectionId,
+    ([, session]) => session.connectionId === connectionId,
   );
   await Promise.allSettled(
     matches.map(([key, session]) =>
       cancelAndEvictProviderSession(state, key, session),
     ),
   );
-}
-
-function providerSessionKeyConnectionId(key: string): string | null {
-  try {
-    const parsed = JSON.parse(key) as unknown;
-    return Array.isArray(parsed) && typeof parsed[2] === "string"
-      ? parsed[2]
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 async function cancelAndEvictProviderSession(
@@ -2603,6 +2913,7 @@ async function readAttemptEvidence(
   let latestReview: {
     id: string;
     status: ReviewResult["status"];
+    completionEligible: boolean;
     summary: string;
     findings: ReviewResult["findings"];
     strengths: string[];
@@ -2615,10 +2926,30 @@ async function readAttemptEvidence(
   if (latestReviewRecord && reviewIsCurrent) {
     try {
       const parsed = await parseReviewResult(latestReviewRecord.resultJson);
-      if (parsed.status === latestReviewRecord.status) {
+      const completionEligible = hasAuthoritativeAcceptedReview({
+        reviewStatus: latestReviewRecord.status,
+        resultJson: latestReviewRecord.resultJson,
+        bundleSha256: latestReviewRecord.evidenceSha256,
+        bundleJson: latestReviewRecord.bundleJson,
+        bundleTestRunId: latestReviewRecord.bundleTestRunId,
+        bundleWorkspaceSnapshotHash: latestReviewRecord.workspaceSnapshotHash,
+        bundleDiffFingerprint: latestReviewRecord.bundleDiffFingerprint,
+        testRunId: latestReviewRecord.testRunId,
+        testOperationId: latestReviewRecord.testOperationId,
+        testStatus: latestReviewRecord.testStatus,
+        testCheckId: latestReviewRecord.testCheckId,
+        testEnvironmentId: latestReviewRecord.testEnvironmentId,
+        testEnvironmentPackDigest: latestReviewRecord.testEnvironmentPackDigest,
+        testBackendId: latestReviewRecord.testBackendId,
+        testInputSnapshotHash: latestReviewRecord.testInputSnapshotHash,
+        testDiffFingerprint: latestReviewRecord.testDiffFingerprint,
+        testDiffTruncated: latestReviewRecord.testDiffTruncated,
+      });
+      if (completionEligible) {
         latestReview = {
           id: latestReviewRecord.id,
           status: parsed.status,
+          completionEligible,
           summary: parsed.summary,
           findings: parsed.findings,
           strengths: parsed.strengths,
@@ -2662,9 +2993,21 @@ function findLatestReview(
       `SELECT r.id, r.status, r.result_json AS resultJson,
               r.created_at AS createdAt, b.id AS bundleId,
               b.bundle_sha256 AS evidenceSha256,
-              b.workspace_snapshot_hash AS workspaceSnapshotHash
+              b.bundle_json AS bundleJson,
+              b.test_run_id AS bundleTestRunId,
+              b.workspace_snapshot_hash AS workspaceSnapshotHash,
+              b.diff_fingerprint AS bundleDiffFingerprint,
+              t.id AS testRunId, t.operation_id AS testOperationId,
+              t.status AS testStatus, t.check_id AS testCheckId,
+              t.environment_id AS testEnvironmentId,
+              t.environment_pack_digest AS testEnvironmentPackDigest,
+              t.backend_id AS testBackendId,
+              t.input_snapshot_hash AS testInputSnapshotHash,
+              t.diff_fingerprint AS testDiffFingerprint,
+              t.diff_truncated AS testDiffTruncated
        FROM reviews r
        LEFT JOIN review_evidence_bundles b ON b.review_id = r.id
+       LEFT JOIN test_runs t ON t.id = b.test_run_id
        WHERE r.exercise_attempt_id = ?
        ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1`,
     )
@@ -2798,32 +3141,6 @@ function redactAttemptWorkspacePath<T>(value: T, workspacePath: string): T {
   return visit(value) as T;
 }
 
-function readMistakes(connection: DatabaseConnection, limit: number) {
-  return connection.sqlite
-    .prepare(
-      `SELECT m.id, t.title AS topic, m.summary, m.correction,
-              m.source_type AS sourceType, m.occurrence_count AS occurrenceCount,
-              m.last_seen_at AS lastSeenAt
-       FROM mistakes m JOIN topics t ON t.id = m.topic_id
-       ORDER BY m.last_seen_at DESC LIMIT ?`,
-    )
-    .all(limit) as Array<{
-    id: string;
-    topic: string;
-    summary: string;
-    correction: string;
-    sourceType: string;
-    occurrenceCount: number;
-    lastSeenAt: number;
-  }>;
-}
-
-function toClientCardStatus(status: string) {
-  return status === "archived" || status === "suspended"
-    ? ("rejected" as const)
-    : (status as "candidate" | "approved");
-}
-
 async function readSettings(state: AppState) {
   const defaults = {
     workspaceRoot: state.defaultWorkspaceRoot,
@@ -2852,6 +3169,7 @@ async function requestExerciseReview(
   state: AppState,
   input: {
     attempt: AttemptRecord;
+    operationId: string;
     diff: string;
     diffTruncated: boolean;
     workspaceSnapshotHash: string;
@@ -2859,6 +3177,7 @@ async function requestExerciseReview(
     criteria: string[];
     constraints: string[];
     prompt: string;
+    approvedTopicIds: string[];
     signal: AbortSignal;
     previewDisclosure?: boolean;
     disclosureOperationId?: string;
@@ -2869,9 +3188,10 @@ async function requestExerciseReview(
       providerId: ProviderId;
       modelId: string;
       result: ReviewResult;
+      authorityStatus: "accepted";
       evidenceBundleJson: string;
-      persistCompletedAssistant: () => Promise<void>;
-      finishCompleted: () => void;
+      persistCompletedAssistant: () => void;
+      finishCompleted: () => Promise<void>;
       fail: (error: unknown) => Promise<never>;
     }
   | {
@@ -2900,6 +3220,7 @@ async function requestExerciseReview(
       prompt: input.prompt,
       acceptanceCriteria: input.criteria,
       constraints: input.constraints,
+      approvedTopicIds: input.approvedTopicIds,
     },
     workspace: {
       id: input.attempt.workspaceHandleId,
@@ -2980,11 +3301,15 @@ async function requestExerciseReview(
   const { modelId, provider } = dispatch;
   const key = JSON.stringify([
     input.attempt.sessionId,
-    "reviewer",
+    `reviewer:${input.attempt.id}:${input.operationId}`,
     dispatch.connection.connectionId,
     modelId,
+    randomUUID(),
   ]);
-  let storedSession = state.providerSessions.get(key);
+  // Reviewer sessions are deliberately operation-scoped. Pi retains session
+  // context internally, so reusing a provider session could retransmit evidence
+  // from a prior review without including it in the current disclosure.
+  let storedSession: ProviderSessionRecord | undefined;
   let provisionalSession:
     { provider: AgentProvider; providerSessionId: string } | undefined;
   let turnId: string | undefined;
@@ -3036,7 +3361,7 @@ async function requestExerciseReview(
     );
     if (storedSession) {
       try {
-        await persistAgentResponse(state, {
+        persistAgentResponse(state, {
           conversationId: storedSession.conversationId,
           content: cancelled
             ? safeAgentCancellationMessage
@@ -3066,6 +3391,7 @@ async function requestExerciseReview(
               metadata: {
                 learningSessionId: input.attempt.sessionId,
                 exerciseAttemptId: input.attempt.id,
+                reviewOperationId: input.operationId,
               },
             },
             signal,
@@ -3099,7 +3425,7 @@ async function requestExerciseReview(
             });
             conversationId = conversation.id;
             setupSignal.throwIfAborted();
-            await state.repository.addMessage({
+            state.repository.addMessage({
               conversationId,
               role: "user",
               content: reviewPrompt,
@@ -3107,6 +3433,7 @@ async function requestExerciseReview(
             setupSignal.throwIfAborted();
             const adoptedSession: ProviderSessionRecord = {
               providerId,
+              connectionId: dispatch.connection.connectionId,
               provider,
               providerSessionId: ownedSession.id,
               conversationId,
@@ -3137,7 +3464,7 @@ async function requestExerciseReview(
         let messageId: string | undefined;
         try {
           setupSignal.throwIfAborted();
-          const message = await state.repository.addMessage({
+          const message = state.repository.addMessage({
             conversationId: storedSession!.conversationId,
             role: "user",
             content: reviewPrompt,
@@ -3211,7 +3538,14 @@ async function requestExerciseReview(
         "Reviewer provider did not return a complete result",
       );
     }
-    const result = await parseReviewResult(rawResponse);
+    const parsedResult = await parseReviewResult(rawResponse);
+    const { result, authorityStatus } = validateReviewResultAgainstEvidence(
+      parsedResult,
+      {
+        diff: input.diff,
+        approvedTopicIds: input.approvedTopicIds,
+      },
+    );
     throwIfCancelled();
     const conversationId = storedSession.conversationId;
     return {
@@ -3219,11 +3553,12 @@ async function requestExerciseReview(
       providerId,
       modelId,
       result,
+      authorityStatus,
       evidenceBundleJson: reviewPrompt,
-      persistCompletedAssistant: async () => {
+      persistCompletedAssistant: () => {
         state.providerRuntime.assertDispatchCommitAllowed(dispatch);
         throwIfCancelled();
-        await persistAgentResponse(state, {
+        persistAgentResponse(state, {
           conversationId,
           content: JSON.stringify(result),
           status: "completed",
@@ -3231,7 +3566,10 @@ async function requestExerciseReview(
         state.providerRuntime.assertDispatchCommitAllowed(dispatch);
         throwIfCancelled();
       },
-      finishCompleted: () => finishDispatch("completed", null),
+      finishCompleted: async () => {
+        finishDispatch("completed", null);
+        await cancelTurn();
+      },
       fail: failTurn,
     };
   } catch (error) {
@@ -3246,7 +3584,7 @@ async function requestExerciseReview(
   }
 }
 
-async function persistAgentResponse(
+function persistAgentResponse(
   state: AppState,
   input: {
     conversationId: string;
@@ -3254,8 +3592,8 @@ async function persistAgentResponse(
     status: string;
     idempotencyKey?: string;
   },
-): Promise<string> {
-  const message = await state.repository.addMessage({
+): string {
+  const message = state.repository.addMessage({
     conversationId: input.conversationId,
     role: "assistant",
     content: input.content,

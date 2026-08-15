@@ -1675,6 +1675,12 @@ function CourseDesignerPanel({
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generationController = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      generationController.current?.abort();
+    },
+    [],
+  );
   const creationBrief = parseAuthoringBriefDescription(initialGoal);
   const initialConstraints = creationBrief
     ? [

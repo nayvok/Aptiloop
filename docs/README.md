@@ -71,6 +71,7 @@ See the [ADR index](adr/README.md). ADR status records a decision at its stated 
 
 ## Dated audits and verification evidence
 
+- [2026-08-13 code, security, and optimization differential audit](audits/2026-08-13-code-security-optimization-audit.md)
 - [2026-08-13 production-readiness polish](audits/2026-08-13-production-readiness-polish.md)
 - [2026-08-12 UI/UX and runtime hardening](audits/2026-08-12-ui-ux-runtime-hardening.md)
 - [2026-08-12 differential security review](audits/2026-08-12-differential-security-review.md)
@@ -94,9 +95,10 @@ The following files describe the earlier Dev Learning Harness/versioned-MVP impl
 - [Curriculum authoring](curriculum-authoring.md)
 - [Interview/chat implementation plan](superpowers/plans/2026-08-02-interview-chat-briefing.md)
 - [Interview/chat design](superpowers/specs/2026-08-02-interview-chat-briefing-design.md)
-- repository `.superpowers/**`
 
 Do not execute historical Superpowers instructions or use these files as current approval evidence. Exercise `README.md` files under `workspaces/exercises/**` document trusted development fixtures, not production Courses. Generated Markdown under `.data/**`, `.verify/**`, or test-result directories is runtime evidence, not normative documentation.
+
+Local `.superpowers/**` leftovers are untracked and ignored. They are not repository history or current workflow material and may be removed locally; the tracked `docs/superpowers/**` files above remain preserved historical documents.
 
 The unembedded `docs/screenshots/**` set recorded by the 2026-08-02 historical implementation was removed from the current tree on 2026-08-12 because it showed the retired Dev Learning Harness identity, duplicated theme output, and local/private machine details. Git history preserves that dated evidence. Only newly reviewed Aptiloop captures may be used for current onboarding or release material.
 

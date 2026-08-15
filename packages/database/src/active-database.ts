@@ -26,6 +26,7 @@ import {
   learnerCourseStateMigrationContract,
   learnerCourseStateTriggerGuardMigrationContract,
   providerHubMigrationContract,
+  providerConnectionRetirementMigrationContract,
   legacyCompatibleMigrationContract,
   openDatabaseWithWritableTargetGuard,
   type CurrentDatabaseMigrationContract,
@@ -544,6 +545,30 @@ export function assertM1DatabaseMigrationAdmission(
       kind: "current",
       contract: currentContract,
       logicalSha256: candidate.health.logicalSha256,
+    };
+  }
+
+  if (
+    allowLegacyCompatibility &&
+    candidate.health.legacyCompatibility.coherent &&
+    matchesMigrationIds(
+      candidate.health.migrations.ids,
+      providerConnectionRetirementMigrationContract,
+    ) &&
+    candidate.health.schemaSha256 ===
+      providerConnectionRetirementMigrationContract.schemaSha256 &&
+    hasCurrentDatabaseHealth(candidate.health, false)
+  ) {
+    const migrationCapability: DatabaseMigrationAdmissionCapability = {
+      kind: "legacy-compatible-noop",
+      contract: providerConnectionRetirementMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+    };
+    return {
+      kind: "legacy-compatible",
+      contract: providerConnectionRetirementMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+      migrationCapability,
     };
   }
 

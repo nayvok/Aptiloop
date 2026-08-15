@@ -505,11 +505,6 @@ describe("UI foundation", () => {
       labels: ["nav.review", "interview.title"],
     },
     {
-      pathname: "/chat",
-      sectionHref: "/settings",
-      labels: ["nav.settings", "chat.page.title"],
-    },
-    {
       pathname: "/settings",
       sectionHref: "/settings",
       labels: ["nav.settings"],
@@ -524,6 +519,13 @@ describe("UI foundation", () => {
       );
     },
   );
+
+  it("treats the retired chat path as unknown route context", () => {
+    expect(resolveRouteContext("/chat")).toEqual({
+      sectionHref: null,
+      breadcrumbs: [{ label: "brand.name" }],
+    });
+  });
 
   it("renders a Courses-owned lesson breadcrumb and active navigation", () => {
     apiMock.mockReturnValue(new Promise(() => {}));

@@ -581,9 +581,10 @@ describe("Aptiloop Home", () => {
       />,
     );
 
-    expect(
-      await screen.findByText(/exactly one available lesson/u),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Aptiloop Core is unavailable.",
+    );
+    expect(screen.queryByText(/exactly one available lesson/u)).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Start lesson" }),
     ).not.toBeInTheDocument();
@@ -642,10 +643,8 @@ describe("Aptiloop Home", () => {
     expect(
       await screen.findByText("Aptiloop Core is unavailable."),
     ).toBeVisible();
-    const diagnostic = screen.getByText(/persisted current step/u);
-    expect(diagnostic).not.toBeVisible();
-    fireEvent.click(screen.getByText("Technical details"));
-    expect(diagnostic).toBeVisible();
+    expect(screen.queryByText(/persisted current step/u)).toBeNull();
+    expect(screen.queryByText("Technical details")).toBeNull();
     expect(
       screen.queryByRole("button", { name: /Resume lesson/u }),
     ).not.toBeInTheDocument();
@@ -804,7 +803,8 @@ describe("Aptiloop Home", () => {
     expect(
       screen.getByRole("link", { name: "Browse Courses" }),
     ).toHaveAttribute("href", "/courses");
-    expect(screen.getByText("Technical details")).toBeVisible();
+    expect(screen.queryByText("Technical details")).toBeNull();
+    expect(screen.queryByText("Revision path is unavailable")).toBeNull();
     expect(
       screen.queryByRole("heading", { level: 1, name: "Home" }),
     ).not.toBeInTheDocument();
@@ -828,6 +828,7 @@ describe("Aptiloop Home", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Course revision unavailable",
     );
+    expect(screen.queryByText("Technical details")).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "JavaScript Foundations" }),
     ).not.toBeInTheDocument();
@@ -932,10 +933,10 @@ describe("Aptiloop Home", () => {
     expect(
       await screen.findByText("Aptiloop Core is unavailable."),
     ).toBeVisible();
-    const diagnostic = screen.getByText(/Protected curriculum field received/u);
-    expect(diagnostic).not.toBeVisible();
-    fireEvent.click(screen.getByText("Technical details"));
-    expect(diagnostic).toBeVisible();
+    expect(
+      screen.queryByText(/Protected curriculum field received/u),
+    ).toBeNull();
+    expect(screen.queryByText("Technical details")).toBeNull();
     expect(
       screen.queryByText("secret reference answer"),
     ).not.toBeInTheDocument();
@@ -973,8 +974,9 @@ describe("Aptiloop Home", () => {
     });
     renderWithQuery(<HomeClient />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Path endpoint is unavailable",
+      "Aptiloop Core is unavailable.",
     );
+    expect(screen.queryByText("Path endpoint is unavailable")).toBeNull();
     expect(
       screen.getByRole("heading", { level: 1, name: "Home" }),
     ).toBeVisible();

@@ -26,8 +26,7 @@ const MOCK_REVIEW: ReviewResult = {
     {
       severity: "warning",
       category: "edge_case",
-      file: "src/solution.ts",
-      line: 7,
+      file: "src/normalize-profile.ts",
       message: "Подумай, что произойдёт, если входная коллекция будет пустой.",
       hintLevel: 1,
     },
@@ -37,7 +36,7 @@ const MOCK_REVIEW: ReviewResult = {
   ],
   suggestedMasteryChanges: [
     {
-      topicId: "javascript-arrays",
+      topicId: "mutation",
       dimension: "implementation",
       delta: 0.25,
       reason: "Основное преобразование корректно.",
@@ -58,7 +57,7 @@ const MOCK_PASSED_REVIEW: ReviewResult = {
   ],
   suggestedMasteryChanges: [
     {
-      topicId: "javascript-arrays",
+      topicId: "mutation",
       dimension: "debugging",
       delta: 0.25,
       reason:

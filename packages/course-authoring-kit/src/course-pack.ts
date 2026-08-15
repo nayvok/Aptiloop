@@ -1044,6 +1044,7 @@ function validateKnowledge(
       });
     }
   });
+  validateKnowledgePrerequisiteCycles(pack, nodeIds, diagnostics);
   pack.knowledge.sourceSnapshots.forEach((snapshot, index) => {
     if (snapshot.content !== null) {
       const content =
@@ -1111,6 +1112,47 @@ function validateKnowledge(
       );
     }
   });
+}
+
+function validateKnowledgePrerequisiteCycles(
+  pack: CoursePackV1,
+  nodeIds: ReadonlySet<string>,
+  diagnostics: CoursePackDiagnostic[],
+): void {
+  const nodeIndexById = new Map(
+    pack.knowledge.nodes.map((node, index) => [node.knowledgeNodeId, index]),
+  );
+  const complete = new Set<string>();
+  const active = new Set<string>();
+
+  const visit = (nodeId: string): void => {
+    if (complete.has(nodeId)) return;
+    active.add(nodeId);
+    const nodeIndex = nodeIndexById.get(nodeId)!;
+    const node = pack.knowledge.nodes[nodeIndex]!;
+    node.prerequisiteKnowledgeNodeIds.forEach(
+      (prerequisiteId, prerequisiteIndex) => {
+        if (!nodeIds.has(prerequisiteId) || prerequisiteId === nodeId) return;
+        if (active.has(prerequisiteId)) {
+          diagnostics.push(
+            createDiagnostic(
+              "PACK_KNOWLEDGE_GRAPH_CYCLE",
+              "error",
+              `/knowledge/nodes/${nodeIndex}/prerequisiteKnowledgeNodeIds/${prerequisiteIndex}`,
+              nodeId,
+              "Knowledge prerequisite relationships must be acyclic",
+            ),
+          );
+          return;
+        }
+        visit(prerequisiteId);
+      },
+    );
+    active.delete(nodeId);
+    complete.add(nodeId);
+  };
+
+  for (const node of pack.knowledge.nodes) visit(node.knowledgeNodeId);
 }
 
 function validateProtectedSeparation(
@@ -1193,6 +1235,12 @@ const SECRET_PATTERNS = [
   /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u,
   /\bAKIA[0-9A-Z]{16}\b/u,
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*\b/iu,
+  /\bAuthorization\s*:\s*Basic\s+[A-Za-z0-9+/]{12,}={0,2}(?![A-Za-z0-9+/=])/iu,
+  /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/u,
+  /\bAIza[0-9A-Za-z_-]{32,}\b/u,
+  /(?:^|[\s{[(,;?&"'])(?:password|passphrase|api[\s_-]*key|access[\s_-]*token|client[\s_-]*secret|private[\s_-]*key)["']?\s*(?:=|:|=>)\s*["']?[^\s"'&,;}\]]{6,}(?=["']?(?:[ \t]*(?:$|[,;}\]])|&))/iu,
+  /(?:^|[\s{[(,;])(?:password|passphrase|api[\s_-]*key|access[\s_-]*token|client[\s_-]*secret|private[\s_-]*key)\s+(?:is\s+)?["'][^"'\r\n]{6,}["']/iu,
+  /https:\/\/[^\s/?#]+:(?:[^\s@/?#]{6,})@/iu,
 ];
 const ACTIVE_CONTENT_PATTERNS = [
   /<\s*(?:script|iframe|object|embed|link|meta)\b/iu,

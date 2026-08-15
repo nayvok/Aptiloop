@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
   output: "standalone",
   outputFileTracingRoot: path.join(process.cwd(), "../.."),
-  transpilePackages: ["@aptiloop/shared"],
+  transpilePackages: ["@aptiloop/course-authoring-kit", "@aptiloop/shared"],
   webpack(config) {
     config.resolve.extensionAlias = {
       ...config.resolve.extensionAlias,

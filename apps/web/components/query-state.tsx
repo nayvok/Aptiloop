@@ -4,7 +4,7 @@ import { WarningCircleIcon } from "@phosphor-icons/react/dist/ssr";
 
 import { Button } from "@/components/ui/button";
 import type { FailureOperation } from "@/lib/failure-presentation";
-import { presentFailure } from "@/lib/failure-presentation";
+import { presentFailure, safeDiagnosticId } from "@/lib/failure-presentation";
 import { useI18n } from "@/lib/i18n";
 import { useOnlineStatus } from "@/lib/online-status";
 
@@ -23,6 +23,7 @@ export function QueryError({
 }) {
   const { t } = useI18n();
   const isOnline = useOnlineStatus();
+  const presentedDiagnosticId = safeDiagnosticId(diagnostic);
 
   return (
     <div
@@ -60,13 +61,13 @@ export function QueryError({
             {t("query.offlineDescription")}
           </p>
         ) : null}
-        {diagnostic ? (
+        {presentedDiagnosticId ? (
           <details className="mt-3 max-w-[65ch] text-xs text-muted-foreground">
             <summary className="min-h-11 cursor-pointer py-3 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
               {t("query.technicalDetails")}
             </summary>
             <p className="break-words font-mono [overflow-wrap:anywhere]">
-              {diagnostic}
+              {presentedDiagnosticId}
             </p>
           </details>
         ) : null}
@@ -85,10 +86,12 @@ export function QueryError({
 }
 
 export function SafeQueryError({
+  title,
   error,
   operation,
   retry,
 }: {
+  title?: string;
   error: unknown;
   operation: FailureOperation;
   retry?: () => void;
@@ -97,6 +100,7 @@ export function SafeQueryError({
   const presentation = presentFailure(error, operation, t);
   return (
     <QueryError
+      {...(title ? { title } : {})}
       message={presentation.message}
       {...(presentation.diagnostic
         ? { diagnostic: presentation.diagnostic }

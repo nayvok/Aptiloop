@@ -62,13 +62,16 @@ export class LearningKernelRepository {
     this.#assertStorage();
     const rows = this.#connection.sqlite
       .prepare(
-        `SELECT context.course_id, context.revision_id, branch.id AS branch_id
+        `SELECT context.course_id, context.revision_id,
+                context.adaptation_branch_id AS branch_id
          FROM session_course_contexts context
          JOIN adaptation_branches branch
            ON branch.course_id = context.course_id
-          AND branch.status = 'active'
+          AND branch.id = context.adaptation_branch_id
          WHERE context.session_id = ?
-         ORDER BY branch.id`,
+           AND (branch.base_revision_id = context.revision_id
+                OR branch.head_revision_id = context.revision_id)
+         ORDER BY context.adaptation_branch_id`,
       )
       .all(sessionId) as Array<{
       course_id: string;
@@ -78,8 +81,8 @@ export class LearningKernelRepository {
     if (rows.length !== 1) {
       throw new Error(
         rows.length === 0
-          ? "Learning Kernel session has no active personal adaptation branch"
-          : "Learning Kernel session has multiple active personal adaptation branches",
+          ? "Learning Kernel session has no pinned personal adaptation branch"
+          : "Learning Kernel session has multiple pinned personal adaptation branches",
       );
     }
     const row = rows[0]!;
@@ -158,6 +161,43 @@ export class LearningKernelRepository {
     });
   }
 
+  readAcceptedFactFrontier(
+    scope: LearningKernelScope,
+    observedAt: string,
+    acceptedBefore: number,
+  ): readonly string[] {
+    this.#assertStorage();
+    this.#requireSessionScope(scope);
+    const observedTimestamp = Date.parse(observedAt);
+    if (!Number.isFinite(observedTimestamp)) {
+      throw new Error("Learning Kernel frontier observed clock is invalid");
+    }
+    if (!Number.isSafeInteger(acceptedBefore) || acceptedBefore < 0) {
+      throw new Error("Learning Kernel frontier acceptance clock is invalid");
+    }
+    const rows = this.#connection.sqlite
+      .prepare(
+        `SELECT id, accepted_at FROM learning_kernel_facts
+         WHERE session_id = ? AND course_id = ? AND revision_id = ?
+           AND branch_id = ? AND occurred_at <= ? AND accepted_at <= ?
+         ORDER BY occurred_at, id`,
+      )
+      .all(
+        scope.sessionId,
+        scope.courseId,
+        scope.revisionId,
+        scope.branchId,
+        observedTimestamp,
+        acceptedBefore,
+      ) as Array<{ id: string; accepted_at: number }>;
+    if (rows.some((row) => row.accepted_at === acceptedBefore)) {
+      throw new Error(
+        "Learning Kernel accepted frontier is ambiguous at the persisted boundary",
+      );
+    }
+    return rows.map((row) => row.id);
+  }
+
   readProjection(scope: LearningKernelScope): LearningKernelProjection | null {
     if (!this.hasStorage()) return null;
     const row = this.#connection.sqlite
@@ -174,16 +214,7 @@ export class LearningKernelRepository {
         scope.branchId,
       ) as { projection_json: string; projection_hash: string } | undefined;
     if (!row) return null;
-    const projection = JSON.parse(
-      row.projection_json,
-    ) as LearningKernelProjection;
-    if (
-      canonicalLearningKernelJson(projection) !== row.projection_json ||
-      projection.projectionHash !== row.projection_hash
-    ) {
-      throw new Error("Stored Learning Kernel projection is inconsistent");
-    }
-    return projection;
+    return this.#verifyStoredProjection(scope, row);
   }
 
   reproject(
@@ -201,6 +232,36 @@ export class LearningKernelRepository {
     return projection;
   }
 
+  reprojectFrontier(
+    scope: LearningKernelScope,
+    observedAt: string,
+    sourceFactIds: readonly string[],
+  ): LearningKernelProjection {
+    this.#assertStorage();
+    const session = this.#requireSessionScope(scope);
+    const requested = new Set(sourceFactIds);
+    if (requested.size !== sourceFactIds.length) {
+      throw new Error("Learning Kernel fact frontier contains duplicates");
+    }
+    const facts = this.readFacts(scope).filter((fact) =>
+      requested.has(fact.id),
+    );
+    if (
+      facts.length !== sourceFactIds.length ||
+      facts.some((fact, index) => fact.id !== sourceFactIds[index])
+    ) {
+      throw new Error(
+        "Learning Kernel fact frontier is unavailable or out of canonical order",
+      );
+    }
+    return projectLearningKernel({
+      scope,
+      activities: this.#readActivities(scope, session.lesson_id),
+      facts,
+      observedAt,
+    });
+  }
+
   #requireSessionScope(scope: LearningKernelScope): SessionScopeRow {
     const row = this.#connection.sqlite
       .prepare(
@@ -208,15 +269,19 @@ export class LearningKernelRepository {
                 branch.id AS branch_id
          FROM session_course_contexts context
          JOIN adaptation_branches branch
-           ON branch.course_id = context.course_id AND branch.id = ?
+           ON branch.course_id = context.course_id
+          AND branch.id = context.adaptation_branch_id
          WHERE context.session_id = ? AND context.course_id = ?
-               AND context.revision_id = ? AND branch.status = 'active'`,
+               AND context.revision_id = ?
+               AND context.adaptation_branch_id = ?
+               AND (branch.base_revision_id = context.revision_id
+                    OR branch.head_revision_id = context.revision_id)`,
       )
       .get(
-        scope.branchId,
         scope.sessionId,
         scope.courseId,
         scope.revisionId,
+        scope.branchId,
       ) as SessionScopeRow | undefined;
     if (!row) {
       throw new Error(
@@ -451,6 +516,36 @@ export class LearningKernelRepository {
         "Idempotent Learning Kernel replay does not match the persisted projection",
       );
     }
+  }
+
+  #verifyStoredProjection(
+    scope: LearningKernelScope,
+    row: { projection_json: string; projection_hash: string },
+  ): LearningKernelProjection {
+    const projection = JSON.parse(
+      row.projection_json,
+    ) as LearningKernelProjection;
+    if (
+      canonicalLearningKernelJson(projection) !== row.projection_json ||
+      projection.projectionHash !== row.projection_hash
+    ) {
+      throw new Error("Stored Learning Kernel projection is inconsistent");
+    }
+    const replayed = this.reprojectFrontier(
+      scope,
+      projection.observedAt,
+      projection.factFrontier,
+    );
+    if (
+      replayed.projectionHash !== projection.projectionHash ||
+      canonicalLearningKernelJson(replayed) !==
+        canonicalLearningKernelJson(projection)
+    ) {
+      throw new Error(
+        "Stored Learning Kernel projection diverges from append-only facts",
+      );
+    }
+    return projection;
   }
 
   #assertStorage(): void {

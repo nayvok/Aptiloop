@@ -14,6 +14,7 @@ import {
   type UnitProgressionItem,
 } from "./unit-progression.js";
 import type { HintLevel } from "./hints.js";
+import { ReviewPrefixProjection } from "./review-prefix.js";
 
 export const LEARNING_KERNEL_FACT_SCHEMA_VERSION = 1 as const;
 export const LEARNING_KERNEL_MODEL_VERSION = "baseline-1" as const;
@@ -293,6 +294,7 @@ export function reduceLearningKernel(
       "Learning Kernel fact ID is already bound to a different operation",
     );
   }
+  validateNewCommandLinks(candidate, input.facts);
   const facts = sortFacts([...input.facts, candidate]);
   const projection = projectLearningKernel({
     scope: input.scope,
@@ -823,6 +825,86 @@ function validateFactLinks(
   }
 }
 
+function validateNewCommandLinks(
+  candidate: LearningKernelFact,
+  existingFacts: readonly LearningKernelFact[],
+): void {
+  const existingById = new Map(existingFacts.map((fact) => [fact.id, fact]));
+  const body = candidate.body;
+  if (body.type === "evidence") {
+    assertNewEvidenceBasisPrecedes(body, candidate, existingById);
+    return;
+  }
+  if (body.type !== "correction") return;
+
+  assertNewEvidenceBasisPrecedes(body.replacement, candidate, existingById);
+  const target = existingById.get(body.supersedesFactId);
+  if (!target || target.body.type !== "evidence") {
+    throw new LearningKernelValidationError(
+      `Correction target is not an evidence fact: ${body.supersedesFactId}`,
+    );
+  }
+  if (
+    existingFacts.some(
+      (fact) =>
+        fact.body.type === "correction" &&
+        fact.body.supersedesFactId === target.id,
+    )
+  ) {
+    throw new LearningKernelConflictError(
+      `Evidence fact already has a correction: ${target.id}`,
+    );
+  }
+  if (compareFactsByCanonicalOrder(target, candidate) >= 0) {
+    throw new LearningKernelValidationError(
+      `Correction precedes its target: ${target.id}`,
+    );
+  }
+  assertCorrectionPreservesEvidenceIdentity(target.body, body.replacement);
+}
+
+function assertNewEvidenceBasisPrecedes(
+  body: LearningKernelEvidenceBody,
+  candidate: LearningKernelFact,
+  existingById: ReadonlyMap<string, LearningKernelFact>,
+): void {
+  if (!Array.isArray(body.basisFactIds)) return;
+  for (const basisFactId of body.basisFactIds) {
+    const basisFact = existingById.get(basisFactId);
+    if (!basisFact || compareFactsByCanonicalOrder(basisFact, candidate) >= 0) {
+      throw new LearningKernelValidationError(
+        `Evidence basis fact is unavailable or not earlier: ${basisFactId}`,
+      );
+    }
+  }
+}
+
+function assertCorrectionPreservesEvidenceIdentity(
+  target: LearningKernelEvidenceBody,
+  replacement: LearningKernelEvidenceBody,
+): void {
+  if (
+    target.activityId !== replacement.activityId ||
+    target.dimension !== replacement.dimension ||
+    target.evidenceType !== replacement.evidenceType ||
+    target.errorFamily !== replacement.errorFamily ||
+    !haveSameIdentifiers(target.knowledgeNodeIds, replacement.knowledgeNodeIds)
+  ) {
+    throw new LearningKernelValidationError(
+      "Correction replacement must preserve evidence identity",
+    );
+  }
+}
+
+function haveSameIdentifiers(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const rightIds = new Set(right);
+  return left.every((id) => rightIds.has(id));
+}
+
 function assertProvenance(provenance: LearningKernelFactProvenance): void {
   assertExactKeys(
     provenance,
@@ -924,19 +1006,20 @@ function projectMastery(
   evidence: readonly EffectiveEvidenceFact[],
   observedTimestamp: number,
 ): Readonly<Record<string, LearningKernelMasteryProjection>> {
-  const nodeIds = uniqueSorted(
-    evidence.flatMap((item) => item.body.knowledgeNodeIds),
-  );
+  const evidenceByNodeAndDimension = indexMasteryEvidence(evidence);
+  const nodeIds = [...evidenceByNodeAndDimension.keys()].sort(compareStrings);
   return Object.fromEntries(
     nodeIds.map((knowledgeNodeId) => {
+      const evidenceByDimension =
+        evidenceByNodeAndDimension.get(knowledgeNodeId);
+      if (!evidenceByDimension) {
+        throw new LearningKernelValidationError(
+          "Mastery projection lost its knowledge-node evidence index",
+        );
+      }
       const byDimension = Object.fromEntries(
         MASTERY_DIMENSIONS.map((dimension) => {
-          const source = evidence.filter(
-            (item) =>
-              item.body.outcome !== "unverified" &&
-              item.body.dimension === dimension &&
-              item.body.knowledgeNodeIds.includes(knowledgeNodeId),
-          );
+          const source = evidenceByDimension.get(dimension) ?? [];
           let profile = createEmptyMasteryProfile();
           for (const item of source) {
             profile = applyMasteryEvidence(profile, {
@@ -966,6 +1049,32 @@ function projectMastery(
       return [knowledgeNodeId, byDimension] as const;
     }),
   );
+}
+
+function indexMasteryEvidence(
+  evidence: readonly EffectiveEvidenceFact[],
+): Map<string, Map<MasteryDimension, EffectiveEvidenceFact[]>> {
+  const evidenceByNodeAndDimension = new Map<
+    string,
+    Map<MasteryDimension, EffectiveEvidenceFact[]>
+  >();
+  for (const item of evidence) {
+    for (const knowledgeNodeId of item.body.knowledgeNodeIds) {
+      let evidenceByDimension = evidenceByNodeAndDimension.get(knowledgeNodeId);
+      if (!evidenceByDimension) {
+        evidenceByDimension = new Map();
+        evidenceByNodeAndDimension.set(knowledgeNodeId, evidenceByDimension);
+      }
+      if (item.body.outcome === "unverified") continue;
+      const source = evidenceByDimension.get(item.body.dimension);
+      if (source) {
+        source.push(item);
+      } else {
+        evidenceByDimension.set(item.body.dimension, [item]);
+      }
+    }
+  }
+  return evidenceByNodeAndDimension;
 }
 
 function projectMistakes(
@@ -1067,8 +1176,14 @@ function projectReviewItems(
     baseItems.map((item) => [item.id, item.id] as const),
   );
   const touchedSeries = new Set<string>();
+  const reviewPrefix = new ReviewPrefixProjection({
+    masteryReviewIntervalMilliseconds: MASTERY_REVIEW_INTERVAL_MILLISECONDS,
+    mistakeReviewItemId: (knowledgeNodeId, errorFamily) =>
+      `review-${mistakeFingerprint(scope, knowledgeNodeId, errorFamily).slice("sha256:".length)}`,
+  });
 
   for (const fact of facts) {
+    reviewPrefix.accept(fact);
     if (fact.body.type !== "review") continue;
     const current = byId.get(fact.body.reviewItemId);
     if (!current) {
@@ -1079,12 +1194,7 @@ function projectReviewItems(
     const seriesId = seriesByItemId.get(current.id) ?? current.id;
     let item = current;
     if (baseItemIds.has(current.id) && !touchedSeries.has(seriesId)) {
-      const snapshot = projectReviewItemBeforeFact(
-        scope,
-        current.id,
-        facts,
-        fact,
-      );
+      const snapshot = reviewPrefix.project(current);
       if (!snapshot) {
         throw new LearningKernelValidationError(
           `Review item was unavailable at fact ${fact.id}`,
@@ -1296,45 +1406,6 @@ function projectLegacyReviewItems(
     }
   }
   return [...byId.values()].sort(compareReviewItems);
-}
-
-function projectReviewItemBeforeFact(
-  scope: LearningKernelScope,
-  reviewItemId: string,
-  facts: readonly LearningKernelFact[],
-  boundary: LearningKernelFact,
-): LearningKernelReviewItem | null {
-  const priorFacts = facts.filter(
-    (fact) => fact.body.type !== "review" && reviewFactPrecedes(fact, boundary),
-  );
-  const priorFactById = new Map(priorFacts.map((fact) => [fact.id, fact]));
-  const priorEvidence = effectiveEvidenceFacts(priorFacts, priorFactById);
-  const priorMastery = projectMastery(
-    priorEvidence,
-    Date.parse(boundary.occurredAt),
-  );
-  const priorMistakes = projectMistakes(scope, priorEvidence);
-  return (
-    projectLegacyReviewItems(
-      scope,
-      priorMastery,
-      priorEvidence,
-      priorMistakes,
-      priorFacts,
-      priorFactById,
-    ).find((item) => item.id === reviewItemId) ?? null
-  );
-}
-
-function reviewFactPrecedes(
-  candidate: LearningKernelFact,
-  boundary: LearningKernelFact,
-): boolean {
-  return (
-    Date.parse(candidate.occurredAt) < Date.parse(boundary.occurredAt) ||
-    (candidate.occurredAt === boundary.occurredAt &&
-      compareStrings(candidate.id, boundary.id) < 0)
-  );
 }
 
 function reviewSuccessorId(
@@ -1704,10 +1775,16 @@ function addMilliseconds(value: string, milliseconds: number): string {
 }
 
 function sortFacts(facts: readonly LearningKernelFact[]): LearningKernelFact[] {
-  return [...facts].sort(
-    (left, right) =>
-      Date.parse(left.occurredAt) - Date.parse(right.occurredAt) ||
-      compareStrings(left.id, right.id),
+  return [...facts].sort(compareFactsByCanonicalOrder);
+}
+
+function compareFactsByCanonicalOrder(
+  left: LearningKernelFact,
+  right: LearningKernelFact,
+): number {
+  return (
+    Date.parse(left.occurredAt) - Date.parse(right.occurredAt) ||
+    compareStrings(left.id, right.id)
   );
 }
 

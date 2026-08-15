@@ -305,6 +305,30 @@ const enUS = {
     "The local Course draft could not be created. Try again.",
   "failure.operation.courseInstructionsDownload":
     "The authoring instructions could not be downloaded. Try again.",
+  "failure.operation.coursePackLibraryLoad":
+    "The local Course library could not be loaded.",
+  "failure.operation.coursePackSelect":
+    "The Course could not be selected. Try again.",
+  "failure.operation.coursePackUninstall":
+    "The Course revision could not be removed. Try again.",
+  "failure.operation.coursePackExport":
+    "The Course Pack could not be exported. Try again.",
+  "courses.validation.diagnostic.unsafe":
+    "Remove the unsafe or authority-bearing value from this field.",
+  "courses.validation.diagnostic.structure":
+    "Correct the Course Pack structure at this field.",
+  "courses.validation.diagnostic.reference":
+    "Correct the missing or mismatched Course Pack reference.",
+  "courses.validation.diagnostic.graph":
+    "Correct the invalid or cyclic knowledge graph.",
+  "courses.validation.diagnostic.locale":
+    "Correct the locale or localization declaration at this field.",
+  "courses.validation.diagnostic.provenance":
+    "Complete the required provenance, attribution, or terms information.",
+  "courses.validation.diagnostic.requirement":
+    "Correct or remove the unavailable Course requirement.",
+  "courses.validation.diagnostic.generic":
+    "This Course Pack field did not pass validation.",
   "failure.operation.studioLoad": "Curriculum Studio could not be loaded.",
   "failure.operation.studioAction":
     "The Studio action did not complete. Try again.",
@@ -348,10 +372,6 @@ const enUS = {
   "ui.developerTools.title": "Developer tools",
   "ui.developerTools.description":
     "Diagnostics and manual tools for checking the provider lifecycle. They are not part of the primary learning path.",
-  "ui.developerTools.playgroundTitle": "Agent Playground",
-  "ui.developerTools.playgroundDescription":
-    "Manual conversation with a selected role and model, with visible tool events. Reviewer remains read-only and cannot apply changes.",
-  "ui.developerTools.openPlayground": "Open Playground",
   "ui.developerTools.boundaryNote":
     "No embedded terminal UI or arbitrary shell access is available here. Executable commands are selected only by the server allowlist.",
   "ui.messageScroller.toLast": "Go to latest message",
@@ -402,7 +422,6 @@ const enUS = {
   "settings.connection.cancelling": "Cancelling…",
   "settings.connection.loginCancelled":
     "Provider sign-in was cancelled. The connection was not authorized.",
-  "ui.developerTools.compatibilityBadge": "Compatibility surface",
   "ui.developerTools.boundaryTitle": "Deliberate execution boundaries",
   "ui.developerTools.executionBoundary": "Command execution",
   "ui.developerTools.serverAllowlist": "Server allowlist only",
@@ -438,63 +457,9 @@ const enUS = {
   "query.loadingSettings": "Loading settings…",
   "query.settingsUnavailable": "Settings are unavailable",
   "query.retry": "Try again",
-  "chat.page.title": "Agent diagnostic",
-  "chat.page.description":
-    "An optional, bounded conversation for checking reasoning or selected evidence. Courses and lessons remain the primary learning path.",
-  "chat.error.response": "Could not get a response.",
-  "chat.status.cancelled": "Response stopped.",
-  "chat.status.loading": "Loading conversation…",
-  "chat.label.you": "You",
-  "chat.role.teacher": "Tutor",
-  "chat.role.reviewer": "Solution reviewer",
-  "chat.role.interviewer": "Interviewer",
-  "chat.role.curator": "Learning curator",
-  "chat.role.codexExpert": "Architecture expert",
-  "chat.error.prepare":
-    "Could not prepare the request. Your message is ready to retry.",
-  "chat.error.send":
-    "Could not send the request. Your message is ready to retry.",
-  "chat.error.responseDetail":
-    "Could not get a response. Your message is ready to retry.",
-  "chat.error.emptyResponse": "The agent completed the response without text.",
-  "chat.a11y.roleSelector": "Agent role",
-  "chat.a11y.transcript": "Agent conversation transcript",
-  "chat.error.history": "Conversation history is temporarily unavailable.",
-  "chat.error.settings": "Provider settings are temporarily unavailable.",
-  "chat.error.recovery":
-    "Pending external-data approval could not be checked. Nothing was sent.",
-  "chat.error.cancelDisclosure":
-    "The pending external-data approval could not be cancelled. Nothing was sent; try again.",
-  "chat.error.dataUnavailable": "Agent data is temporarily unavailable.",
-  "chat.retry": "Try again",
-  "chat.status.generating": "Agent is preparing a response",
-  "chat.status.failed": "No response received",
-  "chat.status.ready": "Response ready",
-  "chat.empty.title": "Start by writing your question or answer",
-  "chat.empty.description":
-    "The agent will not write a practice solution for you. Solution review works only with a committed diff.",
-  "chat.empty.reloadLimitation":
-    "Reload does not restore an unsent draft or a response in progress.",
-  "chat.a11y.typing": "Agent is typing",
-  "chat.composer.label": "Message to the agent",
-  "chat.composer.placeholder": "Write your answer or ask a follow-up question…",
-  "chat.composer.stop": "Stop response",
-  "chat.composer.send": "Send",
   "chat.composer.configureAi": "Configure AI",
   "chat.composer.unavailablePlaceholder":
     "Configure an available provider and model in Settings to use this diagnostic.",
-  "chat.composer.context": "Conversation context: {context}",
-  "chat.tools.title": "Tool events ({count})",
-  "chat.tools.boundary": "Read-only activity",
-  "chat.disclosure.title": "Send data to an external AI?",
-  "chat.disclosure.description":
-    "Permission applies once and only to the specified request.",
-  "chat.disclosure.destination": "Recipient",
-  "chat.disclosure.data": "Data",
-  "chat.disclosure.payload": "{categories} · {bytes} bytes",
-  "chat.disclosure.exclusions": "Not sent",
-  "chat.disclosure.cancel": "Do not send",
-  "chat.disclosure.approve": "Allow once",
   "review.view.due": "Due",
   "review.view.mistakes": "Corrections",
   "review.view.cards": "Review queue",
@@ -680,6 +645,9 @@ const enUS = {
   "session.tutor.complete": "Complete dialogue",
   "session.tutor.answer": "Answer follow-up",
   "session.tutor.send": "Send explanation",
+  "session.tutor.disclosureTitle": "Share this lesson context?",
+  "session.tutor.disclosureApprove": "Share and continue",
+  "session.tutor.disclosureCancel": "Keep local",
   "session.quiz.invalid":
     "Quiz configuration is invalid: every question needs at least two options.",
   "session.quiz.correct": "Correct",
@@ -984,8 +952,8 @@ const enUS = {
     "The tests passed. Now request a solution review.",
   "practice.nextAction.applyFindings":
     "Apply the findings yourself, then repeat diff → tests → solution review.",
-  "practice.nextAction.accepted":
-    "The solution review was accepted — save the skill evidence and return to the lesson.",
+  "practice.nextAction.evidenceVerified":
+    "Evidence receipt verified — continue to save the skill evidence and return to the lesson.",
   "practice.workspace.copied": "Workspace ID copied.",
   "practice.workspace.copyFailed": "Could not copy the workspace ID.",
   "practice.disclosure.cancelled":
@@ -1033,8 +1001,8 @@ const enUS = {
   "practice.sidebar.label": "Review and topics",
   "practice.topics.title": "Topics in practice",
   "practice.reviewer.title": "Reviewer",
-  "practice.reviewer.status.accepted": "Accepted",
-  "practice.reviewer.status.changesRequested": "Changes requested",
+  "practice.reviewer.status.accepted": "Advisory passed",
+  "practice.reviewer.status.changesRequested": "Advisory: changes requested",
   "practice.reviewer.status.notRun": "Not run",
   "practice.evidenceBundle.title": "Evidence bundle",
   "practice.evidenceBundle.snapshot": "snapshot {hash}",
@@ -1042,9 +1010,11 @@ const enUS = {
   "practice.reviewer.empty":
     "Review becomes available after a changed diff and a successful test against the current files. It remains read-only.",
   "practice.reviewer.accepting": "Saving skill evidence…",
-  "practice.reviewer.accept": "Accept review and continue",
+  "practice.reviewer.accept": "Continue",
+  "practice.reviewer.receiptVerified":
+    "Evidence receipt verified. You can continue regardless of the advisory verdict.",
   "practice.reviewer.changesRequested":
-    "Fix the code in Zed, run the tests again, and request a new review. The current review does not complete the unit.",
+    "The Reviewer recommends changes. You can continue with the verified evidence receipt, or revise the code, rerun the tests, and request a new review.",
   "practice.disclosure.title": "Send evidence to external AI?",
   "practice.disclosure.description":
     "The Reviewer will receive only the recorded bundle. This approval is valid once.",
@@ -1947,6 +1917,30 @@ const ruRU: Record<MessageKey, string> = {
     "Не удалось создать локальный черновик курса. Повторите попытку.",
   "failure.operation.courseInstructionsDownload":
     "Не удалось скачать инструкции по авторингу. Повторите попытку.",
+  "failure.operation.coursePackLibraryLoad":
+    "Не удалось загрузить локальную библиотеку курсов.",
+  "failure.operation.coursePackSelect":
+    "Не удалось выбрать курс. Повторите попытку.",
+  "failure.operation.coursePackUninstall":
+    "Не удалось удалить ревизию курса. Повторите попытку.",
+  "failure.operation.coursePackExport":
+    "Не удалось экспортировать Course Pack. Повторите попытку.",
+  "courses.validation.diagnostic.unsafe":
+    "Удалите из этого поля небезопасное значение или значение с полномочиями.",
+  "courses.validation.diagnostic.structure":
+    "Исправьте структуру Course Pack в этом поле.",
+  "courses.validation.diagnostic.reference":
+    "Исправьте отсутствующую или несовпадающую ссылку Course Pack.",
+  "courses.validation.diagnostic.graph":
+    "Исправьте некорректный или циклический граф знаний.",
+  "courses.validation.diagnostic.locale":
+    "Исправьте локаль или объявление локализации в этом поле.",
+  "courses.validation.diagnostic.provenance":
+    "Заполните обязательные сведения о происхождении, атрибуции или условиях.",
+  "courses.validation.diagnostic.requirement":
+    "Исправьте или удалите недоступное требование курса.",
+  "courses.validation.diagnostic.generic":
+    "Это поле Course Pack не прошло проверку.",
   "failure.operation.studioLoad": "Не удалось загрузить Curriculum Studio.",
   "failure.operation.studioAction":
     "Действие Studio не завершилось. Повторите попытку.",
@@ -1990,10 +1984,6 @@ const ruRU: Record<MessageKey, string> = {
   "ui.developerTools.title": "Инструменты разработчика",
   "ui.developerTools.description":
     "Диагностика и ручные инструменты для проверки provider lifecycle. Они не входят в основной учебный маршрут.",
-  "ui.developerTools.playgroundTitle": "Agent Playground",
-  "ui.developerTools.playgroundDescription":
-    "Ручной диалог с выбранной ролью, моделью и видимыми tool events. Reviewer остаётся read-only и не может применять изменения.",
-  "ui.developerTools.openPlayground": "Открыть Playground",
   "ui.developerTools.boundaryNote":
     "Встроенного terminal UI и произвольного shell-доступа здесь нет. Исполняемые команды выбирает только серверный allowlist.",
   "ui.messageScroller.toLast": "К последнему сообщению",
@@ -2047,7 +2037,6 @@ const ruRU: Record<MessageKey, string> = {
   "settings.connection.cancelling": "Отменяю…",
   "settings.connection.loginCancelled":
     "Авторизация у провайдера отменена. Подключение не авторизовано.",
-  "ui.developerTools.compatibilityBadge": "Режим совместимости",
   "ui.developerTools.boundaryTitle": "Явные границы выполнения",
   "ui.developerTools.executionBoundary": "Выполнение команд",
   "ui.developerTools.serverAllowlist": "Только серверный список разрешений",
@@ -2083,64 +2072,9 @@ const ruRU: Record<MessageKey, string> = {
   "query.loadingSettings": "Загружаю настройки…",
   "query.settingsUnavailable": "Настройки недоступны",
   "query.retry": "Повторить",
-  "chat.page.title": "Диагностика с агентом",
-  "chat.page.description":
-    "Необязательный ограниченный диалог для проверки рассуждений или выбранных подтверждений. Основной учебный путь остаётся в курсах и занятиях.",
-  "chat.error.response": "Не удалось получить ответ.",
-  "chat.status.cancelled": "Ответ остановлен.",
-  "chat.status.loading": "Загружаю диалог…",
-  "chat.label.you": "Ты",
-  "chat.role.teacher": "Тьютор",
-  "chat.role.reviewer": "Ревьюер решения",
-  "chat.role.interviewer": "Интервьюер",
-  "chat.role.curator": "Куратор обучения",
-  "chat.role.codexExpert": "Эксперт по архитектуре",
-  "chat.error.prepare":
-    "Не удалось подготовить запрос. Сообщение сохранено для повторной отправки.",
-  "chat.error.send":
-    "Не удалось отправить запрос. Сообщение сохранено для повторной отправки.",
-  "chat.error.responseDetail":
-    "Не удалось получить ответ. Сообщение сохранено для повторной отправки.",
-  "chat.error.emptyResponse": "Агент завершил ответ без текста.",
-  "chat.a11y.roleSelector": "Роль агента",
-  "chat.a11y.transcript": "История диалога с агентом",
-  "chat.error.history": "История диалога временно недоступна.",
-  "chat.error.settings": "Настройки провайдера временно недоступны.",
-  "chat.error.recovery":
-    "Не удалось проверить ожидающее разрешение на отправку внешнему AI. Данные не отправлены.",
-  "chat.error.cancelDisclosure":
-    "Не удалось отменить ожидающее разрешение на отправку внешнему AI. Данные не отправлены — повтори попытку.",
-  "chat.error.dataUnavailable": "Данные агента временно недоступны.",
-  "chat.retry": "Повторить",
-  "chat.status.generating": "Агент формирует ответ",
-  "chat.status.failed": "Ответ не получен",
-  "chat.status.ready": "Ответ готов",
-  "chat.empty.title": "Сначала сформулируй свой вопрос или ответ",
-  "chat.empty.description":
-    "Агент не будет писать практическое решение вместо тебя. Проверка решения работает только с зафиксированным diff.",
-  "chat.empty.reloadLimitation":
-    "Перезагрузка не восстанавливает неотправленный черновик или формируемый ответ.",
-  "chat.a11y.typing": "Агент печатает",
-  "chat.composer.label": "Сообщение агенту",
-  "chat.composer.placeholder":
-    "Напиши свой ответ или попроси уточняющий вопрос…",
-  "chat.composer.stop": "Остановить ответ",
-  "chat.composer.send": "Отправить",
   "chat.composer.configureAi": "Настроить AI",
   "chat.composer.unavailablePlaceholder":
     "Настройте доступного провайдера и модель, чтобы использовать эту диагностику.",
-  "chat.composer.context": "Контекст диалога: {context}",
-  "chat.tools.title": "События инструментов ({count})",
-  "chat.tools.boundary": "Только чтение",
-  "chat.disclosure.title": "Отправить данные внешнему AI?",
-  "chat.disclosure.description":
-    "Разрешение действует один раз только для указанного запроса.",
-  "chat.disclosure.destination": "Получатель",
-  "chat.disclosure.data": "Данные",
-  "chat.disclosure.payload": "{categories} · {bytes} Б",
-  "chat.disclosure.exclusions": "Не отправляется",
-  "chat.disclosure.cancel": "Не отправлять",
-  "chat.disclosure.approve": "Разрешить один раз",
   "review.view.due": "К повторению",
   "review.view.mistakes": "Исправления",
   "review.view.cards": "Очередь повторения",
@@ -2326,6 +2260,9 @@ const ruRU: Record<MessageKey, string> = {
   "session.tutor.complete": "Завершить диалог",
   "session.tutor.answer": "Ответить на уточнение",
   "session.tutor.send": "Отправить объяснение",
+  "session.tutor.disclosureTitle": "Передать контекст этого урока?",
+  "session.tutor.disclosureApprove": "Передать и продолжить",
+  "session.tutor.disclosureCancel": "Оставить локально",
   "session.quiz.invalid":
     "Quiz настроен некорректно: у каждого вопроса должно быть минимум два варианта ответа.",
   "session.quiz.correct": "Верно",
@@ -2631,8 +2568,8 @@ const ruRU: Record<MessageKey, string> = {
     "Тесты прошли. Теперь запросите проверку решения.",
   "practice.nextAction.applyFindings":
     "Примените замечания самостоятельно и повторите diff → тесты → проверку решения.",
-  "practice.nextAction.accepted":
-    "Проверка решения принята — сохраните подтверждения навыка и вернитесь к занятию.",
+  "practice.nextAction.evidenceVerified":
+    "Квитанция доказательств проверена — продолжите, чтобы сохранить подтверждения навыка и вернуться к занятию.",
   "practice.workspace.copied": "Идентификатор рабочей области скопирован.",
   "practice.workspace.copyFailed": "Не удалось скопировать идентификатор.",
   "practice.disclosure.cancelled":
@@ -2679,8 +2616,9 @@ const ruRU: Record<MessageKey, string> = {
   "practice.sidebar.label": "Проверка и темы",
   "practice.topics.title": "Тренируемые темы",
   "practice.reviewer.title": "Reviewer",
-  "practice.reviewer.status.accepted": "Принято",
-  "practice.reviewer.status.changesRequested": "Нужны изменения",
+  "practice.reviewer.status.accepted": "Совет Reviewer: пройдено",
+  "practice.reviewer.status.changesRequested":
+    "Совет Reviewer: нужны изменения",
   "practice.reviewer.status.notRun": "Не запускался",
   "practice.evidenceBundle.title": "Капсула доказательств",
   "practice.evidenceBundle.snapshot": "snapshot {hash}",
@@ -2688,9 +2626,11 @@ const ruRU: Record<MessageKey, string> = {
   "practice.reviewer.empty":
     "Review становится доступен после изменённого diff и успешного теста на текущих файлах. Он остаётся read-only.",
   "practice.reviewer.accepting": "Сохраняю подтверждения навыка…",
-  "practice.reviewer.accept": "Принять проверку и продолжить",
+  "practice.reviewer.accept": "Продолжить",
+  "practice.reviewer.receiptVerified":
+    "Квитанция доказательств проверена. Можно продолжить независимо от рекомендательного вердикта.",
   "practice.reviewer.changesRequested":
-    "Исправьте код в Zed, снова запустите тесты и запросите новое review. Текущее review не завершает юнит.",
+    "Reviewer рекомендует изменения. Можно продолжить с проверенной квитанцией доказательств или исправить код, снова запустить тесты и запросить новое review.",
   "practice.disclosure.title": "Отправить evidence внешнему AI?",
   "practice.disclosure.description":
     "Reviewer получит только зафиксированный bundle. Разрешение действует один раз.",

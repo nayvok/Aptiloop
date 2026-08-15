@@ -80,7 +80,7 @@ export function selectReviewTopics(
         right.priority - left.priority ||
         nullableInstant(left.topic.lastReviewedAt) -
           nullableInstant(right.topic.lastReviewedAt) ||
-        left.topic.topicId.localeCompare(right.topic.topicId),
+        compareStrings(left.topic.topicId, right.topic.topicId),
     )
     .slice(0, options.limit);
 }
@@ -124,4 +124,8 @@ function parseInstant(value: string | Date): number {
 
 function round(value: number): number {
   return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }

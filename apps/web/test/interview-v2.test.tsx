@@ -366,6 +366,13 @@ function installApi(routes: Record<string, ApiRoute>) {
   });
 }
 
+function expectJsonRequest(path: string, expectedBody: unknown): void {
+  const call = apiMock.mock.calls.find(([candidate]) => candidate === path);
+  expect(call).toBeDefined();
+  expect(call?.[1]).toMatchObject({ method: "POST" });
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual(expectedBody);
+}
+
 function interviewRoutes({
   current = currentInterviewResponse(null),
   opened,
@@ -387,6 +394,28 @@ function interviewRoutes({
     "/interviews/v2/interview-1/answers": answers,
     "/interviews/v2/interview-1/finish": finish,
     ...extra,
+  };
+}
+
+function linkedSessionFixture() {
+  return {
+    session: {
+      id: "session-1",
+      currentStep: "unit-interview-1",
+      snapshot: {
+        curriculumId: "course-1",
+        curriculumVersionId: "revision-1",
+        curriculumTitle: "JavaScript Foundations",
+        day: { order: 3, title: "Closures and scope" },
+        units: [
+          {
+            id: "unit-interview-1",
+            stableId: "unit-interview-1",
+            type: "interview",
+          },
+        ],
+      },
+    },
   };
 }
 
@@ -504,7 +533,15 @@ describe("versioned interview workflow", () => {
                 curriculumVersionId: "snapshot-revision-id",
                 curriculumTitle: "JavaScript Foundations",
                 day: { order: 3, title: "Closures and scope" },
+                units: [
+                  {
+                    id: "unit-interview-1",
+                    stableId: "unit-interview-1",
+                    type: "interview",
+                  },
+                ],
               },
+              currentStep: "unit-interview-1",
             },
           },
         },
@@ -564,7 +601,15 @@ describe("versioned interview workflow", () => {
                 curriculumVersionId: "snapshot-revision-id",
                 curriculumTitle: "JavaScript Foundations",
                 day: { order: 3, title: "Closures and scope" },
+                units: [
+                  {
+                    id: "unit-interview-1",
+                    stableId: "unit-interview-1",
+                    type: "interview",
+                  },
+                ],
               },
+              currentStep: "unit-interview-1",
             },
           },
         },
@@ -679,18 +724,12 @@ describe("versioned interview workflow", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Чем lexical scope отличается от dynamic scope?",
     );
-    expect(apiMock).toHaveBeenCalledWith(
-      "/interviews/v2",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          operationId: "operation-1",
-          topics: ["JavaScript", "TypeScript"],
-          difficulty: "interview-ready",
-          questionCount: 2,
-        }),
-      }),
-    );
+    expectJsonRequest("/interviews/v2", {
+      operationId: "operation-1",
+      topics: ["JavaScript", "TypeScript"],
+      difficulty: "interview-ready",
+      questionCount: 2,
+    });
 
     fireEvent.change(screen.getByLabelText("Сообщение"), {
       target: {
@@ -788,18 +827,12 @@ describe("versioned interview workflow", () => {
     expect(
       await screen.findByText(/Чем lexical scope отличается/u),
     ).toBeInTheDocument();
-    expect(apiMock).toHaveBeenCalledWith(
-      "/interviews/v2",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          operationId: "operation-1",
-          topics: ["JavaScript", "Скоуп"],
-          difficulty: "interview-ready",
-          questionCount: 3,
-        }),
-      }),
-    );
+    expectJsonRequest("/interviews/v2", {
+      operationId: "operation-1",
+      topics: ["JavaScript", "Скоуп"],
+      difficulty: "interview-ready",
+      questionCount: 3,
+    });
   });
 
   it("shows the manual topics field when the manual scope is selected", async () => {
@@ -1296,19 +1329,13 @@ describe("versioned interview workflow", () => {
     expect(
       await screen.findByText(/Чем lexical scope отличается/u),
     ).toBeVisible();
-    expect(apiMock).toHaveBeenCalledWith(
-      "/interviews/v2",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          topics: ["JavaScript", "TypeScript"],
-          difficulty: "interview-ready",
-          questionCount: 3,
-          operationId: "operation-1",
-          disclosureOperationId: "disclosure:start-1",
-        }),
-      }),
-    );
+    expectJsonRequest("/interviews/v2", {
+      topics: ["JavaScript", "TypeScript"],
+      difficulty: "interview-ready",
+      questionCount: 3,
+      operationId: "operation-1",
+      disclosureOperationId: "disclosure:start-1",
+    });
     expect(window.localStorage.getItem("dlh-interview-v2-start")).toBeNull();
   });
 
@@ -1873,6 +1900,7 @@ describe("versioned interview workflow", () => {
       interviewRoutes({
         extra: {
           "/interviews/v2/current?learningSessionId=session-1": response,
+          "/learning/sessions/v2/session-1": linkedSessionFixture(),
         },
       }),
     );
@@ -1893,6 +1921,7 @@ describe("versioned interview workflow", () => {
         extra: {
           "/interviews/v2/current?learningSessionId=session-1":
             currentInterviewResponse(null, "session-1"),
+          "/learning/sessions/v2/session-1": linkedSessionFixture(),
         },
       }),
     );
@@ -1915,6 +1944,7 @@ describe("versioned interview workflow", () => {
         extra: {
           "/interviews/v2/current?learningSessionId=session-1":
             currentInterviewResponse(null, "session-1"),
+          "/learning/sessions/v2/session-1": linkedSessionFixture(),
         },
       }),
     );
@@ -1932,19 +1962,12 @@ describe("versioned interview workflow", () => {
     expect(
       await screen.findByRole("link", { name: "Вернуться к занятию" }),
     ).toHaveAttribute("href", "/session?id=session-1");
-    expect(apiMock).toHaveBeenCalledWith(
-      "/interviews/v2",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          operationId: "operation-1",
-          topics: ["JavaScript"],
-          difficulty: "interview-ready",
-          questionCount: 3,
-          learningSessionId: "session-1",
-        }),
-      }),
-    );
+    expectJsonRequest("/interviews/v2", {
+      operationId: "operation-1",
+      questionCount: 3,
+      learningSessionId: "session-1",
+      unitId: "unit-interview-1",
+    });
   });
 
   it("masks a latest report associated with another learning session", async () => {

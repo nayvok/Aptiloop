@@ -86,7 +86,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       failure?: ConstructorParameters<typeof ApiError>[2];
     } | null;
     throw new ApiError(
-      body?.error ?? `Request failed (${response.status})`,
+      `Request failed (${response.status})`,
       response.status,
       body?.failure,
       body?.code,
@@ -116,7 +116,7 @@ export async function* streamAgent(
       failure?: ConstructorParameters<typeof ApiError>[2];
     } | null;
     throw new ApiError(
-      body?.error ?? `Stream failed (${response.status})`,
+      `Stream failed (${response.status})`,
       response.status,
       body?.failure,
     );
@@ -125,26 +125,45 @@ export async function* streamAgent(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        completed = true;
+      }
+      buffer += decoder.decode(value, { stream: !done });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
 
-    for (const frame of frames) {
-      const line = frame
-        .split("\n")
-        .find((candidate) => candidate.startsWith("data:"));
-      if (line) {
-        const event = parseBrowserAgentEvent(line.slice(5).trim());
-        if (!event) {
-          throw new ApiError("Agent stream returned an invalid event", 502);
+      for (const frame of frames) {
+        const line = frame
+          .split("\n")
+          .find((candidate) => candidate.startsWith("data:"));
+        if (line) {
+          const event = parseBrowserAgentEvent(line.slice(5).trim());
+          if (!event) {
+            throw new ApiError("Agent stream returned an invalid event", 502);
+          }
+          yield event;
         }
-        yield event;
+      }
+
+      if (done) break;
+    }
+  } finally {
+    if (!completed) {
+      try {
+        await reader.cancel("Agent stream consumption stopped");
+      } catch {
+        // Cleanup must not replace an event parsing or transport failure.
       }
     }
-
-    if (done) break;
+    try {
+      reader.releaseLock();
+    } catch {
+      // Cleanup must not replace an event parsing or transport failure.
+    }
   }
 }

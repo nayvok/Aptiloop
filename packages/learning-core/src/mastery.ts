@@ -161,7 +161,7 @@ export function applyMasteryEvidenceBatch(
   const ordered = [...evidence].sort(
     (left, right) =>
       parseInstant(left.occurredAt) - parseInstant(right.occurredAt) ||
-      left.id.localeCompare(right.id),
+      compareStrings(left.id, right.id),
   );
   return ordered.reduce(
     (current, item) => applyMasteryEvidence(current, item).profile,
@@ -221,4 +221,8 @@ function clamp(value: number, min: number, max: number): number {
 
 function round(value: number): number {
   return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }

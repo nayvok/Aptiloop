@@ -93,7 +93,6 @@ export function resolveRouteTitleKey(
   }
   if (isAtOrBelow(pathname, "/skills")) return "nav.skills";
 
-  if (isAtOrBelow(pathname, "/chat")) return "chat.page.title";
   if (isAtOrBelow(pathname, "/settings/developer-tools")) {
     return "ui.developerTools.title";
   }

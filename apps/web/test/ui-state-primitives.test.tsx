@@ -5,6 +5,7 @@ import { QueryError, SafeQueryError } from "@/components/query-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LocaleProvider } from "@/lib/i18n";
+import { presentCoursePackDiagnostic } from "@/lib/failure-presentation";
 
 let isOnline = true;
 
@@ -201,6 +202,8 @@ describe("honest UI state primitives", () => {
     "diagnostic with spaces",
     `diagnostic-${"x".repeat(200)}`,
     "diagnostic\u0000secret",
+    "sk-super-secret-sentinel",
+    "credential:private-value",
     "<script>diagnostic</script>",
   ])("rejects an unsafe diagnostic ID: %s", (diagnosticId) => {
     renderLocalized(
@@ -221,6 +224,55 @@ describe("honest UI state primitives", () => {
     );
     expect(screen.getByRole("alert")).not.toHaveTextContent(diagnosticId);
     expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
+  });
+
+  it("never renders private paths, SQL errors, stacks, or secret-like sentinels passed as diagnostics", () => {
+    const sentinels = [
+      "C:\\Users\\yan\\private\\database.sqlite",
+      "SQLITE_ERROR: no such table: provider_credentials",
+      "Error: failed\n    at internalServer (server.ts:42:7)",
+      "sk-super-secret-sentinel",
+    ];
+
+    const { rerender } = renderLocalized(
+      <QueryError
+        message="Aptiloop Core is unavailable."
+        diagnostic={sentinels[0] ?? ""}
+      />,
+    );
+
+    for (const sentinel of sentinels) {
+      rerender(
+        <LocaleProvider initialLocale="en-US" syncSettings={false}>
+          <QueryError
+            message="Aptiloop Core is unavailable."
+            diagnostic={sentinel}
+          />
+        </LocaleProvider>,
+      );
+      expect(screen.getByRole("alert")).not.toHaveTextContent(sentinel);
+      expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps classified Course Pack validation guidance without trusting its message", () => {
+    const t = (key: string) =>
+      key === "courses.validation.diagnostic.unsafe"
+        ? "Remove the unsafe value from this field."
+        : key;
+    const presentation = presentCoursePackDiagnostic(
+      {
+        code: "PACK_AUTHORITY_FIELD",
+        path: "/command",
+      },
+      t,
+    );
+
+    expect(presentation).toEqual({
+      code: "PACK_AUTHORITY_FIELD",
+      path: "/command",
+      message: "Remove the unsafe value from this field.",
+    });
   });
 
   it("provides warning alerts and underline-free segmented and rail tabs", () => {

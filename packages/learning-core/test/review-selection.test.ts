@@ -77,6 +77,19 @@ describe("review topic selection", () => {
     expect(selected.map((item) => item.topic.topicId)).toEqual(["a", "b", "z"]);
   });
 
+  it("uses portable code-unit ordering for equal-priority topic IDs", () => {
+    const selected = selectReviewTopics(
+      [
+        { ...baseTopic, topicId: "ä" },
+        { ...baseTopic, topicId: "z" },
+      ],
+      { limit: 2 },
+      clock,
+    );
+
+    expect(selected.map((item) => item.topic.topicId)).toEqual(["z", "ä"]);
+  });
+
   it("never mutates the input order", () => {
     const topics = [
       { ...baseTopic, topicId: "second", repeatedErrorCount: 0 },

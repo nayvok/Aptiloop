@@ -218,7 +218,7 @@ describe("curriculum authoring", () => {
       .prepare("DELETE FROM courses WHERE id = ?")
       .run("missing-course");
 
-    await expect(repository.getVersionGraph(draft.id)).rejects.toThrow(
+    expect(() => repository.getVersionGraph(draft.id)).toThrow(
       `Unknown Course for curriculum version: ${draft.id}`,
     );
   });
@@ -440,7 +440,7 @@ describe("curriculum authoring", () => {
         )
         .get(),
     ).toEqual({ count: 0 });
-    await expect(
+    expect(() =>
       repository.addUnit({
         versionId: draft.id,
         dayId: day.id,
@@ -452,7 +452,7 @@ describe("curriculum authoring", () => {
         depthLevel: "foundation",
         payload: { type: "study", body: "Late" },
       }),
-    ).rejects.toThrow(/immutable/i);
+    ).toThrow(/immutable/i);
 
     const clone = await repository.cloneRevision(published.id, {
       title: "Second revision",
@@ -558,9 +558,9 @@ describe("curriculum authoring", () => {
       title: "Collision week",
     });
 
-    await expect(
-      sourceRepository.cloneRevision(publishedSource.id),
-    ).rejects.toThrow(/unique constraint/i);
+    expect(() => sourceRepository.cloneRevision(publishedSource.id)).toThrow(
+      /unique constraint/i,
+    );
     expect(
       connection.sqlite
         .prepare(

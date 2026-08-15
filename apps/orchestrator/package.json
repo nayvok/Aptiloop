@@ -15,7 +15,6 @@
   "dependencies": {
     "@aptiloop/agent-core": "0.1.0",
     "@aptiloop/course-authoring-kit": "0.1.0",
-    "@aptiloop/codex-provider": "0.1.0",
     "@aptiloop/database": "0.1.0",
     "@aptiloop/exercise-core": "0.1.0",
     "@aptiloop/learning-core": "0.1.0",

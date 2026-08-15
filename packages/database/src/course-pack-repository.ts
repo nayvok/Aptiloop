@@ -9,6 +9,7 @@ import {
 } from "@aptiloop/course-authoring-kit";
 import { CourseOperationIdSchema } from "@aptiloop/shared";
 
+import { adaptationBranchIdForRevision } from "./adaptation-branch.js";
 import { withTransaction, type DatabaseConnection } from "./database.js";
 
 const REQUIRED_M3_TABLES = [
@@ -208,6 +209,9 @@ export class CoursePackRepository {
       }
 
       const now = this.#now();
+      if (input.action === "install") {
+        this.#assertCourseHasNoActiveSession(pack.course.courseKey);
+      }
       this.#assertInstallIdentity(pack);
       this.#insertCompatibilityGraph(pack, now);
       this.#applyPackTargetMetadata(pack);
@@ -230,10 +234,14 @@ export class CoursePackRepository {
           now,
         );
       this.#insertPackMetadata(pack);
+      if (input.action === "install") {
+        this.#prepareInstalledPersonalBranch(pack, now);
+      }
       this.#publishManifestRevision(pack, now);
 
       let resultRevisionId = pack.revision.revisionKey;
       if (input.action === "install") {
+        this.#activateInstalledRevisionBranch(pack, now);
         this.#connection.sqlite
           .prepare(
             `UPDATE courses SET active_revision_id = ?, title = ?,
@@ -260,6 +268,14 @@ export class CoursePackRepository {
             now,
             pack.course.courseKey,
           );
+        this.#connection.sqlite
+          .prepare(
+            `UPDATE learner_course_states
+             SET active_revision_id = ?, current_learning_session_id = NULL,
+                 updated_at = MAX(created_at, ?)
+             WHERE course_id = ?`,
+          )
+          .run(pack.revision.revisionKey, now, pack.course.courseKey);
       } else {
         resultRevisionId = this.#createEditableDraft(pack, now);
         this.#archiveManifestRevision(pack, now);
@@ -470,15 +486,10 @@ export class CoursePackRepository {
       this.#connection.sqlite
         .prepare(
           `UPDATE adaptation_branches SET status = 'archived', updated_at = ?
-           WHERE course_id = ? AND base_revision_id = ? AND status = 'active'
-             AND NOT EXISTS (
-               SELECT 1 FROM curriculum_versions revision
-               WHERE revision.adaptation_branch_id = adaptation_branches.id
-                 AND revision.branch_kind = 'personal'
-                 AND revision.status IN ('draft', 'published')
-             )`,
+           WHERE course_id = ? AND status = 'active'
+             AND (base_revision_id = ? OR head_revision_id = ?)`,
         )
-        .run(now, revision.course_id, input.revisionId);
+        .run(now, revision.course_id, input.revisionId, input.revisionId);
       this.#connection.sqlite
         .prepare(
           `UPDATE learner_state
@@ -506,6 +517,29 @@ export class CoursePackRepository {
              )`,
         )
         .run(revision.course_id, input.revisionId);
+      this.#connection.sqlite
+        .prepare(
+          `UPDATE learner_course_states
+           SET is_selected = 1, updated_at = MAX(updated_at, ?)
+           WHERE course_id = (
+             SELECT state.course_id
+             FROM learner_course_states state
+             JOIN course_revisions revision
+               ON revision.course_id = state.course_id
+              AND revision.id = state.active_revision_id
+             JOIN curriculum_versions source
+               ON source.curriculum_id = revision.course_id
+              AND source.id = revision.id
+             WHERE revision.status = 'published'
+               AND source.status = 'published'
+             ORDER BY state.updated_at DESC, state.course_id
+             LIMIT 1
+           )
+             AND NOT EXISTS (
+               SELECT 1 FROM learner_course_states WHERE is_selected = 1
+             )`,
+        )
+        .run(now);
       const retainedEvidenceCount = this.#evidenceCount(input.revisionId);
       this.#connection.sqlite
         .prepare(
@@ -1042,58 +1076,41 @@ export class CoursePackRepository {
       .get(revisionId) as { id: string } | undefined;
     if (existing) return existing.id;
 
-    const activeBranch = this.#connection.sqlite
+    const matchingBranchId = adaptationBranchIdForRevision(
+      pack.course.courseKey,
+      pack.revision.revisionKey,
+    );
+    const matchingBranch = this.#connection.sqlite
       .prepare(
-        `SELECT id, base_revision_id FROM adaptation_branches
-         WHERE course_id = ? AND status = 'active'
-         ORDER BY id LIMIT 1`,
+        `SELECT id, base_revision_id, status FROM adaptation_branches
+         WHERE course_id = ? AND id = ?`,
       )
-      .get(pack.course.courseKey) as
-      { id: string; base_revision_id: string } | undefined;
+      .get(pack.course.courseKey, matchingBranchId) as
+      | {
+          id: string;
+          base_revision_id: string;
+          status: "active" | "archived";
+        }
+      | undefined;
     if (
-      activeBranch &&
-      activeBranch.base_revision_id !== pack.revision.revisionKey
+      matchingBranch &&
+      matchingBranch.base_revision_id !== pack.revision.revisionKey
     ) {
-      const existingPersonalRevision = this.#connection.sqlite
-        .prepare(
-          `SELECT id FROM curriculum_versions
-           WHERE adaptation_branch_id = ?
-             AND branch_kind = 'personal'
-             AND status IN ('draft', 'published')
-           LIMIT 1`,
-        )
-        .get(activeBranch.id) as { id: string } | undefined;
-      if (existingPersonalRevision) {
-        throw new CoursePackRepositoryError(
-          "conflict",
-          "Active personal adaptation must be integrated before opening this Course Pack as a draft",
-        );
-      }
-      this.#connection.sqlite
-        .prepare(
-          `UPDATE adaptation_branches
-           SET status = 'archived', updated_at = ?
-           WHERE id = ? AND course_id = ? AND status = 'active'`,
-        )
-        .run(now, activeBranch.id, pack.course.courseKey);
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Personal adaptation branch identity is bound to another revision",
+      );
     }
-    const reusableBranch =
-      activeBranch?.base_revision_id === pack.revision.revisionKey
-        ? activeBranch
-        : undefined;
-    const adaptationBranchId =
-      reusableBranch?.id ??
-      scopedId("branch", pack.revision.revisionKey, "local");
-    if (!reusableBranch) {
+    if (!matchingBranch) {
       this.#connection.sqlite
         .prepare(
           `INSERT INTO adaptation_branches
            (id, course_id, owner, base_revision_id, head_revision_id, status,
             created_at, updated_at)
-           VALUES (?, ?, 'local', ?, NULL, 'active', ?, ?)`,
+           VALUES (?, ?, 'local', ?, NULL, 'archived', ?, ?)`,
         )
         .run(
-          adaptationBranchId,
+          matchingBranchId,
           pack.course.courseKey,
           pack.revision.revisionKey,
           now,
@@ -1112,10 +1129,244 @@ export class CoursePackRepository {
       parentRevisionId: pack.revision.revisionKey,
       branchKind: "personal",
       basedOnContentHash: pack.revision.contentHash,
-      adaptationBranchId,
+      adaptationBranchId: matchingBranchId,
     });
     this.#applyPackActivityMetadata(pack, revisionId);
     return revisionId;
+  }
+
+  #activateInstalledRevisionBranch(pack: CoursePackV1, now: number): void {
+    const branchId = adaptationBranchIdForRevision(
+      pack.course.courseKey,
+      pack.revision.revisionKey,
+    );
+    const baseRevisionId =
+      pack.revision.branchKind === "upstream"
+        ? pack.revision.revisionKey
+        : pack.revision.parentRevisionKey!;
+    const headRevisionId =
+      pack.revision.branchKind === "personal"
+        ? pack.revision.revisionKey
+        : null;
+    const activeBranches = this.#connection.sqlite
+      .prepare(
+        `SELECT id, base_revision_id
+         FROM adaptation_branches
+         WHERE course_id = ? AND status = 'active'
+         ORDER BY id`,
+      )
+      .all(pack.course.courseKey) as Array<{
+      id: string;
+      base_revision_id: string;
+    }>;
+    if (activeBranches.length > 1) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Course has ambiguous active personal adaptation branches",
+      );
+    }
+    const active = activeBranches[0];
+    if (active?.id === branchId) {
+      if (active.base_revision_id !== baseRevisionId) {
+        throw new CoursePackRepositoryError(
+          "conflict",
+          "Personal adaptation branch identity is bound to another revision",
+        );
+      }
+      this.#setInstalledBranchHead(
+        pack.course.courseKey,
+        branchId,
+        headRevisionId,
+        now,
+      );
+      return;
+    }
+    if (active) {
+      this.#connection.sqlite
+        .prepare(
+          `UPDATE adaptation_branches
+           SET status = 'archived', updated_at = ?
+           WHERE course_id = ? AND id = ? AND status = 'active'`,
+        )
+        .run(now, pack.course.courseKey, active.id);
+    }
+
+    const reusable = this.#connection.sqlite
+      .prepare(
+        `SELECT base_revision_id, status
+         FROM adaptation_branches
+         WHERE course_id = ? AND id = ?`,
+      )
+      .get(pack.course.courseKey, branchId) as
+      { base_revision_id: string; status: "active" | "archived" } | undefined;
+    if (reusable) {
+      if (reusable.base_revision_id !== baseRevisionId) {
+        throw new CoursePackRepositoryError(
+          "conflict",
+          "Personal adaptation branch identity is bound to another revision",
+        );
+      }
+      this.#connection.sqlite
+        .prepare(
+          `UPDATE adaptation_branches
+           SET status = 'active', updated_at = ?
+           WHERE course_id = ? AND id = ? AND status = 'archived'`,
+        )
+        .run(now, pack.course.courseKey, branchId);
+      this.#setInstalledBranchHead(
+        pack.course.courseKey,
+        branchId,
+        headRevisionId,
+        now,
+      );
+      return;
+    }
+    this.#connection.sqlite
+      .prepare(
+        `INSERT INTO adaptation_branches
+         (id, course_id, owner, base_revision_id, head_revision_id, status,
+          created_at, updated_at)
+         VALUES (?, ?, 'local', ?, ?, 'active', ?, ?)`,
+      )
+      .run(
+        branchId,
+        pack.course.courseKey,
+        baseRevisionId,
+        headRevisionId,
+        now,
+        now,
+      );
+  }
+
+  #assertCourseHasNoActiveSession(courseId: string): void {
+    const activeSession = this.#connection.sqlite
+      .prepare(
+        `SELECT session.id
+         FROM learning_sessions session
+         JOIN session_course_contexts context ON context.session_id = session.id
+         WHERE context.course_id = ? AND session.status = 'active'
+         LIMIT 1`,
+      )
+      .get(courseId);
+    if (activeSession) {
+      throw new CoursePackRepositoryError(
+        "active_session",
+        "Complete the active Course session before installing another revision",
+      );
+    }
+  }
+
+  #prepareInstalledPersonalBranch(pack: CoursePackV1, now: number): void {
+    if (pack.revision.branchKind !== "personal") return;
+    const baseRevisionId = pack.revision.parentRevisionKey;
+    if (!baseRevisionId) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Personal Course Pack revision has no immutable upstream parent",
+      );
+    }
+    const branchId = adaptationBranchIdForRevision(
+      pack.course.courseKey,
+      pack.revision.revisionKey,
+    );
+    const activeBranches = this.#connection.sqlite
+      .prepare(
+        `SELECT id FROM adaptation_branches
+         WHERE course_id = ? AND status = 'active'
+         ORDER BY id`,
+      )
+      .all(pack.course.courseKey) as Array<{ id: string }>;
+    if (activeBranches.length > 1) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Course has ambiguous active personal adaptation branches",
+      );
+    }
+    const active = activeBranches[0];
+    if (active && active.id !== branchId) {
+      this.#connection.sqlite
+        .prepare(
+          `UPDATE adaptation_branches
+           SET status = 'archived', updated_at = ?
+           WHERE course_id = ? AND id = ? AND status = 'active'`,
+        )
+        .run(now, pack.course.courseKey, active.id);
+    }
+    const existing = this.#connection.sqlite
+      .prepare(
+        `SELECT base_revision_id, head_revision_id, status
+         FROM adaptation_branches WHERE course_id = ? AND id = ?`,
+      )
+      .get(pack.course.courseKey, branchId) as
+      | {
+          base_revision_id: string;
+          head_revision_id: string | null;
+          status: "active" | "archived";
+        }
+      | undefined;
+    if (existing) {
+      if (
+        existing.base_revision_id !== baseRevisionId ||
+        existing.head_revision_id !== null
+      ) {
+        throw new CoursePackRepositoryError(
+          "conflict",
+          "Personal adaptation branch identity is already occupied",
+        );
+      }
+      if (existing.status === "archived") {
+        this.#connection.sqlite
+          .prepare(
+            `UPDATE adaptation_branches
+             SET status = 'active', updated_at = ?
+             WHERE course_id = ? AND id = ? AND status = 'archived'`,
+          )
+          .run(now, pack.course.courseKey, branchId);
+      }
+    } else {
+      this.#connection.sqlite
+        .prepare(
+          `INSERT INTO adaptation_branches
+           (id, course_id, owner, base_revision_id, head_revision_id, status,
+            created_at, updated_at)
+           VALUES (?, ?, 'local', ?, NULL, 'active', ?, ?)`,
+        )
+        .run(branchId, pack.course.courseKey, baseRevisionId, now, now);
+    }
+    const classified = this.#connection.sqlite
+      .prepare(
+        `UPDATE curriculum_versions
+         SET adaptation_branch_id = ?, updated_at = ?
+         WHERE id = ? AND curriculum_id = ? AND status = 'draft'
+           AND branch_kind = 'personal'`,
+      )
+      .run(branchId, now, pack.revision.revisionKey, pack.course.courseKey);
+    if (classified.changes !== 1) {
+      throw new Error("Personal Course Pack branch could not be classified");
+    }
+  }
+
+  #setInstalledBranchHead(
+    courseId: string,
+    branchId: string,
+    headRevisionId: string | null,
+    now: number,
+  ): void {
+    if (headRevisionId === null) return;
+    const result = this.#connection.sqlite
+      .prepare(
+        `UPDATE adaptation_branches
+         SET head_revision_id = ?, updated_at = ?
+         WHERE course_id = ? AND id = ? AND status = 'active'
+           AND (head_revision_id IS NULL OR head_revision_id = ?)`,
+      )
+      .run(headRevisionId, now, courseId, branchId, headRevisionId);
+    if (result.changes !== 1) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Personal adaptation branch head is already occupied",
+      );
+    }
   }
 
   #archiveManifestRevision(pack: CoursePackV1, now: number): void {

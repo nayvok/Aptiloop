@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,6 +20,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createApp, type AppOptions } from "../src/app.js";
+import { tutorTurnMessageKey } from "../src/tutor-message-scope.js";
 import { seedDevelopmentDatabase } from "./development-database-fixture.js";
 import { testDevelopmentProviderFixture } from "./provider-development-fixture.js";
 
@@ -30,6 +32,10 @@ const rawToolPayload = "raw-tool-payload-must-not-leak";
 const timestamp = "2026-08-08T00:00:00.000Z";
 const roots: string[] = [];
 const runtimes: Array<{ close(): Promise<void> }> = [];
+const runtimeStates = new WeakMap<
+  Hono,
+  ReturnType<typeof createApp>["state"]
+>();
 
 const browserEventSchema = z.discriminatedUnion("type", [
   z
@@ -490,11 +496,12 @@ function runtime(options: AppOptions = {}) {
       : {}),
   });
   runtimes.push(created);
+  runtimeStates.set(created.app, created.state);
   return created;
 }
 
 async function startActiveVersionedSession(
-  current: ReturnType<typeof createApp>,
+  current: Pick<ReturnType<typeof createApp>, "state">,
   idempotencyKey: string,
   dayOffset = 0,
 ): Promise<string> {
@@ -519,17 +526,71 @@ async function startActiveVersionedSession(
   return detail.session.id;
 }
 
-const request = (app: Hono, requestPath: string, init?: RequestInit) =>
-  app.request(`http://127.0.0.1:8787${requestPath}`, {
-    ...init,
+const request = async (app: Hono, requestPath: string, init?: RequestInit) => {
+  let requestInit = init;
+  if (
+    ["/api/agent/stream", "/api/ai/disclosures"].includes(requestPath) &&
+    typeof init?.body === "string"
+  ) {
+    const candidate = JSON.parse(init.body) as Record<string, unknown>;
+    if (candidate.role === "teacher") {
+      const state = runtimeStates.get(app);
+      if (!state) throw new Error("Missing test runtime state");
+      if (typeof candidate.sessionId !== "string") {
+        candidate.sessionId = await startActiveVersionedSession(
+          { state },
+          `agent-policy-${randomUUID()}`,
+        );
+      }
+      if (typeof candidate.unitId !== "string") {
+        try {
+          const detail = state.repository.getVersionedSession(
+            String(candidate.sessionId),
+          );
+          const unit = detail.snapshot.units.find(
+            (item) => item.type === "teacher-dialogue",
+          );
+          candidate.unitId = unit?.id ?? "missing-tutor-unit";
+          const progress = detail.unitProgress.find(
+            (item) => item.unitId === unit?.id,
+          );
+          if (
+            detail.session.status === "active" &&
+            unit &&
+            progress?.status !== "in_progress"
+          ) {
+            state.repository.updateUnitProgress({
+              sessionId: detail.session.id,
+              unitId: unit.id,
+              status: "in_progress",
+            });
+          }
+        } catch {
+          candidate.unitId = "missing-tutor-unit";
+        }
+      }
+      candidate.__scopeInjectedByTest = true;
+      requestInit = { ...init, body: JSON.stringify(candidate) };
+    }
+  }
+  if (typeof requestInit?.body === "string") {
+    const candidate = JSON.parse(requestInit.body) as Record<string, unknown>;
+    if (candidate.__scopeInjectedByTest === true) {
+      delete candidate.__scopeInjectedByTest;
+      requestInit = { ...requestInit, body: JSON.stringify(candidate) };
+    }
+  }
+  return app.request(`http://127.0.0.1:8787${requestPath}`, {
+    ...requestInit,
     headers: {
       Host: "127.0.0.1:8787",
       "X-Aptiloop-Client": "web",
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:3000",
-      ...init?.headers,
+      ...requestInit?.headers,
     },
   });
+};
 
 const themeMutation = { theme: "system" } as const;
 
@@ -682,7 +743,7 @@ describe("M1 agent policy boundary", () => {
     );
     expect(completedResponse.status).toBe(409);
     expect(await completedResponse.json()).toEqual({
-      error: "Agent turns require an active versioned learning session",
+      error: "Tutor turns require an active versioned learning session",
     });
 
     const noncurrentMock = new ScriptedProvider();
@@ -772,6 +833,7 @@ describe("M1 agent policy boundary", () => {
     expect(mock.createInputs).toHaveLength(1);
     expect(mock.createInputs[0]?.metadata).toEqual({
       learningSessionId: sessionId,
+      learningUnitId: expect.any(String),
     });
     expect(
       current.state.connection.sqlite
@@ -781,6 +843,101 @@ describe("M1 agent policy boundary", () => {
         )
         .get(),
     ).toEqual({ learningSessionId: sessionId });
+  });
+
+  it("keeps Tutor transcript and prior dialogue in the exact unit scope", async () => {
+    const mock = new ScriptedProvider();
+    const current = runtime({ providers: { mock } });
+    const sessionId = await startActiveVersionedSession(
+      current,
+      "agent-policy-exact-tutor-unit-scope",
+    );
+    const detail = current.state.repository.getVersionedSession(sessionId);
+    const unit = detail.snapshot.units.find(
+      (candidate) => candidate.type === "teacher-dialogue",
+    );
+    if (!unit || unit.payload.type !== "teacher-dialogue") {
+      throw new Error("Missing Tutor unit fixture");
+    }
+    current.state.repository.updateUnitProgress({
+      sessionId,
+      unitId: unit.id,
+      status: "in_progress",
+    });
+
+    const first = await request(current.app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({
+        role: "teacher",
+        sessionId,
+        unitId: unit.id,
+        message: "Exact unit first turn",
+      }),
+    });
+    expect(first.status).toBe(200);
+    const firstEvents = parseSse(await first.text());
+    const firstTurnId = firstEvents[0]?.turnId;
+    if (!firstTurnId) throw new Error("Missing first Tutor turn ID");
+    const conversationId = [...current.state.providerSessions.values()][0]
+      ?.conversationId;
+    if (!conversationId) throw new Error("Missing Tutor conversation");
+
+    const siblingUnitId = `${unit.id}:advanced`;
+    current.state.repository.addMessage({
+      conversationId,
+      role: "user",
+      content: "sibling-unit-user-sentinel",
+      idempotencyKey: tutorTurnMessageKey(
+        siblingUnitId,
+        "sibling-turn",
+        "user",
+      ),
+    });
+    current.state.repository.addMessage({
+      conversationId,
+      role: "assistant",
+      content: "sibling-unit-assistant-sentinel",
+      idempotencyKey: tutorTurnMessageKey(
+        siblingUnitId,
+        "sibling-turn",
+        "assistant",
+      ),
+    });
+    current.state.repository.addMessage({
+      conversationId,
+      role: "user",
+      content: "legacy-raw-prefix-sentinel",
+      idempotencyKey: `tutor-unit:${unit.id}:agent-turn:legacy-turn:user`,
+    });
+
+    const transcript = await request(
+      current.app,
+      `/api/learning/sessions/v2/${encodeURIComponent(sessionId)}/units/${encodeURIComponent(unit.id)}/teacher-transcript`,
+    );
+    expect(transcript.status).toBe(200);
+    const transcriptText = JSON.stringify(await transcript.json());
+    expect(transcriptText).toContain("Exact unit first turn");
+    expect(transcriptText).not.toContain("sibling-unit");
+    expect(transcriptText).not.toContain("legacy-raw-prefix-sentinel");
+
+    const second = await request(current.app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({
+        role: "teacher",
+        sessionId,
+        unitId: unit.id,
+        message: "Exact unit second turn",
+      }),
+    });
+    expect(second.status).toBe(200);
+    await second.text();
+    const providerPayload = JSON.parse(
+      mock.streamInputs[1]?.message ?? "null",
+    ) as { priorDialogue?: Array<{ content: string }> };
+    const priorDialogue = JSON.stringify(providerPayload.priorDialogue ?? []);
+    expect(priorDialogue).toContain("Exact unit first turn");
+    expect(priorDialogue).not.toContain("sibling-unit");
+    expect(priorDialogue).not.toContain("legacy-raw-prefix-sentinel");
   });
 
   it("cancels and drains a hanging provider stream before closing SQLite", async () => {
@@ -905,104 +1062,86 @@ describe("M1 agent policy boundary", () => {
     runtimes.splice(runtimes.indexOf(current), 1);
   });
 
-  it.each(["createConversation", "addMessage"] as const)(
-    "drains a shutdown-gated new-session %s before closing SQLite",
-    async (phase) => {
-      let markSetupStarted!: () => void;
-      const setupStarted = new Promise<void>((resolve) => {
-        markSetupStarted = resolve;
-      });
-      let releaseSetup!: () => void;
-      const setupRelease = new Promise<void>((resolve) => {
-        releaseSetup = resolve;
-      });
-      const lifecycle: string[] = [];
-      let conversationsAtClose: number | undefined;
-      const mock = new ScriptedProvider({
-        onCancel: () => {
-          lifecycle.push("provider-cancelled");
-        },
-      });
-      const current = runtime({ providers: { mock } });
-      const closeDatabase = current.state.connection.close.bind(
-        current.state.connection,
-      );
-      vi.spyOn(current.state.connection, "close").mockImplementation(() => {
-        conversationsAtClose = (
-          current.state.connection.sqlite
-            .prepare(
-              "SELECT count(*) AS count FROM agent_conversations WHERE role = 'teacher'",
-            )
-            .get() as { count: number }
-        ).count;
-        lifecycle.push("database-closed");
-        closeDatabase();
-      });
-      if (phase === "createConversation") {
-        const createConversation =
-          current.state.repository.createConversation.bind(
-            current.state.repository,
-          );
-        vi.spyOn(
-          current.state.repository,
-          "createConversation",
-        ).mockImplementationOnce(async (input) => {
-          lifecycle.push("repository-started");
-          markSetupStarted();
-          await setupRelease;
-          return createConversation(input);
-        });
-      } else {
-        const addMessage = current.state.repository.addMessage.bind(
-          current.state.repository,
-        );
-        vi.spyOn(current.state.repository, "addMessage").mockImplementationOnce(
-          async (input) => {
-            lifecycle.push("repository-started");
-            markSetupStarted();
-            await setupRelease;
-            return addMessage(input);
-          },
-        );
-      }
-      const sessionId = await startActiveVersionedSession(
-        current,
-        `agent-policy-shutdown-${phase}`,
-      );
-      const responsePromise = request(current.app, "/api/agent/stream", {
-        method: "POST",
-        body: JSON.stringify({
-          role: "teacher",
-          sessionId,
-          message: "Wait during repository setup",
-        }),
-      });
-      await setupStarted;
+  it("drains shutdown-gated conversation creation before closing SQLite", async () => {
+    let markSetupStarted!: () => void;
+    const setupStarted = new Promise<void>((resolve) => {
+      markSetupStarted = resolve;
+    });
+    let releaseSetup!: () => void;
+    const setupRelease = new Promise<void>((resolve) => {
+      releaseSetup = resolve;
+    });
+    const lifecycle: string[] = [];
+    let conversationsAtClose: number | undefined;
+    const mock = new ScriptedProvider({
+      onCancel: () => {
+        lifecycle.push("provider-cancelled");
+      },
+    });
+    const current = runtime({ providers: { mock } });
+    const closeDatabase = current.state.connection.close.bind(
+      current.state.connection,
+    );
+    vi.spyOn(current.state.connection, "close").mockImplementation(() => {
+      conversationsAtClose = (
+        current.state.connection.sqlite
+          .prepare(
+            "SELECT count(*) AS count FROM agent_conversations WHERE role = 'teacher'",
+          )
+          .get() as { count: number }
+      ).count;
+      lifecycle.push("database-closed");
+      closeDatabase();
+    });
+    const createConversation = current.state.repository.createConversation.bind(
+      current.state.repository,
+    );
+    vi.spyOn(
+      current.state.repository,
+      "createConversation",
+    ).mockImplementationOnce(async (input) => {
+      lifecycle.push("repository-started");
+      markSetupStarted();
+      await setupRelease;
+      return createConversation(input);
+    });
+    const sessionId = await startActiveVersionedSession(
+      current,
+      "agent-policy-shutdown-create-conversation",
+    );
+    const responsePromise = request(current.app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({
+        role: "teacher",
+        sessionId,
+        message: "Wait during repository setup",
+      }),
+    });
+    await setupStarted;
 
-      current.beginShutdown();
-      const closePromise = current.close();
-      expect(lifecycle).toEqual(["repository-started"]);
-      releaseSetup();
-      const response = await responsePromise;
-      lifecycle.push("handler-settled");
-      await closePromise;
+    current.beginShutdown();
+    const closePromise = current.close();
+    expect(lifecycle).toEqual(["repository-started"]);
+    releaseSetup();
+    const response = await responsePromise;
+    lifecycle.push("handler-settled");
+    await closePromise;
 
-      expect(response.status).toBe(409);
-      expect(await response.json()).toEqual({ error: safeCancellation });
-      expect(mock.cancelCalls).toEqual([providerHandle]);
-      expect(current.state.providerSessions.size).toBe(0);
-      expect(current.state.activeProviderTurns.size).toBe(0);
-      expect(current.state.activeProviderTurnReservations.size).toBe(0);
-      expect(conversationsAtClose).toBe(0);
-      expect(lifecycle).toEqual([
-        "repository-started",
-        "provider-cancelled",
-        "database-closed",
-        "handler-settled",
-      ]);
-      runtimes.splice(runtimes.indexOf(current), 1);
-    },
-  );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: safeCancellation });
+    expect(mock.cancelCalls).toEqual([providerHandle]);
+    expect(current.state.providerSessions.size).toBe(0);
+    expect(current.state.activeProviderTurns.size).toBe(0);
+    expect(current.state.activeProviderTurnReservations.size).toBe(0);
+    expect(conversationsAtClose).toBe(0);
+    expect(lifecycle).toEqual([
+      "repository-started",
+      "provider-cancelled",
+      "handler-settled",
+      "database-closed",
+    ]);
+    runtimes.splice(runtimes.indexOf(current), 1);
+  });
 
   it("aborts and drains initial provider inspection before closing SQLite", async () => {
     let markInspectionStarted!: () => void;
@@ -1049,7 +1188,7 @@ describe("M1 agent policy boundary", () => {
 
     current.beginShutdown();
     await current.close();
-    await expect(responsePromise).resolves.toMatchObject({ status: 400 });
+    await expect(responsePromise).resolves.toMatchObject({ status: 409 });
 
     expect(mock.createInputs).toHaveLength(0);
     expect(current.state.providerSessions.size).toBe(0);
@@ -1077,8 +1216,10 @@ describe("M1 agent policy boundary", () => {
           "createConversation",
         ).mockRejectedValueOnce(new Error("injected conversation failure"));
       } else {
-        vi.spyOn(current.state.repository, "addMessage").mockRejectedValueOnce(
-          new Error("injected message failure"),
+        vi.spyOn(current.state.repository, "addMessage").mockImplementationOnce(
+          () => {
+            throw new Error("injected message failure");
+          },
         );
       }
 
@@ -1244,31 +1385,26 @@ describe("M1 agent policy boundary", () => {
       .uuid()
       .parse([...current.state.providerSessions.values()][0]?.conversationId);
 
-    let releaseUserPersistence!: () => void;
-    const userPersistenceGate = new Promise<void>((resolve) => {
-      releaseUserPersistence = resolve;
-    });
-    let markUserPersisted!: () => void;
-    const userPersisted = new Promise<void>((resolve) => {
-      markUserPersisted = resolve;
-    });
-    const originalAddMessage = current.state.repository.addMessage.bind(
-      current.state.repository,
+    const controller = new AbortController();
+    const originalRunSetup = current.state.providerRuntime.runSetup.bind(
+      current.state.providerRuntime,
     );
-    let delayNextUser = true;
-    vi.spyOn(current.state.repository, "addMessage").mockImplementation(
-      async (input) => {
-        const row = await originalAddMessage(input);
-        if (input.role === "user" && delayNextUser) {
-          delayNextUser = false;
-          markUserPersisted();
-          await userPersistenceGate;
+    let setupCalls = 0;
+    vi.spyOn(current.state.providerRuntime, "runSetup").mockImplementation(
+      async (operation, signal, onAbortedResult) => {
+        const result = await originalRunSetup(
+          operation,
+          signal,
+          onAbortedResult,
+        );
+        setupCalls += 1;
+        if (setupCalls === 2) {
+          controller.abort();
         }
-        return row;
+        return result;
       },
     );
 
-    const controller = new AbortController();
     const abortedResponsePromise = request(current.app, "/api/agent/stream", {
       method: "POST",
       signal: controller.signal,
@@ -1277,9 +1413,6 @@ describe("M1 agent policy boundary", () => {
         message: "Abort after committed setup",
       }),
     });
-    await userPersisted;
-    controller.abort();
-    releaseUserPersistence();
 
     const aborted = await abortedResponsePromise;
     expect(aborted.status).toBe(409);
@@ -1407,34 +1540,38 @@ describe("M1 agent policy boundary", () => {
       .uuid()
       .parse([...current.state.providerSessions.values()][0]?.conversationId);
 
-    let releaseUserPersistence!: () => void;
-    const userPersistenceGate = new Promise<void>((resolve) => {
-      releaseUserPersistence = resolve;
-    });
-    let markUserPersisted!: () => void;
-    const userPersisted = new Promise<void>((resolve) => {
-      markUserPersisted = resolve;
-    });
     const originalAddMessage = current.state.repository.addMessage.bind(
       current.state.repository,
     );
-    let delayNextUser = true;
+    const controller = new AbortController();
     vi.spyOn(current.state.repository, "addMessage").mockImplementation(
-      async (input) => {
+      (input) => {
         if (input.role === "assistant" && input.status === "cancelled") {
           throw new Error("injected cancellation persistence failure");
         }
-        const row = await originalAddMessage(input);
-        if (input.role === "user" && delayNextUser) {
-          delayNextUser = false;
-          markUserPersisted();
-          await userPersistenceGate;
-        }
+        const row = originalAddMessage(input);
         return row;
       },
     );
+    const originalRunSetup = current.state.providerRuntime.runSetup.bind(
+      current.state.providerRuntime,
+    );
+    let setupCalls = 0;
+    vi.spyOn(current.state.providerRuntime, "runSetup").mockImplementation(
+      async (operation, signal, onAbortedResult) => {
+        const result = await originalRunSetup(
+          operation,
+          signal,
+          onAbortedResult,
+        );
+        setupCalls += 1;
+        if (setupCalls === 2) {
+          controller.abort();
+        }
+        return result;
+      },
+    );
 
-    const controller = new AbortController();
     const responsePromise = request(current.app, "/api/agent/stream", {
       method: "POST",
       signal: controller.signal,
@@ -1443,10 +1580,6 @@ describe("M1 agent policy boundary", () => {
         message: "Abort before failed terminal persistence",
       }),
     });
-    await userPersisted;
-    controller.abort();
-    releaseUserPersistence();
-
     const response = await responsePromise;
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: safeFailure });
@@ -1891,9 +2024,20 @@ describe("M1 agent policy boundary", () => {
 
       expect(response.status).toBe(200);
       expect(mock.streamInputs).toHaveLength(1);
-      expect(mock.streamInputs[0]?.message).toBe(
-        "Explain this bounded learner question",
-      );
+      const providerPayload = z
+        .object({
+          task: z.literal("answer-within-lesson-scope"),
+          scope: z.object({
+            lesson: z.object({ topics: z.array(z.string()) }),
+            unit: z.object({
+              id: z.string(),
+              openingPrompt: z.string(),
+            }),
+          }),
+          learnerMessage: z.literal("Explain this bounded learner question"),
+        })
+        .parse(JSON.parse(mock.streamInputs[0]?.message ?? ""));
+      expect(providerPayload.scope.lesson.topics.length).toBeGreaterThan(0);
       const providerView = JSON.stringify({
         createInputs: mock.createInputs,
         streamInputs: mock.streamInputs,
@@ -1975,17 +2119,19 @@ describe("M1 agent policy boundary", () => {
       method: "POST",
       body: JSON.stringify({ role: "teacher", message: "Second bounded turn" }),
     });
-    expect(second.status).toBe(200);
-    expect(await second.text()).toContain(safeFailure);
+    expect(second.status).toBe(400);
+    expect(await second.json()).toMatchObject({
+      failure: { code: "budget_exceeded" },
+    });
     expect(mock.createInputs).toHaveLength(1);
-    expect(mock.cancelCalls).toEqual([providerHandle]);
+    expect(mock.cancelCalls).toEqual([]);
     expect(
       state.connection.sqlite
         .prepare(
           "SELECT status FROM agent_messages WHERE role = 'assistant' ORDER BY rowid",
         )
         .all(),
-    ).toEqual([{ status: "completed" }, { status: "failed" }]);
+    ).toEqual([{ status: "completed" }]);
   });
 
   it("rejects a concurrent turn without disturbing sequential session reuse", async () => {
@@ -2081,30 +2227,35 @@ describe("M1 agent policy boundary", () => {
   });
 
   it("holds the turn reservation through terminal assistant persistence", async () => {
-    let releaseAssistantPersistence!: () => void;
-    const assistantPersistenceGate = new Promise<void>((resolve) => {
-      releaseAssistantPersistence = resolve;
+    let releaseProvider!: () => void;
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
     });
-    let markAssistantPersistenceStarted!: () => void;
-    const assistantPersistenceStarted = new Promise<void>((resolve) => {
-      markAssistantPersistenceStarted = resolve;
+    let markProviderCompleted!: () => void;
+    const providerCompleted = new Promise<void>((resolve) => {
+      markProviderCompleted = resolve;
     });
-    const mock = new ScriptedProvider();
-    const { app, state } = runtime({ providers: { mock } });
-    const originalAddMessage = state.repository.addMessage.bind(
-      state.repository,
-    );
-    let gateFirstAssistant = true;
-    vi.spyOn(state.repository, "addMessage").mockImplementation(
-      async (input) => {
-        if (input.role === "assistant" && gateFirstAssistant) {
-          gateFirstAssistant = false;
-          markAssistantPersistenceStarted();
-          await assistantPersistenceGate;
-        }
-        return originalAddMessage(input);
+    const mock = new ScriptedProvider({
+      script: async function* (sessionId) {
+        yield {
+          type: "message.completed",
+          sessionId,
+          sequence: 0,
+          timestamp,
+          content: "Safe answer",
+        };
+        markProviderCompleted();
+        await providerGate;
+        yield {
+          type: "session.completed",
+          sessionId,
+          sequence: 1,
+          timestamp,
+          reason: "completed",
+        };
       },
-    );
+    });
+    const { app, state } = runtime({ providers: { mock } });
 
     const first = await request(app, "/api/agent/stream", {
       method: "POST",
@@ -2115,7 +2266,7 @@ describe("M1 agent policy boundary", () => {
     });
     expect(first.status).toBe(200);
     const firstBody = first.text();
-    await assistantPersistenceStarted;
+    await providerCompleted;
     expect(state.activeProviderTurnReservations.size).toBe(1);
 
     const concurrent = await request(app, "/api/agent/stream", {
@@ -2138,7 +2289,7 @@ describe("M1 agent policy boundary", () => {
         .all(),
     ).toEqual([{ role: "user", content: "First persisted turn" }]);
 
-    releaseAssistantPersistence();
+    releaseProvider();
     expect(await firstBody).toContain("Safe answer");
     expect(state.activeProviderTurnReservations.size).toBe(0);
 
@@ -2171,14 +2322,12 @@ describe("M1 agent policy boundary", () => {
     const originalAddMessage = state.repository.addMessage.bind(
       state.repository,
     );
-    vi.spyOn(state.repository, "addMessage").mockImplementation(
-      async (input) => {
-        if (input.role === "assistant") {
-          throw new Error("simulated persistence failure");
-        }
-        return originalAddMessage(input);
-      },
-    );
+    vi.spyOn(state.repository, "addMessage").mockImplementation((input) => {
+      if (input.role === "assistant") {
+        throw new Error("simulated persistence failure");
+      }
+      return originalAddMessage(input);
+    });
 
     const response = await request(app, "/api/agent/stream", {
       method: "POST",
@@ -2220,6 +2369,66 @@ describe("M1 agent policy boundary", () => {
     expect(mock.cancelCalls).toEqual([providerHandle]);
     expect(state.providerSessions.size).toBe(0);
     expect(state.activeProviderTurnReservations.size).toBe(0);
+  });
+
+  it("cancels a cached Tutor provider session when its connection is removed", async () => {
+    const mock = new ScriptedProvider();
+    const { app, state } = runtime({ providers: { mock } });
+    const response = await request(app, "/api/agent/stream", {
+      method: "POST",
+      body: JSON.stringify({ role: "teacher", message: "Cache this turn" }),
+    });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(state.providerSessions.size).toBe(1);
+    expect([...state.providerSessions.values()][0]?.connectionId).toBe(
+      "conn:mock",
+    );
+
+    vi.spyOn(state.providerManagement, "remove").mockResolvedValue();
+    const removed = await request(
+      app,
+      `/api/settings/ai/connections/${encodeURIComponent("conn:mock")}`,
+      { method: "DELETE", body: "{}" },
+    );
+
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({ removed: true });
+    expect(mock.cancelCalls).toEqual([providerHandle]);
+    expect(state.providerSessions.size).toBe(0);
+  });
+
+  it("cancels an externally scoped nested-key session by explicit connection ownership", async () => {
+    const mock = new ScriptedProvider({ sessionId: "nested-provider-session" });
+    const { app, state } = runtime({ providers: { mock } });
+    const nestedKey = JSON.stringify([
+      JSON.stringify([
+        "learning-session",
+        "learning-unit",
+        "teacher",
+        "conn:mock",
+        "mock-deterministic",
+      ]),
+      randomUUID(),
+    ]);
+    state.providerSessions.set(nestedKey, {
+      providerId: "mock",
+      connectionId: "conn:mock",
+      provider: mock,
+      providerSessionId: mock.sessionId,
+      conversationId: randomUUID(),
+    });
+
+    vi.spyOn(state.providerManagement, "remove").mockResolvedValue();
+    const removed = await request(
+      app,
+      `/api/settings/ai/connections/${encodeURIComponent("conn:mock")}`,
+      { method: "DELETE", body: "{}" },
+    );
+
+    expect(removed.status).toBe(200);
+    expect(mock.cancelCalls).toEqual(["nested-provider-session"]);
+    expect(state.providerSessions.size).toBe(0);
   });
 
   it("cancels only through the opaque app-owned turn route", async () => {

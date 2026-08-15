@@ -38,6 +38,8 @@ export interface DatabaseConnection {
   close(): void;
 }
 
+const closedConnections = new WeakSet<DatabaseConnection>();
+
 export interface OpenDatabaseOptions {
   readonly?: boolean;
   fileMustExist?: boolean;
@@ -115,59 +117,102 @@ function openDatabaseInternal(
     throw error;
   }
 
-  return {
+  const connection: DatabaseConnection = {
     db: createDrizzleDatabase(sqlite),
     sqlite,
-    close: () => sqlite.close(),
+    close: () => closeDatabaseConnection(connection),
   };
+  return connection;
+}
+
+function closeDatabaseConnection(connection: DatabaseConnection): void {
+  if (closedConnections.has(connection)) return;
+  closedConnections.add(connection);
+  connection.sqlite.close();
 }
 
 let nestedTransactionId = 0;
+const asyncFunctionPrototype = Object.getPrototypeOf(
+  async () => undefined,
+) as object;
+
+type SynchronousTransactionResult<T> =
+  T extends PromiseLike<unknown> ? never : T;
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" || typeof value === "function") &&
+    value !== null &&
+    "then" in value &&
+    typeof value.then === "function"
+  );
+}
+
+const synchronousTransactionError =
+  "Database transaction callbacks must be synchronous";
+
+function rejectInvokedAsyncTransaction(
+  connection: DatabaseConnection,
+  result: PromiseLike<unknown>,
+  rollback: () => void,
+): never {
+  try {
+    rollback();
+  } catch {
+    // The connection is fail-stopped below even if SQLite cannot unwind cleanly.
+  }
+  try {
+    closeDatabaseConnection(connection);
+  } catch {
+    // Preserve the primary transaction contract error.
+  }
+  void Promise.resolve(result).catch(() => undefined);
+  throw new Error(synchronousTransactionError);
+}
 
 export function withTransaction<T>(
   connection: DatabaseConnection,
-  callback: () => T,
-): T {
+  callback: () => T & SynchronousTransactionResult<T>,
+): SynchronousTransactionResult<T> {
+  if (Object.getPrototypeOf(callback) === asyncFunctionPrototype) {
+    throw new Error(synchronousTransactionError);
+  }
+  if (closedConnections.has(connection)) {
+    throw new Error("Database connection is closed");
+  }
   if (connection.sqlite.isTransaction) {
     const savepoint = `aptiloop_nested_${nestedTransactionId++}`;
     connection.sqlite.exec(`SAVEPOINT ${savepoint}`);
     try {
       const result = callback();
+      if (isPromiseLike(result)) {
+        return rejectInvokedAsyncTransaction(connection, result, () => {
+          connection.sqlite.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          connection.sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+        });
+      }
       connection.sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
-      return result;
+      return result as SynchronousTransactionResult<T>;
     } catch (error) {
-      connection.sqlite.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-      connection.sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      if (!closedConnections.has(connection)) {
+        connection.sqlite.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        connection.sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      }
       throw error;
     }
   }
   connection.sqlite.exec("BEGIN IMMEDIATE");
   try {
     const result = callback();
+    if (isPromiseLike(result)) {
+      return rejectInvokedAsyncTransaction(connection, result, () => {
+        connection.sqlite.exec("ROLLBACK");
+      });
+    }
     connection.sqlite.exec("COMMIT");
-    return result;
+    return result as SynchronousTransactionResult<T>;
   } catch (error) {
-    connection.sqlite.exec("ROLLBACK");
-    throw error;
-  }
-}
-
-export async function withAsyncTransaction<T>(
-  connection: DatabaseConnection,
-  callback: () => Promise<T>,
-): Promise<T> {
-  if (connection.sqlite.isTransaction) {
-    throw new Error(
-      "Concurrent asynchronous database transactions are not allowed",
-    );
-  }
-  connection.sqlite.exec("BEGIN IMMEDIATE");
-  try {
-    const result = await callback();
-    connection.sqlite.exec("COMMIT");
-    return result;
-  } catch (error) {
-    connection.sqlite.exec("ROLLBACK");
+    if (!closedConnections.has(connection)) connection.sqlite.exec("ROLLBACK");
     throw error;
   }
 }
@@ -435,6 +480,7 @@ const learnerCourseStateTriggerGuardMigrationId =
   "0018_learner_course_state_trigger_guard";
 const providerConnectionRetirementMigrationId =
   "0019_provider_connection_retirement";
+const adaptationBranchLifecycleMigrationId = "0020_adaptation_branch_lifecycle";
 const legacyCompatibleMigrationIds = [
   "0000_initial",
   "0001_versioned_curriculum",
@@ -573,6 +619,15 @@ export const providerConnectionRetirementMigrationContract: CurrentDatabaseMigra
     schemaSha256:
       "118b7995755d1a4dde55f0685931f0283ba44ddff0929cb6e07e6ccf0ff098e1",
   };
+export const adaptationBranchLifecycleMigrationContract: CurrentDatabaseMigrationContract =
+  {
+    migrationIds: [
+      ...providerConnectionRetirementMigrationContract.migrationIds,
+      adaptationBranchLifecycleMigrationId,
+    ],
+    schemaSha256:
+      "a8b8ae44b994e8afe93b8436832d64c1c68103bae2731d4afd1ea385ff041021",
+  };
 const approvedM2SourceMigrationContracts = [
   legacyCompatibleMigrationContract,
   courseFoundationsBaseMigrationContract,
@@ -588,6 +643,7 @@ const approvedM2SourceMigrationContracts = [
   courseDesignerWorkflowMigrationContract,
   learnerCourseStateMigrationContract,
   learnerCourseStateTriggerGuardMigrationContract,
+  providerConnectionRetirementMigrationContract,
 ] as const;
 const approvedM2StageContracts: Readonly<
   Record<string, CurrentDatabaseMigrationContract>
@@ -612,6 +668,8 @@ const approvedM2StageContracts: Readonly<
     learnerCourseStateTriggerGuardMigrationContract,
   [providerConnectionRetirementMigrationId]:
     providerConnectionRetirementMigrationContract,
+  [adaptationBranchLifecycleMigrationId]:
+    adaptationBranchLifecycleMigrationContract,
 };
 
 const courseFoundationsBackfillMarker = "-- dlh-course-foundations-backfill";

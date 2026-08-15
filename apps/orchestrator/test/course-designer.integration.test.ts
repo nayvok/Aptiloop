@@ -752,7 +752,7 @@ describe("Course Designer", () => {
       attribution: {
         providerType: "mock",
         modelId: "mock-designer",
-        promptTemplateVersion: "v1.1.0",
+        promptTemplateVersion: "v1.2.0",
         provenance: { sourceIds: ["source:1"] },
         validation: { valid: true },
       },
@@ -989,6 +989,71 @@ describe("Course Designer", () => {
     expect(
       ((await retry.json()) as { workflow: { state: string } }).workflow.state,
     ).toBe("CURRICULUM_PROPOSAL");
+  });
+
+  it("rolls back every draft mutation when compilation fails partway", async () => {
+    const { app, connection, version } = await createRuntime({
+      summary: "Add two weeks with a conflicting order",
+      changes: [
+        {
+          kind: "add-week",
+          stableId: "first-week",
+          title: "First week",
+          orderIndex: 0,
+        },
+        {
+          kind: "add-week",
+          stableId: "second-week",
+          title: "Second week",
+          orderIndex: 0,
+        },
+      ],
+    });
+    const base = `/api/curriculum-editor/versions/${version.id}/designer`;
+    const workflowId = await startWorkflow(app, base);
+    const generated = await post(
+      app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/generate`,
+      { operationId: "proposal:rollback:generate" },
+    );
+    expect(generated.status).toBe(200);
+    const proposalId = (
+      (await generated.json()) as { proposal: { id: string } }
+    ).proposal.id;
+    const confirmed = await post(
+      app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/advance`,
+      { operationId: "proposal:rollback:confirm", action: "confirm-proposal" },
+    );
+    expect(confirmed.status).toBe(200);
+
+    const applied = await post(
+      app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/proposals/${encodeURIComponent(proposalId)}/apply`,
+      { operationId: "proposal:rollback:apply" },
+    );
+    expect(applied.status).toBe(500);
+    expect(
+      connection.sqlite
+        .prepare(
+          "SELECT stable_id FROM curriculum_weeks WHERE version_id = ? ORDER BY stable_id",
+        )
+        .all(version.id),
+    ).toEqual([]);
+    expect(
+      connection.sqlite
+        .prepare(
+          "SELECT status, reviewed_at FROM course_draft_proposals WHERE id = ?",
+        )
+        .get(proposalId),
+    ).toEqual({ status: "proposed", reviewed_at: null });
+    expect(
+      connection.sqlite
+        .prepare(
+          "SELECT state, recovery_state FROM course_designer_workflows WHERE id = ?",
+        )
+        .get(workflowId),
+    ).toEqual({ state: "FAILED", recovery_state: "COMPILATION" });
   });
 
   it("applies targeted edits reproducibly from the same provider output", async () => {

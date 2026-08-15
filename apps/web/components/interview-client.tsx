@@ -180,6 +180,15 @@ const linkedSessionContextSchema = z
                 title: z.string().trim().min(1),
               })
               .passthrough(),
+            units: z.array(
+              z
+                .object({
+                  id: idSchema,
+                  stableId: idSchema,
+                  type: z.string(),
+                })
+                .passthrough(),
+            ),
           })
           .passthrough(),
       })
@@ -1254,13 +1263,27 @@ export function InterviewClient({
     setAction("start");
     setActionError(null);
     try {
+      const linkedInterviewUnit = validatedLearningSessionId
+        ? linkedSession?.snapshot.units.find(
+            (unit) =>
+              unit.type === "interview" &&
+              unit.stableId === linkedSession.currentStep,
+          )
+        : null;
+      if (validatedLearningSessionId && !linkedInterviewUnit) {
+        throw new Error("Missing current linked Interview unit");
+      }
       const raw = await api<unknown>("/interviews/v2", {
         method: "POST",
         body: JSON.stringify({
-          ...draft,
-          ...(validatedLearningSessionId
-            ? { learningSessionId: validatedLearningSessionId }
-            : {}),
+          ...(validatedLearningSessionId && linkedInterviewUnit
+            ? {
+                operationId: draft.operationId,
+                questionCount: draft.questionCount,
+                learningSessionId: validatedLearningSessionId,
+                unitId: linkedInterviewUnit.id,
+              }
+            : draft),
           ...(disclosureOperationId ? { disclosureOperationId } : {}),
         }),
       });

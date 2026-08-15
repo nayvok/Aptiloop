@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -172,6 +173,8 @@ describe("restart-safe versioned practice", () => {
     );
 
     const now = Date.now();
+    const environmentPackDigest =
+      "sha256:8a714b40eb7d8c64ea6ef2844577bbffd509f7edf7225b2bd26bd2656a0b68b8";
     first.state.connection.sqlite
       .prepare(
         `INSERT INTO test_runs
@@ -183,12 +186,13 @@ describe("restart-safe versioned practice", () => {
                  '12 tests passed', '', 42, ?, 0,
                  'apt.compat.node24.npm-test.v1',
                  'apt.compat.node24.local.v1',
-                 'sha256:8a714b40eb7d8c64ea6ef2844577bbffd509f7edf7225b2bd26bd2656a0b68b8',
+                 ?,
                  'local-native', ?, ?, ?, ?)`,
       )
       .run(
         attemptId,
         testedFingerprint,
+        environmentPackDigest,
         testedSnapshot.contentHash,
         JSON.stringify({ schemaVersion: 1, status: "passed" }),
         now,
@@ -199,7 +203,7 @@ describe("restart-safe versioned practice", () => {
         `INSERT INTO reviews
          (id, session_id, exercise_attempt_id, provider_id, model_id, status,
           result_json, raw_response, created_at, completed_at)
-         VALUES ('review-latest', ?, ?, 'mock', 'mock-deterministic', 'passed',
+         VALUES ('review-latest', ?, ?, 'mock', 'mock-deterministic', 'accepted',
                  ?, 'RAW_PROVIDER_SECRET_MUST_NOT_LEAK', ?, ?)`,
       )
       .run(
@@ -213,6 +217,51 @@ describe("restart-safe versioned practice", () => {
           suggestedMasteryChanges: [],
         }),
         now + 6_000,
+        now + 6_000,
+      );
+    const reviewBundleJson = JSON.stringify({
+      schemaVersion: 1,
+      kind: "apt.review-evidence.v1",
+      task: "Review the bounded learner diff.",
+      exercise: {
+        prompt: "Persist a learner-authored change.",
+        acceptanceCriteria: [],
+        constraints: [],
+        approvedTopicIds: [],
+      },
+      workspace: { inputSnapshotHash: testedSnapshot.contentHash },
+      evidence: {
+        gitDiff: testedDiff.patch,
+        diffTruncated: false,
+        trustedCheck: {
+          operationId: "operation-latest",
+          checkId: "apt.compat.node24.npm-test.v1",
+          environmentId: "apt.compat.node24.local.v1",
+          environmentPackDigest,
+          backendId: "local-native",
+          inputSnapshotHash: testedSnapshot.contentHash,
+          status: "passed",
+        },
+      },
+    });
+    const reviewBundleSha256 = `sha256:${createHash("sha256")
+      .update(reviewBundleJson, "utf8")
+      .digest("hex")}`;
+    first.state.connection.sqlite
+      .prepare(
+        `INSERT INTO review_evidence_bundles
+         (id, review_id, exercise_attempt_id, test_run_id,
+          workspace_snapshot_hash, diff_fingerprint, bundle_sha256,
+          bundle_json, created_at)
+         VALUES ('review-latest-bundle', 'review-latest', ?, 'test-latest',
+                 ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        attemptId,
+        testedSnapshot.contentHash,
+        testedFingerprint,
+        reviewBundleSha256,
+        reviewBundleJson,
         now + 6_000,
       );
 
@@ -261,10 +310,15 @@ describe("restart-safe versioned practice", () => {
     expect(beforeRestart.attempt.latestReview).toEqual({
       id: "review-latest",
       status: "passed",
+      completionEligible: true,
       summary: "Решение соответствует критериям",
       findings: [],
       strengths: ["Сохранена чистая функция"],
-      evidenceBundle: null,
+      evidenceBundle: {
+        id: "review-latest-bundle",
+        sha256: reviewBundleSha256,
+        workspaceSnapshotHash: testedSnapshot.contentHash,
+      },
     });
     expect(collectKeys(beforeRestart)).not.toContain("rawResponse");
     expect(JSON.stringify(beforeRestart)).not.toContain("RAW_PROVIDER_SECRET");

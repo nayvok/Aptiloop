@@ -31,7 +31,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { PageHeader } from "@/components/page-header";
-import { EmptyState, QueryError } from "@/components/query-state";
+import { EmptyState, SafeQueryError } from "@/components/query-state";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -84,6 +84,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import {
+  presentCoursePackDiagnostic,
+  presentFailure,
+  safeDiagnosticId,
+  SafeUiError,
+} from "@/lib/failure-presentation";
 import { type MessageKey, useI18n } from "@/lib/i18n";
 import {
   type LearningCourse,
@@ -305,12 +311,8 @@ function getSafeErrorDiagnostic(error: unknown): string | null {
     failure?: { diagnosticId?: unknown };
   };
   const diagnosticId = candidate.failure?.diagnosticId;
-  if (
-    typeof diagnosticId === "string" &&
-    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u.test(diagnosticId)
-  ) {
-    return diagnosticId;
-  }
+  const safeId = safeDiagnosticId(diagnosticId);
+  if (safeId) return safeId;
   const status =
     typeof candidate.status === "number" &&
     Number.isInteger(candidate.status) &&
@@ -706,9 +708,7 @@ function CoursePackClient({
       toast.success(t("courses.notice.selected"));
     },
     onError: (error: unknown) =>
-      toast.error(
-        error instanceof Error ? error.message : t("courses.alert.errorTitle"),
-      ),
+      toast.error(presentFailure(error, "coursePack.select", t).message),
   });
   const uninstall = useMutation({
     mutationFn: async (item: CoursePackLibraryItem) =>
@@ -732,9 +732,7 @@ function CoursePackClient({
       toast.error(
         getErrorCode(error) === "active_session"
           ? t("courses.error.activeSessionPinned")
-          : error instanceof Error
-            ? error.message
-            : t("courses.alert.errorTitle"),
+          : presentFailure(error, "coursePack.uninstall", t).message,
       ),
   });
 
@@ -1091,8 +1089,9 @@ function CoursePackClient({
         />
 
         {library.isError ? (
-          <QueryError
-            message={library.error.message}
+          <SafeQueryError
+            error={library.error}
+            operation="coursePack.library.load"
             retry={() => void library.refetch()}
           />
         ) : null}
@@ -1284,9 +1283,9 @@ function CoursePackClient({
           </div>
         ) : null}
         {learningCourses.isError ? (
-          <QueryError
-            message={t("courses.current.unavailableDescription")}
-            diagnostic={learningCourses.error.message}
+          <SafeQueryError
+            error={learningCourses.error}
+            operation="home.courses.load"
             retry={() => void learningCourses.refetch()}
           />
         ) : null}
@@ -1384,9 +1383,9 @@ function CoursePackClient({
           <CourseLibrarySkeleton />
         ) : null}
         {!learningCourses.isError && library.isError ? (
-          <QueryError
-            message={t("courses.current.unavailable")}
-            diagnostic={library.error.message}
+          <SafeQueryError
+            error={library.error}
+            operation="coursePack.library.load"
             retry={() => {
               void library.refetch();
             }}
@@ -1577,9 +1576,8 @@ function CoursePackClient({
                               }),
                             ).catch((error: unknown) => {
                               toast.error(
-                                error instanceof Error
-                                  ? error.message
-                                  : t("courses.alert.errorTitle"),
+                                presentFailure(error, "coursePack.export", t)
+                                  .message,
                               );
                             });
                           }}
@@ -2091,26 +2089,38 @@ function DiagnosticList({
 }: {
   diagnostics: readonly z.infer<typeof diagnosticSchema>[];
 }) {
+  const { t } = useI18n();
   return (
     <ul className="flex max-h-64 min-w-0 flex-col gap-2 overflow-y-auto pr-1">
-      {diagnostics.map((diagnostic, index) => (
-        <li
-          key={`${diagnostic.code}:${diagnostic.path}:${index}`}
-          className="min-w-0 rounded-lg border border-border bg-surface-soft p-3 text-sm"
-        >
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge
-              variant={diagnostic.severity === "error" ? "error" : "warning"}
-            >
-              {diagnostic.code}
-            </Badge>
-            <code className="break-all font-mono text-xs text-muted-foreground">
-              {diagnostic.path}
-            </code>
-          </div>
-          <p className="mt-2 break-words leading-5">{diagnostic.message}</p>
-        </li>
-      ))}
+      {diagnostics.map((diagnostic, index) => {
+        const presentation = presentCoursePackDiagnostic(diagnostic, t);
+        return (
+          <li
+            key={`${diagnostic.code}:${diagnostic.path}:${index}`}
+            className="min-w-0 rounded-lg border border-border bg-surface-soft p-3 text-sm"
+          >
+            {presentation.code || presentation.path ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {presentation.code ? (
+                  <Badge
+                    variant={
+                      diagnostic.severity === "error" ? "error" : "warning"
+                    }
+                  >
+                    {presentation.code}
+                  </Badge>
+                ) : null}
+                {presentation.path ? (
+                  <code className="break-all font-mono text-xs text-muted-foreground">
+                    {presentation.path}
+                  </code>
+                ) : null}
+              </div>
+            ) : null}
+            <p className="mt-2 break-words leading-5">{presentation.message}</p>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -2782,7 +2792,7 @@ async function exportPack(
     `/api/course-packs/export?revisionId=${encodeURIComponent(item.revisionId)}`,
     { headers: { "X-Aptiloop-Client": "web" } },
   );
-  if (!response.ok) throw new Error(formatError(response.status));
+  if (!response.ok) throw new SafeUiError(formatError(response.status));
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");

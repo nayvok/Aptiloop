@@ -18,6 +18,8 @@ import {
 import type { Hono } from "hono";
 import { z } from "zod";
 
+import { readBoundedRequestBody } from "./http-resource-admission.js";
+
 const VALIDATION_TTL_MILLISECONDS = 15 * 60 * 1_000;
 const MAX_STAGED_VALIDATIONS = 32;
 const MAX_STAGED_DIAGNOSTICS = 100;
@@ -99,9 +101,10 @@ export function registerCoursePackRoutes(
     await cleanupExpired(staged, now());
     let sourceBytes: Uint8Array;
     try {
-      sourceBytes = await readBoundedBody(
+      sourceBytes = await readBoundedRequestBody(
         context.req.raw,
         COURSE_PACK_JSON_LIMITS_V1.maxBytes,
+        `Course Pack exceeds ${COURSE_PACK_JSON_LIMITS_V1.maxBytes} bytes`,
       );
     } catch (error) {
       return context.json(
@@ -382,38 +385,6 @@ function coursePackOpenPath(result: {
   return result.action === "install"
     ? `/courses/${encodeURIComponent(result.courseId)}/revisions/${encodeURIComponent(result.revisionId)}`
     : null;
-}
-
-async function readBoundedBody(
-  request: Request,
-  maxBytes: number,
-): Promise<Uint8Array> {
-  const declaredLength = request.headers.get("Content-Length");
-  if (declaredLength !== null) {
-    const parsed = Number(declaredLength);
-    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maxBytes) {
-      throw new Error(`Course Pack exceeds ${maxBytes} bytes`);
-    }
-  }
-  if (request.body === null) return new Uint8Array();
-  const buffer = new Uint8Array(maxBytes);
-  const reader = request.body.getReader();
-  let length = 0;
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      if (length + chunk.value.byteLength > maxBytes) {
-        await reader.cancel();
-        throw new Error(`Course Pack exceeds ${maxBytes} bytes`);
-      }
-      buffer.set(chunk.value, length);
-      length += chunk.value.byteLength;
-    }
-    return buffer.slice(0, length);
-  } finally {
-    reader.releaseLock();
-  }
 }
 
 async function cleanupExpired(

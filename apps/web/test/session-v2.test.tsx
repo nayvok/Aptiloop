@@ -19,9 +19,10 @@ const { apiMock, pushMock, searchState, streamAgentMock, toastErrorMock } =
     apiMock: vi.fn(),
     pushMock: vi.fn(),
     searchState: { value: "id=session-v2" },
-    streamAgentMock: vi.fn(async function* (): AsyncGenerator<
-      Record<string, unknown>
-    > {
+    streamAgentMock: vi.fn(async function* (
+      _body?: Record<string, unknown>,
+      _signal?: AbortSignal,
+    ): AsyncGenerator<Record<string, unknown>> {
       yield {
         type: "message.delta",
         turnId: "turn-1",
@@ -423,6 +424,7 @@ function replaceProgress(
 function makeSummaryResponse(
   session: SessionFixture,
   evidenceId = "summary-1",
+  reviewStatus: null | "passed" | "changes_requested" = null,
 ) {
   return {
     summary: {
@@ -457,7 +459,8 @@ function makeSummaryResponse(
         quizScore: 0.5,
         maxHintLevel: 2,
         exerciseTestsPassed: true,
-        reviewStatus: "passed",
+        reviewReceiptAccepted: true,
+        reviewStatus,
         correctionCycleCount: 1,
       },
     },
@@ -524,8 +527,14 @@ function mockTeacherDialogueApi() {
     if (path === "/learning/sessions/v2/session-v2") {
       return Promise.resolve({ session });
     }
-    if (path === "/learning/sessions/v2/session-v2/teacher-transcript") {
+    if (
+      path ===
+      "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue/teacher-transcript"
+    ) {
       return Promise.resolve({ messages: [] });
+    }
+    if (path === "/ai/disclosures") {
+      return Promise.resolve({ required: false });
     }
     if (
       path === "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue"
@@ -1692,12 +1701,12 @@ describe("guided versioned session", () => {
       type: "teacher-dialogue" as const,
       conversationId: null,
       turnCount: 1,
-      revisionAttemptIds: ["operation-1"],
+      revisionAttemptIds: ["turn-1"],
     };
     const followUpPayload = {
       ...firstRevisionPayload,
       turnCount: 2,
-      revisionAttemptIds: ["operation-1", "operation-4"],
+      revisionAttemptIds: ["turn-1", "turn-1"],
     };
     const firstRevised = replaceProgress(
       session,
@@ -1709,7 +1718,10 @@ describe("guided versioned session", () => {
       if (path === "/learning/sessions/v2/session-v2") {
         return Promise.resolve({ session });
       }
-      if (path === "/learning/sessions/v2/session-v2/teacher-transcript") {
+      if (
+        path ===
+        "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue/teacher-transcript"
+      ) {
         return Promise.resolve({
           messages: [
             {
@@ -1729,6 +1741,9 @@ describe("guided versioned session", () => {
         return Promise.resolve({
           session: body.payload.turnCount === 1 ? firstRevised : followedUp,
         });
+      }
+      if (path === "/ai/disclosures") {
+        return Promise.resolve({ required: false });
       }
       throw new Error(`Unexpected API path: ${path}`);
     });
@@ -1805,6 +1820,83 @@ describe("guided versioned session", () => {
     expect(
       await screen.findByRole("button", { name: /Завершить диалог/u }),
     ).toBeEnabled();
+  });
+
+  it("aborts only an active Teacher stream when the lesson unmounts", async () => {
+    mockTeacherDialogueApi();
+    let activeSignal: AbortSignal | undefined;
+    streamAgentMock.mockImplementationOnce(async function* (
+      _body?: Record<string, unknown>,
+      signal?: AbortSignal,
+    ) {
+      activeSignal = signal;
+      await new Promise<void>((resolve) => {
+        if (signal?.aborted) {
+          resolve();
+          return;
+        }
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      yield* [];
+    });
+    const rendered = renderWithQuery(<SessionClient />);
+    const revision = await screen.findByLabelText("Уточнённое объяснение");
+    fireEvent.change(revision, {
+      target: {
+        value: "Подробное самостоятельное объяснение механизма учеником.",
+      },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Отправить объяснение" }),
+    );
+
+    await vi.waitFor(() => expect(activeSignal).toBeDefined());
+    expect(activeSignal?.aborted).toBe(false);
+    await act(async () => {
+      rendered.unmount();
+      await Promise.resolve();
+    });
+
+    expect(activeSignal?.aborted).toBe(true);
+    expect(apiMock).not.toHaveBeenCalledWith(
+      "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue",
+      expect.anything(),
+    );
+  });
+
+  it("does not abort a completed Teacher stream during later unmount", async () => {
+    mockTeacherDialogueApi();
+    renderWithQuery(<SessionClient />);
+    const revision = await screen.findByLabelText("Уточнённое объяснение");
+    fireEvent.change(revision, {
+      target: {
+        value: "Подробное самостоятельное объяснение механизма учеником.",
+      },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Отправить объяснение" }),
+    );
+
+    await vi.waitFor(() => {
+      expect(apiMock).toHaveBeenCalledWith(
+        "/learning/sessions/v2/session-v2/units/unit-teacher-dialogue",
+        expect.anything(),
+      );
+      expect(streamAgentMock).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() =>
+      expect(
+        screen.getByLabelText("Ответ на уточнение преподавателя"),
+      ).toBeEnabled(),
+    );
+    const signal = streamAgentMock.mock.calls.at(-1)?.[1];
+    expect(signal).toBeDefined();
+    if (!signal) throw new Error("Teacher stream signal was not captured");
+    expect(signal.aborted).toBe(false);
+
+    cleanup();
+
+    expect(signal.aborted).toBe(false);
   });
 
   it.each([
@@ -2230,6 +2322,37 @@ describe("guided versioned session", () => {
       /correctOptionIds|referenceAnswer/u,
     );
   });
+
+  it.each(["passed", "changes_requested"] as const)(
+    "rejects the legacy %s Reviewer status as Summary authority",
+    async (reviewStatus) => {
+      const initial = makeSession("summary");
+      const summarized = replaceProgress(initial, "in_progress", {
+        type: "summary",
+        summaryId: "summary-1",
+      });
+      apiMock
+        .mockResolvedValueOnce({ session: initial })
+        .mockResolvedValueOnce(
+          makeSummaryResponse(summarized, "summary-1", reviewStatus),
+        );
+      renderWithQuery(<SessionClient />);
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Сформировать итог" }),
+      );
+
+      await vi.waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(1));
+      expect(
+        screen.queryByText(
+          "День завершён на основе сохранённых подтверждений навыка.",
+        ),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Сформировать итог" }),
+      ).toBeEnabled();
+    },
+  );
 
   it("announces loading and renders a retryable contract or network error", async () => {
     apiMock.mockReturnValueOnce(new Promise(() => undefined));

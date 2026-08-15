@@ -24,6 +24,12 @@ function diagnosticCodes(value: Uint8Array): string[] {
   );
 }
 
+function finalizedWithProvenanceNote(note: string): Uint8Array {
+  const raw = structuredClone(validCoursePack());
+  raw.course.provenance.notes = note;
+  return bytes(finalizeCoursePack(CoursePackV1Schema.parse(raw)));
+}
+
 describe("Course Pack V1", () => {
   it("validates, canonicalizes, and hashes the synthetic fixture deterministically", () => {
     const pack = validCoursePack();
@@ -113,6 +119,61 @@ describe("Course Pack V1", () => {
     }
   });
 
+  it("rejects common credential forms without echoing their values", () => {
+    const slackToken = [
+      "xoxb",
+      "123456789012",
+      "abcdefghijklmnopqrstuvwx",
+    ].join("-");
+    const secrets = [
+      "password=hunter2",
+      "passphrase: correct-horse-battery-staple",
+      "api_key=abc123456789",
+      "access-token: abcdefghijklmnop",
+      '"client_secret":"client-secret-value"',
+      "private key => private-key-value",
+      slackToken,
+      "AIzaSyA12345678901234567890123456789012",
+      "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+      "https://learner:password123@example.invalid/resource",
+    ];
+
+    for (const [index, secret] of secrets.entries()) {
+      const result = validateCoursePackBytes(
+        finalizedWithProvenanceNote(secret),
+      );
+      expect(result.report.diagnostics, `secret case ${index}`).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "PACK_SECRET_SHAPED_VALUE" }),
+        ]),
+      );
+      expect(JSON.stringify(result.report.diagnostics)).not.toContain(secret);
+    }
+  });
+
+  it("does not classify ordinary credential-related prose as a secret", () => {
+    const safeNotes = [
+      "The lesson explains how password managers reduce credential reuse.",
+      "Rotate an API key after accidental exposure.",
+      "A client secret belongs in an approved credential store.",
+      "The access token expires after the configured interval.",
+      "Private key cryptography uses a public/private key pair.",
+      "Use Basic authentication only over an authenticated transport.",
+      "Basic authentication overview",
+      "Password: minimum length is twelve characters.",
+      "API key: rotation policy should be documented.",
+    ];
+
+    for (const [index, note] of safeNotes.entries()) {
+      const result = validateCoursePackBytes(finalizedWithProvenanceNote(note));
+      expect(result.valid, `safe note case ${index}`).toBe(true);
+      expect(
+        result.report.diagnostics.map((diagnostic) => diagnostic.code),
+        `safe note case ${index}`,
+      ).not.toContain("PACK_SECRET_SHAPED_VALUE");
+    }
+  });
+
   it("rejects cycles, dangling references, requirement drift, and hash drift", () => {
     const fixture = validCoursePack();
     const cyclic = structuredClone(fixture);
@@ -120,6 +181,60 @@ describe("Course Pack V1", () => {
       "recall-replay",
     ];
     expect(diagnosticCodes(bytes(cyclic))).toContain("PACK_GRAPH_CYCLE");
+
+    const knowledgeCycle = structuredClone(fixture);
+    knowledgeCycle.knowledge.nodes = [
+      {
+        ...knowledgeCycle.knowledge.nodes[0]!,
+        knowledgeNodeId: "cycle-a",
+        prerequisiteKnowledgeNodeIds: ["cycle-b"],
+      },
+      {
+        ...knowledgeCycle.knowledge.nodes[0]!,
+        knowledgeNodeId: "cycle-b",
+        prerequisiteKnowledgeNodeIds: ["cycle-a"],
+      },
+    ];
+    const finalizedKnowledgeCycle = finalizeCoursePack(
+      CoursePackV1Schema.parse(knowledgeCycle),
+    );
+    const firstKnowledgeCycleResult = validateCoursePackBytes(
+      bytes(finalizedKnowledgeCycle),
+    );
+    const secondKnowledgeCycleResult = validateCoursePackBytes(
+      bytes(finalizedKnowledgeCycle),
+    );
+    expect(firstKnowledgeCycleResult.report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_KNOWLEDGE_GRAPH_CYCLE",
+          path: "/knowledge/nodes/1/prerequisiteKnowledgeNodeIds/0",
+          entityId: "cycle-b",
+        }),
+      ]),
+    );
+    expect(secondKnowledgeCycleResult.report.diagnostics).toEqual(
+      firstKnowledgeCycleResult.report.diagnostics,
+    );
+
+    const relatedCycle = structuredClone(fixture);
+    relatedCycle.knowledge.nodes = [
+      {
+        ...relatedCycle.knowledge.nodes[0]!,
+        knowledgeNodeId: "related-a",
+        relatedKnowledgeNodeIds: ["related-b"],
+      },
+      {
+        ...relatedCycle.knowledge.nodes[0]!,
+        knowledgeNodeId: "related-b",
+        relatedKnowledgeNodeIds: ["related-a"],
+      },
+    ];
+    expect(
+      diagnosticCodes(
+        bytes(finalizeCoursePack(CoursePackV1Schema.parse(relatedCycle))),
+      ),
+    ).not.toContain("PACK_KNOWLEDGE_GRAPH_CYCLE");
 
     const dangling = structuredClone(fixture);
     dangling.lessons[0]!.activities[0]!.knowledgeNodeIds = ["missing-node"];
