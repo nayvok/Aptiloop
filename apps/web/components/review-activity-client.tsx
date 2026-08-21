@@ -151,9 +151,11 @@ export function ReviewActivityClient({
   }
 
   const activity = query.data;
-  const activityLabel = activityLabels[activity.activityKind];
-  const reasonLabel = reasonLabels[activity.reasonCode];
-  const dimensionLabel = dimensionLabels[activity.dimension];
+  const activityLabel =
+    activityLabels[activity.activityKind] ?? "ui.unknownValue";
+  const reasonLabel = reasonLabels[activity.reasonCode] ?? "ui.unknownValue";
+  const dimensionLabel =
+    dimensionLabels[activity.dimension] ?? "ui.unknownValue";
   const trimmedResponse = response.trim();
   const responseIsValid =
     trimmedResponse.length >= activity.response.minimumLength &&
@@ -212,9 +214,7 @@ export function ReviewActivityClient({
           context: (
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{t("review.activity.badge")}</Badge>
-              <Badge variant="secondary">
-                {activityLabel ? t(activityLabel) : activity.activityKind}
-              </Badge>
+              <Badge variant="secondary">{t(activityLabel)}</Badge>
             </div>
           ),
           status: (
@@ -250,17 +250,13 @@ export function ReviewActivityClient({
                 <dt className="text-xs font-medium text-muted-foreground">
                   {t("review.activity.metadata.dimension")}
                 </dt>
-                <dd className="mt-1 font-medium">
-                  {dimensionLabel ? t(dimensionLabel) : activity.dimension}
-                </dd>
+                <dd className="mt-1 font-medium">{t(dimensionLabel)}</dd>
               </div>
               <div className="min-w-0 sm:col-span-2">
                 <dt className="text-xs font-medium text-muted-foreground">
                   {t("cards.reviewReason")}
                 </dt>
-                <dd className="mt-1 leading-6">
-                  {reasonLabel ? t(reasonLabel) : activity.reasonCode}
-                </dd>
+                <dd className="mt-1 leading-6">{t(reasonLabel)}</dd>
               </div>
             </dl>
           ),

@@ -85,6 +85,7 @@ export function Markdown({
             <a
               className="font-medium text-primary underline underline-offset-2"
               {...props}
+              rel="noopener noreferrer"
             />
           ),
           blockquote: ({ node: _node, ...props }) => (

@@ -22,16 +22,39 @@ export interface DaySummaryInput {
   readonly reviewReceiptAccepted: boolean;
 }
 
+export type DaySummaryMessageKey =
+  | "daySummary.flashcard.ruleBack"
+  | "daySummary.flashcard.ruleFront"
+  | "daySummary.gap.codeReadingPartial"
+  | "daySummary.gap.exerciseNotConfirmed"
+  | "daySummary.gap.quizIncorrect"
+  | "daySummary.gap.quizPartial"
+  | "daySummary.gap.recallUnverified"
+  | "daySummary.gap.teacherRevisionPartial"
+  | "daySummary.legacy.untranslated"
+  | "daySummary.mistake.quizCorrection"
+  | "daySummary.mistake.quizSummary"
+  | "daySummary.narrative.evidence"
+  | "daySummary.narrative.noEvidence"
+  | "daySummary.strength.exercisePassed"
+  | "daySummary.strength.quizConfident";
+
+/** A locale-neutral presentation directive resolved by the UI catalog. */
+export interface DaySummaryMessage {
+  readonly key: DaySummaryMessageKey;
+  readonly params?: Readonly<Record<string, string | number>>;
+}
+
 export interface MistakeCandidate {
   readonly fingerprint: string;
-  readonly summary: string;
-  readonly correction: string;
+  readonly summary: DaySummaryMessage;
+  readonly correction: DaySummaryMessage;
   readonly sourceId: string;
 }
 
 export interface FlashcardCandidate {
-  readonly front: string;
-  readonly back: string;
+  readonly front: DaySummaryMessage;
+  readonly back: DaySummaryMessage;
   readonly sourceFingerprint?: string;
 }
 
@@ -61,11 +84,11 @@ export interface DaySummary {
   readonly sessionId: string;
   readonly occurredAt: string;
   readonly masteryEvidence: readonly DaySummaryMasteryEvidence[];
-  readonly strengths: readonly string[];
-  readonly gaps: readonly string[];
+  readonly strengths: readonly DaySummaryMessage[];
+  readonly gaps: readonly DaySummaryMessage[];
   readonly mistakeCandidates: readonly MistakeCandidate[];
   readonly flashcardCandidates: readonly FlashcardCandidate[];
-  readonly narrative: string;
+  readonly narrative: DaySummaryMessage;
   readonly metrics: DaySummaryMetrics;
 }
 
@@ -101,13 +124,11 @@ export function deriveDaySummary(input: DaySummaryInput): DaySummary {
   );
 
   const mistakeCandidates = buildMistakeCandidates(input, questionIds);
-  const flashcardCandidates = mistakeCandidates
-    .filter((candidate) => candidate.sourceId !== input.sessionId)
-    .map((candidate) => ({
-      front: "Восстановите правило, проверенное вопросом квиза.",
-      back: "Сформулируйте правило своими словами и приведите собственный пример.",
-      sourceFingerprint: candidate.fingerprint,
-    }));
+  const flashcardCandidates = mistakeCandidates.map((candidate) => ({
+    front: message("daySummary.flashcard.ruleFront"),
+    back: message("daySummary.flashcard.ruleBack"),
+    sourceFingerprint: candidate.fingerprint,
+  }));
   const strengths = buildStrengths(input, quizOutcome);
   const gaps = buildGaps(input, quizOutcome);
   const metrics = buildMetrics(input, topicIds.length, masteryEvidence);
@@ -202,13 +223,13 @@ function toMasteryEvidence(
 function buildStrengths(
   input: DaySummaryInput,
   quizOutcome: EvidenceOutcome,
-): string[] {
-  const strengths: string[] = [];
+): DaySummaryMessage[] {
+  const strengths: DaySummaryMessage[] = [];
   if (quizOutcome === "correct") {
-    strengths.push("Квиз пройден на уровне уверенного понимания.");
+    strengths.push(message("daySummary.strength.quizConfident"));
   }
   if (input.exerciseTestsPassed) {
-    strengths.push("Реализация прошла разрешённые проверки.");
+    strengths.push(message("daySummary.strength.exercisePassed"));
   }
   return strengths;
 }
@@ -216,32 +237,26 @@ function buildStrengths(
 function buildGaps(
   input: DaySummaryInput,
   quizOutcome: EvidenceOutcome,
-): string[] {
-  const gaps: string[] = [];
+): DaySummaryMessage[] {
+  const gaps: DaySummaryMessage[] = [];
   if (input.recallAttempted) {
-    gaps.push(
-      "Воспроизведение по памяти выполнено, но его корректность отдельно не подтверждена.",
-    );
+    gaps.push(message("daySummary.gap.recallUnverified"));
   }
   if (input.teacherRevision) {
-    gaps.push(
-      "Объяснение уточнено после преподавателя, но остаётся частичным подтверждением навыка.",
-    );
+    gaps.push(message("daySummary.gap.teacherRevisionPartial"));
   }
   if (quizOutcome !== "correct") {
     gaps.push(
       quizOutcome === "partial"
-        ? "Квиз показывает частичное понимание; ошибки нужно разобрать."
-        : "Квиз показывает пробелы; тему нужно восстановить и проверить заново.",
+        ? message("daySummary.gap.quizPartial")
+        : message("daySummary.gap.quizIncorrect"),
     );
   }
   if (input.codeReadingAttempted) {
-    gaps.push(
-      "Чтение кода выполнено, но без отдельной проверки корректности засчитано частично.",
-    );
+    gaps.push(message("daySummary.gap.codeReadingPartial"));
   }
   if (!input.exerciseTestsPassed) {
-    gaps.push("Реализация ещё не подтверждена разрешёнными проверками.");
+    gaps.push(message("daySummary.gap.exerciseNotConfirmed"));
   }
   return gaps;
 }
@@ -252,9 +267,8 @@ function buildMistakeCandidates(
 ): MistakeCandidate[] {
   const quizMistakes = questionIds.map((questionId) => ({
     fingerprint: `mistake-quiz-${fingerprint(questionId)}`,
-    summary: "В квизе выбран неверный или неполный ответ.",
-    correction:
-      "Восстановить проверяемое правило своими словами и подтвердить новым примером.",
+    summary: message("daySummary.mistake.quizSummary"),
+    correction: message("daySummary.mistake.quizCorrection"),
     sourceId: questionId,
   }));
 
@@ -288,16 +302,23 @@ function buildMetrics(
   };
 }
 
-function buildNarrative(metrics: DaySummaryMetrics): string {
+function buildNarrative(metrics: DaySummaryMetrics): DaySummaryMessage {
   if (metrics.evidenceCount === 0) {
-    return "По занятию пока нет подтверждений навыка: темы для оценки не определены.";
+    return message("daySummary.narrative.noEvidence");
   }
-  return [
-    `Собрано подтверждений навыка: ${metrics.evidenceCount}.`,
-    `Подтверждено: ${metrics.correctEvidenceCount}.`,
-    `Частично: ${metrics.partialEvidenceCount}.`,
-    `Требует работы: ${metrics.incorrectEvidenceCount}.`,
-  ].join(" ");
+  return message("daySummary.narrative.evidence", {
+    evidenceCount: metrics.evidenceCount,
+    correctCount: metrics.correctEvidenceCount,
+    partialCount: metrics.partialEvidenceCount,
+    incorrectCount: metrics.incorrectEvidenceCount,
+  });
+}
+
+function message(
+  key: DaySummaryMessageKey,
+  params?: Record<string, string | number>,
+): DaySummaryMessage {
+  return params === undefined ? { key } : { key, params };
 }
 
 function toQuizOutcome(score: number): EvidenceOutcome {
@@ -323,7 +344,7 @@ function uniqueSortedNonEmpty(values: readonly string[]): string[] {
     throw new TypeError("IDs must not be empty");
   }
   return [...new Set(normalized)].sort((left, right) =>
-    left.localeCompare(right, "en"),
+    left < right ? -1 : left > right ? 1 : 0,
   );
 }
 

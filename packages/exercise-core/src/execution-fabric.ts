@@ -154,7 +154,9 @@ export class TrustedExecutionFabric {
   listEnvironments(): readonly EnvironmentPackDescriptor[] {
     return [...this.#environments.values()]
       .map((environment) => environment.descriptor)
-      .sort((left, right) => left.id.localeCompare(right.id, "en"));
+      .sort((left, right) =>
+        left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+      );
   }
 
   describeEnvironment(environmentId: string): EnvironmentPackDescriptor {

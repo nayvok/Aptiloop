@@ -69,6 +69,19 @@ describe("complete workspace snapshots", () => {
     expect(changed.contentHash).not.toBe(first.contentHash);
   });
 
+  it("orders snapshot entries by Unicode code units instead of locale collation", async () => {
+    const root = await workspace();
+    await writeFile(path.join(root, "alpha.txt"), "lower", "utf8");
+    await writeFile(path.join(root, "Bravo.txt"), "upper", "utf8");
+
+    const snapshot = await snapshotCompleteWorkspace(root);
+
+    expect(snapshot.files.map((file) => file.documentId)).toEqual([
+      "Bravo.txt",
+      "alpha.txt",
+    ]);
+  });
+
   it("fails closed when a complete snapshot exceeds a declared limit", async () => {
     const root = await workspace();
     await writeFile(path.join(root, "large.txt"), "12345", "utf8");

@@ -64,6 +64,12 @@ const dimensionLabels: Readonly<Record<string, MessageKey>> = {
   interview: "skills.dimension.interview",
 };
 const historyStates = ["completed", "dismissed", "superseded"] as const;
+const stateLabels: Readonly<Record<string, MessageKey>> = {
+  pending: "cards.status.pending",
+  completed: "cards.status.completed",
+  dismissed: "cards.status.dismissed",
+  superseded: "cards.status.superseded",
+};
 
 function ReviewRow({
   review,
@@ -101,7 +107,7 @@ function ReviewRow({
                     : "secondary"
               }
             >
-              {t(`cards.status.${review.state}` as MessageKey)}
+              {t(stateLabels[review.state] ?? "ui.unknownValue")}
             </Badge>
             <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               <CalendarBlankIcon aria-hidden />
@@ -393,7 +399,7 @@ export function ReviewQueueClient({ dueOnly = false }: { dueOnly?: boolean }) {
                     className="inline-flex items-baseline gap-2"
                   >
                     <span className="text-muted-foreground">
-                      {t(`cards.status.${status}` as MessageKey)}
+                      {t(stateLabels[status] ?? "ui.unknownValue")}
                     </span>
                     <span className="font-mono text-xs font-semibold tabular-nums">
                       {formatNumber(counts[status] ?? 0)}

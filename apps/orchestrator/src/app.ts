@@ -1136,12 +1136,12 @@ export function createApp(options: AppOptions = {}) {
       }
     } catch (error) {
       requestSignal.removeEventListener("abort", onSetupAbort);
-      await cleanupFailedSetup();
       const cancelled = setupAborted || requestSignal.aborted;
       finishDispatch(
         cancelled ? "cancelled" : "failed",
         cancelled ? "cancelled" : providerFailureCode(error),
       );
+      await cleanupFailedSetup();
       if (cancelled) {
         return context.json({ error: safeAgentCancellationMessage }, 409);
       }
@@ -1173,13 +1173,13 @@ export function createApp(options: AppOptions = {}) {
         "Provider dispatch was not initialized",
       );
     }
+    let finishResponseWork!: () => void;
+    const responseWork = new Promise<void>((resolve) => {
+      finishResponseWork = resolve;
+    });
     try {
       context.header("X-Aptiloop-Agent-Turn-Id", turnId);
       state.activeProviderTurns.set(turnId, { key, session: activeSession });
-      let finishResponseWork!: () => void;
-      const responseWork = new Promise<void>((resolve) => {
-        finishResponseWork = resolve;
-      });
       const response = streamSSE(context, async (stream) => {
         let assistantContent = "";
         let terminalReason: "completed" | "failed" | "cancelled" | undefined;
@@ -1400,6 +1400,7 @@ export function createApp(options: AppOptions = {}) {
             // The browser may have disconnected while the provider was cancelled.
           }
         } finally {
+          requestSignal.removeEventListener("abort", onSetupAbort);
           const activeTurn = state.activeProviderTurns.get(turnId);
           if (activeTurn?.session === activeSession) {
             state.activeProviderTurns.delete(turnId);
@@ -1422,17 +1423,18 @@ export function createApp(options: AppOptions = {}) {
       });
       return responseWithTrackedWork(response, responseWork);
     } catch (error) {
+      finishResponseWork();
       requestSignal.removeEventListener("abort", onSetupAbort);
       const activeTurn = state.activeProviderTurns.get(turnId);
       if (activeTurn?.session === activeSession) {
         state.activeProviderTurns.delete(turnId);
       }
-      await cleanupFailedSetup();
       const cancelled = setupAborted || requestSignal.aborted;
       finishDispatch(
         cancelled ? "cancelled" : "failed",
         cancelled ? "cancelled" : providerFailureCode(error),
       );
+      await cleanupFailedSetup();
       if (cancelled) {
         return context.json({ error: safeAgentCancellationMessage }, 409);
       }
@@ -1458,7 +1460,13 @@ export function createApp(options: AppOptions = {}) {
 
   app.get("/api/agent/history", (context) => {
     const role = AgentRoleSchema.parse(context.req.query("role") ?? "teacher");
-    const sessionId = context.req.query("sessionId");
+    const sessionId = z
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
+      .optional()
+      .parse(context.req.query("sessionId"));
     const conversation = sessionId
       ? state.connection.sqlite
           .prepare(

@@ -77,7 +77,7 @@ const LinkedInterviewSetupRequestSchema = InterviewSetupBaseSchema.extend({
   unitId: UnitIdSchema,
 }).strict();
 
-export const InterviewSetupRequestSchema = z.union([
+const InterviewSetupRequestSchema = z.union([
   StandaloneInterviewSetupRequestSchema,
   LinkedInterviewSetupRequestSchema,
 ]);
@@ -105,7 +105,7 @@ interface ResolvedInterviewSetup {
   readonly courseBinding?: InterviewCourseBinding;
 }
 
-export const InterviewAnswerRequestSchema = z
+const InterviewAnswerRequestSchema = z
   .object({
     operationId: OperationIdSchema,
     answer: z.string().trim().min(1).max(20_000),
@@ -113,10 +113,10 @@ export const InterviewAnswerRequestSchema = z
   })
   .strict();
 
-export const InterviewFinishRequestSchema = z
+const InterviewFinishRequestSchema = z
   .object({ operationId: OperationIdSchema })
   .strict();
-export const InterviewAbandonRequestSchema = InterviewFinishRequestSchema;
+const InterviewAbandonRequestSchema = InterviewFinishRequestSchema;
 
 const StoredSetupSchema = z.object({
   operationId: OperationIdSchema,
@@ -135,7 +135,7 @@ const InterviewEvidenceSchema = z.object({
   observation: z.string().min(1),
 });
 
-export const InterviewReportSchema = z.object({
+const InterviewReportSchema = z.object({
   interviewId: z.string().min(1),
   status: z.literal("completed"),
   summary: z.string().min(1),

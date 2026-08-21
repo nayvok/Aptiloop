@@ -433,24 +433,32 @@ function makeSummaryResponse(
       sessionId: session.id,
       occurredAt: now,
       masteryEvidence: [],
-      strengths: ["Тесты и проверка решения пройдены"],
-      gaps: ["Точнее объяснять shallow copy"],
+      strengths: [{ key: "daySummary.strength.exercisePassed" }],
+      gaps: [{ key: "daySummary.gap.recallUnverified" }],
       mistakeCandidates: [
         {
           fingerprint: "mistake-shallow-copy",
-          summary: "Смешаны shallow и deep copy",
-          correction: "Spread копирует только верхний уровень",
+          summary: { key: "daySummary.mistake.quizSummary" },
+          correction: { key: "daySummary.mistake.quizCorrection" },
           sourceId: "quiz-q2",
         },
       ],
       flashcardCandidates: [
         {
-          front: "Что копирует object spread?",
-          back: "Только верхний уровень объекта.",
+          front: { key: "daySummary.flashcard.ruleFront" },
+          back: { key: "daySummary.flashcard.ruleBack" },
           sourceFingerprint: "mistake-shallow-copy",
         },
       ],
-      narrative: "День завершён на основе сохранённых подтверждений навыка.",
+      narrative: {
+        key: "daySummary.narrative.evidence",
+        params: {
+          evidenceCount: 4,
+          correctCount: 2,
+          partialCount: 2,
+          incorrectCount: 0,
+        },
+      },
       metrics: {
         topicCount: 1,
         evidenceCount: 6,
@@ -2281,7 +2289,7 @@ describe("guided versioned session", () => {
     fireEvent.click(generateButton);
     expect(
       await screen.findByText(
-        "День завершён на основе сохранённых подтверждений навыка.",
+        "Собрано подтверждений навыка: 4. Подтверждено: 2. Частично: 2. Требует работы: 0.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("50%")).toBeInTheDocument();
@@ -2347,7 +2355,7 @@ describe("guided versioned session", () => {
 
     expect(
       await screen.findByText(
-        "День завершён на основе сохранённых подтверждений навыка.",
+        "Собрано подтверждений навыка: 4. Подтверждено: 2. Частично: 2. Требует работы: 0.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -2380,7 +2388,7 @@ describe("guided versioned session", () => {
       await vi.waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(1));
       expect(
         screen.queryByText(
-          "День завершён на основе сохранённых подтверждений навыка.",
+          "Собрано подтверждений навыка: 4. Подтверждено: 2. Частично: 2. Требует работы: 0.",
         ),
       ).not.toBeInTheDocument();
       expect(

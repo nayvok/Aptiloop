@@ -83,13 +83,16 @@ describe("SQLite database", () => {
   it("seeds curriculum idempotently without replacing user history", () => {
     const connection = fixture();
     const first = seedDatabase(connection, undefined, 1_000);
+    const seededRows = dumpSeedTables(connection);
     const second = seedDatabase(connection, undefined, 2_000);
+    const reseededRows = dumpSeedTables(connection);
 
     expect(second).toEqual(first);
     expect(first.days).toBe(7);
     expect(count(connection, "curriculum_days")).toBe(7);
     expect(count(connection, "questions")).toBeGreaterThan(7);
     expect(count(connection, "provider_configurations")).toBe(0);
+    expect(reseededRows).toEqual(seededRows);
   });
 
   it("runs start-answer-reveal-complete flow transactionally and idempotently", async () => {
@@ -130,7 +133,14 @@ describe("SQLite database", () => {
       answer: "Повтор HTTP запроса",
       idempotencyKey: "answer-one",
     });
-    expect(duplicate.id).toBe(answer.id);
+    expect(duplicate).toEqual(answer);
+    expect(
+      connection.sqlite
+        .prepare(
+          "SELECT count(*) AS count FROM answer_attempts WHERE idempotency_key = ?",
+        )
+        .get("answer-one") as { count: number },
+    ).toEqual({ count: 1 });
     expect(
       await repository.getReferenceAnswer(started.session.id, questionId),
     ).toBeNull();
@@ -183,6 +193,14 @@ describe("SQLite database", () => {
     expect(count(connection, "mastery_evidence")).toBe(1);
     expect(count(connection, "mistakes")).toBe(1);
     expect(count(connection, "flashcards")).toBe(1);
+    expect(
+      await repository.recordAnswer({
+        sessionId: started.session.id,
+        questionId,
+        answer: "Повтор HTTP запроса",
+        idempotencyKey: "answer-one",
+      }),
+    ).toEqual(answer);
     const knowledge = await repository.getKnowledgeMap();
     expect(
       knowledge.find((item) => item.topic.id === topicId)?.mastery[0]?.score,
@@ -247,4 +265,15 @@ function count(connection: DatabaseConnection, table: string): number {
     count: number;
   };
   return row.count;
+}
+
+function dumpSeedTables(connection: DatabaseConnection): unknown[] {
+  return [
+    "SELECT * FROM curriculum_days ORDER BY id",
+    "SELECT * FROM topics ORDER BY id",
+    "SELECT * FROM curriculum_day_topics ORDER BY day_id, order_index",
+    "SELECT * FROM questions ORDER BY id",
+    "SELECT * FROM exercises ORDER BY id",
+    `SELECT * FROM application_settings WHERE key = 'curriculum.activeWeekId'`,
+  ].flatMap((query) => connection.sqlite.prepare(query).all());
 }

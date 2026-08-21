@@ -37,13 +37,13 @@ export const TRUSTED_VERIFIER_PATHS = Object.freeze([
 
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 const STRICT_USES =
-  /^\s*(?:-\s+)?uses:\s+([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?\/[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?(?:\/[A-Za-z0-9_.\/-]+)?)@([0-9a-f]{40})\s+#\s+([A-Za-z0-9][A-Za-z0-9._+-]*)\s*$/;
+  /^\s*(?:-\s+)?uses:\s+([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?\/[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?(?:\/[A-Za-z0-9_./-]+)?)@([0-9a-f]{40})\s+#\s+([A-Za-z0-9][A-Za-z0-9._+-]*)\s*$/;
 const USES_KEY = /^\s*(?:-\s*)?(?:(?:"uses"|'uses')|uses)\s*:/;
 const EXPLICIT_USES_KEY = /^\s*\?\s*(?:(?:"uses"|'uses')|uses)(?:\s|$)/;
 const QUOTED_MAPPING_KEY =
   /^\s*(?:-\s*)?(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*:/;
 const FLOW_COLLECTION_VALUE =
-  /^\s*(?:(?:-\s+)?[^\s:#"'{}\[\],]+\s*:\s*|-\s*|(?:---\s*)?)(?:[!&][^\s\[\]{},]+\s+)*[\[{]/;
+  /^\s*(?:(?:-\s+)?[^\s:#"'{}[\],]+\s*:\s*|-\s*|(?:---\s*)?)(?:[!&][^\s[\]{},]+\s+)*[[{]/;
 const BLOCK_SCALAR = /:\s*[>|]([0-9+-]*)\s*$/;
 function yamlMappingKeyIndentation(line, indentation) {
   return line.match(/^\s*-\s+/)?.[0].length ?? indentation;
@@ -78,8 +78,8 @@ function hasYamlAnchorOrAlias(line) {
 
     const previous = line[index - 1];
     const next = line[index + 1];
-    const hasBoundary = index === 0 || /[\s,\[\]{}:?-]/.test(previous ?? "");
-    const hasName = Boolean(next) && !/[\s,\[\]{}#&*]/.test(next ?? "");
+    const hasBoundary = index === 0 || /[\s,[\]{}:?-]/.test(previous ?? "");
+    const hasName = Boolean(next) && !/[\s,[\]{}#&*]/.test(next ?? "");
     if (hasBoundary && hasName) return true;
   }
   return false;

@@ -232,7 +232,7 @@ function canonicalize(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         .map(([key, child]) => [key, canonicalize(child)]),
     );
   }
@@ -677,7 +677,7 @@ const courseFoundationsBackfillMarker = "-- dlh-course-foundations-backfill";
 function readMigrationDefinitions(directory: string): MigrationDefinition[] {
   return readdirSync(directory)
     .filter((file) => file.endsWith(".sql"))
-    .sort((left, right) => left.localeCompare(right))
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
     .map((file) => ({
       id: file.slice(0, -".sql".length),
       path: join(directory, file),

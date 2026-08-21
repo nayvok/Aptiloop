@@ -493,6 +493,7 @@ function startServiceOwnerWatchdog({
   const check = async () => {
     if (stopped || currentCheck) return;
     currentCheck = (async () => {
+      // eslint-disable-next-line no-useless-assignment -- fail-closed default kept explicit
       let active = false;
       try {
         await assertCanonicalDirectoryPath(runRootGuard);

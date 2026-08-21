@@ -1075,4 +1075,29 @@ describe("curriculum editor routes", () => {
       error: { code: "validation_failed" },
     });
   });
+
+  it("propagates unexpected storage failures instead of masking them as client errors", async () => {
+    const connection = openDatabase(":memory:");
+    migrateDatabase(connection);
+    let closed = false;
+    const closeOnce = () => {
+      if (!closed) {
+        closed = true;
+        connection.close();
+      }
+    };
+    try {
+      const app = new Hono();
+      app.onError((error, context) => {
+        console.error(error);
+        return context.json({ error: "Internal server error" }, 500);
+      });
+      registerCurriculumEditorRoutes(app, { connection });
+      closeOnce();
+      const response = await request(app, "/api/curriculum-editor/versions");
+      expect(response.status).toBe(500);
+    } finally {
+      closeOnce();
+    }
+  });
 });

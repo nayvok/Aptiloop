@@ -215,7 +215,7 @@ export async function getExerciseDiff(
   const untrackedFiles = untrackedResult.stdout
     .split("\0")
     .filter((entry) => entry.length > 0)
-    .sort((left, right) => left.localeCompare(right));
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 
   let patch = tracked.stdout;
   let truncated = Buffer.byteLength(patch) > maxOutputBytes;
@@ -283,6 +283,9 @@ async function renderUntrackedPatch(
     }
 
     const content = bytes.toString("utf8");
+    if (content.length === 0) {
+      return { patch: header, truncated: false };
+    }
     const lines = content.split("\n");
     const completeLineCount = content.endsWith("\n")
       ? lines.length - 1

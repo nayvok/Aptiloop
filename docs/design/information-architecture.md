@@ -11,7 +11,7 @@ This document owns Core Alpha route responsibility, navigation, meaningful URL s
 
 Calm Workshop — Clear Slate is the approved direction name, not a separate status label.
 
-The visual system is owned by [`../../DESIGN.md`](../../DESIGN.md) and [`../design-system.md`](../design-system.md). Activity internals, Studio, and accessibility are owned by the sibling specialist specifications; this document links to them instead of redefining their component anatomy.
+The visual system is owned by [`../../DESIGN.md`](../../DESIGN.md) and [`implementation.md`](implementation.md). Activity internals, Studio, and accessibility are owned by the sibling specialist specifications; this document links to them instead of redefining their component anatomy.
 
 ## Audit of the current information architecture
 
@@ -439,7 +439,7 @@ The App Router root error and not-found boundaries retain the App Shell whenever
 
 **Implemented baseline**
 
-Light/dark tokens, `surface-soft`, focus treatment, and Clear Slate hierarchy are canonical in [`../../DESIGN.md`](../../DESIGN.md) and [`../design-system.md`](../design-system.md). This IA adds only one invariant: theme or breakpoint changes never change route ownership, reading order, current destination, or URL-backed state.
+Light/dark tokens, `surface-soft`, focus treatment, and Clear Slate hierarchy are canonical in [`../../DESIGN.md`](../../DESIGN.md) and [`implementation.md`](implementation.md). This IA adds only one invariant: theme or breakpoint changes never change route ownership, reading order, current destination, or URL-backed state.
 
 ## Explicit non-goals
 

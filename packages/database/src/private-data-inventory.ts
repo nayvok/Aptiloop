@@ -34,7 +34,7 @@ function canonicalizeSnapshotValue(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         .map(([key, child]) => [key, canonicalizeSnapshotValue(child)]),
     );
   }
@@ -787,7 +787,8 @@ function collectRootCandidates(
       continue;
     }
     const entries = readdirSync(directory, { withFileTypes: true }).sort(
-      (left, right) => left.name.localeCompare(right.name),
+      (left, right) =>
+        left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
     );
     for (const entry of entries) {
       const entryPath = join(directory, entry.name);
@@ -935,7 +936,9 @@ function inspectCandidate(seed: CandidateSeed): PrivateDataInventoryCandidate {
   }
   return {
     id: `sqlite-${shortHash(seed.path)}`,
-    origins: [...seed.origins].sort((left, right) => left.localeCompare(right)),
+    origins: [...seed.origins].sort((left, right) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    ),
     classification: isBackupPath(seed.path) ? "backup" : "database",
     pathHash: sha256(seed.path),
     family: before.family,
@@ -951,7 +954,9 @@ function failedInventoryCandidate(
 ): PrivateDataInventoryCandidate {
   return {
     id: `sqlite-${shortHash(seed.path)}`,
-    origins: [...seed.origins].sort((left, right) => left.localeCompare(right)),
+    origins: [...seed.origins].sort((left, right) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    ),
     classification: isBackupPath(seed.path) ? "backup" : "database",
     pathHash: sha256(seed.path),
     family,
@@ -2949,7 +2954,9 @@ function pathKey(path: string): string {
 }
 
 function comparePaths(left: string, right: string): number {
-  return pathKey(left).localeCompare(pathKey(right));
+  const leftKey = pathKey(left);
+  const rightKey = pathKey(right);
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
 }
 
 function shortHash(value: string): string {

@@ -14,7 +14,7 @@ import {
   type ToolPolicy,
 } from "@aptiloop/shared";
 
-import type { DatabaseConnection } from "./database.js";
+import { withTransaction, type DatabaseConnection } from "./database.js";
 
 interface ProviderConnectionRow {
   connection_id: string;
@@ -625,16 +625,8 @@ export class ProviderHubRepository {
     return row?.occurred_at ?? null;
   }
 
-  #transaction<T>(operation: () => T): T {
-    this.#connection.sqlite.exec("BEGIN IMMEDIATE");
-    try {
-      const result = operation();
-      this.#connection.sqlite.exec("COMMIT");
-      return result;
-    } catch (error) {
-      this.#connection.sqlite.exec("ROLLBACK");
-      throw error;
-    }
+  #transaction(operation: () => void): void {
+    withTransaction(this.#connection, operation);
   }
 }
 

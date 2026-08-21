@@ -82,6 +82,41 @@ describe.skipIf(!gitAvailable)("exercise Git baseline", () => {
     });
   });
 
+  it("renders an empty untracked file without a phantom hunk", async () => {
+    const root = await temporaryDirectory();
+    await writeFile(path.join(root, "answer.ts"), "baseline\n");
+    const baseline = await ensureExerciseBaseline(root);
+    await writeFile(path.join(root, "empty.txt"), "");
+
+    const diff = await getExerciseDiff(root, {
+      expectedBaselineHash: baseline.commit,
+    });
+
+    expect(diff.hasChanges).toBe(true);
+    expect(diff.untrackedFiles).toEqual(["empty.txt"]);
+    expect(diff.patch).toContain("diff --git a/empty.txt b/empty.txt");
+    expect(diff.patch).toContain("new file mode 100644");
+    expect(diff.patch).toContain("--- /dev/null");
+    expect(diff.patch).toContain("+++ b/empty.txt");
+    expect(diff.patch).not.toMatch(/@@/u);
+    expect(diff.patch).not.toMatch(/^\+$/mu);
+    expect(fingerprintExerciseDiff(diff)).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  it("sorts untracked files by Unicode code units instead of locale collation", async () => {
+    const root = await temporaryDirectory();
+    await writeFile(path.join(root, "answer.ts"), "baseline\n");
+    const baseline = await ensureExerciseBaseline(root);
+    await writeFile(path.join(root, "alpha.txt"), "lower-case\n");
+    await writeFile(path.join(root, "Notes.txt"), "upper-case\n");
+
+    const diff = await getExerciseDiff(root, {
+      expectedBaselineHash: baseline.commit,
+    });
+
+    expect(diff.untrackedFiles).toEqual(["Notes.txt", "alpha.txt"]);
+  });
+
   it("caps review output", async () => {
     const root = await temporaryDirectory();
     await writeFile(path.join(root, "answer.ts"), "baseline\n");

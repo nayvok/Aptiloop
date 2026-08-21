@@ -39,6 +39,7 @@ let terminating = false;
 async function verifyOwner({ initial = false } = {}) {
   if (checking || terminating) return;
   checking = true;
+  // eslint-disable-next-line no-useless-assignment -- fail-closed default kept explicit
   let active = false;
   try {
     await assertCanonicalDirectoryPath(runsRootGuard);

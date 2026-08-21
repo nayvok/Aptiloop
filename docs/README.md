@@ -38,7 +38,7 @@ Historical documents preserve decision and migration context. They are not curre
 ## Current design and accessibility
 
 - [Design system](../DESIGN.md)
-- [Design implementation reference](design-system.md)
+- [Design implementation reference](design/implementation.md)
 - [Information architecture](design/information-architecture.md)
 - [Activity renderers](design/activity-renderers.md)
 - [Adaptive Studio](design/adaptive-studio.md)

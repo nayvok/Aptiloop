@@ -535,8 +535,14 @@ describe("versioned day summary", () => {
             topicId: string;
             errorKey?: string;
           }>;
-          strengths: string[];
-          gaps: string[];
+          strengths: Array<{
+            key: string;
+            params?: Record<string, string | number>;
+          }>;
+          gaps: Array<{
+            key: string;
+            params?: Record<string, string | number>;
+          }>;
           mistakeCandidates: Array<{ fingerprint: string; sourceId: string }>;
           metrics: {
             correctEvidenceCount: number;
@@ -600,6 +606,183 @@ describe("versioned day summary", () => {
         mistake.fingerprint.startsWith("mistake-review-"),
       ),
     ).toBe(false);
+  });
+
+  it("migrates persisted legacy summary prose into locale-neutral messages", async () => {
+    const runtime = createRuntime();
+    const pathResponse = await request(runtime.app, "/api/learning/path");
+    const pathBody = (await pathResponse.json()) as {
+      curriculum: { weeks: Array<{ days: Array<{ id: string }> }> };
+    };
+    const dayId = pathBody.curriculum.weeks[0]?.days[0]?.id;
+    if (!dayId) throw new Error("Missing seeded Day 1");
+    const startResponse = await request(
+      runtime.app,
+      "/api/learning/sessions/v2",
+      {
+        method: "POST",
+        body: JSON.stringify({ dayId, operationId: "legacy-summary-start" }),
+      },
+    );
+    expect(startResponse.status).toBe(201);
+    const started = (await startResponse.json()) as {
+      session: LearningSession;
+    };
+    const { summary } = preparePersistedSummaryFacts(runtime, started.session);
+    insertAuthoritativeSummaryReview(runtime, {
+      reviewId: "legacy-summary-review",
+      sessionId: started.session.id,
+      exerciseAttemptId: "summary-exercise-attempt",
+      testRunId: "summary-test-run",
+      testOperationId: "summary-fixture-test",
+      resultStatus: "passed",
+      createdAt: Date.now() + 10_000,
+    });
+    const response = await request(
+      runtime.app,
+      `/api/learning/sessions/v2/${started.session.id}/units/${summary.id}/summary`,
+      {
+        method: "POST",
+        body: JSON.stringify({ operationId: "legacy-summary-read" }),
+      },
+    );
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as {
+      evidence: { id: string };
+      summary: {
+        metrics: {
+          evidenceCount: number;
+          correctEvidenceCount: number;
+          partialEvidenceCount: number;
+          incorrectEvidenceCount: number;
+        };
+      };
+    };
+
+    const evidenceRow = runtime.state.connection.sqlite
+      .prepare(
+        "SELECT payload_json FROM versioned_unit_evidence WHERE id = ? AND evidence_type = 'summary'",
+      )
+      .get(created.evidence.id) as { payload_json: string };
+    const payload = JSON.parse(evidenceRow.payload_json) as {
+      authority: unknown;
+      summary: Record<string, unknown>;
+    };
+    const metrics = created.summary.metrics;
+    const legacyPayload = {
+      authority: payload.authority,
+      summary: {
+        ...payload.summary,
+        strengths: [
+          "Квиз пройден на уровне уверенного понимания.",
+          "Реализация прошла разрешённые проверки.",
+        ],
+        gaps: [
+          "Воспроизведение по памяти выполнено, но его корректность отдельно не подтверждена.",
+          "Неизвестное историческое пояснение.",
+        ],
+        mistakeCandidates: [
+          {
+            fingerprint: "mistake-quiz-legacy",
+            summary: "В квизе выбран неверный или неполный ответ.",
+            correction:
+              "Восстановить проверяемое правило своими словами и подтвердить новым примером.",
+            sourceId: "question-legacy",
+          },
+        ],
+        flashcardCandidates: [
+          {
+            front: "Восстановите правило, проверенное вопросом квиза.",
+            back: "Сформулируйте правило своими словами и приведите собственный пример.",
+            sourceFingerprint: "mistake-quiz-legacy",
+          },
+        ],
+        narrative: `Собрано подтверждений навыка: ${metrics.evidenceCount}. Подтверждено: ${metrics.correctEvidenceCount}. Частично: ${metrics.partialEvidenceCount}. Требует работы: ${metrics.incorrectEvidenceCount}.`,
+      },
+    };
+    const sqlite = runtime.state.connection.sqlite;
+    sqlite
+      .prepare(
+        `INSERT INTO versioned_unit_evidence
+         (id, session_id, unit_id, evidence_type, operation_id, question_id,
+          payload_json, correctness, created_at)
+         VALUES ('legacy-summary-evidence', ?, ?, 'summary',
+                 'summary:' || ? , NULL, ?, NULL, ?)`,
+      )
+      .run(
+        started.session.id,
+        summary.id,
+        createHash("sha256").update("legacy-summary-operation").digest("hex"),
+        JSON.stringify(legacyPayload),
+        Date.now() + 1,
+      );
+    const progressRow = sqlite
+      .prepare(
+        "SELECT progress_json FROM unit_progress WHERE session_id = ? AND unit_id = ?",
+      )
+      .get(started.session.id, summary.id) as {
+      progress_json: string | null;
+    };
+    const progress = JSON.parse(progressRow.progress_json ?? "{}") as {
+      type?: string;
+    };
+    sqlite
+      .prepare(
+        "UPDATE unit_progress SET progress_json = ? WHERE session_id = ? AND unit_id = ?",
+      )
+      .run(
+        JSON.stringify({
+          ...progress,
+          type: "summary",
+          summaryId: "legacy-summary-evidence",
+        }),
+        started.session.id,
+        summary.id,
+      );
+
+    const rereadResponse = await request(
+      runtime.app,
+      `/api/learning/sessions/v2/${started.session.id}/units/${summary.id}/summary`,
+    );
+    expect(rereadResponse.status).toBe(200);
+    const reread = (await rereadResponse.json()) as {
+      summary: {
+        strengths: Array<{ key: string }>;
+        gaps: Array<{ key: string; params?: { text: string } }>;
+        mistakeCandidates: Array<{ summary: { key: string } }>;
+        flashcardCandidates: Array<{ front: { key: string } }>;
+        narrative: {
+          key: string;
+          params?: Record<string, string | number>;
+        };
+      };
+    };
+    expect(reread.summary.strengths).toEqual([
+      { key: "daySummary.strength.quizConfident" },
+      { key: "daySummary.strength.exercisePassed" },
+    ]);
+    expect(reread.summary.gaps[0]).toEqual({
+      key: "daySummary.gap.recallUnverified",
+    });
+    expect(reread.summary.gaps[1]).toEqual({
+      key: "daySummary.legacy.untranslated",
+      params: { text: "Неизвестное историческое пояснение." },
+    });
+    expect(reread.summary.mistakeCandidates[0]?.summary).toEqual({
+      key: "daySummary.mistake.quizSummary",
+    });
+    expect(reread.summary.flashcardCandidates[0]?.front).toEqual({
+      key: "daySummary.flashcard.ruleFront",
+    });
+    expect(reread.summary.narrative).toEqual({
+      key: "daySummary.narrative.evidence",
+      params: {
+        evidenceCount: metrics.evidenceCount,
+        correctCount: metrics.correctEvidenceCount,
+        partialCount: metrics.partialEvidenceCount,
+        incorrectCount: metrics.incorrectEvidenceCount,
+      },
+    });
   });
 
   it("derives and idempotently persists summary artifacts from server facts", async () => {

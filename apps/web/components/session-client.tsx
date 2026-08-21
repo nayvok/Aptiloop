@@ -33,7 +33,7 @@ import {
   unitStatusMessageKeys,
   unitTypeMessageKeys,
 } from "@/lib/unit-labels";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import { DayPlanRail, DayPlanSheet } from "@/components/day-plan";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -489,18 +489,26 @@ const quizResponseSchema = z
 const codeReadingResponseSchema = z
   .object({ evidence: evidenceBaseSchema, session: learnerSessionSchema })
   .passthrough();
+const daySummaryMessageSchema = z
+  .object({
+    key: z.string().min(1),
+    params: z
+      .record(z.string().min(1), z.union([z.number(), z.string()]))
+      .optional(),
+  })
+  .passthrough();
 const daySummarySchema = z
   .object({
     sessionId: idSchema,
     occurredAt: z.string().datetime(),
-    strengths: z.array(z.string()),
-    gaps: z.array(z.string()),
+    strengths: z.array(daySummaryMessageSchema),
+    gaps: z.array(daySummaryMessageSchema),
     mistakeCandidates: z.array(
       z
         .object({
           fingerprint: idSchema,
-          summary: z.string().min(1),
-          correction: z.string().min(1),
+          summary: daySummaryMessageSchema,
+          correction: daySummaryMessageSchema,
           sourceId: idSchema,
         })
         .passthrough(),
@@ -508,13 +516,13 @@ const daySummarySchema = z
     flashcardCandidates: z.array(
       z
         .object({
-          front: z.string().min(1),
-          back: z.string().min(1),
+          front: daySummaryMessageSchema,
+          back: daySummaryMessageSchema,
           sourceFingerprint: idSchema.optional(),
         })
         .passthrough(),
     ),
-    narrative: z.string(),
+    narrative: daySummaryMessageSchema,
     metrics: z
       .object({
         topicCount: z.number().int().nonnegative(),
@@ -3021,7 +3029,7 @@ function SummaryUnit({
         >
           <div data-slot="summary-narrative" className="py-5">
             <p className="max-w-[68ch] break-words text-[0.9375rem] leading-6 [overflow-wrap:anywhere]">
-              {result.summary.narrative}
+              {summaryMessageText(t, result.summary.narrative)}
             </p>
           </div>
           <dl
@@ -3049,7 +3057,9 @@ function SummaryUnit({
               title={t("session.summary.strengths")}
               items={
                 result.summary.strengths.length
-                  ? result.summary.strengths
+                  ? result.summary.strengths.map((message) =>
+                      summaryMessageText(t, message),
+                    )
                   : [t("session.summary.noStrengths")]
               }
             />
@@ -3057,7 +3067,9 @@ function SummaryUnit({
               title={t("session.summary.gaps")}
               items={
                 result.summary.gaps.length
-                  ? result.summary.gaps
+                  ? result.summary.gaps.map((message) =>
+                      summaryMessageText(t, message),
+                    )
                   : [t("session.summary.noGaps")]
               }
             />
@@ -3130,6 +3142,16 @@ function SummaryMetric({ label, value }: { label: string; value: string }) {
       <dd className="mt-1 text-xl font-semibold tabular-nums">{value}</dd>
     </div>
   );
+}
+
+function summaryMessageText(
+  t: (
+    key: MessageKey,
+    values?: Readonly<Record<string, string | number>>,
+  ) => string,
+  message: z.infer<typeof daySummaryMessageSchema>,
+): string {
+  return t(message.key as MessageKey, message.params);
 }
 
 function CheckpointUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {

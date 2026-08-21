@@ -1224,16 +1224,20 @@ export class LearningRepository {
     idempotencyKey?: string;
   }): Promise<AnswerAttempt> {
     if (!input.answer.trim()) throw new Error("Answer must not be empty");
-    if (input.idempotencyKey) {
-      const [existing] = await this.#connection.db
-        .select()
-        .from(answerAttempts)
-        .where(eq(answerAttempts.idempotencyKey, input.idempotencyKey))
-        .limit(1);
-      if (existing) return existing;
-    }
 
     const result = withTransaction(this.#connection, () => {
+      if (input.idempotencyKey) {
+        const existing = this.#connection.sqlite
+          .prepare(
+            `SELECT id, session_id AS sessionId, question_id AS questionId,
+                    attempt_number AS attemptNumber, answer, correctness,
+                    feedback, idempotency_key AS idempotencyKey,
+                    submitted_at AS submittedAt
+             FROM answer_attempts WHERE idempotency_key = ? LIMIT 1`,
+          )
+          .get(input.idempotencyKey) as AnswerAttempt | undefined;
+        if (existing) return existing;
+      }
       const session = this.#connection.sqlite
         .prepare(
           "SELECT day_id AS dayId, status FROM learning_sessions WHERE id = ?",
@@ -1650,16 +1654,11 @@ export class LearningRepository {
          value_json = excluded.value_json,
          updated_at = excluded.updated_at`,
     );
-    this.#connection.sqlite.exec("BEGIN IMMEDIATE");
-    try {
+    withTransaction(this.#connection, () => {
       for (const row of rows) {
         statement.run(row.key, row.valueJson, updatedAt);
       }
-      this.#connection.sqlite.exec("COMMIT");
-    } catch (error) {
-      this.#connection.sqlite.exec("ROLLBACK");
-      throw error;
-    }
+    });
   }
 
   async getSetting<T>(key: string): Promise<T | null> {

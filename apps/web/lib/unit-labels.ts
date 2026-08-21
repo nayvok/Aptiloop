@@ -94,7 +94,3 @@ export function activityColorClass(type: UnitType): string {
 export function activitySurfaceClass(type: UnitType): string {
   return `bg-activity-${activityTone[type]}-surface`;
 }
-
-export function activityBorderClass(type: UnitType): string {
-  return `border-activity-${activityTone[type]}/40`;
-}

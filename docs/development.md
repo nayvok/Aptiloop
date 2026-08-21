@@ -85,7 +85,7 @@ npm run build
 npm run test:e2e
 ```
 
-`npm run verify` runs format check, lint, typecheck, fast tests, and build. It does not run E2E. `npm test` runs fast tests followed by E2E.
+`npm run verify` runs format check, lint, typecheck, fast tests, build, and the production content check. It does not run E2E. `npm test` runs fast tests followed by E2E.
 
 Focused examples:
 

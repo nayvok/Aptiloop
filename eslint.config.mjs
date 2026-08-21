@@ -10,11 +10,32 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/playwright-report/**",
       "**/test-results/**",
+      "**/.data/**",
+      "**/.turbo/**",
+      "**/.verify/**",
       "workspaces/**/.harness/**",
     ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        AbortController: "readonly",
+        Buffer: "readonly",
+        TextDecoder: "readonly",
+        URL: "readonly",
+        clearInterval: "readonly",
+        clearTimeout: "readonly",
+        console: "readonly",
+        process: "readonly",
+        queueMicrotask: "readonly",
+        setInterval: "readonly",
+        setTimeout: "readonly",
+      },
+    },
+  },
   {
     files: ["**/*.{ts,tsx}"],
     rules: {

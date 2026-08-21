@@ -60,7 +60,9 @@ export async function snapshotCompleteWorkspace(
 
   const visit = async (directory: string, segments: readonly string[]) => {
     const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((left, right) => left.name.localeCompare(right.name, "en"));
+    entries.sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+    );
     for (const entry of entries) {
       if (segments.length === 0 && EXCLUDED_ROOT_ENTRIES.has(entry.name)) {
         continue;
@@ -112,7 +114,11 @@ export async function snapshotCompleteWorkspace(
 
   await visit(canonicalRoot, []);
   files.sort((left, right) =>
-    left.documentId.localeCompare(right.documentId, "en"),
+    left.documentId < right.documentId
+      ? -1
+      : left.documentId > right.documentId
+        ? 1
+        : 0,
   );
   const canonicalManifest = JSON.stringify({
     schemaVersion: 1,

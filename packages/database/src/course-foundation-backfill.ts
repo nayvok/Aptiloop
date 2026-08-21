@@ -222,7 +222,7 @@ function canonicalize(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         .map(([key, child]) => [key, canonicalize(child)]),
     );
   }
@@ -814,7 +814,8 @@ export function backfillCourseFoundations(
   for (const members of activitiesByLesson.values()) {
     members.sort(
       (left, right) =>
-        left.order_index - right.order_index || left.id.localeCompare(right.id),
+        left.order_index - right.order_index ||
+        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
     );
   }
 
@@ -1741,8 +1742,12 @@ export function backfillCourseFoundations(
 
   plans.sort(
     (left, right) =>
-      left.table.localeCompare(right.table) ||
-      left.primaryKey.localeCompare(right.primaryKey),
+      (left.table < right.table ? -1 : left.table > right.table ? 1 : 0) ||
+      (left.primaryKey < right.primaryKey
+        ? -1
+        : left.primaryKey > right.primaryKey
+          ? 1
+          : 0),
   );
   const sourceRowsDigest = sha256(
     canonicalJson(
@@ -1985,7 +1990,8 @@ export function backfillCourseFoundations(
   );
   for (const evidence of mappedEvidence.sort(
     (left, right) =>
-      left.occurredAt - right.occurredAt || left.id.localeCompare(right.id),
+      left.occurredAt - right.occurredAt ||
+      (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
   )) {
     insertEvidence.run(
       evidence.id,

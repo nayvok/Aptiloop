@@ -24,7 +24,10 @@ import {
 import type { Hono } from "hono";
 import { z } from "zod";
 
-import { readBoundedRequestBody } from "./http-resource-admission.js";
+import {
+  readBoundedRequestBody,
+  RequestBodyAdmissionError,
+} from "./http-resource-admission.js";
 
 const VALIDATION_TTL_MILLISECONDS = 15 * 60 * 1_000;
 const MAX_STAGED_VALIDATIONS = 32;
@@ -117,13 +120,15 @@ export function registerCoursePackRoutes(
         `Course Pack exceeds ${COURSE_PACK_JSON_LIMITS_V1.maxBytes} bytes`,
       );
     } catch (error) {
+      const status =
+        error instanceof RequestBodyAdmissionError ? error.status : 413;
       return context.json(
         {
           valid: false,
           error:
             error instanceof Error ? error.message : "Course Pack is too large",
         },
-        413,
+        status,
       );
     }
 

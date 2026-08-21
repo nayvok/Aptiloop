@@ -3,6 +3,7 @@
 import { ArrowRightIcon, CaretDownIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { z } from "zod";
 
 import { EmptyState, QueryError } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
@@ -34,14 +35,31 @@ const dimensions = [
   "interview",
 ] as const;
 type Dimension = (typeof dimensions)[number];
-type Topic = {
-  id: string;
-  title: string;
-  group: string;
-  scores: Record<Dimension, number>;
-  evidenceCount: number;
-  reviewDue: boolean;
-};
+
+const skillsTopicSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    group: z.string(),
+    scores: z
+      .object({
+        understanding: z.number().min(0).max(5),
+        explanation: z.number().min(0).max(5),
+        codeReading: z.number().min(0).max(5),
+        implementation: z.number().min(0).max(5),
+        debugging: z.number().min(0).max(5),
+        interview: z.number().min(0).max(5),
+      })
+      .strict(),
+    evidenceCount: z.number().int().nonnegative(),
+    reviewDue: z.boolean(),
+  })
+  .passthrough();
+const skillsResponseSchema = z
+  .object({ topics: z.array(skillsTopicSchema) })
+  .passthrough();
+
+type Topic = z.infer<typeof skillsTopicSchema>;
 
 function dimensionKey(dimension: Dimension): MessageKey {
   return `skills.dimension.${dimension}` as MessageKey;
@@ -81,7 +99,8 @@ export function KnowledgeClient() {
   const { formatNumber, t } = useI18n();
   const query = useQuery({
     queryKey: ["knowledge"],
-    queryFn: () => api<{ topics: Topic[] }>("/learning/skills"),
+    queryFn: async () =>
+      skillsResponseSchema.parse(await api<unknown>("/learning/skills")),
   });
 
   if (query.isLoading) {

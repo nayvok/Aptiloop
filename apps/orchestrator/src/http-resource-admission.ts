@@ -147,7 +147,7 @@ export class RequestBodyAdmissionError extends Error {
   }
 }
 
-export function assertBoundedContentLength(
+function assertBoundedContentLength(
   request: Request,
   maxBytes: number,
   tooLargeMessage = `Request body exceeds ${maxBytes} bytes`,

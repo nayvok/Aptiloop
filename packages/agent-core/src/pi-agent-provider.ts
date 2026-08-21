@@ -430,8 +430,36 @@ class AsyncEventQueue<T> implements AsyncIterable<T> {
   }
 }
 
+interface RedactionRule {
+  readonly pattern: RegExp;
+  readonly replacement: string;
+}
+
+const SECRET_REDACTION_RULES: readonly RedactionRule[] = [
+  {
+    pattern:
+      /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization)["']?\s*[:=]\s*["']?[^\s"'&;<>]{8,}/gi,
+    replacement: "$1=[REDACTED]",
+  },
+  {
+    pattern: /\b(bearer|basic)\s+\S{8,}/gi,
+    replacement: "$1 [REDACTED]",
+  },
+  { pattern: /\bsk-[A-Za-z0-9_-]{8,}/g, replacement: "[REDACTED]" },
+  { pattern: /\bghp_[A-Za-z0-9]{16,}/g, replacement: "[REDACTED]" },
+  { pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}/g, replacement: "[REDACTED]" },
+];
+
+function redactSecrets(message: string): string {
+  let redacted = message;
+  for (const rule of SECRET_REDACTION_RULES) {
+    redacted = redacted.replace(rule.pattern, rule.replacement);
+  }
+  return redacted;
+}
+
 function safeErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim()
-    ? error.message.slice(0, 500)
+    ? redactSecrets(error.message).slice(0, 500)
     : fallback;
 }

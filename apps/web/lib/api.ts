@@ -111,14 +111,14 @@ export async function* streamAgent(
   });
 
   if (!response.ok || !response.body) {
-    const body = (await response.json().catch(() => null)) as {
+    const errorBody = (await response.json().catch(() => null)) as {
       error?: string;
       failure?: ConstructorParameters<typeof ApiError>[2];
     } | null;
     throw new ApiError(
       `Stream failed (${response.status})`,
       response.status,
-      body?.failure,
+      errorBody?.failure,
     );
   }
 

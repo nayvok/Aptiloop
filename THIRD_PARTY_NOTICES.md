@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-**Generated scope:** 2026-08-13, from the committed `package-lock.json` for
+**Generated scope:** 2026-08-22, from the committed `package-lock.json` for
 Aptiloop 0.1.0 and inspection of the current production web standalone output
 and Debian-based container definitions.
 

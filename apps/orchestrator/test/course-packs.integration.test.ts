@@ -1377,6 +1377,36 @@ describe("Course Pack HTTP lifecycle", () => {
     expect(response.status).toBe(413);
   });
 
+  it("reports malformed Content-Length admission as 400 rather than 413", async () => {
+    const { app } = await fixture();
+    const malformed = await app.request("/api/course-packs/validate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": "not-a-number",
+      },
+      body: "{}",
+    });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({
+      valid: false,
+      error: "Content-Length is invalid",
+    });
+    const mismatched = await app.request("/api/course-packs/validate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": "5",
+      },
+      body: "{}",
+    });
+    expect(mismatched.status).toBe(400);
+    expect(await mismatched.json()).toMatchObject({
+      valid: false,
+      error: "Content-Length is invalid",
+    });
+  });
+
   it("stages malformed JSON as bounded diagnostics without retaining source bytes", async () => {
     const { app, connection, stagingRoot } = await fixture();
     const response = await app.request("/api/course-packs/validate", {

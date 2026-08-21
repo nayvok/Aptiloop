@@ -134,7 +134,7 @@ npm run test:e2e
 npm run build
 ```
 
-`npm run verify` runs format check, lint, typecheck, fast tests, and build. It does **not** run E2E. `npm test` runs fast tests followed by E2E.
+`npm run verify` runs format check, lint, typecheck, fast tests, build, and the production content check. It does **not** run E2E. `npm test` runs fast tests followed by E2E.
 
 For a database change, use a disposable database to prove the affected contract and rollback/recovery procedure. Before any valuable-data migration, run the explicit read-only inventory and create a new active-source-only approved backup under `.data/approved-backups/`; never use a quarantined candidate or old backup automatically.
 

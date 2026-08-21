@@ -29,6 +29,7 @@ import {
   type LearningKernelFactProvenance,
   type LearningKernelScope,
   type DaySummary,
+  type DaySummaryMessage,
   type HintLevel,
   type LearningKernelProjection,
   type LearningKernelReviewItem,
@@ -194,19 +195,28 @@ const summaryMasteryEvidenceSchema = z
   })
   .strict();
 
+const daySummaryMessageSchema = z
+  .object({
+    key: z.string().regex(/^daySummary\.[a-z][a-zA-Z.]+$/u),
+    params: z
+      .record(z.string().min(1).max(40), z.number().or(z.string().max(500)))
+      .optional(),
+  })
+  .strict();
+
 const daySummarySchema = z
   .object({
     sessionId: z.string().min(1),
     occurredAt: z.iso.datetime(),
     masteryEvidence: z.array(summaryMasteryEvidenceSchema),
-    strengths: z.array(z.string()),
-    gaps: z.array(z.string()),
+    strengths: z.array(daySummaryMessageSchema),
+    gaps: z.array(daySummaryMessageSchema),
     mistakeCandidates: z.array(
       z
         .object({
           fingerprint: z.string().min(1),
-          summary: z.string().min(1),
-          correction: z.string().min(1),
+          summary: daySummaryMessageSchema,
+          correction: daySummaryMessageSchema,
           sourceId: z.string().min(1),
         })
         .strict(),
@@ -214,13 +224,13 @@ const daySummarySchema = z
     flashcardCandidates: z.array(
       z
         .object({
-          front: z.string().min(1),
-          back: z.string().min(1),
+          front: daySummaryMessageSchema,
+          back: daySummaryMessageSchema,
           sourceFingerprint: z.string().min(1).optional(),
         })
         .strict(),
     ),
-    narrative: z.string(),
+    narrative: daySummaryMessageSchema,
     metrics: z
       .object({
         topicCount: z.number().int().nonnegative(),
@@ -1448,7 +1458,7 @@ async function readKernelSkills(
     }
   }
   return [...topics.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([id, topic]) => ({
       id,
       ...readKnowledgeNode(state, target.revisionId, id),
@@ -1483,7 +1493,11 @@ async function readKernelMistakes(
   return [...mistakes.values()]
     .filter((mistake) => mistake.status === "open")
     .sort((left, right) =>
-      right.latestOccurrenceAt.localeCompare(left.latestOccurrenceAt),
+      right.latestOccurrenceAt < left.latestOccurrenceAt
+        ? -1
+        : right.latestOccurrenceAt > left.latestOccurrenceAt
+          ? 1
+          : 0,
     )
     .map((mistake) => {
       const scheduledReview = reviews
@@ -1495,8 +1509,11 @@ async function readKernelMistakes(
         )
         .sort(
           (left, right) =>
-            left.dueAt.localeCompare(right.dueAt) ||
-            left.id.localeCompare(right.id),
+            (left.dueAt < right.dueAt
+              ? -1
+              : left.dueAt > right.dueAt
+                ? 1
+                : 0) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
         )[0];
       return {
         id: mistake.fingerprint,
@@ -1547,8 +1564,16 @@ async function readKernelReviews(
   return [...latest.values()]
     .sort(
       (left, right) =>
-        left.review.dueAt.localeCompare(right.review.dueAt) ||
-        left.review.id.localeCompare(right.review.id),
+        (left.review.dueAt < right.review.dueAt
+          ? -1
+          : left.review.dueAt > right.review.dueAt
+            ? 1
+            : 0) ||
+        (left.review.id < right.review.id
+          ? -1
+          : left.review.id > right.review.id
+            ? 1
+            : 0),
     )
     .map(({ review, scope }) => {
       const source = readReviewSource(state.connection, scope, review);
@@ -1866,8 +1891,8 @@ function buildReviewSubmissionResponse(
     )
     .sort(
       (left, right) =>
-        left.dueAt.localeCompare(right.dueAt) ||
-        left.id.localeCompare(right.id),
+        (left.dueAt < right.dueAt ? -1 : left.dueAt > right.dueAt ? 1 : 0) ||
+        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
     )[0];
   if (
     completed?.state !== "completed" ||
@@ -3014,16 +3039,145 @@ function parsePersistedSummary(payloadJson: string): {
   summary: DaySummary;
   authority: CanonicalSummaryAuthority | null;
 } {
-  const payload = z
+  const payloadStructure = z
     .object({
-      summary: daySummarySchema,
+      summary: z.unknown(),
       authority: canonicalSummaryAuthoritySchema.optional(),
     })
-    .strict()
-    .parse(JSON.parse(payloadJson));
+    .strict();
+  const payload = payloadStructure.parse(JSON.parse(payloadJson));
+  const modern = daySummarySchema.safeParse(payload.summary);
+  if (modern.success) {
+    return {
+      summary: modern.data as DaySummary,
+      authority: payload.authority ?? null,
+    };
+  }
+  const legacy = legacyDaySummarySchema.safeParse(payload.summary);
+  if (!legacy.success) {
+    throw new Error("Persisted summary payload does not match a known shape");
+  }
   return {
-    summary: payload.summary as DaySummary,
+    summary: migrateLegacyDaySummary(legacy.data),
     authority: payload.authority ?? null,
+  };
+}
+
+const LEGACY_SUMMARY_TEXT_TO_KEY: Record<string, DaySummaryMessage["key"]> = {
+  "Квиз пройден на уровне уверенного понимания.":
+    "daySummary.strength.quizConfident",
+  "Реализация прошла разрешённые проверки.":
+    "daySummary.strength.exercisePassed",
+  "Воспроизведение по памяти выполнено, но его корректность отдельно не подтверждена.":
+    "daySummary.gap.recallUnverified",
+  "Объяснение уточнено после преподавателя, но остаётся частичным подтверждением навыка.":
+    "daySummary.gap.teacherRevisionPartial",
+  "Квиз показывает частичное понимание; ошибки нужно разобрать.":
+    "daySummary.gap.quizPartial",
+  "Квиз показывает пробелы; тему нужно восстановить и проверить заново.":
+    "daySummary.gap.quizIncorrect",
+  "Чтение кода выполнено, но без отдельной проверки корректности засчитано частично.":
+    "daySummary.gap.codeReadingPartial",
+  "Реализация ещё не подтверждена разрешёнными проверками.":
+    "daySummary.gap.exerciseNotConfirmed",
+  "В квизе выбран неверный или неполный ответ.":
+    "daySummary.mistake.quizSummary",
+  "Восстановить проверяемое правило своими словами и подтвердить новым примером.":
+    "daySummary.mistake.quizCorrection",
+  "Восстановите правило, проверенное вопросом квиза.":
+    "daySummary.flashcard.ruleFront",
+  "Сформулируйте правило своими словами и приведите собственный пример.":
+    "daySummary.flashcard.ruleBack",
+};
+
+function legacySummaryMessage(text: string): DaySummaryMessage {
+  const key = LEGACY_SUMMARY_TEXT_TO_KEY[text];
+  if (key) return { key };
+  return { key: "daySummary.legacy.untranslated", params: { text } };
+}
+
+function legacyNarrativeMessage(
+  text: string,
+  metrics: DaySummary["metrics"],
+): DaySummaryMessage {
+  if (text.startsWith("По занятию пока нет подтверждений навыка")) {
+    return { key: "daySummary.narrative.noEvidence" };
+  }
+  if (text.startsWith("Собрано подтверждений навыка:")) {
+    return {
+      key: "daySummary.narrative.evidence",
+      params: {
+        evidenceCount: metrics.evidenceCount,
+        correctCount: metrics.correctEvidenceCount,
+        partialCount: metrics.partialEvidenceCount,
+        incorrectCount: metrics.incorrectEvidenceCount,
+      },
+    };
+  }
+  return { key: "daySummary.legacy.untranslated", params: { text } };
+}
+
+const legacyDaySummarySchema = z
+  .object({
+    sessionId: z.string().min(1),
+    occurredAt: z.iso.datetime(),
+    masteryEvidence: z.array(summaryMasteryEvidenceSchema),
+    strengths: z.array(z.string()),
+    gaps: z.array(z.string()),
+    mistakeCandidates: z.array(
+      z
+        .object({
+          fingerprint: z.string().min(1),
+          summary: z.string().min(1),
+          correction: z.string().min(1),
+          sourceId: z.string().min(1),
+        })
+        .strict(),
+    ),
+    flashcardCandidates: z.array(
+      z
+        .object({
+          front: z.string().min(1),
+          back: z.string().min(1),
+          sourceFingerprint: z.string().min(1).optional(),
+        })
+        .strict(),
+    ),
+    narrative: z.string(),
+    metrics: daySummarySchema.shape.metrics,
+  })
+  .strict();
+
+function migrateLegacyDaySummary(
+  legacy: z.infer<typeof legacyDaySummarySchema>,
+): DaySummary {
+  const metrics = {
+    ...legacy.metrics,
+    maxHintLevel: legacy.metrics
+      .maxHintLevel as DaySummary["metrics"]["maxHintLevel"],
+    reviewReceiptAccepted: legacy.metrics.reviewReceiptAccepted ?? false,
+  };
+  return {
+    sessionId: legacy.sessionId,
+    occurredAt: legacy.occurredAt,
+    masteryEvidence: legacy.masteryEvidence as DaySummary["masteryEvidence"],
+    strengths: legacy.strengths.map(legacySummaryMessage),
+    gaps: legacy.gaps.map(legacySummaryMessage),
+    mistakeCandidates: legacy.mistakeCandidates.map((candidate) => ({
+      fingerprint: candidate.fingerprint,
+      summary: legacySummaryMessage(candidate.summary),
+      correction: legacySummaryMessage(candidate.correction),
+      sourceId: candidate.sourceId,
+    })),
+    flashcardCandidates: legacy.flashcardCandidates.map((candidate) => ({
+      front: legacySummaryMessage(candidate.front),
+      back: legacySummaryMessage(candidate.back),
+      ...(candidate.sourceFingerprint === undefined
+        ? {}
+        : { sourceFingerprint: candidate.sourceFingerprint }),
+    })),
+    narrative: legacyNarrativeMessage(legacy.narrative, metrics),
+    metrics,
   };
 }
 

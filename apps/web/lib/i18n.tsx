@@ -157,6 +157,35 @@ const enUS = {
   "dayPlan.prerequisites": "Prerequisites",
   "dayPlan.noPrerequisites": "No prerequisites.",
   "dayPlan.outOfScope": "Outside this lesson",
+  "daySummary.flashcard.ruleFront":
+    "Recall the rule verified by the quiz question.",
+  "daySummary.flashcard.ruleBack":
+    "State the rule in your own words and give your own example.",
+  "daySummary.gap.codeReadingPartial":
+    "Code reading was completed, but without a separate correctness check it counts as partial.",
+  "daySummary.gap.exerciseNotConfirmed":
+    "The implementation is not yet confirmed by the allowed checks.",
+  "daySummary.gap.quizIncorrect":
+    "The quiz shows gaps; restore the topic and verify it again.",
+  "daySummary.gap.quizPartial":
+    "The quiz shows partial understanding; review the mistakes.",
+  "daySummary.gap.recallUnverified":
+    "Recall from memory was completed, but its correctness was not separately confirmed.",
+  "daySummary.gap.teacherRevisionPartial":
+    "The explanation was refined after the teacher, but remains partial evidence of the skill.",
+  "daySummary.legacy.untranslated": "{text}",
+  "daySummary.mistake.quizCorrection":
+    "Restore the verified rule in your own words and confirm it with a new example.",
+  "daySummary.mistake.quizSummary":
+    "An incorrect or incomplete answer was chosen in the quiz.",
+  "daySummary.narrative.evidence":
+    "Skill evidence collected: {evidenceCount}. Confirmed: {correctCount}. Partial: {partialCount}. Needs work: {incorrectCount}.",
+  "daySummary.narrative.noEvidence":
+    "No confirmed skill evidence for this session yet: no topics were defined for assessment.",
+  "daySummary.strength.exercisePassed":
+    "The implementation passed the allowed checks.",
+  "daySummary.strength.quizConfident":
+    "The quiz passed at the level of confident understanding.",
   "activity.unsupported.title": "Activity unavailable",
   "activity.unsupported.description":
     "This activity type is not supported by this Aptiloop version. No progress was changed.",
@@ -377,6 +406,7 @@ const enUS = {
   "ui.messageScroller.toLast": "Go to latest message",
   "ui.messageScroller.toStart": "Go to beginning",
   "ui.close": "Close",
+  "ui.unknownValue": "Unknown",
   "settings.status.degraded": "Configured · not yet tested",
   "settings.status.authentication": "Authentication required",
   "settings.status.unavailable": "Unavailable",
@@ -1776,6 +1806,35 @@ const ruRU: Record<MessageKey, string> = {
   "dayPlan.prerequisites": "Зависимости",
   "dayPlan.noPrerequisites": "Зависимостей нет.",
   "dayPlan.outOfScope": "Вне занятия",
+  "daySummary.flashcard.ruleFront":
+    "Восстановите правило, проверенное вопросом квиза.",
+  "daySummary.flashcard.ruleBack":
+    "Сформулируйте правило своими словами и приведите собственный пример.",
+  "daySummary.gap.codeReadingPartial":
+    "Чтение кода выполнено, но без отдельной проверки корректности засчитано частично.",
+  "daySummary.gap.exerciseNotConfirmed":
+    "Реализация ещё не подтверждена разрешёнными проверками.",
+  "daySummary.gap.quizIncorrect":
+    "Квиз показывает пробелы; тему нужно восстановить и проверить заново.",
+  "daySummary.gap.quizPartial":
+    "Квиз показывает частичное понимание; ошибки нужно разобрать.",
+  "daySummary.gap.recallUnverified":
+    "Воспроизведение по памяти выполнено, но его корректность отдельно не подтверждена.",
+  "daySummary.gap.teacherRevisionPartial":
+    "Объяснение уточнено после преподавателя, но остаётся частичным подтверждением навыка.",
+  "daySummary.legacy.untranslated": "{text}",
+  "daySummary.mistake.quizCorrection":
+    "Восстановить проверяемое правило своими словами и подтвердить новым примером.",
+  "daySummary.mistake.quizSummary":
+    "В квизе выбран неверный или неполный ответ.",
+  "daySummary.narrative.evidence":
+    "Собрано подтверждений навыка: {evidenceCount}. Подтверждено: {correctCount}. Частично: {partialCount}. Требует работы: {incorrectCount}.",
+  "daySummary.narrative.noEvidence":
+    "По занятию пока нет подтверждений навыка: темы для оценки не определены.",
+  "daySummary.strength.exercisePassed":
+    "Реализация прошла разрешённые проверки.",
+  "daySummary.strength.quizConfident":
+    "Квиз пройден на уровне уверенного понимания.",
   "activity.unsupported.title": "Активность недоступна",
   "activity.unsupported.description":
     "Эта версия Aptiloop не поддерживает такой тип активности. Прогресс не изменён.",
@@ -1998,6 +2057,7 @@ const ruRU: Record<MessageKey, string> = {
   "ui.messageScroller.toLast": "К последнему сообщению",
   "ui.messageScroller.toStart": "К началу",
   "ui.close": "Закрыть",
+  "ui.unknownValue": "Неизвестно",
   "settings.status.degraded": "Настроено · ещё не протестировано",
   "settings.status.authentication": "Нужна авторизация",
   "settings.status.unavailable": "Недоступно",

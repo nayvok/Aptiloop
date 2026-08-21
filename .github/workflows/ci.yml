@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CI: true
+  NPM_VERSION: "11.12.1"
 
 jobs:
   supply-chain:
@@ -62,7 +63,7 @@ jobs:
           cache: npm
           cache-dependency-path: source/package-lock.json
       - name: Use repository npm version
-        run: npm install --global npm@11.12.1
+        run: npm install --global npm@$NPM_VERSION
       - name: Install source dependencies without lifecycle scripts
         working-directory: source
         env:
@@ -78,9 +79,7 @@ jobs:
       - name: Generate CycloneDX npm SBOM
         if: always()
         working-directory: source
-        run: |
-          mkdir -p .verify/supply-chain
-          npm sbom --sbom-format=cyclonedx --workspaces --include-workspace-root --legacy-peer-deps > .verify/supply-chain/sbom.cdx.json
+        run: npm run sbom
       - name: Validate exact supply-chain evidence
         id: validate-supply-chain-evidence
         if: always()
@@ -112,6 +111,20 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
+      - name: Upload supply-chain failure diagnostics
+        if: ${{ always() && steps.validate-supply-chain-evidence.outcome != 'skipped' && steps.validate-supply-chain-evidence.outcome != 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: supply-chain-failure-diagnostics
+          path: |
+            source/.verify/supply-chain/workflow-provenance.json
+            source/.verify/supply-chain/npm-audit.json
+            source/.verify/supply-chain/npm-audit-production.json
+            source/.verify/supply-chain/npm-audit-summary.json
+            source/.verify/supply-chain/sbom.cdx.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 3
 
   quality:
     name: Fast quality gates
@@ -129,7 +142,7 @@ jobs:
           node-version: 24
           cache: npm
       - name: Use repository npm version
-        run: npm install --global npm@11.12.1
+        run: npm install --global npm@$NPM_VERSION
       - name: Install workspace dependencies
         run: npm ci
       - name: Check formatting
@@ -159,7 +172,7 @@ jobs:
           node-version: 24
           cache: npm
       - name: Use repository npm version
-        run: npm install --global npm@11.12.1
+        run: npm install --global npm@$NPM_VERSION
       - name: Install workspace dependencies
         run: npm ci
       - name: Install repository-pinned Playwright Chromium

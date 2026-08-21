@@ -323,11 +323,12 @@ function seedSingleVersion(
       // active curriculum by `curricula.updated_at DESC`, so such a row must
       // never outrank a real, later publish. Clamp the wall-clock marker to
       // the seed moment when the authored value is in the future.
+      const seedWallClock = Date.now();
       connection.sqlite
         .prepare(
           `UPDATE curricula SET updated_at = ? WHERE id = ? AND updated_at > ?`,
         )
-        .run(Date.now(), version.curriculumId, Date.now());
+        .run(seedWallClock, version.curriculumId, seedWallClock);
       return;
     }
 

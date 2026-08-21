@@ -205,8 +205,16 @@ export function backfillLearningKernel(
     (left, right) =>
       left.observedAt - right.observedAt ||
       left.order - right.order ||
-      left.row.session_id.localeCompare(right.row.session_id) ||
-      left.row.unit_id.localeCompare(right.row.unit_id),
+      (left.row.session_id < right.row.session_id
+        ? -1
+        : left.row.session_id > right.row.session_id
+          ? 1
+          : 0) ||
+      (left.row.unit_id < right.row.unit_id
+        ? -1
+        : left.row.unit_id > right.row.unit_id
+          ? 1
+          : 0),
   );
   for (const event of progressEvents) {
     const sourceId = `${event.row.session_id}:${event.row.unit_id}:${event.transition}`;

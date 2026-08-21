@@ -1,4 +1,4 @@
-# Design system
+# Design implementation reference
 
 ## Status and direction
 
@@ -17,7 +17,7 @@ Calm Workshop — Clear Slate is the approved and implemented visual direction. 
 
 **Implemented baseline**
 
-The exact canonical values and contrast intent are in [`../DESIGN.md`](../DESIGN.md#color-roles). `apps/web/app/globals.css` implements these token families:
+The exact canonical values and contrast intent are in [`../../DESIGN.md`](../../DESIGN.md#color-roles). `apps/web/app/globals.css` implements these token families:
 
 - neutral foundation: `background`, `foreground`, `card`, `popover`, `surface-raised`, `surface-soft`, `sidebar`, `secondary`, `muted`, `accent`, `border`, `input`, and `overlay`;
 - primary interaction: `primary`, `primary-hover`, `primary-foreground`, and `ring`;
@@ -47,7 +47,7 @@ The exact canonical values and contrast intent are in [`../DESIGN.md`](../DESIGN
 
 **Implemented baseline**
 
-The design system owns reusable composition, not route semantics. The canonical route, query-state, breadcrumb, Course creation/intake, Review destination, and Studio ownership rules live in [`design/information-architecture.md`](design/information-architecture.md). Components must preserve those rules without duplicating them in local variants.
+The design system owns reusable composition, not route semantics. The canonical route, query-state, breadcrumb, Course creation/intake, Review destination, and Studio ownership rules live in [`information-architecture.md`](information-architecture.md). Components must preserve those rules without duplicating them in local variants.
 
 ## Component catalog
 

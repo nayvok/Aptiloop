@@ -90,6 +90,18 @@ function fakeModels(): Models {
   return fake as unknown as Models;
 }
 
+function failingModels(error: unknown): Models {
+  const fake = {
+    getProvider: (providerId: string) =>
+      providerId === "openai" ? { id: "openai" } : undefined,
+    checkAuth: async () => {
+      throw error;
+    },
+    getModels: () => [],
+  };
+  return fake as unknown as Models;
+}
+
 async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
   const events: T[] = [];
   for await (const event of stream) events.push(event);
@@ -297,6 +309,81 @@ describe("PiAgentProvider", () => {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
     }
+  });
+
+  it("redacts bearer tokens before surfacing provider errors", async () => {
+    const provider = new PiAgentProvider({
+      models: failingModels(
+        new Error(
+          "Request rejected: Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload-sig-value99",
+        ),
+      ),
+      providerType: "openai",
+    });
+
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      state: "authentication-required",
+      message: "Request rejected: Authorization: Bearer [REDACTED]",
+    });
+  });
+
+  it("redacts api_key assignments before surfacing provider errors", async () => {
+    const provider = new PiAgentProvider({
+      models: failingModels(
+        new Error(
+          "Upstream rejected the request because api_key = 0123456789abcdef was invalid",
+        ),
+      ),
+      providerType: "openai",
+    });
+
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      state: "authentication-required",
+      message:
+        "Upstream rejected the request because api_key=[REDACTED] was invalid",
+    });
+  });
+
+  it("redacts GitHub personal access tokens before surfacing provider errors", async () => {
+    const provider = new PiAgentProvider({
+      models: failingModels(
+        new Error(
+          "GitHub upload failed with ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 for repo",
+        ),
+      ),
+      providerType: "openai",
+    });
+
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      state: "authentication-required",
+      message: "GitHub upload failed with [REDACTED] for repo",
+    });
+  });
+
+  it("keeps ordinary provider error messages unchanged", async () => {
+    const provider = new PiAgentProvider({
+      models: failingModels(
+        new Error("Model endpoint refused the connection after 30 seconds"),
+      ),
+      providerType: "openai",
+    });
+
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      state: "authentication-required",
+      message: "Model endpoint refused the connection after 30 seconds",
+    });
+  });
+
+  it("keeps the fallback message when a provider error has no text", async () => {
+    const provider = new PiAgentProvider({
+      models: failingModels(new Error("")),
+      providerType: "openai",
+    });
+
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      state: "authentication-required",
+      message: "Authentication failed for openai",
+    });
   });
 
   it("rejects provider tools outside the Aptiloop role policy", async () => {

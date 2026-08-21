@@ -45,7 +45,7 @@ const catalogIds = [
   "lm-studio-local",
 ] as const;
 
-export const ProviderCatalogIdSchema = z.enum(catalogIds);
+const ProviderCatalogIdSchema = z.enum(catalogIds);
 const StableConnectionIdSchema = z
   .string()
   .trim()

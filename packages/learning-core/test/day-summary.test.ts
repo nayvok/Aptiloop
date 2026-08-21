@@ -165,7 +165,35 @@ describe("deriveDaySummary", () => {
 
     expect(summary.masteryEvidence).toEqual([]);
     expect(summary.metrics.evidenceCount).toBe(0);
-    expect(summary.narrative).toContain("пока нет подтверждений навыка");
+    expect(summary.narrative).toEqual({
+      key: "daySummary.narrative.noEvidence",
+    });
+  });
+
+  it("emits locale-neutral presentation messages without authored prose", () => {
+    const summary = deriveDaySummary({
+      ...baseInput,
+      quizScore: 0,
+      exerciseTestsPassed: false,
+      incorrectQuestionIds: ["question-1"],
+    });
+    const serialized = JSON.stringify(summary);
+
+    expect(summary.narrative.key).toBe("daySummary.narrative.evidence");
+    expect(summary.narrative.params).toMatchObject({
+      evidenceCount: expect.any(Number),
+      correctCount: expect.any(Number),
+      partialCount: expect.any(Number),
+      incorrectCount: expect.any(Number),
+    });
+    expect(
+      summary.strengths.every((item) => item.key.startsWith("daySummary.")),
+    ).toBe(true);
+    expect(
+      summary.gaps.every((item) => item.key.startsWith("daySummary.")),
+    ).toBe(true);
+    expect(serialized).not.toContain("Квиз");
+    expect(serialized).not.toContain("подтверждений");
   });
 
   it("produces stable IDs, ordering, mistakes, and flashcards", () => {

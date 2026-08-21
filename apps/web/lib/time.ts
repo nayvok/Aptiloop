@@ -30,15 +30,3 @@ export function formatDuration(
 ): string {
   return `≈ ${formatMinutesShort(minutes, locale)}`;
 }
-
-export function formatHoursHuman(
-  minutes: number,
-  locale: UiLocale = "en-US",
-): string {
-  return formatUnit(
-    Math.max(1, Math.round(minutes / 60)),
-    "hour",
-    locale,
-    "long",
-  );
-}

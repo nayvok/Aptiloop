@@ -768,9 +768,21 @@ async function authoringChangeReview(
   }
   changes.sort(
     (left, right) =>
-      left.entityType.localeCompare(right.entityType) ||
-      left.stableId.localeCompare(right.stableId) ||
-      left.operation.localeCompare(right.operation),
+      (left.entityType < right.entityType
+        ? -1
+        : left.entityType > right.entityType
+          ? 1
+          : 0) ||
+      (left.stableId < right.stableId
+        ? -1
+        : left.stableId > right.stableId
+          ? 1
+          : 0) ||
+      (left.operation < right.operation
+        ? -1
+        : left.operation > right.operation
+          ? 1
+          : 0),
   );
   const draftHash = authoringDraftHash(graph);
   const reviewBody = {
@@ -892,6 +904,17 @@ async function handle(
         409,
       );
     }
+    if (error instanceof z.ZodError) {
+      return context.json(
+        {
+          error: {
+            code: "validation_failed",
+            message: "The curriculum change is not internally consistent",
+          },
+        },
+        409,
+      );
+    }
     const message = error instanceof Error ? error.message : "";
     if (message.includes("immutable") || message.includes("Only a draft")) {
       return context.json(
@@ -924,15 +947,7 @@ async function handle(
         409,
       );
     }
-    return context.json(
-      {
-        error: {
-          code: "curriculum_update_failed",
-          message: "The curriculum change could not be saved",
-        },
-      },
-      409,
-    );
+    throw error;
   }
 }
 
