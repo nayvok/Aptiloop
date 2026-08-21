@@ -9,6 +9,7 @@ import {
   type PageRouteContextRegistration,
 } from "@/components/page-route-context";
 import { LocaleProvider, type UiLocale } from "@/lib/i18n";
+import { learningPathSchema } from "@/lib/learning-path";
 
 const { apiMock, pushMock } = vi.hoisted(() => ({
   apiMock: vi.fn(),
@@ -185,6 +186,24 @@ afterEach(() => {
 });
 
 describe("Aptiloop Home", () => {
+  it("parses an archived revision pinned by its active session", () => {
+    const published = pathFixture();
+    const archived = {
+      ...published,
+      curriculum: {
+        ...published.curriculum,
+        version: {
+          ...published.curriculum.version,
+          status: "archived" as const,
+        },
+      },
+    };
+
+    const parsed = learningPathSchema.parse(archived);
+    expect(parsed.curriculum?.version.status).toBe("archived");
+    expect(parsed.nextAction?.type).toBe("resume");
+  });
+
   it("shows one next action, finite phases, and upcoming lessons", async () => {
     apiMock.mockImplementation((path: string) =>
       Promise.resolve(path === "/settings" ? mockSettings() : pathFixture()),

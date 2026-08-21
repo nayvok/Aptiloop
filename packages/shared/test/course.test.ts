@@ -7,6 +7,7 @@ import {
   CourseRevisionSchema,
   CourseLessonSchema,
   CourseSchema,
+  CoursePackStagedValidationResponseSchema,
   EvidenceFactSchema,
   KnowledgeCapsuleSchema,
   LearnerActivityDefinitionSchema,
@@ -427,6 +428,53 @@ describe("Course foundation contracts", () => {
       StableIdentityReuseInputSchema.safeParse({
         existing,
         candidate: { ...existing, semanticHash: HASH_B },
+      }).success,
+    ).toBe(false);
+  });
+  it("accepts offset ISO expiry and requires safe diagnostic metadata", () => {
+    const diagnostic = {
+      code: "PACK_SHAPE_INVALID",
+      severity: "error" as const,
+      path: "/lessons/0",
+      entityId: null,
+      message: "Course Pack shape is invalid",
+      ruleId: null,
+      context: "json-value" as const,
+    };
+    const response = {
+      valid: false as const,
+      storageAvailable: true,
+      validationId: "123e4567-e89b-42d3-a456-426614174001",
+      expiresAt: "2026-08-19T16:18:00+05:00",
+      sourceKind: "unknown" as const,
+      finalized: false,
+      report: {
+        validatorVersion: "m3-v2",
+        valid: false,
+        errors: 1,
+        warnings: 0,
+        diagnostics: [diagnostic],
+        limits: {
+          maxBytes: 1_048_576,
+          maxDecodedCharacters: 900_000,
+          maxDepth: 32,
+          maxItems: 20_000,
+          maxStringCharacters: 50_000,
+          maxParseMilliseconds: 100,
+        },
+      },
+    };
+
+    expect(CoursePackStagedValidationResponseSchema.parse(response)).toEqual(
+      response,
+    );
+    expect(
+      CoursePackStagedValidationResponseSchema.safeParse({
+        ...response,
+        report: {
+          ...response.report,
+          diagnostics: [{ ...diagnostic, context: undefined }],
+        },
       }).success,
     ).toBe(false);
   });

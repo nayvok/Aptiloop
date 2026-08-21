@@ -1,19 +1,13 @@
 {
-  "format": "aptiloop.course-pack",
+  "format": "aptiloop.course-pack-authoring-draft",
   "formatVersion": 1,
+  "formatMinorVersion": 1,
   "revision": {
     "revisionKey": "replace-with-stable-course-id/v1",
     "revisionNumber": 1,
     "parentRevisionKey": null,
     "branchKind": "upstream",
-    "basedOnContentHash": null,
-    "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-  },
-  "requirements": {
-    "activityTypes": ["study"],
-    "capabilities": [],
-    "environmentIds": [],
-    "checkIds": []
+    "basedOnContentHash": null
   },
   "course": {
     "courseKey": "replace-with-stable-course-id",
@@ -59,6 +53,7 @@
       "goal": "Replace with an observable learning goal",
       "estimatedMinutes": 10,
       "knowledgeNodeIds": ["replace-with-knowledge-node-id"],
+      "prerequisiteLessonIds": [],
       "entryActivityIds": ["replace-with-activity-id"],
       "activities": [
         {

@@ -6,15 +6,21 @@ import path from "node:path";
 
 import {
   COURSE_PACK_JSON_LIMITS_V1,
-  validateCoursePackBytes,
+  prepareCoursePackBytes,
+  type CoursePackSourceKind,
   type CoursePackPreview,
   type CoursePackValidationReport,
 } from "@aptiloop/course-authoring-kit";
 import {
   coursePackSourceBytesHash,
   CoursePackRepositoryError,
+  type CoursePackInstallResult,
   type CoursePackRepository,
 } from "@aptiloop/database";
+import {
+  CoursePackStagedValidationResponseSchema,
+  type CoursePackStagedValidationResponse,
+} from "@aptiloop/shared";
 import type { Hono } from "hono";
 import { z } from "zod";
 
@@ -45,13 +51,17 @@ interface StagedCoursePackBase {
   readonly report: CoursePackValidationReport;
   readonly expiresAt: number;
   expiryTimer: ReturnType<typeof setTimeout> | null;
+  readonly sourceKind: CoursePackSourceKind;
+  readonly finalized: boolean;
 }
 
 interface StagedValidCoursePack extends StagedCoursePackBase {
   readonly valid: true;
   readonly directory: string;
-  readonly filePath: string;
+  readonly preparedFilePath: string;
+  readonly sourceFilePath: string;
   readonly sourceBytesHash: string;
+  readonly stagedBytesHash: string;
   readonly contentHash: string;
   readonly preview: CoursePackPreview;
 }
@@ -117,14 +127,24 @@ export function registerCoursePackRoutes(
       );
     }
 
-    const directory = await mkdtemp(
-      path.join(stagingRoot, "aptiloop-course-pack-"),
-    );
-    await chmod(directory, 0o700);
-    const filePath = path.join(directory, "pack.json");
+    let directory: string;
     try {
-      await writeFile(filePath, sourceBytes, { flag: "wx", mode: 0o600 });
-      const validation = validateCoursePackBytes(sourceBytes);
+      directory = await createStagingDirectory(stagingRoot);
+    } catch {
+      return context.json(
+        {
+          valid: false,
+          error: "Course Pack staging is unavailable",
+          code: "COURSE_PACK_STAGING_FAILED",
+        },
+        503,
+      );
+    }
+    const sourceFilePath = path.join(directory, "source.json");
+    const preparedFilePath = path.join(directory, "pack.json");
+    try {
+      await writeFile(sourceFilePath, sourceBytes, { flag: "wx", mode: 0o600 });
+      const validation = prepareCoursePackBytes(sourceBytes);
       const sourceBytesHash = coursePackSourceBytesHash(sourceBytes);
       const validationId = validationIdSchema.parse(id());
       const expiresAt = now() + validationTtlMilliseconds;
@@ -142,6 +162,8 @@ export function registerCoursePackRoutes(
           report,
           expiresAt,
           expiryTimer: null,
+          sourceKind: validation.sourceKind,
+          finalized: validation.finalized,
         };
         await stageValidation(
           staged,
@@ -158,17 +180,25 @@ export function registerCoursePackRoutes(
           ),
         );
       }
+      await writeFile(preparedFilePath, validation.preparedBytes, {
+        flag: "wx",
+        mode: 0o600,
+      });
 
       const stagedValidation: StagedValidCoursePack = {
         valid: true,
         directory,
-        filePath,
+        preparedFilePath,
+        sourceFilePath,
         sourceBytesHash,
+        stagedBytesHash: coursePackSourceBytesHash(validation.preparedBytes),
         contentHash: validation.contentHash,
         preview: validation.preview,
         report,
         expiresAt,
         expiryTimer: null,
+        sourceKind: validation.sourceKind,
+        finalized: validation.finalized,
       };
       await stageValidation(
         staged,
@@ -183,6 +213,16 @@ export function registerCoursePackRoutes(
           stagedValidation,
           repository.hasStorage(),
         ),
+      );
+    } catch (error) {
+      if (!isStagingFileSystemError(error)) throw error;
+      return context.json(
+        {
+          valid: false,
+          error: "Course Pack staging failed",
+          code: "COURSE_PACK_STAGING_FAILED",
+        },
+        503,
       );
     } finally {
       if (
@@ -285,28 +325,48 @@ export function registerCoursePackRoutes(
 
       claimValidation(staged, validationId, entry);
       try {
-        const sourceBytes = new Uint8Array(await readFile(entry.filePath));
-        const validation = validateCoursePackBytes(sourceBytes);
+        const sourceBytes = new Uint8Array(
+          await readFile(entry.sourceFilePath),
+        );
+        if (coursePackSourceBytesHash(sourceBytes) !== entry.sourceBytesHash) {
+          return context.json(
+            { error: "Staged Course Pack changed after validation" },
+            409,
+          );
+        }
+        const preparation = prepareCoursePackBytes(sourceBytes);
         if (
-          !validation.valid ||
-          validation.contentHash !== entry.contentHash ||
-          coursePackSourceBytesHash(sourceBytes) !== entry.sourceBytesHash
+          !preparation.valid ||
+          preparation.contentHash !== entry.contentHash ||
+          preparation.sourceKind !== entry.sourceKind ||
+          preparation.finalized !== entry.finalized ||
+          coursePackSourceBytesHash(preparation.preparedBytes) !==
+            entry.stagedBytesHash
         ) {
           return context.json(
             { error: "Staged Course Pack changed after validation" },
             409,
           );
         }
-        let result: ReturnType<CoursePackRepository["install"]>;
+        const stagedBytes = new Uint8Array(
+          await readFile(entry.preparedFilePath),
+        );
+        if (coursePackSourceBytesHash(stagedBytes) !== entry.stagedBytesHash) {
+          return context.json(
+            { error: "Staged Course Pack changed after validation" },
+            409,
+          );
+        }
+        let result: CoursePackInstallResult;
         try {
           result = repository.install({
             operationId: body.operationId,
             validationId,
             action: body.action,
             sourceBytesHash: entry.sourceBytesHash,
-            pack: validation.pack,
-            canonicalJson: validation.canonicalJson,
-            report: validation.report,
+            pack: preparation.pack,
+            canonicalJson: preparation.canonicalJson,
+            report: preparation.report,
           });
         } catch (error) {
           if (error instanceof CoursePackRepositoryError) {
@@ -455,13 +515,15 @@ function boundedStagedReport(
   maxBytes: number,
 ): CoursePackValidationReport {
   const diagnostics = report.diagnostics
-    .slice(0, Math.max(0, maxDiagnostics))
+    .slice(0, Math.min(MAX_STAGED_DIAGNOSTICS, Math.max(0, maxDiagnostics)))
     .map((diagnostic) => ({
       code: diagnostic.code.slice(0, 100),
       severity: diagnostic.severity,
       path: diagnostic.path.slice(0, 1_000),
       entityId: diagnostic.entityId?.slice(0, 200) ?? null,
       message: diagnostic.message.slice(0, 2_000),
+      ruleId: diagnostic.ruleId?.slice(0, 100) ?? null,
+      context: diagnostic.context,
     }));
   const bounded: CoursePackValidationReport = { ...report, diagnostics };
   const byteLimit = Math.max(4_096, maxBytes);
@@ -481,16 +543,20 @@ function stagedValidationResponse(
   validationId: string,
   entry: StagedCoursePack,
   storageAvailable: boolean,
-) {
+): CoursePackStagedValidationResponse {
   const base = {
     storageAvailable,
     validationId,
     expiresAt: new Date(entry.expiresAt).toISOString(),
     report: entry.report,
+    sourceKind: entry.sourceKind,
+    finalized: entry.finalized,
   };
-  return entry.valid
-    ? { valid: true as const, ...base, preview: entry.preview }
-    : { valid: false as const, ...base };
+  return CoursePackStagedValidationResponseSchema.parse(
+    entry.valid
+      ? { valid: true as const, ...base, preview: entry.preview }
+      : { valid: false as const, ...base },
+  );
 }
 
 async function removeStaging(directory: string): Promise<void> {
@@ -511,5 +577,38 @@ async function removeStaging(directory: string): Promise<void> {
       }
       await new Promise((resolve) => setTimeout(resolve, attempt * 25));
     }
+  }
+}
+
+async function createStagingDirectory(stagingRoot: string): Promise<string> {
+  const directory = await mkdtemp(
+    path.join(stagingRoot, "aptiloop-course-pack-"),
+  );
+  try {
+    await chmod(directory, 0o700);
+    return directory;
+  } catch (error) {
+    await removeStaging(directory);
+    throw error;
+  }
+}
+
+function isStagingFileSystemError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  switch (error.code) {
+    case "EACCES":
+    case "EBUSY":
+    case "EDQUOT":
+    case "EEXIST":
+    case "EIO":
+    case "EMFILE":
+    case "ENFILE":
+    case "ENOENT":
+    case "ENOSPC":
+    case "EPERM":
+    case "EROFS":
+      return true;
+    default:
+      return false;
   }
 }

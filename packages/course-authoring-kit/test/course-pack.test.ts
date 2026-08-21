@@ -4,13 +4,27 @@ import {
   calculateCoursePackContentHash,
   canonicalJson,
   COURSE_PACK_JSON_LIMITS_V1,
+  CoursePackAuthoringDraftV1Schema,
   CoursePackV1Schema,
+  deriveCoursePackRequirements,
   finalizeCoursePack,
+  finalizeCoursePackAuthoringDraft,
   parseStrictJson,
+  prepareCoursePackBytes,
   StrictJsonError,
   validateCoursePackBytes,
 } from "../src/index.js";
-import { validCoursePack } from "./fixture.js";
+import {
+  createBranchingCoursePackAuthoringDraftFixture,
+  createBrokenLessonGraphCoursePackAuthoringDraftFixtures,
+  createCoursePackAuthoringDraftFixture,
+  createMultipleActivityTypesCoursePackAuthoringDraftFixture,
+  createMissingContentTermsCoursePackAuthoringDraftFixtures,
+  createProtectedMaterialCoursePackAuthoringDraftFixture,
+  createRegistryMismatchCoursePackAuthoringDraftFixture,
+  createSequentialCoursePackAuthoringDraftFixture,
+  validCoursePack,
+} from "./fixture.js";
 
 const encoder = new TextEncoder();
 
@@ -320,6 +334,360 @@ describe("Course Pack V1", () => {
         "PACK_LOCALIZATION_MISSING",
         "PACK_PROVENANCE_UNRESOLVED",
         "PACK_CONTENT_HASH_MISMATCH",
+      ]),
+    );
+  });
+
+  it("rejects runtime-incompatible completion and broken typed references", () => {
+    const incompatible = createSequentialCoursePackAuthoringDraftFixture();
+    incompatible.lessons[1]!.activities[0]!.completionCriteria = [
+      { type: "attempts", minimum: 1 },
+    ];
+    expect(
+      prepareCoursePackBytes(bytes(incompatible)).report.diagnostics,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_COMPLETION_CRITERION_INCOMPATIBLE",
+          entityId: "practice-study",
+        }),
+      ]),
+    );
+
+    const danglingReview = createCoursePackAuthoringDraftFixture();
+    const review = danglingReview.lessons[0]!.activities[0]!;
+    review.type = "review";
+    review.completionCriteria = [
+      {
+        type: "exercise",
+        passingTestsRequired: true,
+        acceptedReviewRequired: true,
+      },
+    ];
+    review.payload = { type: "review", exerciseUnitId: "missing-exercise" };
+    expect(
+      prepareCoursePackBytes(bytes(danglingReview)).report.diagnostics,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_REVIEW_REFERENCE_INVALID",
+          entityId: "minimal-checkpoint",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects duplicate or objectively ungradable quiz questions", () => {
+    const duplicate = createProtectedMaterialCoursePackAuthoringDraftFixture();
+    const duplicateActivity = duplicate.lessons[0]!.activities[0]!;
+    duplicateActivity.protectedMaterial.questions.push(
+      structuredClone(duplicateActivity.protectedMaterial.questions[0]!),
+    );
+    expect(prepareCoursePackBytes(bytes(duplicate)).report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_QUESTION_ID_DUPLICATE",
+          entityId: "protected-quiz",
+        }),
+      ]),
+    );
+
+    const ungradable = createProtectedMaterialCoursePackAuthoringDraftFixture();
+    ungradable.lessons[0]!.activities[0]!.protectedMaterial.questions[0]!.correctOptionIds =
+      [];
+    expect(
+      prepareCoursePackBytes(bytes(ungradable)).report.diagnostics,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_QUESTION_EVALUATION_INVALID",
+          entityId: "protected-quiz",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects protected values embedded in primary or localized learner content", () => {
+    const primaryLeak =
+      createProtectedMaterialCoursePackAuthoringDraftFixture();
+    const answer =
+      primaryLeak.lessons[0]!.activities[0]!.protectedMaterial.referenceAnswer!;
+    primaryLeak.lessons[0]!.activities[0]!.description = `Learner-visible feedback reveals: ${answer}`;
+    expect(
+      prepareCoursePackBytes(bytes(primaryLeak)).report.diagnostics,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "PACK_PROTECTED_MATERIAL_LEAK" }),
+      ]),
+    );
+
+    const localizedLeak =
+      createProtectedMaterialCoursePackAuthoringDraftFixture();
+    localizedLeak.course.availableLocales = ["en-US", "ru-RU"];
+    localizedLeak.localizations = [
+      {
+        locale: "ru-RU",
+        releaseComplete: false,
+        fields: {
+          "activity/protected-quiz/description": `Перевод раскрывает ответ: ${answer}`,
+        },
+      },
+    ];
+    expect(
+      prepareCoursePackBytes(bytes(localizedLeak)).report.diagnostics,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "PACK_PROTECTED_MATERIAL_LEAK" }),
+      ]),
+    );
+  });
+});
+
+describe("Course Pack Authoring Draft V1", () => {
+  it("keeps legacy V1 canonical bytes and hash inputs free of current fields", () => {
+    const legacy = validCoursePack();
+    expect("formatMinorVersion" in legacy).toBe(false);
+    expect(
+      legacy.lessons.every((lesson) => !("prerequisiteLessonIds" in lesson)),
+    ).toBe(true);
+    const before = canonicalJson(legacy);
+    const reparsed = CoursePackV1Schema.parse(
+      JSON.parse(JSON.stringify(legacy)) as unknown,
+    );
+    expect(canonicalJson(reparsed)).toBe(before);
+    expect(calculateCoursePackContentHash(reparsed)).toBe(
+      legacy.revision.contentHash,
+    );
+  });
+
+  it("finalizes hashless drafts purely with exact derived requirements", () => {
+    const draft = createSequentialCoursePackAuthoringDraftFixture();
+    const before = JSON.stringify(draft);
+    const finalized = finalizeCoursePackAuthoringDraft(draft);
+
+    expect(JSON.stringify(draft)).toBe(before);
+    expect(finalized.format).toBe("aptiloop.course-pack");
+    expect(finalized.formatMinorVersion).toBe(1);
+    expect(finalized.requirements).toEqual({
+      activityTypes: ["checkpoint", "recall", "study"],
+      capabilities: [],
+      environmentIds: [],
+      checkIds: [],
+    });
+    expect(finalized.requirements).toEqual(
+      deriveCoursePackRequirements(finalized.lessons),
+    );
+    expect(finalized.revision.contentHash).toBe(
+      calculateCoursePackContentHash(finalized),
+    );
+    expect(CoursePackV1Schema.parse(finalized)).toEqual(finalized);
+    expect("requirements" in draft).toBe(false);
+    expect("contentHash" in draft.revision).toBe(false);
+  });
+
+  it("prepares canonical finalized bytes while retaining source classification", () => {
+    const draft = createCoursePackAuthoringDraftFixture();
+    const result = prepareCoursePackBytes(bytes(draft));
+
+    expect(result.valid).toBe(true);
+    expect(result.sourceKind).toBe("authoring-draft");
+    expect(result.finalized).toBe(true);
+    if (!result.valid) throw new Error("Expected a valid prepared draft");
+    expect(new TextDecoder().decode(result.preparedBytes)).toBe(
+      result.canonicalJson,
+    );
+    expect(result.pack.revision.contentHash).toBe(result.contentHash);
+
+    const finalResult = prepareCoursePackBytes(result.preparedBytes);
+    expect(finalResult).toMatchObject({
+      valid: true,
+      sourceKind: "course-pack",
+      finalized: false,
+    });
+  });
+
+  it("rejects missing, self, and cyclic lesson prerequisites deterministically", () => {
+    const broken = createBrokenLessonGraphCoursePackAuthoringDraftFixtures();
+    const expected = {
+      missing: "PACK_LESSON_GRAPH_REFERENCE_MISSING",
+      self: "PACK_LESSON_GRAPH_SELF_REFERENCE",
+      cycle: "PACK_LESSON_GRAPH_CYCLE",
+    } as const;
+
+    for (const kind of ["missing", "self", "cycle"] as const) {
+      const source = broken[kind];
+      const before = JSON.stringify(source);
+      const first = prepareCoursePackBytes(bytes(source));
+      const second = prepareCoursePackBytes(bytes(source));
+      expect(first.valid).toBe(false);
+      expect(first.sourceKind).toBe("authoring-draft");
+      expect(first.finalized).toBe(true);
+      expect(first.preparedBytes).toBeNull();
+      expect(first.report.diagnostics).toEqual(second.report.diagnostics);
+      expect(first.report.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: expected[kind] }),
+        ]),
+      );
+      expect(JSON.stringify(source)).toBe(before);
+    }
+  });
+
+  it("accepts event-handler-looking React only in code fields or fenced Markdown", () => {
+    const safe = createMultipleActivityTypesCoursePackAuthoringDraftFixture();
+    const safeResult = prepareCoursePackBytes(bytes(safe));
+    expect(safeResult.valid).toBe(true);
+    expect(
+      safeResult.report.diagnostics.map((diagnostic) => diagnostic.code),
+    ).not.toContain("PACK_ACTIVE_CONTENT");
+
+    const activeHtml = structuredClone(safe);
+    const study = activeHtml.lessons[0]!.activities.find(
+      (activity) => activity.type === "study",
+    )!;
+    if (study.payload.type !== "study") throw new Error("Expected study");
+    study.payload.body = '<button onClick="runAction()">Run</button>';
+    const activeResult = prepareCoursePackBytes(bytes(activeHtml));
+    expect(activeResult.report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_ACTIVE_CONTENT",
+          ruleId: "event-handler-attribute",
+          context: "learner-markdown",
+        }),
+      ]),
+    );
+
+    const fencedScript = structuredClone(safe);
+    const fencedStudy = fencedScript.lessons[0]!.activities.find(
+      (activity) => activity.type === "study",
+    )!;
+    if (fencedStudy.payload.type !== "study") {
+      throw new Error("Expected study");
+    }
+    fencedStudy.payload.body = "```html\n<script>alert(1)</script>\n```";
+    expect(
+      prepareCoursePackBytes(bytes(fencedScript)).report.diagnostics,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_ACTIVE_CONTENT",
+          ruleId: "active-html-element",
+          context: "learner-markdown",
+        }),
+      ]),
+    );
+  });
+
+  it("keeps every security diagnostic rule and context explicit", () => {
+    const cases = [
+      [
+        "command",
+        "npm test",
+        "PACK_AUTHORITY_FIELD",
+        "authority-field",
+        "field-name",
+      ],
+      [
+        "note",
+        "sk-abcdefghijklmnop",
+        "PACK_SECRET_SHAPED_VALUE",
+        "secret-shaped-value",
+        "json-value",
+      ],
+      [
+        "note",
+        "javascript:alert(1)",
+        "PACK_ACTIVE_CONTENT",
+        "javascript-url",
+        "json-value",
+      ],
+      [
+        "note",
+        "C:\\Users\\learner",
+        "PACK_LOCAL_PATH_VALUE",
+        "windows-drive-path",
+        "json-value",
+      ],
+      [
+        "note",
+        "https://127.0.0.1/private",
+        "PACK_URL_UNSAFE",
+        "url-policy",
+        "json-value",
+      ],
+    ] as const;
+    for (const [field, value, code, ruleId, context] of cases) {
+      const raw = { ...validCoursePack(), [field]: value };
+      expect(validateCoursePackBytes(bytes(raw)).report.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code, ruleId, context }),
+        ]),
+      );
+    }
+    expect(
+      validateCoursePackBytes(
+        bytes(validCoursePack()),
+      ).report.diagnostics.every(
+        (diagnostic) =>
+          Object.hasOwn(diagnostic, "ruleId") &&
+          Object.hasOwn(diagnostic, "context"),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps Course and Source terms as independent installation blockers", () => {
+    const fixtures =
+      createMissingContentTermsCoursePackAuthoringDraftFixtures();
+    const courseResult = prepareCoursePackBytes(bytes(fixtures.course));
+    const sourceResult = prepareCoursePackBytes(bytes(fixtures.source));
+
+    expect(courseResult.report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_CONTENT_TERMS_MISSING",
+          path: "/course/provenance",
+        }),
+      ]),
+    );
+    expect(sourceResult.report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_SOURCE_TERMS_MISSING",
+          path: "/knowledge/sourceSnapshots/0",
+        }),
+      ]),
+    );
+    expect(courseResult.valid).toBe(false);
+    expect(sourceResult.valid).toBe(false);
+  });
+
+  it("covers the bounded fixture corpus and registry mismatch", () => {
+    const validDrafts = [
+      createCoursePackAuthoringDraftFixture(),
+      createSequentialCoursePackAuthoringDraftFixture(),
+      createBranchingCoursePackAuthoringDraftFixture(),
+      createMultipleActivityTypesCoursePackAuthoringDraftFixture(),
+      createProtectedMaterialCoursePackAuthoringDraftFixture(),
+    ];
+    for (const draft of validDrafts) {
+      expect(CoursePackAuthoringDraftV1Schema.parse(draft)).toEqual(draft);
+      expect(prepareCoursePackBytes(bytes(draft)).valid).toBe(true);
+    }
+
+    const registryMismatch =
+      createRegistryMismatchCoursePackAuthoringDraftFixture();
+    const mismatchResult = prepareCoursePackBytes(bytes(registryMismatch));
+    expect(mismatchResult.valid).toBe(false);
+    expect(mismatchResult.pack?.requirements.checkIds).toEqual([
+      "missing-check",
+    ]);
+    expect(mismatchResult.report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PACK_REQUIREMENT_UNAVAILABLE",
+          path: "/requirements/checkIds/0",
+        }),
       ]),
     );
   });

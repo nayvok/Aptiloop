@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   canonicalJson,
   CoursePackV1Schema,
+  validateCoursePackBytes,
   type CoursePackDiagnostic,
   type CoursePackV1,
   type CoursePackValidationReport,
@@ -11,6 +12,8 @@ import { CourseOperationIdSchema } from "@aptiloop/shared";
 
 import { adaptationBranchIdForRevision } from "./adaptation-branch.js";
 import { withTransaction, type DatabaseConnection } from "./database.js";
+
+const UTF8_ENCODER = new TextEncoder();
 
 const REQUIRED_M3_TABLES = [
   "course_pack_manifests",
@@ -160,8 +163,19 @@ export class CoursePackRepository {
         "Course Pack canonical JSON does not match the validated pack",
       );
     }
-    if (pack.revision.contentHash.length !== 71) {
-      throw new Error("Course Pack requires a prefixed SHA-256 content hash");
+    const supportedValidation = validateCoursePackBytes(
+      UTF8_ENCODER.encode(input.canonicalJson),
+    );
+    if (!supportedValidation.valid) {
+      throw new Error(
+        "Course Pack installation requires app-supported validation",
+      );
+    }
+    if (
+      supportedValidation.canonicalJson !== input.canonicalJson ||
+      supportedValidation.contentHash !== pack.revision.contentHash
+    ) {
+      throw new Error("Course Pack app-supported validation is inconsistent");
     }
 
     return withTransaction(this.#connection, () => {
@@ -229,14 +243,15 @@ export class CoursePackRepository {
           input.canonicalJson,
           pack.revision.contentHash,
           input.sourceBytesHash,
-          boundedReportJson(input.report),
-          input.report.validatorVersion,
+          boundedReportJson(supportedValidation.report),
+          supportedValidation.report.validatorVersion,
           now,
         );
       this.#insertPackMetadata(pack);
       if (input.action === "install") {
         this.#prepareInstalledPersonalBranch(pack, now);
       }
+      this.#assertCompatibilityProjection(pack, pack.revision.revisionKey);
       this.#publishManifestRevision(pack, now);
 
       let resultRevisionId = pack.revision.revisionKey;
@@ -666,6 +681,7 @@ export class CoursePackRepository {
   ): void {
     for (const lesson of pack.lessons) {
       for (const activity of lesson.activities) {
+        const privateQuestions = projectedPrivateQuestions(activity);
         const result = this.#connection.sqlite
           .prepare(
             `UPDATE course_activities
@@ -680,7 +696,7 @@ export class CoursePackRepository {
               ),
             ),
             canonicalJson(
-              activity.protectedMaterial.questions.map((question) => ({
+              privateQuestions.map((question) => ({
                 id: question.id,
                 kind: question.kind,
                 prompt: question.prompt,
@@ -689,7 +705,10 @@ export class CoursePackRepository {
             ),
             canonicalJson(activity.capabilityIds),
             canonicalJson(activity.knowledgeNodeIds),
-            canonicalJson(activity.protectedMaterial),
+            canonicalJson({
+              ...activity.protectedMaterial,
+              questions: privateQuestions,
+            }),
             pack.course.courseKey,
             targetRevisionId,
             scopedId("activity", targetRevisionId, activity.activityId),
@@ -796,7 +815,11 @@ export class CoursePackRepository {
         now,
       );
 
-    for (const lesson of pack.lessons) {
+    for (const lesson of prerequisiteInsertionOrder(
+      pack.lessons,
+      (candidate) => candidate.lessonId,
+      (candidate) => candidate.prerequisiteLessonIds ?? [],
+    )) {
       const lessonId = scopedId("lesson", revision.id, lesson.lessonId);
       this.#connection.sqlite
         .prepare(
@@ -818,25 +841,22 @@ export class CoursePackRepository {
           lesson.description,
           lesson.goal,
           lesson.estimatedMinutes,
-          canonicalJson([]),
+          canonicalJson(lesson.prerequisiteLessonIds ?? []),
           canonicalJson(lesson.knowledgeNodeIds),
           now,
           now,
         );
-      for (const activity of lesson.activities) {
+      for (const activity of prerequisiteInsertionOrder(
+        lesson.activities,
+        (candidate) => candidate.activityId,
+        (candidate) => candidate.prerequisiteActivityIds,
+      )) {
         const activityId = scopedId(
           "activity",
           revision.id,
           activity.activityId,
         );
-        const learnerQuestions = activity.protectedMaterial.questions.map(
-          (question) => ({
-            id: question.id,
-            kind: question.kind,
-            prompt: question.prompt,
-            options: question.options,
-          }),
-        );
+        const privateQuestions = projectedPrivateQuestions(activity);
         const learnerSources = activity.sourceSnapshotIds.map((snapshotId) => {
           const snapshot = sourceSnapshots.get(snapshotId);
           if (!snapshot) {
@@ -881,7 +901,7 @@ export class CoursePackRepository {
             activity.description,
             activity.estimatedMinutes,
             canonicalJson(learnerSources),
-            canonicalJson(learnerQuestions),
+            canonicalJson(privateQuestions),
             activity.protectedMaterial.referenceAnswer === null
               ? null
               : canonicalJson(activity.protectedMaterial.referenceAnswer),
@@ -899,6 +919,193 @@ export class CoursePackRepository {
           );
       }
     }
+  }
+
+  #assertCompatibilityProjection(pack: CoursePackV1, revisionId: string): void {
+    const expected: CompatibilityProjection = {
+      lessonIds: pack.lessons.map((lesson) => lesson.lessonId).sort(),
+      lessonEdges: pack.lessons
+        .flatMap((lesson) =>
+          (lesson.prerequisiteLessonIds ?? []).map((prerequisiteId) =>
+            projectionKey(lesson.lessonId, prerequisiteId),
+          ),
+        )
+        .sort(),
+      activityIds: pack.lessons
+        .flatMap((lesson) =>
+          lesson.activities.map((activity) =>
+            projectionKey(lesson.lessonId, activity.activityId),
+          ),
+        )
+        .sort(),
+      activityEdges: pack.lessons
+        .flatMap((lesson) =>
+          lesson.activities.flatMap((activity) =>
+            activity.prerequisiteActivityIds.map((prerequisiteId) =>
+              projectionKey(
+                lesson.lessonId,
+                activity.activityId,
+                prerequisiteId,
+              ),
+            ),
+          ),
+        )
+        .sort(),
+    };
+
+    const sourceLessons = this.#connection.sqlite
+      .prepare(
+        `SELECT stable_id, prerequisites_json
+         FROM curriculum_days_v2
+         WHERE version_id = ? ORDER BY stable_id`,
+      )
+      .all(revisionId) as Array<{
+      stable_id: string;
+      prerequisites_json: string;
+    }>;
+    const sourceActivities = this.#connection.sqlite
+      .prepare(
+        `SELECT lesson.stable_id AS lesson_stable_id,
+                activity.stable_id AS activity_stable_id,
+                activity.unlock_rules_json
+         FROM curriculum_units activity
+         JOIN curriculum_days_v2 lesson
+           ON lesson.version_id = activity.version_id
+          AND lesson.id = activity.day_id
+         WHERE activity.version_id = ?
+         ORDER BY lesson.stable_id, activity.stable_id`,
+      )
+      .all(revisionId) as Array<{
+      lesson_stable_id: string;
+      activity_stable_id: string;
+      unlock_rules_json: string;
+    }>;
+    const source: CompatibilityProjection = {
+      lessonIds: sourceLessons.map((lesson) => lesson.stable_id).sort(),
+      lessonEdges: sourceLessons
+        .flatMap((lesson) =>
+          jsonStringArray(
+            lesson.prerequisites_json,
+            "Course Pack lesson prerequisites",
+          ).map((prerequisiteId) =>
+            projectionKey(lesson.stable_id, prerequisiteId),
+          ),
+        )
+        .sort(),
+      activityIds: sourceActivities
+        .map((activity) =>
+          projectionKey(activity.lesson_stable_id, activity.activity_stable_id),
+        )
+        .sort(),
+      activityEdges: sourceActivities
+        .flatMap((activity) =>
+          jsonUnitPrerequisiteIds(activity.unlock_rules_json).map(
+            (prerequisiteId) =>
+              projectionKey(
+                activity.lesson_stable_id,
+                activity.activity_stable_id,
+                prerequisiteId,
+              ),
+          ),
+        )
+        .sort(),
+    };
+    assertCompatibilityProjection("curriculum source", expected, source);
+
+    const foundationLessonIds = this.#connection.sqlite
+      .prepare(
+        `SELECT stable_id FROM course_lessons
+         WHERE course_id = ? AND revision_id = ? ORDER BY stable_id`,
+      )
+      .all(pack.course.courseKey, revisionId) as Array<{ stable_id: string }>;
+    const foundationLessonEdges = this.#connection.sqlite
+      .prepare(
+        `SELECT lesson.stable_id AS lesson_stable_id,
+                prerequisite.stable_id AS prerequisite_stable_id
+         FROM course_lesson_prerequisites edge
+         JOIN course_lessons lesson
+           ON lesson.course_id = edge.course_id
+          AND lesson.revision_id = edge.revision_id
+          AND lesson.id = edge.lesson_id
+         JOIN course_lessons prerequisite
+           ON prerequisite.course_id = edge.course_id
+          AND prerequisite.revision_id = edge.revision_id
+          AND prerequisite.id = edge.prerequisite_lesson_id
+         WHERE edge.course_id = ? AND edge.revision_id = ?
+         ORDER BY lesson.stable_id, prerequisite.stable_id`,
+      )
+      .all(pack.course.courseKey, revisionId) as Array<{
+      lesson_stable_id: string;
+      prerequisite_stable_id: string;
+    }>;
+    const foundationActivityIds = this.#connection.sqlite
+      .prepare(
+        `SELECT lesson.stable_id AS lesson_stable_id,
+                activity.stable_id AS activity_stable_id
+         FROM course_activities activity
+         JOIN course_lessons lesson
+           ON lesson.course_id = activity.course_id
+          AND lesson.revision_id = activity.revision_id
+          AND lesson.id = activity.lesson_id
+         WHERE activity.course_id = ? AND activity.revision_id = ?
+         ORDER BY lesson.stable_id, activity.stable_id`,
+      )
+      .all(pack.course.courseKey, revisionId) as Array<{
+      lesson_stable_id: string;
+      activity_stable_id: string;
+    }>;
+    const foundationActivityEdges = this.#connection.sqlite
+      .prepare(
+        `SELECT lesson.stable_id AS lesson_stable_id,
+                activity.stable_id AS activity_stable_id,
+                prerequisite.stable_id AS prerequisite_stable_id
+         FROM course_activity_prerequisites edge
+         JOIN course_lessons lesson
+           ON lesson.course_id = edge.course_id
+          AND lesson.revision_id = edge.revision_id
+          AND lesson.id = edge.lesson_id
+         JOIN course_activities activity
+           ON activity.course_id = edge.course_id
+          AND activity.revision_id = edge.revision_id
+          AND activity.lesson_id = edge.lesson_id
+          AND activity.id = edge.activity_id
+         JOIN course_activities prerequisite
+           ON prerequisite.course_id = edge.course_id
+          AND prerequisite.revision_id = edge.revision_id
+          AND prerequisite.lesson_id = edge.lesson_id
+          AND prerequisite.id = edge.prerequisite_activity_id
+         WHERE edge.course_id = ? AND edge.revision_id = ?
+         ORDER BY lesson.stable_id, activity.stable_id,
+                  prerequisite.stable_id`,
+      )
+      .all(pack.course.courseKey, revisionId) as Array<{
+      lesson_stable_id: string;
+      activity_stable_id: string;
+      prerequisite_stable_id: string;
+    }>;
+    const foundation: CompatibilityProjection = {
+      lessonIds: foundationLessonIds.map((lesson) => lesson.stable_id).sort(),
+      lessonEdges: foundationLessonEdges
+        .map((edge) =>
+          projectionKey(edge.lesson_stable_id, edge.prerequisite_stable_id),
+        )
+        .sort(),
+      activityIds: foundationActivityIds
+        .map((activity) =>
+          projectionKey(activity.lesson_stable_id, activity.activity_stable_id),
+        )
+        .sort(),
+      activityEdges: foundationActivityEdges
+        .map((edge) =>
+          projectionKey(
+            edge.lesson_stable_id,
+            edge.activity_stable_id,
+            edge.prerequisite_stable_id,
+          ),
+        )
+        .sort(),
+    };
+    assertCompatibilityProjection("foundation", expected, foundation);
   }
 
   #insertKnowledge(pack: CoursePackV1, now: number): void {
@@ -1132,6 +1339,7 @@ export class CoursePackRepository {
       adaptationBranchId: matchingBranchId,
     });
     this.#applyPackActivityMetadata(pack, revisionId);
+    this.#assertCompatibilityProjection(pack, revisionId);
     return revisionId;
   }
 
@@ -1553,6 +1761,115 @@ export class CoursePackRepository {
   }
 }
 
+function prerequisiteInsertionOrder<T>(
+  items: readonly T[],
+  stableId: (item: T) => string,
+  prerequisiteIds: (item: T) => readonly string[],
+): readonly T[] {
+  const itemById = new Map(items.map((item) => [stableId(item), item]));
+  const active = new Set<string>();
+  const complete = new Set<string>();
+  const ordered: T[] = [];
+  const visit = (item: T): void => {
+    const id = stableId(item);
+    if (complete.has(id)) return;
+    if (active.has(id)) {
+      throw new Error("Course Pack prerequisite insertion graph has a cycle");
+    }
+    active.add(id);
+    for (const prerequisiteId of prerequisiteIds(item)) {
+      const prerequisite = itemById.get(prerequisiteId);
+      if (prerequisite === undefined) {
+        throw new Error(
+          "Course Pack prerequisite insertion graph is incomplete",
+        );
+      }
+      visit(prerequisite);
+    }
+    active.delete(id);
+    complete.add(id);
+    ordered.push(item);
+  };
+  for (const item of items) visit(item);
+  if (ordered.length !== items.length) {
+    throw new Error("Course Pack prerequisite insertion graph is ambiguous");
+  }
+  return ordered;
+}
+
+interface CompatibilityProjection {
+  readonly lessonIds: readonly string[];
+  readonly lessonEdges: readonly string[];
+  readonly activityIds: readonly string[];
+  readonly activityEdges: readonly string[];
+}
+
+function projectionKey(...ids: readonly string[]): string {
+  return canonicalJson(ids);
+}
+
+function jsonStringArray(value: string, label: string): readonly string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new Error(`${label} projection is invalid`);
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((entry) => typeof entry !== "string")
+  ) {
+    throw new Error(`${label} projection is invalid`);
+  }
+  return parsed as string[];
+}
+
+function jsonUnitPrerequisiteIds(value: string): readonly string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new Error("Course Pack activity prerequisite projection is invalid");
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("Course Pack activity prerequisite projection is invalid");
+  }
+  return parsed.map((candidate) => {
+    if (
+      candidate === null ||
+      typeof candidate !== "object" ||
+      Array.isArray(candidate)
+    ) {
+      throw new Error(
+        "Course Pack activity prerequisite projection is invalid",
+      );
+    }
+    const rule = candidate as Record<string, unknown>;
+    if (
+      rule.type !== "unit-completed" ||
+      typeof rule.unitId !== "string" ||
+      Object.keys(rule).sort().join(",") !== "type,unitId"
+    ) {
+      throw new Error(
+        "Course Pack activity prerequisite projection is invalid",
+      );
+    }
+    return rule.unitId;
+  });
+}
+
+function assertCompatibilityProjection(
+  layer: string,
+  expected: CompatibilityProjection,
+  actual: CompatibilityProjection,
+): void {
+  if (canonicalJson(expected) !== canonicalJson(actual)) {
+    throw new Error(
+      `Course Pack compatibility projection mismatch in ${layer}`,
+    );
+  }
+}
+
 export function createCoursePackRepository(
   connection: DatabaseConnection,
   options: CoursePackRepositoryOptions = {},
@@ -1570,6 +1887,27 @@ function scopedId(kind: string, revisionId: string, stableId: string): string {
     .digest("hex")}`;
 }
 
+function projectedPrivateQuestions(
+  activity: CoursePackV1["lessons"][number]["activities"][number],
+): CoursePackV1["lessons"][number]["activities"][number]["protectedMaterial"]["questions"] {
+  if (activity.protectedMaterial.questions.length > 0) {
+    return activity.protectedMaterial.questions;
+  }
+  if (activity.payload.type !== "recall") return [];
+  return [
+    {
+      id: activity.activityId,
+      kind: "explain",
+      prompt: activity.payload.prompt,
+      options: [],
+      correctOptionIds: [],
+      referenceAnswer: activity.protectedMaterial.referenceAnswer,
+      evaluationPoints: [],
+      commonMistakes: [],
+    },
+  ];
+}
+
 function boundedReportJson(report: CoursePackValidationReport): string {
   const boundedDiagnostics = report.diagnostics
     .slice(0, 500)
@@ -1578,6 +1916,8 @@ function boundedReportJson(report: CoursePackValidationReport): string {
       severity: diagnostic.severity,
       path: diagnostic.path.slice(0, 1_000),
       entityId: diagnostic.entityId?.slice(0, 200) ?? null,
+      ruleId: diagnostic.ruleId?.slice(0, 100) ?? null,
+      context: diagnostic.context,
       message: diagnostic.message.slice(0, 2_000),
     }));
   return canonicalJson({

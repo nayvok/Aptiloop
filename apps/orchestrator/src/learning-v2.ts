@@ -3552,7 +3552,10 @@ function assertCompletionCriteria(
     let failed: boolean;
     switch (criterion.type) {
       case "acknowledgement":
-        failed = !("acknowledged" in payload && payload.acknowledged);
+        failed = !(
+          ("acknowledged" in payload && payload.acknowledged) ||
+          (unit.type === "study" && payload.type === "study")
+        );
         break;
       case "checklist":
         failed = !(
@@ -3588,7 +3591,7 @@ function assertCompletionCriteria(
                     payload.reportId,
                   ) >= (criterion.minimum ?? 1)
                 )
-              : evidenceAttemptCount(unit, payload) < criterion.minimum;
+              : evidenceAttemptCount(payload) < criterion.minimum;
         break;
       case "dialogue":
         failed = !hasPersistedTeacherDialogue(
@@ -3772,29 +3775,38 @@ function countCompletedInterviewAnswers(
   return count.count;
 }
 
-function evidenceAttemptCount(
-  unit: CurriculumUnit,
-  payload: UnitProgressPayload,
-): number {
+function evidenceAttemptCount(payload: UnitProgressPayload): number {
   switch (payload.type) {
+    case "briefing":
+      return payload.acknowledged
+        ? Math.max(1, payload.checkedItemIds.length)
+        : payload.checkedItemIds.length;
+    case "study":
+      return payload.checkedItemIds.length + (payload.notes.trim() ? 1 : 0);
     case "recall":
       return payload.answers.length;
-    case "quiz":
-      return payload.attemptedQuestionIds.length;
     case "teacher-dialogue":
       return payload.turnCount;
+    case "quiz":
+      return payload.attemptedQuestionIds.length;
     case "code-reading":
       return [
         payload.prediction,
         payload.explanation,
         payload.verbalFix,
       ].filter((value) => value.trim()).length;
-    default:
-      return Object.values(payload).some(
-        (value) => typeof value === "string" && value.trim(),
-      )
-        ? 1
-        : 0;
+    case "exercise":
+      return payload.attemptId === null ? 0 : 1;
+    case "review":
+      return payload.reviewId === null ? 0 : 1;
+    case "interview":
+      return payload.reportId === null ? 0 : 1;
+    case "summary":
+      return payload.summaryId === null ? 0 : 1;
+    case "checkpoint":
+      return payload.acknowledged ? 1 : 0;
+    case "spaced-review":
+      return payload.reviewedTopicIds.length;
   }
 }
 

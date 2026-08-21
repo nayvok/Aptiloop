@@ -675,7 +675,6 @@ export function SessionClient() {
     await Promise.all([
       queryClient.invalidateQueries({
         queryKey: ["learning-path"],
-        refetchType: "none",
       }),
       queryClient.invalidateQueries({
         queryKey: ["learning-session-current"],
@@ -959,11 +958,6 @@ export function SessionClient() {
                 patchUnit={patchUnit}
                 runAction={runAction}
                 acceptSession={acceptSession}
-                onExercise={() =>
-                  router.push(
-                    `/exercise?sessionId=${encodeURIComponent(session.id)}`,
-                  )
-                }
                 onInterview={() => {
                   const payload = focusedProgress.payload;
                   const interviewId =
@@ -1396,7 +1390,6 @@ type UnitBodyProps = {
     getSession: (result: T) => LearnerSession,
   ) => Promise<T | null>;
   acceptSession: (session: LearnerSession) => Promise<void>;
-  onExercise: () => void;
   onInterview: () => void;
 };
 
@@ -2847,7 +2840,7 @@ function CodeReadingUnit({
   );
 }
 
-function ExerciseHandoffUnit({ unit, progress, onExercise }: UnitBodyProps) {
+function ExerciseHandoffUnit({ session, unit, progress }: UnitBodyProps) {
   const { t } = useI18n();
   const criteria =
     unit.payload.type === "exercise"
@@ -2880,11 +2873,15 @@ function ExerciseHandoffUnit({ unit, progress, onExercise }: UnitBodyProps) {
         <CompletedNote />
       ) : (
         <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
-          <Button className="w-full sm:w-auto" onClick={onExercise}>
-            {unit.type === "review"
-              ? t("session.practice.openReview")
-              : t("session.practice.open")}
-            <ArrowRightIcon aria-hidden />
+          <Button className="w-full sm:w-auto" asChild>
+            <Link
+              href={`/exercise?sessionId=${encodeURIComponent(session.id)}`}
+            >
+              {unit.type === "review"
+                ? t("session.practice.openReview")
+                : t("session.practice.open")}
+              <ArrowRightIcon aria-hidden />
+            </Link>
           </Button>
         </div>
       )}

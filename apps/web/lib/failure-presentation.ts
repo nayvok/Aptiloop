@@ -96,6 +96,9 @@ const coursePackDiagnosticGroups = {
   graph: new Set([
     "PACK_KNOWLEDGE_GRAPH_CYCLE",
     "PACK_KNOWLEDGE_GRAPH_INVALID",
+    "PACK_LESSON_GRAPH_CYCLE",
+    "PACK_LESSON_GRAPH_REFERENCE_MISSING",
+    "PACK_LESSON_GRAPH_SELF_REFERENCE",
   ]),
   locale: new Set([
     "PACK_LOCALE_DUPLICATE",
@@ -145,20 +148,37 @@ export function safeDiagnosticId(value: unknown): string | undefined {
 export type CoursePackDiagnosticPresentation = {
   code?: string;
   path?: string;
+  ruleId?: string;
+  context?: string;
   message: string;
 };
 
 export function presentCoursePackDiagnostic(
-  diagnostic: { code: string; path: string },
+  diagnostic: {
+    code: string;
+    path: string;
+    ruleId?: string | null;
+    context?: string | null;
+  },
   t: Translate,
 ): CoursePackDiagnosticPresentation {
   const group = Object.entries(coursePackDiagnosticGroups).find(([, codes]) =>
     codes.has(diagnostic.code),
   )?.[0] as keyof typeof coursePackDiagnosticGroups | undefined;
+  const ruleId = safeDiagnosticId(diagnostic.ruleId);
+  const context = safeDiagnosticId(diagnostic.context);
+  const metadata = {
+    ...(ruleId === undefined ? {} : { ruleId }),
+    ...(context === undefined ? {} : { context }),
+  };
   if (!group) {
-    return { message: t("courses.validation.diagnostic.generic") };
+    return {
+      ...metadata,
+      message: t("courses.validation.diagnostic.generic"),
+    };
   }
   return {
+    ...metadata,
     code: diagnostic.code,
     ...(safeJsonPointerPattern.test(diagnostic.path)
       ? { path: diagnostic.path }

@@ -42,10 +42,10 @@ A Course Pack is a declarative, schema-versioned description of one `Course` and
 
 ## Implementation status
 
-**Implemented baseline:** the repository has versioned curriculum rows, stable unit IDs, published-content guards, creation-time hashed session snapshots, protected learner DTOs, and a strict curriculum editor. Current repair hooks can rewrite older snapshot bytes. It does not have Course Pack serialization, bounded import/export, locale separation, pack validation, or pack installation. Current trusted exercise templates remain outside this contract.
+**Implemented baseline:** Course Pack V1 now has a strict schema, bounded local validation and staging, deterministic canonicalization and content hashing, transactional Install/Open-as-draft lifecycle, immutable manifests, local export, and a version-matched Authoring Kit. The imported revision remains declarative and cannot grant process, filesystem, provider, credential, or plugin authority.
 
-**Approved Core Alpha target:** the declarative contract above is normative; no future package or importer is claimed to exist.
+**Approved Core Alpha target:** the declarative contract above remains normative. Runtime registries are app-owned; accepting a Pack never proves an unavailable executor, environment, or trusted check exists.
 
 **Future:** signed distribution, remote catalogs, executable asset trust, and marketplace workflows.
 
-No major implementation is authorized until the Core Alpha audit/specification set passes the owner approval gate.
+Subsequent changes remain subject to the current Core Alpha specifications and owner approval gates.

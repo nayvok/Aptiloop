@@ -68,6 +68,12 @@ Required invariants:
 - `occurredAt` ordering ties break by fact ID; projection never depends on SQLite row order or locale collation.
 - Numeric rounding, hash, sort, and canonical JSON rules are specified and portable across SQLite/PostgreSQL adapters.
 
+## Course Pack lesson graph projection
+
+**Implemented baseline.** Course Pack V1 minor 1 carries an explicit, finite lesson prerequisite DAG in `lesson.prerequisiteLessonIds`; missing fields in legacy minor-0 Packs are interpreted as `[]`, never as an inferred sequential chain. Import revalidates the Pack against the installed registry, writes the exact lesson and Activity nodes/edges to both the curriculum read model and Course Foundation snapshot inside one transaction, and compares stable-ID node/edge sets before the revision can be published.
+
+Roadmap availability is derived from those persisted prerequisite IDs: a lesson is available only after every prerequisite lesson is complete. One unambiguous available lesson produces the deterministic Course-level Start action. Intentional parallel branches remain simultaneously available and therefore require explicit learner selection rather than collection-order guessing; an active lesson remains the sole resumable action. The Learning Kernel continues to own deterministic Activity selection inside that lesson.
+
 ## Deterministic evaluation
 
 | Evidence source            | Kernel treatment                                                                                                                                                                                                                             |

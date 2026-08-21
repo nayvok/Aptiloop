@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
-import { CoursePackV1Schema } from "../src/course-pack.js";
+import {
+  COURSE_PACK_AUTHORING_DRAFT_FORMAT,
+  COURSE_PACK_FORMAT_MINOR_VERSION,
+  CoursePackAuthoringDraftV1Schema,
+  CoursePackV1Schema,
+} from "../src/course-pack.js";
 
 const packageRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const schemaDirectory = path.join(packageRoot, "schema");
@@ -14,7 +19,11 @@ await Promise.all([
   mkdir(templatesDirectory, { recursive: true }),
 ]);
 
-const schema = z.toJSONSchema(CoursePackV1Schema, {
+const finalSchema = z.toJSONSchema(CoursePackV1Schema, {
+  target: "draft-2020-12",
+  io: "input",
+});
+const draftSchema = z.toJSONSchema(CoursePackAuthoringDraftV1Schema, {
   target: "draft-2020-12",
   io: "input",
 });
@@ -106,6 +115,26 @@ const authoringTemplate = CoursePackV1Schema.parse({
     },
   ],
 });
+const draftTemplate = CoursePackAuthoringDraftV1Schema.parse({
+  format: COURSE_PACK_AUTHORING_DRAFT_FORMAT,
+  formatVersion: authoringTemplate.formatVersion,
+  formatMinorVersion: COURSE_PACK_FORMAT_MINOR_VERSION,
+  course: authoringTemplate.course,
+  revision: {
+    revisionKey: authoringTemplate.revision.revisionKey,
+    revisionNumber: authoringTemplate.revision.revisionNumber,
+    parentRevisionKey: authoringTemplate.revision.parentRevisionKey,
+    branchKind: authoringTemplate.revision.branchKind,
+    basedOnContentHash: authoringTemplate.revision.basedOnContentHash,
+  },
+  knowledge: authoringTemplate.knowledge,
+  localizations: authoringTemplate.localizations,
+  lessons: authoringTemplate.lessons.map((lesson) => ({
+    ...lesson,
+    prerequisiteLessonIds: [],
+  })),
+});
+
 await Promise.all([
   writeFile(
     path.join(schemaDirectory, "course-pack-v1.schema.json"),
@@ -116,7 +145,23 @@ await Promise.all([
         title: "Aptiloop Course Pack V1",
         description:
           "Declarative local Course interchange. Validation remains authoritative in the version-matched Authoring Kit.",
-        ...schema,
+        ...finalSchema,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  ),
+  writeFile(
+    path.join(schemaDirectory, "course-pack-authoring-draft-v1.schema.json"),
+    `${JSON.stringify(
+      {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        $id: "https://aptiloop.local/schema/course-pack-authoring-draft-v1.schema.json",
+        title: "Aptiloop Course Pack Authoring Draft V1",
+        description:
+          "Hashless authoring interchange. Requirements and contentHash are derived only by the version-matched Authoring Kit.",
+        ...draftSchema,
       },
       null,
       2,
@@ -126,6 +171,14 @@ await Promise.all([
   writeFile(
     path.join(templatesDirectory, "course-pack-v1-authoring-template.json"),
     `${JSON.stringify(authoringTemplate, null, 2)}\n`,
+    "utf8",
+  ),
+  writeFile(
+    path.join(
+      templatesDirectory,
+      "course-pack-authoring-draft-v1-template.json",
+    ),
+    `${JSON.stringify(draftTemplate, null, 2)}\n`,
     "utf8",
   ),
 ]);

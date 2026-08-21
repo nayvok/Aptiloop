@@ -24,7 +24,7 @@
   ],
   "scripts": {
     "build": "npm run generate && tsup",
-    "generate": "tsx scripts/generate-assets.ts",
+    "generate": "tsx scripts/generate-assets.ts && prettier --write schema templates",
     "lint": "eslint src test scripts --max-warnings=0",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

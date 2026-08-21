@@ -66,15 +66,18 @@ Recovery:
 
 **Approved Core Alpha target**
 
-1. From `/courses/new` or Courses, the user chooses **Use an external model**, completes the locally retained brief, and downloads a version-matched instruction file embedding that brief, the exact generated Course Pack V1 schema, and a topic-neutral structural scaffold that is deliberately invalid until all placeholders, ownership/terms, and the content hash are resolved.
-2. The user deliberately supplies only that downloaded file to the chosen external tool. Aptiloop neither transmits the brief nor verifies the external model; the resulting JSON remains untrusted.
-3. The user opens `/courses/import` and selects the exact UTF-8 JSON file returned by the model. No import form exists on `/courses/new`, and downloading instructions or selecting a file creates no Course or Draft.
-4. Aptiloop treats every field as untrusted data. It reads no commands and grants no runtime, filesystem, network, plugin, or provider authority from the pack.
-5. Validation reports schema version, stable IDs, reference integrity, finite graph result, locale coverage, source/capsule hashes, environment/check references, limits, provenance, compatibility, and canonical hash. Authoring Kit and importer results must match.
-6. Unknown or unsupported definitions fail closed. The user may inspect errors without partially installing runnable content.
-7. The browser navigates to `/courses/intake/{validationId}`. A strict GET may restore the staged validation's Preview or diagnostics but never installs, publishes, or opens a Draft.
-8. A valid pack opens in learner-safe Preview. The user sees publisher/provenance claims as claims, not automatic trust proof.
-9. The user explicitly chooses **Install immutable revision** or **Open as local draft**, reviews the identity/hash/destination consequence, and confirms one atomic commit. Open as draft preserves the imported manifest as an immutable archived source revision and creates a separate personal Draft/adaptation lineage.
+1. From `/courses/new` or Courses, the user chooses **Use an external model**, completes a lightweight locally retained Initial Brief, and downloads a self-contained, version-matched instruction. The file embeds the authoring-workflow contract, exact Authoring Draft and final Course Pack schemas, exact runtime registry, semantic/security guidance, topic-neutral scaffold, and commit-pinned authoritative references when the build has a verified repository revision.
+2. The user deliberately supplies only that downloaded file to the chosen external tool. Aptiloop neither transmits the brief nor verifies the external model; every result remains untrusted.
+3. The external model treats the brief as seed context, performs Discovery, asks only material missing questions, and may offer a bounded Diagnostic. It then presents a finite Course proposal. The normal human workflow cannot compile until the user explicitly approves that proposal; an explicitly requested non-interactive run must disclose its assumptions.
+4. After approval, the model compiles one declarative `aptiloop.course-pack-authoring-draft` JSON document. It designs content, graphs, evidence, provenance, and trusted registry references, but does not invent runtime authority, compute `requirements`, canonicalize JSON, or compute `revision.contentHash`.
+5. The user opens `/courses/import` and selects that UTF-8 Authoring Draft or an already finalized Course Pack. No import form exists on `/courses/new`, and downloading instructions or selecting a file creates no Course or Draft.
+6. Aptiloop treats every field as untrusted data. It reads no commands and grants no runtime, filesystem, network, plugin, or provider authority from either document.
+7. For an Authoring Draft, the version-matched local Authoring Kit deterministically validates the draft shape, derives exact runtime requirements, canonicalizes it, computes the immutable content hash, and then runs the same final Course Pack validator. A finalized pack goes directly through that validator. This preparation never repairs authored meaning or weakens a rejection.
+8. Validation reports schema/version, stable IDs, lesson and activity graphs, locale coverage, source/capsule hashes, environment/check references, limits, provenance, compatibility, canonical identity, and safe rule/context diagnostics. Authoring Kit and importer results must match.
+9. Unknown or unsupported definitions fail closed. The user may inspect bounded diagnostics, repair the source document, and retry without partially installing runnable content.
+10. The browser navigates to `/courses/intake/{validationId}`. A strict GET may restore the staged finalized Preview or diagnostics but never installs, publishes, or opens a Draft.
+11. A valid result opens in learner-safe Preview. The user sees whether local deterministic finalization occurred and treats publisher/provenance claims as claims, not automatic trust proof.
+12. The user explicitly chooses **Install immutable revision** or **Open as local draft**, reviews the exact finalized identity/hash/destination consequence, and confirms one atomic commit. Open as draft preserves the imported manifest as an immutable archived source revision and creates a separate personal Draft/adaptation lineage.
 
 Privacy result: import is local. The pack cannot read existing Courses, learner history, credentials, paths, or provider sessions.
 

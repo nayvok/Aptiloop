@@ -43,6 +43,7 @@ A valid V1 pack is:
 {
   "format": "aptiloop.course-pack",
   "formatVersion": 1,
+  "formatMinorVersion": 1,
   "course": {
     "courseKey": "javascript-foundations",
     "title": "JavaScript Foundations",
@@ -85,6 +86,7 @@ A valid V1 pack is:
   "lessons": [
     {
       "lessonId": "lesson-1",
+      "prerequisiteLessonIds": [],
       "order": 0,
       "title": "Start here",
       "description": "A minimal learner-safe lesson.",
@@ -118,11 +120,11 @@ A valid V1 pack is:
 
 ### Closed root fields
 
-The eight root fields shown above are the complete V1 root schema; any other root field is an error. `course`, `revision`, `requirements`, and `knowledge` are strict objects. `lessons` and `localizations` are bounded arrays.
+Current authored V1 documents have nine closed root fields: `format`, `formatVersion`, `formatMinorVersion`, `course`, `revision`, `requirements`, `knowledge`, `localizations`, and `lessons`. `formatMinorVersion: 1` identifies the additive lesson-prerequisite extension. Legacy finalized V1 documents omit `formatMinorVersion` and `prerequisiteLessonIds`; the current reader interprets the missing lesson field as an empty set only during validation and projection, never by materializing it before legacy hash verification. Unknown root fields remain errors.
 
 `localizations` entries have the closed shape `{ locale, releaseComplete, fields }`. `fields` is a map from a stable path such as `lesson/<lessonId>/title` or `activity/<activityId>/payload/body` to a translated string or translated string list. A path must resolve to a field declared localizable by its installed schema; structural, protected, identifier, hash, capability, environment, check, and evaluation fields are never localizable.
 
-Each lesson record has the closed shape `{ lessonId, order, title, description, goal, estimatedMinutes, knowledgeNodeIds, entryActivityIds, activities }`. Each activity record has the closed shape `{ activityId, schemaVersion, order, type, title, description, estimatedMinutes, required, prerequisiteActivityIds, capabilityIds, knowledgeNodeIds, sourceSnapshotIds, completionCriteria, payload, protectedMaterial }`.
+Each current lesson record has the closed shape `{ lessonId, order, title, description, goal, estimatedMinutes, knowledgeNodeIds, prerequisiteLessonIds, entryActivityIds, activities }`. `prerequisiteLessonIds` contains stable lesson IDs, is explicit even when empty, and is not inferred from array order. Each activity record has the closed shape `{ activityId, schemaVersion, order, type, title, description, estimatedMinutes, required, prerequisiteActivityIds, capabilityIds, knowledgeNodeIds, sourceSnapshotIds, completionCriteria, payload, protectedMaterial }`.
 
 V1 has no generic activity-level `environmentId` or `checkIds`. An exercise carries the app-owned trusted check reference only as `payload.testCommandId` inside its strict exercise payload:
 
@@ -153,6 +155,16 @@ V1 has no generic activity-level `environmentId` or `checkIds`. An exercise carr
 
 An imported upstream revision never mutates an existing revision. Identical revision key, content hash, and lifecycle action is an idempotent re-import. Reusing that identity with different content or a different `install | open-as-draft` action is a hard conflict. A personal branch records parent/based-on provenance and never overwrites upstream content. Its Draft head remains mutable only through validated authoring operations; publication creates an immutable personal revision.
 
+### Authoring draft and deterministic finalization
+
+**Implemented baseline.** External authoring compiles an intermediate document with `format: "aptiloop.course-pack-authoring-draft"`, `formatVersion: 1`, and `formatMinorVersion: 1`. Its closed shape deliberately omits `requirements` and `revision.contentHash`. It is not an installable Course Pack, immutable identity, or publication artifact.
+
+The Authoring Kit CLI and local intake boundary are the only finalization authorities. They validate the draft shape and security rules, derive the exact sorted runtime requirements from its activities, canonicalize the resulting strict `aptiloop.course-pack` document, compute `revision.contentHash`, then run the same semantic, registry, graph, provenance, locale, and security validation used for finalized Pack imports. A failed draft remains unchanged; diagnostics guide a bounded author/user repair loop. Finalization never invents an unavailable activity, capability, environment, or check registration.
+
+**Implemented baseline.** Whole-Pack semantics also close the schema/runtime seam: completion criteria must be supported by the declared Activity type and reference only fields that runtime evidence can produce; review, spaced-review, quiz-question, localization, and protected-evaluation references must resolve with the expected types. Choice questions must be objectively gradable. Protected values are normalized and checked against every primary and localized learner-visible string before staging. The runtime projection preserves private questions server-side, synthesizes one private recall question from the typed recall prompt when an older valid Pack has only a reference answer, and exposes only the learner-safe question shape.
+
+The SHA-256 of the original selected bytes is retained separately as intake provenance and idempotency evidence. It is not the canonical Course revision identity. Installation receives only the finalized canonical document and verifies the source-byte hash, canonical bytes, report, runtime projection, and final content hash again before commit.
+
 ### Locale rules
 
 - `primaryLocale` is exactly one well-formed BCP 47 tag and is the authored source of truth.
@@ -164,7 +176,9 @@ An imported upstream revision never mutates an existing revision. Identical revi
 
 ### Lesson and activity fields
 
-Each `lesson` has a stable ID, localized title/goal, topic/knowledge-node references, estimated minutes, and a finite `activities` array. Each activity has:
+Each current `lesson` has a stable ID, localized title/goal, topic/knowledge-node references, estimated minutes, explicit `prerequisiteLessonIds`, and a finite `activities` array. Lesson prerequisites form a revision-wide DAG: every referenced stable ID must exist, self-edges and cycles are errors, and deliberately parallel roots remain parallel. Array order is presentation order only and never creates an implicit prerequisite. Legacy V1 documents without the minor-version field retain the historical no-lesson-edge meaning.
+
+Each activity has:
 
 - stable `activityId` unique within the revision;
 - `type` from the installed Activity Registry;
@@ -197,20 +211,20 @@ A pack cannot define a new capability, environment, check, renderer, plugin, or 
 
 ## Validation and publication
 
-**Implemented baseline.** Validation is deterministic, side-effect free through the semantic phase, and returns stable diagnostics `{code, severity, path, entityId, message}`.
+**Implemented baseline.** Validation is deterministic, side-effect free through the semantic phase, and returns stable diagnostics `{ code, severity, path, entityId, message, ruleId, context }`. `ruleId` and `context` identify the exact security rule and text context without echoing a matched secret.
 
 1. **Envelope:** UTF-8, JSON object, exact format/version, byte/depth/item limits, no duplicate JSON keys, no unknown fields.
 2. **Shape:** all closed schemas, string/array bounds, IDs and locales.
 3. **Identity:** unique stable IDs/orders, parent/hash consistency, canonical hash match.
-4. **Graph:** every reference resolves in the same revision; prerequisite graph is acyclic; at least one entry activity exists; every required activity is reachable; no self-edge; no impossible completion dependency.
+4. **Graph:** every lesson and activity reference resolves in the same revision; both prerequisite graphs are acyclic; at least one entry exists; every required activity is reachable; no self-edge or impossible completion dependency exists.
 5. **Activity semantics:** type/payload/criterion agreement; referenced questions/options/checks/sources exist; protected evaluation is present where an objective evaluator requires it and excluded from learner-visible projections.
 6. **Registry/renderer closure:** installed registries recognize every declared Activity, capability, environment, and check; activity payload schemas and renderer types close. This is structural availability, not proof that a product-level executor can start and complete every activity.
 7. **Knowledge/provenance:** snapshot hashes/citations resolve; HTTPS/source metadata and attribution/license requirements pass. V1 does not resolve `sourceAuthorityId` against a future official-source registry.
 8. **Locale completeness:** primary locale complete; declared release-complete overlays complete.
-9. **Security:** reject executable or secret-shaped fields, unsafe URLs, HTML active content, forbidden local/UNC/device/traversal path values, credential-like values, invalid UTF-8, duplicate JSON keys, and excess byte/depth/item/string/parse limits.
-10. **Canonicalization:** recompute requirements and hash; mismatch blocks import/publication.
+9. **Security:** reject executable or secret-shaped fields, unsafe URLs, active HTML, forbidden local/UNC/device/traversal path values, credential-like values, invalid UTF-8, duplicate JSON keys, and excess byte/depth/item/string/parse limits. Event-handler-looking educational text is accepted only in an explicit code field or fenced Markdown; equivalent active learner-visible markup remains rejected.
+10. **Canonicalization:** deterministically derive requirements, canonicalize, compute the final content hash, and reject mismatches on finalized documents.
 
-`Validate` is not `Publish` and is not end-to-end runtime readiness. Publication requires an explicit user action after a zero-error report and a change summary. Publishing atomically stores immutable content, hash, lineage, validation report version, and timestamp. A model may propose changes only to a draft; it cannot validate as authority, apply without user action, or publish.
+`Validate` is not `Publish` and is not end-to-end runtime readiness. Publication requires an explicit user action after a zero-error report and a change summary. A model may propose changes only to a draft; it cannot validate as authority, apply without user action, or publish.
 
 **Implemented baseline.** `spaced-review` is a recognized schema/renderer type, and due Review Items have a typed participation executor. Runtime execution still is not implied by schema acceptance alone: the server must resolve the exact immutable Course/revision/session snapshot, verify the authored learner-safe prompt and source activity, and fail closed when that content or scope cannot be resolved. Protected evaluation material is never required or exposed because participation completion does not claim correctness or mastery.
 

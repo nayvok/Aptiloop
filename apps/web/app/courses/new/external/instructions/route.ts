@@ -5,6 +5,7 @@ import {
 } from "../course-authoring-instruction";
 
 const MAX_BRIEF_BYTES = 65_536;
+const BUILD_COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 
 async function readLimitedUtf8(request: Request): Promise<string | null> {
   const declaredLength = Number(request.headers.get("content-length"));
@@ -41,6 +42,17 @@ async function readLimitedUtf8(request: Request): Promise<string | null> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const repositoryRevision = process.env.APTILOOP_BUILD_COMMIT;
+  if (
+    repositoryRevision === undefined ||
+    !BUILD_COMMIT_PATTERN.test(repositoryRevision)
+  ) {
+    return Response.json(
+      { error: "Pinned Course authoring metadata is unavailable." },
+      { status: 503 },
+    );
+  }
+
   const mediaType = request.headers
     .get("content-type")
     ?.split(";", 1)[0]
@@ -75,13 +87,16 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  return new Response(createCourseAuthoringInstruction(parsed.data), {
-    status: 200,
-    headers: {
-      "Cache-Control": "no-store",
-      "Content-Disposition": `attachment; filename="${COURSE_AUTHORING_INSTRUCTION_FILENAME}"`,
-      "Content-Type": "text/markdown; charset=utf-8",
-      "X-Content-Type-Options": "nosniff",
+  return new Response(
+    createCourseAuthoringInstruction(parsed.data, { repositoryRevision }),
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="${COURSE_AUTHORING_INSTRUCTION_FILENAME}"`,
+        "Content-Type": "text/markdown; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
+      },
     },
-  });
+  );
 }

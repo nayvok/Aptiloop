@@ -25,23 +25,38 @@ describe("Course revision route boundary", () => {
     notFoundMock.mockClear();
   });
 
-  it("treats App Router params as decoded and encodes the exact endpoint once", async () => {
-    const element = await CourseRevisionPage({
-      params: Promise.resolve({
-        courseId: "course one",
-        revisionId: "revision/two",
-      }),
-    });
+  it.each([
+    { courseId: "course one", revisionId: "revision/two" },
+    { courseId: "course%20one", revisionId: "revision%2Ftwo" },
+  ])(
+    "normalizes decoded or encoded App Router params and encodes the endpoint once",
+    async (params) => {
+      const element = await CourseRevisionPage({
+        params: Promise.resolve(params),
+      });
 
-    expect(element.props).toMatchObject({
-      surface: "revision",
-      pathEndpoint:
-        "/learning/courses/course%20one/revisions/revision%2Ftwo/path",
-      selectionTarget: {
-        courseId: "course one",
-        revisionId: "revision/two",
-      },
-    });
-    expect(notFoundMock).not.toHaveBeenCalled();
+      expect(element.props).toMatchObject({
+        surface: "revision",
+        pathEndpoint:
+          "/learning/courses/course%20one/revisions/revision%2Ftwo/path",
+        selectionTarget: {
+          courseId: "course one",
+          revisionId: "revision/two",
+        },
+      });
+      expect(notFoundMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("routes malformed percent encoding to not-found", async () => {
+    await expect(
+      CourseRevisionPage({
+        params: Promise.resolve({
+          courseId: "course-1",
+          revisionId: "revision%2",
+        }),
+      }),
+    ).rejects.toThrow("NEXT_HTTP_ERROR_FALLBACK;404");
+    expect(notFoundMock).toHaveBeenCalledOnce();
   });
 });

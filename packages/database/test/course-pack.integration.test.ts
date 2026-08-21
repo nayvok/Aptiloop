@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   canonicalCoursePackJson,
+  CoursePackV1Schema,
   finalizeCoursePack,
   validateCoursePackBytes,
   type CoursePackV1,
@@ -149,6 +150,356 @@ describe("CoursePackRepository", () => {
     expect(database.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual(
       [],
     );
+  });
+
+  it("preserves sequential and intentional parallel lesson edges and activity edges", async () => {
+    const database = connection();
+    let id = 0;
+    const repository = new CoursePackRepository(database, {
+      now: () => Date.UTC(2026, 7, 20),
+      id: () => `prerequisite-event-${++id}`,
+    });
+    const pack = prerequisiteCoursePack("prerequisite-graph", [
+      { lessonId: "root", prerequisiteLessonIds: [] },
+      { lessonId: "sequential", prerequisiteLessonIds: ["root"] },
+      { lessonId: "parallel-a", prerequisiteLessonIds: ["sequential"] },
+      { lessonId: "parallel-b", prerequisiteLessonIds: ["sequential"] },
+      {
+        lessonId: "join",
+        prerequisiteLessonIds: ["parallel-a", "parallel-b"],
+      },
+    ]);
+    const current = validated(pack);
+    repository.install({
+      operationId: "install-prerequisite-graph",
+      validationId: "81111111-1111-4111-8111-111111111111",
+      action: "install",
+      sourceBytesHash: coursePackSourceBytesHash(current.sourceBytes),
+      pack: current.validation.pack,
+      canonicalJson: current.validation.canonicalJson,
+      report: current.validation.report,
+    });
+
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT stable_id, prerequisites_json
+           FROM curriculum_days_v2 WHERE version_id = ?
+           ORDER BY order_index`,
+        )
+        .all(pack.revision.revisionKey),
+    ).toEqual([
+      { stable_id: "root", prerequisites_json: "[]" },
+      { stable_id: "sequential", prerequisites_json: '["root"]' },
+      { stable_id: "parallel-a", prerequisites_json: '["sequential"]' },
+      { stable_id: "parallel-b", prerequisites_json: '["sequential"]' },
+      {
+        stable_id: "join",
+        prerequisites_json: '["parallel-a","parallel-b"]',
+      },
+    ]);
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT lesson.stable_id AS lesson_id,
+                  activity.stable_id AS activity_id,
+                  activity.unlock_rules_json
+           FROM curriculum_units activity
+           JOIN curriculum_days_v2 lesson ON lesson.id = activity.day_id
+           WHERE activity.version_id = ? AND activity.unlock_rules_json != '[]'
+           ORDER BY lesson.order_index, activity.order_index`,
+        )
+        .all(pack.revision.revisionKey),
+    ).toEqual(
+      ["root", "sequential", "parallel-a", "parallel-b", "join"].map(
+        (lessonId) => ({
+          lesson_id: lessonId,
+          activity_id: `${lessonId}-recall`,
+          unlock_rules_json: JSON.stringify([
+            { type: "unit-completed", unitId: `${lessonId}-study` },
+          ]),
+        }),
+      ),
+    );
+
+    const graph = await new CourseFoundationRepository(
+      database,
+    ).getCourseRevision(pack.revision.revisionKey);
+    if (!graph) throw new Error("Installed prerequisite graph is missing");
+    const lessonStableIdById = new Map(
+      graph.lessons.map((lesson) => [lesson.id, lesson.stableId]),
+    );
+    expect(
+      graph.lessons
+        .flatMap((lesson) =>
+          lesson.prerequisiteLessonIds.map(
+            (prerequisiteId) =>
+              `${lesson.stableId}<-${lessonStableIdById.get(prerequisiteId)}`,
+          ),
+        )
+        .sort(),
+    ).toEqual(
+      [
+        "join<-parallel-a",
+        "join<-parallel-b",
+        "parallel-a<-sequential",
+        "parallel-b<-sequential",
+        "sequential<-root",
+      ].sort(),
+    );
+    const activityEdges = graph.lessons.flatMap((lesson) => {
+      const stableIdById = new Map(
+        lesson.activities.map((activity) => [activity.id, activity.stableId]),
+      );
+      return lesson.activities.flatMap((activity) =>
+        activity.prerequisiteActivityIds.map(
+          (prerequisiteId) =>
+            `${lesson.stableId}:${activity.stableId}<-${stableIdById.get(prerequisiteId)}`,
+        ),
+      );
+    });
+    expect(activityEdges.sort()).toEqual(
+      ["root", "sequential", "parallel-a", "parallel-b", "join"]
+        .map((lessonId) => `${lessonId}:${lessonId}-recall<-${lessonId}-study`)
+        .sort(),
+    );
+  });
+
+  it("accepts forward lesson and activity edges without inventing false entries", async () => {
+    const database = connection();
+    let id = 0;
+    const repository = new CoursePackRepository(database, {
+      now: () => Date.UTC(2026, 7, 20),
+      id: () => `forward-event-${++id}`,
+    });
+    const pack = prerequisiteCoursePack("forward-prerequisite-graph", [
+      {
+        lessonId: "dependent-first",
+        prerequisiteLessonIds: ["later-root"],
+        forwardActivityEdge: true,
+      },
+      { lessonId: "later-root", prerequisiteLessonIds: [] },
+    ]);
+    const current = validated(pack);
+    repository.install({
+      operationId: "install-forward-prerequisite-graph",
+      validationId: "82222222-2222-4222-8222-222222222222",
+      action: "install",
+      sourceBytesHash: coursePackSourceBytesHash(current.sourceBytes),
+      pack: current.validation.pack,
+      canonicalJson: current.validation.canonicalJson,
+      report: current.validation.report,
+    });
+
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT prerequisites_json FROM curriculum_days_v2
+           WHERE version_id = ? AND stable_id = 'dependent-first'`,
+        )
+        .get(pack.revision.revisionKey),
+    ).toEqual({ prerequisites_json: '["later-root"]' });
+    const graph = await new CourseFoundationRepository(
+      database,
+    ).getCourseRevision(pack.revision.revisionKey);
+    if (!graph) throw new Error("Installed forward graph is missing");
+    const later = graph.lessons.find(
+      (lesson) => lesson.stableId === "later-root",
+    );
+    const dependent = graph.lessons.find(
+      (lesson) => lesson.stableId === "dependent-first",
+    );
+    expect(dependent?.prerequisiteLessonIds).toEqual([later?.id]);
+    const recall = dependent?.activities.find(
+      (activity) => activity.stableId === "dependent-first-recall",
+    );
+    const study = dependent?.activities.find(
+      (activity) => activity.stableId === "dependent-first-study",
+    );
+    expect(study?.prerequisiteActivityIds).toEqual([recall?.id]);
+    expect(dependent?.entryActivityIds).toEqual([recall?.id]);
+  });
+
+  it("rolls back every manifest row when the foundation projection diverges", () => {
+    const database = connection();
+    let id = 0;
+    const repository = new CoursePackRepository(database, {
+      now: () => Date.UTC(2026, 7, 20),
+      id: () => `mismatch-event-${++id}`,
+    });
+    const pack = prerequisiteCoursePack("projection-mismatch", [
+      { lessonId: "root", prerequisiteLessonIds: [] },
+      { lessonId: "dependent", prerequisiteLessonIds: ["root"] },
+    ]);
+    const current = validated(pack);
+    database.sqlite.exec(`
+      CREATE TRIGGER discard_course_pack_lesson_edge
+      AFTER INSERT ON course_lesson_prerequisites
+      WHEN NEW.revision_id = 'projection-mismatch/v1'
+      BEGIN
+        DELETE FROM course_lesson_prerequisites
+        WHERE course_id = NEW.course_id
+          AND revision_id = NEW.revision_id
+          AND lesson_id = NEW.lesson_id
+          AND prerequisite_lesson_id = NEW.prerequisite_lesson_id;
+      END;
+    `);
+
+    expect(() =>
+      repository.install({
+        operationId: "install-projection-mismatch",
+        validationId: "83333333-3333-4333-8333-333333333333",
+        action: "install",
+        sourceBytesHash: coursePackSourceBytesHash(current.sourceBytes),
+        pack: current.validation.pack,
+        canonicalJson: current.validation.canonicalJson,
+        report: current.validation.report,
+      }),
+    ).toThrow("Course Pack compatibility projection mismatch in foundation");
+    expect(
+      database.sqlite
+        .prepare("SELECT id FROM curriculum_versions WHERE id = ?")
+        .get(pack.revision.revisionKey),
+    ).toBeUndefined();
+    expect(
+      database.sqlite
+        .prepare("SELECT id FROM course_revisions WHERE id = ?")
+        .get(pack.revision.revisionKey),
+    ).toBeUndefined();
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT revision_id FROM course_pack_manifests WHERE revision_id = ?",
+        )
+        .get(pack.revision.revisionKey),
+    ).toBeUndefined();
+    expect(
+      database.sqlite
+        .prepare("SELECT count(*) AS count FROM course_pack_lifecycle_events")
+        .get(),
+    ).toEqual({ count: 0 });
+  });
+
+  it("installs a legacy one-lesson pack with empty projected prerequisites", () => {
+    const database = connection();
+    let id = 0;
+    const repository = new CoursePackRepository(database, {
+      now: () => Date.UTC(2026, 7, 20),
+      id: () => `legacy-event-${++id}`,
+    });
+    const legacy = structuredClone(createDevelopmentCoursePackFixture());
+    legacy.course.courseKey = "legacy-one-lesson-pack";
+    legacy.revision.revisionKey = "legacy-one-lesson-pack/v1";
+    delete legacy.formatMinorVersion;
+    for (const lesson of legacy.lessons) {
+      delete lesson.prerequisiteLessonIds;
+    }
+    const pack = finalizeCoursePack(legacy);
+    const current = validated(pack);
+    repository.install({
+      operationId: "install-legacy-one-lesson-pack",
+      validationId: "84444444-4444-4444-8444-444444444444",
+      action: "install",
+      sourceBytesHash: coursePackSourceBytesHash(current.sourceBytes),
+      pack: current.validation.pack,
+      canonicalJson: current.validation.canonicalJson,
+      report: current.validation.report,
+    });
+
+    expect(repository.read(pack.revision.revisionKey)).toEqual(pack);
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT prerequisites_json FROM curriculum_days_v2
+           WHERE version_id = ?`,
+        )
+        .get(pack.revision.revisionKey),
+    ).toEqual({ prerequisites_json: "[]" });
+    expect(
+      database.sqlite
+        .prepare(
+          `SELECT count(*) AS count FROM course_lesson_prerequisites
+           WHERE revision_id = ?`,
+        )
+        .get(pack.revision.revisionKey),
+    ).toEqual({ count: 0 });
+  });
+
+  it("revalidates forged reports against trusted exercise authority", () => {
+    const database = connection();
+    const repository = new CoursePackRepository(database, {
+      now: () => Date.UTC(2026, 7, 20),
+      id: () => "forged-authority-event",
+    });
+    const fixture = createDevelopmentCoursePackFixture();
+    const trusted = validated(fixture);
+    const exercise = structuredClone(fixture.lessons[0]!.activities[0]!);
+    const pack = finalizeCoursePack(
+      CoursePackV1Schema.parse({
+        ...fixture,
+        course: {
+          ...fixture.course,
+          courseKey: "forged-runtime-authority",
+        },
+        revision: {
+          ...fixture.revision,
+          revisionKey: "forged-runtime-authority/v1",
+        },
+        requirements: {
+          activityTypes: ["exercise", "recall", "study"],
+          capabilities: [],
+          environmentIds: ["unsupported-environment"],
+          checkIds: ["unsupported-check"],
+        },
+        lessons: [
+          {
+            ...fixture.lessons[0]!,
+            activities: [
+              ...fixture.lessons[0]!.activities,
+              {
+                ...exercise,
+                activityId: "forged-exercise",
+                order: 2,
+                type: "exercise",
+                title: "Forged trusted exercise",
+                prerequisiteActivityIds: ["recall-replay"],
+                completionCriteria: [
+                  {
+                    type: "exercise",
+                    passingTestsRequired: true,
+                    acceptedReviewRequired: true,
+                  },
+                ],
+                payload: {
+                  type: "exercise",
+                  exerciseId: "forged-exercise",
+                  acceptanceCriteria: ["Run the unsupported check"],
+                  constraints: [],
+                  template: "export const value = 1;",
+                  testCommandId: "unsupported-check",
+                  hintPolicy: "Hints remain declarative.",
+                  reviewPolicy: "Review remains read-only.",
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const sourceBytes = encoder.encode(JSON.stringify(pack));
+
+    expect(() =>
+      repository.install({
+        operationId: "install-forged-runtime-authority",
+        validationId: "85555555-5555-4555-8555-555555555555",
+        action: "install",
+        sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
+        pack,
+        canonicalJson: canonicalCoursePackJson(pack),
+        report: trusted.validation.report,
+      }),
+    ).toThrow("Course Pack installation requires app-supported validation");
+    expect(repository.list()).toEqual([]);
   });
 
   it("rejects revision collisions and rolls back every active row on failure", () => {
@@ -703,4 +1054,46 @@ describe("CoursePackRepository", () => {
 
 function finalizedAndValidated(pack: CoursePackV1) {
   return validated(finalizeCoursePack(pack));
+}
+
+interface PrerequisiteLessonFixture {
+  readonly lessonId: string;
+  readonly prerequisiteLessonIds: readonly string[];
+  readonly forwardActivityEdge?: boolean;
+}
+
+function prerequisiteCoursePack(
+  courseKey: string,
+  lessons: readonly PrerequisiteLessonFixture[],
+): CoursePackV1 {
+  const pack = structuredClone(createDevelopmentCoursePackFixture());
+  const template = pack.lessons[0]!;
+  pack.course.courseKey = courseKey;
+  pack.course.title = `Prerequisite projection ${courseKey}`;
+  pack.revision.revisionKey = `${courseKey}/v1`;
+  pack.formatMinorVersion = 1;
+  pack.lessons = lessons.map((definition, order) => {
+    const lesson = structuredClone(template);
+    const study = lesson.activities[0]!;
+    const recall = lesson.activities[1]!;
+    const studyId = `${definition.lessonId}-study`;
+    const recallId = `${definition.lessonId}-recall`;
+    lesson.lessonId = definition.lessonId;
+    lesson.order = order;
+    lesson.title = `Lesson ${definition.lessonId}`;
+    lesson.prerequisiteLessonIds = [...definition.prerequisiteLessonIds];
+    study.activityId = studyId;
+    recall.activityId = recallId;
+    if (definition.forwardActivityEdge) {
+      study.prerequisiteActivityIds = [recallId];
+      recall.prerequisiteActivityIds = [];
+      lesson.entryActivityIds = [recallId];
+    } else {
+      study.prerequisiteActivityIds = [];
+      recall.prerequisiteActivityIds = [studyId];
+      lesson.entryActivityIds = [studyId];
+    }
+    return lesson;
+  });
+  return finalizeCoursePack(pack);
 }

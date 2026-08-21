@@ -156,40 +156,43 @@ Staged validation is intentionally process-local, size/count bounded, LRU-capped
 
 **Implemented baseline** for the version-matched V1 kit.
 
-Aptiloop provides a version-matched downloadable Course Pack V1 instruction for a capable external model or text editor without granting that tool access to Aptiloop. The instruction embeds the user-approved brief, exact generated schema, and a topic-neutral structural scaffold, requires one UTF-8 Course Pack JSON document rather than prose or executable content, and directs the user back to `/courses/import`. The scaffold is deliberately not installable unchanged: it declares unresolved ownership, omits content terms, uses explicit placeholders, and carries a zero hash. It contains no sample Course or development curriculum. The instruction is not a runtime plugin, provider connection, or substitute for the complete Node-based Authoring Kit validator. Aptiloop cannot verify the external model's readiness or output quality; uploaded bytes remain untrusted until local validation succeeds. The full Kit contains:
+Aptiloop provides a self-contained, version-matched authoring skill for a capable external model without granting that model Aptiloop tools or local authority. The lightweight Initial Brief seeds a conversational lifecycle—Discovery, optional Diagnostic, Course Proposal, explicit User Review, Compilation, deterministic Validation/Repair, learner-safe Preview, and explicit local commit. Interactive mode is the default; only an explicitly selected non-interactive function call may compile directly from the brief, and it must not pretend that review occurred.
 
-- the exact Course Pack JSON Schema plus generated read-only type definitions;
-- the closed catalog of allowed Activity types, payload schemas, evidence/completion contracts, limits, and examples;
-- one topic-neutral, deliberately non-installable authoring scaffold; concrete Course fixtures remain test-only;
-- the same deterministic local validator, canonicalizer, and hash implementation used by import, exposed by the `aptiloop-course-pack` binary and the repository commands shown below;
-- validation-code reference, primary-locale, Source Snapshot/Knowledge Capsule, protected-material, environment/check-ID, provenance, privacy, and no-execution requirements;
-- single-file JSON packaging, import, Preview, Install/Open-as-draft, and export instructions;
-- explicit Kit/Core/schema compatibility rules, with unsupported combinations failing explicitly;
-- guidance for external AI use: the user chooses and transmits only intended context, the AI returns declarative JSON, local validation remains authoritative, and no provider receives credentials, learner history, workspaces, or direct Aptiloop access by default.
-- a model-facing instruction document that contains no credentials or learner history, requires one declarative JSON result, and names `/courses/import` as the only upload destination;
+The downloaded skill contains layered, exact build artifacts:
 
-The Kit and Adaptive Studio must accept/reject the same canonical fixture corpus and produce identical validation codes and hashes. A Kit update cannot weaken an older schema silently. External generators may help author data, but they cannot validate as authority, install, publish, fetch sources through Aptiloop, or define new Activity/runtime/tool behavior.
+- workflow and explicit proposal-approval gates;
+- the strict hashless Authoring Draft and finalized Course Pack JSON Schemas;
+- the exact closed Activity/capability/environment/check registry;
+- concise semantic rules for Activities, evidence, completion, lesson/Activity DAGs, protected material, locales, Source Snapshots, Knowledge Capsules, provenance, privacy, and security;
+- topic-neutral hashless and finalized structural scaffolds; concrete Course fixtures remain test-only;
+- logical schema `$id` values separately from an allowlisted set of raw GitHub source URLs pinned to the exact 40-character build commit;
+- Authoring Kit, format major/minor, and validator versions;
+- a bounded repair protocol: preserve every failed input, use exact deterministic diagnostic code/path/entity/rule/context, make the smallest proposal-preserving change, and stop after three failed rounds.
+
+The external model compiles one `aptiloop.course-pack-authoring-draft` JSON document only after proposal approval. That draft omits `requirements` and `revision.contentHash`; the model must not simulate registry derivation, canonical JSON, or SHA-256. The shared `prepareCoursePackBytes` boundary accepts either this hashless Draft or an already finalized Pack, derives exact requirements from content, canonicalizes, computes and verifies immutable content identity, runs the same schema/semantic/security validator as import, and emits finalized canonical bytes only when valid. Import repositories receive only those finalized bytes. The raw selected-byte hash, source kind, and whether deterministic finalization occurred remain visible validation provenance.
+
+The Kit and Adaptive Studio must accept/reject the same canonical fixture corpus and produce identical validation codes and hashes. A Kit update cannot weaken an older schema silently. External generators may propose declarative content, but cannot validate as authority, install, open a Draft, publish, fetch sources through Aptiloop, or define runtime/tool authority.
 
 Repository workflow after building `@aptiloop/course-authoring-kit`:
 
 ```sh
-node packages/course-authoring-kit/dist/cli.js validate pack.json
-node packages/course-authoring-kit/dist/cli.js hash pack.json
-node packages/course-authoring-kit/dist/cli.js canonicalize pack.json
-node packages/course-authoring-kit/dist/cli.js finalize pack.json
+node packages/course-authoring-kit/dist/cli.js validate draft-or-pack.json
+node packages/course-authoring-kit/dist/cli.js finalize draft-or-pack.json
+node packages/course-authoring-kit/dist/cli.js hash draft-or-pack.json
+node packages/course-authoring-kit/dist/cli.js canonicalize draft-or-pack.json
 ```
 
-`validate` prints the stable report and exits non-zero on a blocker. `hash` prints the content hash over the canonical hash payload. `canonicalize` requires a valid finalized pack and prints canonical JSON. `finalize` computes/replaces the declared revision content hash and prints canonical JSON. The generated schema is `packages/course-authoring-kit/schema/course-pack-v1.schema.json`; the non-installable structural scaffold is `packages/course-authoring-kit/templates/course-pack-v1-authoring-template.json`. Concrete Course fixtures remain under test-only paths. Aptiloop imports one finalized JSON file through Courses → Import Course Pack, shows Preview and diagnostics, then requires a separate Install/Open-as-draft action.
+All four commands use the same preparation boundary and exit non-zero on a blocker. `validate` prints the stable report; `finalize`/`canonicalize` print the finalized canonical JSON; `hash` prints its computed content hash. Generated artifacts live under `packages/course-authoring-kit/schema/` and `packages/course-authoring-kit/templates/` and are synchronized from the TypeScript source contract.
 
 Reference external workflow:
 
-1. From Course creation, choose **Use an external model** and download the version-matched instruction file.
-2. Give the chosen external model only the goal, context, and constraints the user intends to disclose; Aptiloop sends nothing automatically.
-3. Receive one UTF-8 Course Pack JSON document.
-4. Open `/courses/import` and select that exact file. No Pack file input exists on `/courses/new`.
-5. Run bounded local validation and fix every error; no imported field receives executable or provider authority.
-6. Review provenance, requirements, canonical identity, and learner Preview.
-7. Explicitly choose **Install immutable revision** or **Open as local draft**. Installation records the immutable source revision; Open as draft preserves that source manifest and creates a separate editable personal lineage. Neither action publishes the Draft.
+1. From Course creation, choose **Use an external model**, complete the Initial Brief, and download the commit-pinned skill. Aptiloop sends nothing automatically.
+2. Give the chosen model only the skill and context the user intends to disclose. During Discovery, answer only material questions; use an optional Diagnostic only by agreement.
+3. Review and explicitly approve the exact Course Proposal. A material revision requires approval again.
+4. Receive one UTF-8 hashless Authoring Draft JSON document, then open `/courses/import` and select that exact file. No Pack file input exists on `/courses/new`.
+5. Aptiloop deterministically finalizes and validates locally. Preserve each failed draft and repair from exact diagnostics; do not hand-edit requirements or hashes.
+6. Review provenance, derived requirements, final canonical identity, finalization provenance, and learner-safe Preview.
+7. Explicitly choose **Install immutable revision** or **Open as local Draft**. Installation records the immutable source revision; Open as Draft preserves that source manifest and creates a separate editable personal lineage. Neither action publishes the Draft.
 
 ## Course Pack boundary
 

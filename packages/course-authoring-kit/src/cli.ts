@@ -2,14 +2,7 @@
 
 import { readFile } from "node:fs/promises";
 
-import {
-  calculateCoursePackContentHash,
-  canonicalCoursePackJson,
-  CoursePackV1Schema,
-  finalizeCoursePack,
-  parseStrictJson,
-  validateCoursePackBytes,
-} from "./index.js";
+import { prepareCoursePackBytes } from "./index.js";
 
 const usage = `Usage: aptiloop-course-pack <validate|canonicalize|hash|finalize> <pack.json>`;
 
@@ -25,26 +18,18 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   const bytes = new Uint8Array(await readFile(filePath));
+  const result = prepareCoursePackBytes(bytes);
   if (command === "validate") {
-    const result = validateCoursePackBytes(bytes);
     console.log(JSON.stringify(result.report, null, 2));
     return result.valid ? 0 : 1;
   }
-
-  const input = CoursePackV1Schema.parse(parseStrictJson(bytes));
-  if (command === "hash") {
-    console.log(calculateCoursePackContentHash(input));
-    return 0;
-  }
-  if (command === "finalize") {
-    console.log(canonicalCoursePackJson(finalizeCoursePack(input)));
-    return 0;
-  }
-
-  const result = validateCoursePackBytes(bytes);
   if (!result.valid) {
     console.error(JSON.stringify(result.report, null, 2));
     return 1;
+  }
+  if (command === "hash") {
+    console.log(result.contentHash);
+    return 0;
   }
   console.log(result.canonicalJson);
   return 0;

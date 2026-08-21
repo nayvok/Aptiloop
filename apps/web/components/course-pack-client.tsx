@@ -29,6 +29,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { z } from "zod";
+import {
+  CoursePackStagedValidationResponseSchema as validationResponseSchema,
+  type CoursePackStagedValidationResponse as ValidationResponse,
+  type CoursePackValidationDiagnostic,
+} from "@aptiloop/shared";
 
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, SafeQueryError } from "@/components/query-state";
@@ -99,82 +104,6 @@ import {
 import { cn } from "@/lib/utils";
 
 const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-const diagnosticSchema = z
-  .object({
-    code: z.string(),
-    severity: z.enum(["error", "warning"]),
-    path: z.string(),
-    entityId: z.string().nullable(),
-    message: z.string(),
-  })
-  .strict();
-const reportSchema = z
-  .object({
-    validatorVersion: z.string(),
-    valid: z.boolean(),
-    errors: z.number().int().nonnegative(),
-    warnings: z.number().int().nonnegative(),
-    diagnostics: z.array(diagnosticSchema),
-    limits: z.record(z.string(), z.number()),
-  })
-  .strict();
-const previewSchema = z
-  .object({
-    courseKey: z.string(),
-    courseTitle: z.string(),
-    revisionKey: z.string(),
-    revisionNumber: z.number().int().positive(),
-    contentHash: hashSchema,
-    primaryLocale: z.string(),
-    availableLocales: z.array(z.string()),
-    lessonCount: z.number().int().nonnegative(),
-    activityCount: z.number().int().nonnegative(),
-    sourcePrivacyClasses: z.object({
-      public: z.number().int().nonnegative(),
-      private: z.number().int().nonnegative(),
-    }),
-    requirements: z.object({
-      activityTypes: z.array(z.string()),
-      capabilities: z.array(z.string()),
-      environmentIds: z.array(z.string()),
-      checkIds: z.array(z.string()),
-    }),
-    provenance: z
-      .object({
-        contentStatus: z.enum(["development-fixture", "personal"]),
-        author: z.string(),
-        origin: z.enum(["original", "adapted", "generated", "migration"]),
-        ownership: z.enum(["owned", "licensed", "permission", "unresolved"]),
-        licenseSpdx: z.string().nullable(),
-        termsUrl: z.string().nullable(),
-        attribution: z.string().nullable(),
-        createdAt: z.string().datetime(),
-        notes: z.string().nullable(),
-      })
-      .strict(),
-  })
-  .strict();
-const validationResponseSchema = z.discriminatedUnion("valid", [
-  z
-    .object({
-      valid: z.literal(true),
-      storageAvailable: z.boolean(),
-      validationId: z.string().uuid(),
-      expiresAt: z.string().datetime(),
-      preview: previewSchema,
-      report: reportSchema,
-    })
-    .strict(),
-  z
-    .object({
-      valid: z.literal(false),
-      storageAvailable: z.boolean(),
-      validationId: z.string().uuid(),
-      expiresAt: z.string().datetime(),
-      report: reportSchema,
-    })
-    .strict(),
-]);
 const libraryItemSchema = z
   .object({
     courseId: z.string(),
@@ -216,7 +145,6 @@ const commitResponseSchema = z
   })
   .strict();
 
-type ValidationResponse = z.infer<typeof validationResponseSchema>;
 type CoursePackLibraryItem = z.infer<typeof libraryItemSchema>;
 type InstallAction = "install" | "open-as-draft";
 type CommitRequest = {
@@ -304,6 +232,13 @@ function getErrorCode(error: unknown): string | null {
 }
 
 function getSafeErrorDiagnostic(error: unknown): string | null {
+  if (error instanceof z.ZodError) {
+    const issue = error.issues[0];
+    const path = issue?.path
+      .map((part) => String(part).replaceAll("·", ""))
+      .join("/");
+    return path ? `RESPONSE_CONTRACT · /${path}` : "RESPONSE_CONTRACT";
+  }
   if (!error || typeof error !== "object") return null;
   const candidate = error as {
     status?: unknown;
@@ -1006,14 +941,18 @@ function CoursePackClient({
                 {t(
                   unavailable
                     ? "courses.intake.unavailable.title"
-                    : "courses.intake.loadFailed.title",
+                    : stagedValidation.error instanceof z.ZodError
+                      ? "courses.intake.responseContractFailed.title"
+                      : "courses.intake.loadFailed.title",
                 )}
               </AlertTitle>
               <AlertDescription>
                 {t(
                   unavailable
                     ? "courses.intake.unavailable.description"
-                    : "courses.intake.loadFailed.description",
+                    : stagedValidation.error instanceof z.ZodError
+                      ? "courses.intake.responseContractFailed.description"
+                      : "courses.intake.loadFailed.description",
                 )}
               </AlertDescription>
             </Alert>
@@ -1175,9 +1114,12 @@ function CoursePackClient({
                 {validationFailed && file ? (
                   <FieldError id={fileErrorId}>
                     <p>
-                      {t("courses.import.validationFailed", {
-                        filename: file.name,
-                      })}
+                      {t(
+                        validate.error instanceof z.ZodError
+                          ? "courses.import.responseContractFailed"
+                          : "courses.import.validationFailed",
+                        { filename: file.name },
+                      )}
                     </p>
                     {validationError ? (
                       <details className="mt-2 text-muted-foreground">
@@ -1766,6 +1708,16 @@ function CoursePackPreviewPanel({
         <Badge variant="success">{t("courses.preview.ready")}</Badge>
       </div>
 
+      {validation.finalized && validation.sourceKind === "authoring-draft" ? (
+        <Alert>
+          <InfoIcon aria-hidden />
+          <AlertTitle>{t("courses.preview.finalizedDraft.title")}</AlertTitle>
+          <AlertDescription>
+            {t("courses.preview.finalizedDraft.description")}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       <Separator />
 
       <dl className="grid min-w-0 grid-cols-2 gap-x-5 gap-y-4 text-sm sm:grid-cols-4">
@@ -2087,7 +2039,7 @@ function RequirementList({
 function DiagnosticList({
   diagnostics,
 }: {
-  diagnostics: readonly z.infer<typeof diagnosticSchema>[];
+  diagnostics: readonly CoursePackValidationDiagnostic[];
 }) {
   const { t } = useI18n();
   return (
@@ -2099,7 +2051,10 @@ function DiagnosticList({
             key={`${diagnostic.code}:${diagnostic.path}:${index}`}
             className="min-w-0 rounded-lg border border-border bg-surface-soft p-3 text-sm"
           >
-            {presentation.code || presentation.path ? (
+            {presentation.code ||
+            presentation.path ||
+            presentation.ruleId ||
+            presentation.context ? (
               <div className="flex flex-wrap items-center gap-2">
                 {presentation.code ? (
                   <Badge
@@ -2114,6 +2069,14 @@ function DiagnosticList({
                   <code className="break-all font-mono text-xs text-muted-foreground">
                     {presentation.path}
                   </code>
+                ) : null}
+                {presentation.ruleId ? (
+                  <code className="break-all font-mono text-xs text-muted-foreground">
+                    {presentation.ruleId}
+                  </code>
+                ) : null}
+                {presentation.context ? (
+                  <Badge variant="outline">{presentation.context}</Badge>
                 ) : null}
               </div>
             ) : null}

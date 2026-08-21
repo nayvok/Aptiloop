@@ -10,6 +10,8 @@ Course Designer, Tutor, Evaluator, and Reviewer are Aptiloop roles; they are not
 
 **Implemented baseline:** no active Aptiloop AI role receives arbitrary filesystem, shell, process, network, HTTP, edit, patch, plugin, secret, provider-RPC, or database tools. Every exposed effect is an Aptiloop-owned typed tool with strict input/output schema, per-role allowlist, server-side scope checks, bounded result, audit metadata, and non-authoritative proposal/result semantics.
 
+**Approved Core Alpha target:** an external authoring model is not an Aptiloop role and receives no Aptiloop tool or local authority. Its downloadable, self-contained instruction establishes the same Initial Brief → Discovery → optional Diagnostic → Course Proposal → User Review → Compilation lifecycle as embedded Course Designer, but the external conversation remains outside Aptiloop. The model may return only declarative authored content. The local version-matched Authoring Kit derives runtime requirements, canonicalizes JSON, computes immutable content identity, validates registry compatibility and security, and produces the learner-safe Preview. Neither the instruction nor a model-generated hash can authorize Install, Open as draft, or Publish.
+
 Reviewer is evidence-only: it receives only the bounded app-built review capsule, has no local filesystem/general tools or patch/apply authority, and returns typed advice without mutating learner work. A successful Reviewer operation records an app-owned evidence receipt only after strict structural and semantic validation. The model's advisory `passed` or `changes_requested` value is preserved for display but cannot decide progression, correctness, or mastery.
 
 ## 2. Pi evidence and constraints

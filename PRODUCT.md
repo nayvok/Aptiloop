@@ -78,8 +78,8 @@ The complete learner journey is defined in [User journeys](docs/product/user-jou
 
 Two paths are required and produce the same validated Course model:
 
-1. **Embedded authoring:** create a local Draft manually or through the optional restart-safe guided Course Designer, edit in Adaptive Studio, validate, Preview, complete Change review, and explicitly Publish an immutable revision. Guided confirmation or proposal Apply never publishes.
-2. **External authoring:** use the version-matched Authoring Kit with any text editor or external AI generator to produce one declarative Course Pack JSON document, validate/canonicalize it locally, then import it into Aptiloop for the same schema/safety validation, learner Preview, and explicit immutable installation or local Draft creation.
+1. **Embedded authoring:** create a local Draft manually or through the optional restart-safe guided Course Designer, then follow Initial Brief -> Discovery -> optional Diagnostic -> Course Proposal -> explicit User Review -> Compilation -> deterministic Validation/Repair -> learner-safe Preview -> Change review -> explicit Publish. Proposal confirmation or Apply never publishes.
+2. **External authoring:** download the self-contained, commit-pinned Authoring Kit skill and follow the same discovery/proposal/review lifecycle with any chosen external model. After explicit proposal approval, the model emits a hashless declarative Authoring Draft; Aptiloop derives runtime requirements, canonicalizes and hashes it locally, applies the same validation and learner Preview, then requires explicit immutable Install or Open as local Draft.
 
 Manual authoring must be complete without AI. An AI proposal can change only a draft and can never publish, install, run checks, or grant permissions. Aptiloop intentionally ships without bundled Courses: a fresh profile starts empty, and the learner creates a personal Course or explicitly imports a trusted Course Pack. Repository fixtures remain development evidence only. Any future first-party or sample Course requires separate content, provenance, safety, licensing, and ownership approval.
 

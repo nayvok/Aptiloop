@@ -93,6 +93,128 @@ const StableIdListSchema = z.array(StableCourseIdSchema).max(MAX_LIST_ITEMS);
 const EntityIdListSchema = z.array(CourseEntityIdSchema).max(MAX_LIST_ITEMS);
 const ShortTextListSchema = z.array(ShortTextSchema).max(MAX_LIST_ITEMS);
 
+export const CoursePackDiagnosticContextSchema = z.enum([
+  "json-value",
+  "learner-markdown",
+  "educational-code",
+  "field-name",
+]);
+export const CoursePackValidationDiagnosticSchema = z
+  .object({
+    code: z.string().min(1).max(100),
+    severity: z.enum(["error", "warning"]),
+    path: z.string().max(1_000),
+    entityId: z.string().max(MAX_ID_LENGTH).nullable(),
+    message: z.string().min(1).max(2_000),
+    ruleId: z.string().min(1).max(100).nullable(),
+    context: CoursePackDiagnosticContextSchema.nullable(),
+  })
+  .strict();
+export type CoursePackValidationDiagnostic = z.infer<
+  typeof CoursePackValidationDiagnosticSchema
+>;
+
+export const CoursePackValidationReportSchema = z
+  .object({
+    validatorVersion: z.string().min(1).max(100),
+    valid: z.boolean(),
+    errors: z.number().int().nonnegative(),
+    warnings: z.number().int().nonnegative(),
+    diagnostics: z.array(CoursePackValidationDiagnosticSchema),
+    limits: z
+      .object({
+        maxBytes: z.number().int().positive(),
+        maxDecodedCharacters: z.number().int().positive(),
+        maxDepth: z.number().int().positive(),
+        maxItems: z.number().int().positive(),
+        maxStringCharacters: z.number().int().positive(),
+        maxParseMilliseconds: z.number().int().positive(),
+      })
+      .strict(),
+  })
+  .strict();
+export type CoursePackValidationReportDto = z.infer<
+  typeof CoursePackValidationReportSchema
+>;
+
+export const CoursePackPreviewSchema = z
+  .object({
+    courseKey: StableCourseIdSchema,
+    courseTitle: ShortTextSchema,
+    revisionKey: StableCourseIdSchema,
+    revisionNumber: z.number().int().positive(),
+    contentHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+    availableLocales: z.array(CourseLocaleSchema).min(1).max(MAX_LIST_ITEMS),
+    primaryLocale: CourseLocaleSchema,
+    lessonCount: z.number().int().positive(),
+    activityCount: z.number().int().positive(),
+    sourcePrivacyClasses: z
+      .object({
+        public: z.number().int().nonnegative(),
+        private: z.number().int().nonnegative(),
+      })
+      .strict(),
+    requirements: z
+      .object({
+        activityTypes: z.array(StableCourseIdSchema).max(MAX_LIST_ITEMS),
+        capabilities: z.array(StableCourseIdSchema).max(MAX_LIST_ITEMS),
+        environmentIds: z.array(StableCourseIdSchema).max(MAX_LIST_ITEMS),
+        checkIds: z.array(StableCourseIdSchema).max(MAX_LIST_ITEMS),
+      })
+      .strict(),
+    provenance: z
+      .object({
+        contentStatus: z.enum(["development-fixture", "personal"]),
+        author: ShortTextSchema,
+        origin: z.enum(["original", "adapted", "generated", "migration"]),
+        ownership: z.enum(["owned", "licensed", "permission", "unresolved"]),
+        licenseSpdx: ShortTextSchema.nullable(),
+        termsUrl: z.string().url().nullable(),
+        attribution: TextSchema.nullable(),
+        createdAt: IsoDateTimeSchema,
+        notes: TextSchema.nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+export type CoursePackPreviewDto = z.infer<typeof CoursePackPreviewSchema>;
+
+export const CoursePackPreparedSourceKindSchema = z.enum([
+  "course-pack",
+  "authoring-draft",
+  "unknown",
+]);
+const CoursePackStagedValidationBaseSchema = z.object({
+  storageAvailable: z.boolean(),
+  validationId: z.string().uuid(),
+  expiresAt: IsoDateTimeSchema,
+  sourceKind: CoursePackPreparedSourceKindSchema,
+  finalized: z.boolean(),
+  report: CoursePackValidationReportSchema,
+});
+export const CoursePackStagedValidationResponseSchema = z
+  .discriminatedUnion("valid", [
+    CoursePackStagedValidationBaseSchema.extend({
+      valid: z.literal(true),
+      preview: CoursePackPreviewSchema,
+    }).strict(),
+    CoursePackStagedValidationBaseSchema.extend({
+      valid: z.literal(false),
+    }).strict(),
+  ])
+  .superRefine((response, context) => {
+    if (response.report.valid !== response.valid) {
+      context.addIssue({
+        code: "custom",
+        path: ["report", "valid"],
+        message: "Validation report status must match the staged result",
+      });
+    }
+  });
+export type CoursePackStagedValidationResponse = z.infer<
+  typeof CoursePackStagedValidationResponseSchema
+>;
+
 function addDuplicateIssues(
   values: readonly string[],
   context: z.RefinementCtx,

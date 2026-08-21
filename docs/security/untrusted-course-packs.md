@@ -27,7 +27,7 @@ Allowed declarative fields:
 Prohibited anywhere, including extensions and unknown fields:
 
 - executable names, commands, arguments, current directories, shell strings, package scripts, lifecycle hooks, arbitrary test commands, or process environment entries;
-- JavaScript, Python, WebAssembly, native binaries, macros, templates that evaluate code, plugins, dynamic imports, provider adapters, or install hooks;
+- executable JavaScript, Python, WebAssembly, native binaries, macros, dynamically evaluated templates, plugins, dynamic imports, provider adapters, or install hooks. Bounded inert educational code is allowed only inside its typed code field or a fenced Markdown code block and never executes during intake or rendering;
 - credentials, cookies, tokens, authorization headers, secret references, private keys, provider sessions, or embedded `.env` material;
 - absolute/local filesystem paths or handles, host mounts, home-directory references, registry/device/UNC/traversal values, link/special-file metadata, or any field that asks Aptiloop to resolve a pack-provided path;
 - arbitrary network requests, webhooks, embedded active HTML, resource images, or non-HTTP(S) source URLs;
@@ -40,16 +40,17 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 
 **Implemented baseline**
 
-1. **Receive one document as bytes.** Accept only an explicitly selected V1 JSON file and place its bytes in a fresh private staging area outside active Course storage. Directory/archive transport is Future.
-2. **Bound before parsing.** Enforce input bytes, JSON nesting, object/array item counts, string lengths, total decoded text, and parse time. Concrete ceilings are milestone-owned implementation parameters in a versioned limits profile; M3 acceptance requires security review, documented rationale, and boundary tests for every threshold. They are not an additional owner scope decision unless implementation requires a new capability or material security tradeoff.
+1. **Receive one document as bytes.** Accept only an explicitly selected finalized Course Pack or hashless Authoring Draft JSON file and place its bytes in a fresh private staging area outside active Course storage. Directory/archive transport is Future.
+2. **Bound before parsing.** Enforce input bytes, JSON nesting, object/array item counts, string lengths, total decoded text, and parse time under a versioned limits profile.
 3. **Decode and parse strictly.** Require UTF-8, reject BOM/encoding ambiguity where unsupported, duplicate JSON keys, non-object roots, non-finite numbers, unsupported schema versions, and unknown fields.
-4. **Reject authority-bearing values.** Reject commands, scripts, plugins, secrets, credential-like values, unsafe URLs, active content, and local/absolute/drive/UNC/device/traversal/path-resolution fields before semantic import.
-5. **Validate the closed model.** Reject unknown activity kinds, cycles, missing references, unreachable required nodes, locale inconsistencies, protected-answer leakage, required AI-only paths, and forbidden capability fields.
-6. **Verify canonical content.** Canonicalize the parsed V1 object, recompute its declared content hash, and reject collisions or mismatches. A Future signature may establish publisher identity only under a separate trust policy; it never grants execution authority.
-7. **Validate source/privacy metadata.** Restrict external links to intended HTTP(S); imported snapshots remain local and are never fetched or uploaded silently.
-8. **Stage database writes transactionally.** Resolve IDs, collisions, and provenance without overwriting existing immutable revisions. Any database error rolls back rows; filesystem staging cleanup is bounded and best-effort as described below.
-9. **Preview before consequence.** Show provenance, requirements, validation, learner Preview, Course/revision/hash, and the explicit choice **Install immutable revision** or **Open as local draft**.
-10. **Commit atomically and read back.** Persist only the chosen validated result, record import origin/hash/schema/validation/user action, and verify final identity. Re-import of identical bytes is idempotent; conflicting identity is rejected.
+4. **Reject authority-bearing values.** Reject commands, scripts, plugins, secrets, credential-like values, unsafe URLs, active content, and local/absolute/drive/UNC/device/traversal/path-resolution fields before semantic import. Diagnostics identify the stable rule and field context without echoing a matched secret. Event-handler-looking syntax is inert only in a typed code field or fenced Markdown; the same syntax in active learner-visible markup remains blocked.
+5. **Finalize authoring drafts deterministically.** Derive requirements, canonicalize, and compute immutable content identity locally. A draft has neither runtime authority nor a trusted hash, and a model never supplies those values as authority.
+6. **Validate the closed final model.** Reject unknown activity kinds, lesson/activity cycles, missing or wrong-type references, runtime-incompatible completion criteria, ungradable or duplicate protected questions, unreachable required nodes, locale inconsistencies, protected-answer leakage across primary and localized learner-visible content, required AI-only paths, unavailable registry IDs, and forbidden capability fields.
+7. **Verify canonical content.** Recompute the finalized V1 content hash and reject collisions or mismatches. A Future signature may establish publisher identity only under a separate trust policy; it never grants execution authority.
+8. **Validate source/privacy metadata.** Restrict external links to intended HTTP(S); imported snapshots remain local and are never fetched or uploaded silently.
+9. **Stage database writes transactionally.** Resolve IDs, collisions, provenance, and the complete runtime Course projection without overwriting existing immutable revisions. Any graph/projection mismatch or database error rolls back rows.
+10. **Preview before consequence.** Show provenance, requirements, validation, learner Preview, Course/revision/hash, whether local finalization occurred, and the explicit choice **Install immutable revision** or **Open as local draft**.
+11. **Commit atomically and read back.** Persist only the chosen validated result, record import origin/hash/schema/validation/user action, and verify final identity plus exact lesson/activity prerequisite projection. Re-import of identical finalized identity is idempotent; conflicting identity is rejected.
 
 ## 4. Control records
 
@@ -81,9 +82,9 @@ UI locale (`en-US` or `ru-RU`) is independent of the one primary course locale. 
 
 - **Attack path:** a pack supplies cycles, missing prerequisites, duplicate IDs, mutable revisions, protected answers in learner fields, or its own mastery/state transitions.
 - **Impact:** deadlocked activities, answer disclosure, overwritten history, or nondeterministic/forged adaptation.
-- **Existing mitigation:** M3 validates finite referentially complete graphs, stable identities, learner/protected separation, and immutable collision behavior before transactional install. M4 routes accepted facts through the deterministic kernel; pack content cannot carry progression/mastery state, and the same fact frontier replays to the same canonical projection hash.
-- **Residual:** legacy rows without complete fact meaning stay compatibility history or immutable quarantine; Course Pack validation cannot certify the instructional quality or correctness of user-selected content. Any future first-party/sample Course requires a separate quality gate.
-- **Test:** cycle/unreachable/duplicate/dangling tests; protected-field DTO tests; immutable revision and idempotent import tests; deterministic replay from imported content; rejection of mastery/state fields.
+- **Existing mitigation:** M3 validates finite referentially complete graphs, stable identities, typed payload references, runtime-compatible completion criteria, objectively gradable private questions, learner/protected separation across primary and localized content, and immutable collision behavior before transactional install. The runtime projection retains private evaluation material server-side and exposes only learner-safe question DTOs. M4 routes accepted facts through the deterministic kernel; pack content cannot carry progression/mastery state, and the same fact frontier replays to the same canonical projection hash.
+- **Residual:** legacy rows without complete fact meaning stay compatibility history or immutable quarantine; Course Pack validation cannot certify the instructional quality, factual correctness, ownership, or licensing of user-selected content. Normalized exact-value leakage checks do not prove semantic non-disclosure through paraphrase. Any future first-party/sample Course requires a separate quality gate.
+- **Test:** cycle/unreachable/duplicate/dangling/wrong-type reference tests; incompatible completion and ungradable-question rejection; primary/localized protected-value leakage rejection; protected-field DTO and private scoring tests; immutable revision and idempotent import tests; imported study/recall/quiz progression; deterministic replay from imported content; rejection of mastery/state fields.
 
 ### PACK-CTRL-005 — Source and Markdown privacy
 

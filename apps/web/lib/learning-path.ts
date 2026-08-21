@@ -65,7 +65,7 @@ export const learningPathSchema = z
           id: z.string().min(1),
           revision: z.number().int().positive(),
           contentHash: z.string().min(1),
-          status: z.literal("published"),
+          status: z.enum(["published", "archived"]),
         }),
         weeks: z.array(
           z.object({

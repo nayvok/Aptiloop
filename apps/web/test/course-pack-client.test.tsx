@@ -55,18 +55,27 @@ const notStartedSummary = {
   lastActivityAt: null,
 };
 const report = {
-  validatorVersion: "m3-v1",
+  validatorVersion: "m3-v2",
   valid: true,
   errors: 0,
   warnings: 0,
   diagnostics: [],
-  limits: { maxBytes: 1_048_576 },
+  limits: {
+    maxBytes: 1_048_576,
+    maxDecodedCharacters: 900_000,
+    maxDepth: 24,
+    maxItems: 20_000,
+    maxStringCharacters: 50_000,
+    maxParseMilliseconds: 100,
+  },
 };
 const validValidationResponse = {
   valid: true,
   storageAvailable: true,
   validationId: "123e4567-e89b-42d3-a456-426614174001",
   expiresAt: "2099-08-10T00:15:00.000Z",
+  sourceKind: "course-pack" as const,
+  finalized: false,
   report,
   preview: {
     courseKey: "development-kernel-basics",
@@ -203,6 +212,8 @@ describe("Course Pack import", () => {
           storageAvailable: true,
           validationId: "123e4567-e89b-42d3-a456-426614174003",
           expiresAt: "2099-08-10T00:15:00.000Z",
+          sourceKind: "course-pack",
+          finalized: false,
           report: {
             ...report,
             valid: false,
@@ -214,6 +225,8 @@ describe("Course Pack import", () => {
                 path: "/command",
                 entityId: null,
                 message: "Authority-bearing field is forbidden: command",
+                ruleId: "authority-field",
+                context: "field-name",
               },
             ],
           },
@@ -306,6 +319,37 @@ describe("Course Pack import", () => {
     ).not.toBeVisible();
     expect(screen.queryByText(/Users\\learner/u)).not.toBeInTheDocument();
     expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+  it("reports a malformed validation response as a response-contract failure", async () => {
+    const privateDetail =
+      "C:\\Users\\learner\\private\\database.sqlite sk-super-secret-sentinel";
+    apiMock.mockImplementation(async (path: string) => {
+      if (path === "/course-packs") {
+        return { storageAvailable: true, packs: [] };
+      }
+      if (path === "/course-packs/validate") {
+        return {
+          ...validValidationResponse,
+          sourceKind: "unsupported-source-kind",
+          privateDetail,
+        };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+    renderWithQuery(<CoursePackImportClient />);
+    const file = new File(["{}"], "contract.json", {
+      type: "application/json",
+    });
+    fireEvent.change(coursePackFileInput(), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Проверить Pack" }));
+
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveTextContent(
+      "Aptiloop получил некорректный ответ проверки для файла contract.json",
+    );
+    expect(error).not.toHaveTextContent("Не удалось проверить файл");
+    expect(screen.queryByText(privateDetail)).not.toBeInTheDocument();
+    expect(pushMock).not.toHaveBeenCalled();
   });
 
   it("keeps restored commit actions disabled when storage is unavailable", async () => {
@@ -953,6 +997,8 @@ describe("Course Pack staged intake", () => {
       storageAvailable: true,
       validationId: "123e4567-e89b-42d3-a456-426614174004",
       expiresAt: "2099-08-10T00:15:00.000Z",
+      sourceKind: "course-pack" as const,
+      finalized: false,
       report: {
         ...report,
         valid: false,
@@ -964,6 +1010,8 @@ describe("Course Pack staged intake", () => {
             path: "/command",
             entityId: null,
             message: "Authority-bearing field is forbidden: command",
+            ruleId: "authority-field",
+            context: "field-name",
           },
         ],
       },
@@ -977,6 +1025,11 @@ describe("Course Pack staged intake", () => {
     const rejection = await screen.findByRole("alert");
     expect(within(rejection).getByText("Pack отклонён")).toBeInTheDocument();
     expect(screen.getByText("PACK_AUTHORITY_FIELD")).toBeInTheDocument();
+    expect(screen.getByText("authority-field")).toBeInTheDocument();
+    expect(screen.getByText("field-name")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Authority-bearing field is forbidden: command"),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Установить и открыть" }),
     ).not.toBeInTheDocument();
@@ -984,6 +1037,31 @@ describe("Course Pack staged intake", () => {
       screen.queryByRole("button", { name: "Открыть как черновик" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("JSON-файл")).not.toBeInTheDocument();
+  });
+  it("distinguishes a malformed staged response from a staging failure", async () => {
+    apiMock.mockResolvedValue({
+      ...validValidationResponse,
+      expiresAt: 42,
+      privateDetail:
+        "C:\\Users\\learner\\private\\database.sqlite sk-super-secret-sentinel",
+    });
+
+    renderWithQuery(
+      <CoursePackIntakeClient
+        operationId={validValidationResponse.validationId}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Ответ сохранённой проверки некорректен"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Не удалось восстановить проверку"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Установить и открыть" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Users\\learner/u)).not.toBeInTheDocument();
   });
 
   it("fails closed for expired and unavailable staged operations", async () => {

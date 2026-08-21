@@ -491,7 +491,7 @@ test("completes restart-safe Day 1 through correction, summary, mastery and revi
   await expect(page.getByText("Этап 2 из 3 завершён")).toBeVisible();
   await expect(page.getByText("Далее: Практика и повторение")).toBeVisible();
   await page.getByRole("button", { name: "Продолжить сейчас" }).click();
-  await page.getByRole("button", { name: "Открыть практику" }).click();
+  await page.getByRole("link", { name: "Открыть практику" }).click();
   await expect(page).toHaveURL(/\/exercise\?sessionId=/u, {
     timeout: 15_000,
   });

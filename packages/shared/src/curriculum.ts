@@ -770,6 +770,24 @@ export const CourseDraftProposalSchema = z
   })
   .strict();
 
+export const COURSE_AUTHORING_LIFECYCLE_STAGES = [
+  "INITIAL_BRIEF",
+  "DISCOVERY",
+  "DIAGNOSTIC",
+  "COURSE_PROPOSAL",
+  "USER_REVIEW",
+  "COMPILATION",
+  "VALIDATION_REPAIR",
+  "LEARNER_SAFE_PREVIEW",
+  "COMMIT",
+] as const;
+export const CourseAuthoringLifecycleStageSchema = z.enum(
+  COURSE_AUTHORING_LIFECYCLE_STAGES,
+);
+export type CourseAuthoringLifecycleStage = z.infer<
+  typeof CourseAuthoringLifecycleStageSchema
+>;
+
 export const CourseDesignerWorkflowStateSchema = z.enum([
   "DRAFT_REQUEST",
   "DISCOVERY",
@@ -783,6 +801,21 @@ export const CourseDesignerWorkflowStateSchema = z.enum([
 ]);
 export type CourseDesignerWorkflowState = z.infer<
   typeof CourseDesignerWorkflowStateSchema
+>;
+
+export const COURSE_DESIGNER_LIFECYCLE_STAGES_BY_STATE = {
+  DRAFT_REQUEST: ["INITIAL_BRIEF"],
+  DISCOVERY: ["DISCOVERY"],
+  DIAGNOSTIC: ["DIAGNOSTIC"],
+  CURRICULUM_PROPOSAL: ["COURSE_PROPOSAL"],
+  USER_REVIEW: ["USER_REVIEW"],
+  COMPILATION: ["COMPILATION"],
+  VALIDATION: ["VALIDATION_REPAIR", "LEARNER_SAFE_PREVIEW"],
+  PUBLISHED: ["COMMIT"],
+  FAILED: ["VALIDATION_REPAIR"],
+} as const satisfies Record<
+  CourseDesignerWorkflowState,
+  readonly CourseAuthoringLifecycleStage[]
 >;
 
 export const CourseDesignerSourceSchema = z

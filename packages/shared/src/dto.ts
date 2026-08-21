@@ -4,7 +4,7 @@ import { AgentRoleSchema, ProviderIdSchema } from "./agent.js";
 import { DisclosurePayloadCategorySchema } from "./provider-hub.js";
 
 export const IdSchema = z.string().min(1).max(128);
-export const IsoDateTimeSchema = z.string().datetime();
+export const IsoDateTimeSchema = z.string().datetime({ offset: true });
 
 export const ErrorResponseSchema = z.object({
   error: z.object({

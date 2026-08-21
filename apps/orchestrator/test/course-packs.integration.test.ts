@@ -1,16 +1,25 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { validateCoursePackBytes } from "@aptiloop/course-authoring-kit";
-import { createDevelopmentCoursePackFixture } from "../../../packages/course-authoring-kit/test/fixture.js";
 import {
+  prepareCoursePackBytes,
+  validateCoursePackBytes,
+} from "@aptiloop/course-authoring-kit";
+import {
+  createDevelopmentCoursePackFixture,
+  createProtectedMaterialCoursePackAuthoringDraftFixture,
+  createSequentialCoursePackAuthoringDraftFixture,
+} from "../../../packages/course-authoring-kit/test/fixture.js";
+import {
+  coursePackSourceBytesHash,
   createCourseFoundationRepository,
   createCoursePackRepository,
   createLearningRepository,
   migrateDatabase,
   openDatabase,
 } from "@aptiloop/database";
+import { CoursePackStagedValidationResponseSchema } from "@aptiloop/shared";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -89,18 +98,25 @@ describe("Course Pack HTTP lifecycle", () => {
       jsonRequest(pack),
     );
     expect(validationResponse.status).toBe(200);
-    const preview = (await validationResponse.json()) as {
-      valid: true;
-      validationId: string;
-      preview: { contentHash: string; courseKey: string };
-    };
+    const preview = CoursePackStagedValidationResponseSchema.parse(
+      await validationResponse.json(),
+    );
+    if (!preview.valid) throw new Error("Course Pack validation failed");
     expect(preview).toMatchObject({
       valid: true,
+      sourceKind: "course-pack",
+      finalized: false,
       preview: {
         contentHash: pack.revision.contentHash,
         courseKey: pack.course.courseKey,
       },
     });
+    expect(
+      CoursePackStagedValidationResponseSchema.safeParse({
+        ...preview,
+        expiresAt: preview.expiresAt.replace("Z", "+00:00"),
+      }).success,
+    ).toBe(true);
     expect(await readdir(stagingRoot)).toHaveLength(1);
 
     const restored = await app.request(
@@ -108,17 +124,23 @@ describe("Course Pack HTTP lifecycle", () => {
     );
     expect(restored.status).toBe(200);
     expect(restored.headers.get("Cache-Control")).toContain("no-store");
-    const restoredBody = (await restored.json()) as Record<string, unknown>;
+    const restoredBody = CoursePackStagedValidationResponseSchema.parse(
+      await restored.json(),
+    );
     expect(Object.keys(restoredBody).toSorted()).toEqual([
       "expiresAt",
+      "finalized",
       "preview",
       "report",
+      "sourceKind",
       "storageAvailable",
       "valid",
       "validationId",
     ]);
     expect(restoredBody).toMatchObject({
       valid: true,
+      sourceKind: "course-pack",
+      finalized: false,
       storageAvailable: true,
       validationId: preview.validationId,
       preview: {
@@ -131,6 +153,9 @@ describe("Course Pack HTTP lifecycle", () => {
     expect(restoredBody).not.toHaveProperty("sourceBytesHash");
     expect(restoredBody).not.toHaveProperty("directory");
     expect(restoredBody).not.toHaveProperty("filePath");
+    expect(restoredBody).not.toHaveProperty("sourceFilePath");
+    expect(restoredBody).not.toHaveProperty("preparedFilePath");
+    expect(restoredBody).not.toHaveProperty("stagedBytesHash");
     expect(await readdir(stagingRoot)).toHaveLength(1);
     expect(
       await (
@@ -465,6 +490,563 @@ describe("Course Pack HTTP lifecycle", () => {
     ]);
   });
 
+  it("finalizes a sequential draft and unlocks its next lesson through real progress", async () => {
+    const { app, connection, stagingRoot } = await fixture();
+    const draft = createSequentialCoursePackAuthoringDraftFixture();
+    const sourceBytes = encoder.encode(JSON.stringify(draft));
+    const expected = prepareCoursePackBytes(sourceBytes);
+    if (!expected.valid) throw new Error(JSON.stringify(expected.report));
+
+    const validationResponse = await app.request(
+      "/api/course-packs/validate",
+      jsonRequest(draft),
+    );
+    expect(validationResponse.status).toBe(200);
+    const validation = CoursePackStagedValidationResponseSchema.parse(
+      await validationResponse.json(),
+    );
+    if (!validation.valid) throw new Error(JSON.stringify(validation.report));
+    expect(validation).toMatchObject({
+      sourceKind: "authoring-draft",
+      finalized: true,
+      preview: {
+        courseKey: draft.course.courseKey,
+        revisionKey: draft.revision.revisionKey,
+        contentHash: expected.contentHash,
+        lessonCount: 3,
+        requirements: {
+          activityTypes: ["checkpoint", "recall", "study"],
+          capabilities: [],
+          environmentIds: [],
+          checkIds: [],
+        },
+      },
+    });
+
+    const stagedDirectories = await readdir(stagingRoot);
+    expect(stagedDirectories).toHaveLength(1);
+    const stagedDirectory = path.join(stagingRoot, stagedDirectories[0]!);
+    expect((await readdir(stagedDirectory)).toSorted()).toEqual([
+      "pack.json",
+      "source.json",
+    ]);
+    expect(
+      new Uint8Array(await readFile(path.join(stagedDirectory, "source.json"))),
+    ).toEqual(sourceBytes);
+    expect(
+      new Uint8Array(await readFile(path.join(stagedDirectory, "pack.json"))),
+    ).toEqual(expected.preparedBytes);
+
+    const commit = await app.request(
+      `/api/course-packs/validations/${validation.validationId}/commit`,
+      jsonRequest({
+        operationId: "install-sequential-draft",
+        action: "install",
+        expectedContentHash: validation.preview.contentHash,
+      }),
+    );
+    expect(commit.status).toBe(201);
+    expect(await commit.json()).toMatchObject({
+      result: {
+        revisionId: draft.revision.revisionKey,
+        revisionStatus: "published",
+      },
+    });
+    expect(await readdir(stagingRoot)).toEqual([]);
+    expect(
+      connection.sqlite
+        .prepare(
+          `SELECT canonical_json, source_bytes_hash
+           FROM course_pack_manifests WHERE revision_id = ?`,
+        )
+        .get(draft.revision.revisionKey),
+    ).toEqual({
+      canonical_json: expected.canonicalJson,
+      source_bytes_hash: coursePackSourceBytesHash(sourceBytes),
+    });
+
+    const roadmapPath = `/api/learning/courses/${encodeURIComponent(draft.course.courseKey)}/revisions/${encodeURIComponent(draft.revision.revisionKey)}/path`;
+    const roadmapResponse = await app.request(roadmapPath);
+    expect(roadmapResponse.status).toBe(200);
+    const roadmap = (await roadmapResponse.json()) as {
+      curriculum: {
+        weeks: Array<{
+          days: Array<{
+            id: string;
+            stableId: string;
+            status: string;
+            units: Array<{
+              id: string;
+              stableId: string;
+              type: string;
+              status: string;
+            }>;
+          }>;
+        }>;
+      };
+    };
+    const lessons = roadmap.curriculum.weeks.flatMap((week) => week.days);
+    expect(
+      lessons.map(({ stableId, status }) => ({ stableId, status })),
+    ).toEqual([
+      { stableId: "foundation-lesson", status: "available" },
+      { stableId: "practice-lesson", status: "locked" },
+      { stableId: "reflection-lesson", status: "locked" },
+    ]);
+
+    const selected = await app.request(
+      `/api/learning/courses/${encodeURIComponent(draft.course.courseKey)}/select`,
+      jsonRequest({
+        revisionId: draft.revision.revisionKey,
+        operationId: "select-sequential-draft",
+      }),
+    );
+    expect(selected.status).toBe(200);
+
+    const rejectedLockedStart = await app.request(
+      "/api/learning/sessions/v2",
+      jsonRequest({
+        dayId: lessons[1]!.id,
+        operationId: "reject-locked-practice-lesson",
+      }),
+    );
+    expect(rejectedLockedStart.status).not.toBe(201);
+    expect(
+      connection.sqlite
+        .prepare("SELECT count(*) AS count FROM learning_sessions")
+        .get(),
+    ).toEqual({ count: 0 });
+
+    const startedFirst = await app.request(
+      "/api/learning/sessions/v2",
+      jsonRequest({
+        dayId: lessons[0]!.id,
+        operationId: "start-foundation-lesson",
+      }),
+    );
+    expect(startedFirst.status).toBe(201);
+    const firstSession = (await startedFirst.json()) as {
+      session: {
+        id: string;
+        status: string;
+        snapshot: {
+          units: Array<{ id: string; stableId: string; type: string }>;
+        };
+        unitProgress: Array<{ unitId: string; status: string }>;
+      };
+    };
+    const checkpoint = firstSession.session.snapshot.units[0]!;
+    expect(checkpoint).toMatchObject({
+      stableId: "foundation-checkpoint",
+      type: "checkpoint",
+    });
+    expect(firstSession.session.unitProgress).toEqual([
+      expect.objectContaining({ unitId: checkpoint.id, status: "ready" }),
+    ]);
+
+    const checkpointEndpoint = `/api/learning/sessions/v2/${encodeURIComponent(firstSession.session.id)}/units/${encodeURIComponent(checkpoint.id)}`;
+    const startedCheckpoint = await app.request(checkpointEndpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operationId: "start-foundation-checkpoint",
+        status: "in_progress",
+      }),
+    });
+    expect(startedCheckpoint.status).toBe(200);
+    const completedCheckpoint = await app.request(checkpointEndpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operationId: "complete-foundation-checkpoint",
+        status: "completed",
+        payload: { type: "checkpoint", acknowledged: true },
+      }),
+    });
+    expect(completedCheckpoint.status).toBe(200);
+    expect(await completedCheckpoint.json()).toMatchObject({
+      session: {
+        id: firstSession.session.id,
+        status: "completed",
+        unitProgress: [{ unitId: checkpoint.id, status: "completed" }],
+      },
+    });
+
+    const unlockedRoadmap = (await (
+      await app.request(roadmapPath)
+    ).json()) as typeof roadmap;
+    const unlockedLessons = unlockedRoadmap.curriculum.weeks.flatMap(
+      (week) => week.days,
+    );
+    expect(
+      unlockedLessons.map(({ stableId, status }) => ({ stableId, status })),
+    ).toEqual([
+      { stableId: "foundation-lesson", status: "completed" },
+      { stableId: "practice-lesson", status: "available" },
+      { stableId: "reflection-lesson", status: "locked" },
+    ]);
+    const startedSecond = await app.request(
+      "/api/learning/sessions/v2",
+      jsonRequest({
+        dayId: unlockedLessons[1]!.id,
+        operationId: "start-practice-lesson",
+      }),
+    );
+    expect(startedSecond.status).toBe(201);
+    const secondSession = (await startedSecond.json()) as {
+      session: {
+        id: string;
+        status: string;
+        snapshot: {
+          day: { stableId: string };
+          units: Array<{ id: string; stableId: string; type: string }>;
+        };
+      };
+    };
+    expect(secondSession.session).toMatchObject({
+      status: "active",
+      snapshot: { day: { stableId: "practice-lesson" } },
+    });
+    const study = secondSession.session.snapshot.units[0]!;
+    const studyEndpoint = `/api/learning/sessions/v2/${encodeURIComponent(secondSession.session.id)}/units/${encodeURIComponent(study.id)}`;
+    expect(
+      await app.request(studyEndpoint, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operationId: "start-practice-study",
+          status: "in_progress",
+        }),
+      }),
+    ).toMatchObject({ status: 200 });
+    const completedStudy = await app.request(studyEndpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operationId: "complete-practice-study",
+        status: "completed",
+        payload: { type: "study", checkedItemIds: [], notes: "" },
+      }),
+    });
+    expect(completedStudy.status).toBe(200);
+    expect(await completedStudy.json()).toMatchObject({
+      session: { status: "completed" },
+    });
+
+    const reflectionRoadmap = (await (
+      await app.request(roadmapPath)
+    ).json()) as typeof roadmap;
+    const reflectionLessons = reflectionRoadmap.curriculum.weeks.flatMap(
+      (week) => week.days,
+    );
+    expect(
+      reflectionLessons.map(({ stableId, status }) => ({ stableId, status })),
+    ).toEqual([
+      { stableId: "foundation-lesson", status: "completed" },
+      { stableId: "practice-lesson", status: "completed" },
+      { stableId: "reflection-lesson", status: "available" },
+    ]);
+
+    const startedThird = await app.request(
+      "/api/learning/sessions/v2",
+      jsonRequest({
+        dayId: reflectionLessons[2]!.id,
+        operationId: "start-reflection-lesson",
+      }),
+    );
+    expect(startedThird.status).toBe(201);
+    const thirdSession = (await startedThird.json()) as {
+      session: {
+        id: string;
+        snapshot: {
+          units: Array<{
+            id: string;
+            stableId: string;
+            type: string;
+            questions: Array<{ id: string; prompt: string }>;
+          }>;
+        };
+      };
+    };
+    const recall = thirdSession.session.snapshot.units[0]!;
+    expect(recall).toMatchObject({
+      stableId: "reflection-recall",
+      type: "recall",
+      questions: [
+        {
+          id: "reflection-question",
+          prompt: "Why can the sequence be replayed deterministically?",
+        },
+      ],
+    });
+    expect(recall.questions[0]).not.toHaveProperty("referenceAnswer");
+    const recallEndpoint = `/api/learning/sessions/v2/${encodeURIComponent(thirdSession.session.id)}/units/${encodeURIComponent(recall.id)}`;
+    expect(
+      await app.request(recallEndpoint, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operationId: "start-reflection-recall",
+          status: "in_progress",
+        }),
+      }),
+    ).toMatchObject({ status: 200 });
+    const recallAttempt = await app.request(
+      `${recallEndpoint}/recall-attempts`,
+      jsonRequest({
+        operationId: "answer-reflection-recall",
+        questionId: recall.questions[0]!.id,
+        answer:
+          "Stable IDs and explicit acyclic prerequisite edges make replay deterministic.",
+      }),
+    );
+    expect(recallAttempt.status).toBe(201);
+    const completedRecall = await app.request(recallEndpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operationId: "complete-reflection-recall",
+        status: "completed",
+      }),
+    });
+    expect(completedRecall.status).toBe(200);
+    expect(await completedRecall.json()).toMatchObject({
+      session: { status: "completed" },
+    });
+    const completedRoadmap = (await (
+      await app.request(roadmapPath)
+    ).json()) as typeof roadmap;
+    expect(
+      completedRoadmap.curriculum.weeks
+        .flatMap((week) => week.days)
+        .map(({ stableId, status }) => ({ stableId, status })),
+    ).toEqual([
+      { stableId: "foundation-lesson", status: "completed" },
+      { stableId: "practice-lesson", status: "completed" },
+      { stableId: "reflection-lesson", status: "completed" },
+    ]);
+  });
+
+  it("grades an imported quiz from the private immutable session snapshot", async () => {
+    const { app } = await fixture();
+    const draft = createProtectedMaterialCoursePackAuthoringDraftFixture();
+    const validationResponse = await app.request(
+      "/api/course-packs/validate",
+      jsonRequest(draft),
+    );
+    const validation = CoursePackStagedValidationResponseSchema.parse(
+      await validationResponse.json(),
+    );
+    if (!validation.valid) throw new Error(JSON.stringify(validation.report));
+    const commit = await app.request(
+      `/api/course-packs/validations/${validation.validationId}/commit`,
+      jsonRequest({
+        operationId: "install-protected-quiz",
+        action: "install",
+        expectedContentHash: validation.preview.contentHash,
+      }),
+    );
+    expect(commit.status).toBe(201);
+    expect(
+      await app.request(
+        `/api/learning/courses/${encodeURIComponent(draft.course.courseKey)}/select`,
+        jsonRequest({
+          revisionId: draft.revision.revisionKey,
+          operationId: "select-protected-quiz",
+        }),
+      ),
+    ).toMatchObject({ status: 200 });
+    const roadmap = (await (
+      await app.request(
+        `/api/learning/courses/${encodeURIComponent(draft.course.courseKey)}/revisions/${encodeURIComponent(draft.revision.revisionKey)}/path`,
+      )
+    ).json()) as {
+      curriculum: {
+        weeks: Array<{ days: Array<{ id: string }> }>;
+      };
+    };
+    const started = await app.request(
+      "/api/learning/sessions/v2",
+      jsonRequest({
+        dayId: roadmap.curriculum.weeks[0]!.days[0]!.id,
+        operationId: "start-protected-quiz",
+      }),
+    );
+    expect(started.status).toBe(201);
+    const learnerSession = (await started.json()) as {
+      session: {
+        id: string;
+        snapshot: {
+          units: Array<{
+            id: string;
+            questions: Array<{
+              id: string;
+              options: Array<{ id: string }>;
+            }>;
+          }>;
+        };
+      };
+    };
+    const quiz = learnerSession.session.snapshot.units[0]!;
+    expect(quiz.questions[0]).not.toHaveProperty("correctOptionIds");
+    expect(quiz.questions[0]).not.toHaveProperty("referenceAnswer");
+    const quizEndpoint = `/api/learning/sessions/v2/${encodeURIComponent(learnerSession.session.id)}/units/${encodeURIComponent(quiz.id)}`;
+    expect(
+      await app.request(quizEndpoint, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operationId: "start-protected-quiz-unit",
+          status: "in_progress",
+        }),
+      }),
+    ).toMatchObject({ status: 200 });
+    const attempt = await app.request(
+      `${quizEndpoint}/quiz-attempts`,
+      jsonRequest({
+        operationId: "answer-protected-quiz",
+        answers: [
+          {
+            questionId: quiz.questions[0]!.id,
+            selectedOptionId: "option-b",
+          },
+        ],
+      }),
+    );
+    expect(attempt.status).toBe(201);
+    expect(await attempt.json()).toMatchObject({
+      attempt: {
+        score: 1,
+        results: [{ questionId: "protected-question", correct: true }],
+      },
+      session: {
+        unitProgress: [expect.objectContaining({ status: "in_progress" })],
+      },
+    });
+    const completed = await app.request(quizEndpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operationId: "complete-protected-quiz",
+        status: "completed",
+      }),
+    });
+    expect(completed.status).toBe(200);
+    expect(await completed.json()).toMatchObject({
+      session: { status: "completed" },
+    });
+  });
+
+  it("keeps rejected draft graphs and unavailable requirements out of learning state", async () => {
+    const { app, connection, stagingRoot } = await fixture();
+    const rejectedGraph = createSequentialCoursePackAuthoringDraftFixture();
+    rejectedGraph.lessons[1]!.prerequisiteLessonIds = ["missing-lesson"];
+    const unavailableRequirement =
+      createSequentialCoursePackAuthoringDraftFixture();
+    unavailableRequirement.lessons[1]!.activities[0]!.capabilityIds = [
+      "unsupported-capability",
+    ];
+
+    for (const [index, candidate, diagnosticCode] of [
+      [0, rejectedGraph, "PACK_LESSON_GRAPH_REFERENCE_MISSING"],
+      [1, unavailableRequirement, "PACK_REQUIREMENT_UNAVAILABLE"],
+    ] as const) {
+      const retainedClientSource = JSON.stringify(candidate);
+      const response = await app.request(
+        "/api/course-packs/validate",
+        jsonRequest(candidate),
+      );
+      expect(response.status).toBe(200);
+      const rejected = CoursePackStagedValidationResponseSchema.parse(
+        await response.json(),
+      );
+      if (rejected.valid) throw new Error("Invalid draft was accepted");
+      expect(rejected).toMatchObject({
+        sourceKind: "authoring-draft",
+        finalized: true,
+      });
+      expect(rejected.report.diagnostics.map(({ code }) => code)).toContain(
+        diagnosticCode,
+      );
+      expect(JSON.stringify(candidate)).toBe(retainedClientSource);
+      const restored = await app.request(
+        `/api/course-packs/validations/${rejected.validationId}`,
+      );
+      expect(restored.status).toBe(200);
+      expect(await restored.json()).toEqual(rejected);
+      const invalidCommit = await app.request(
+        `/api/course-packs/validations/${rejected.validationId}/commit`,
+        jsonRequest({
+          operationId: `reject-invalid-draft-${index}`,
+          action: "install",
+          expectedContentHash: `sha256:${"f".repeat(64)}`,
+        }),
+      );
+      expect(invalidCommit.status).toBe(409);
+      expect(
+        (
+          await app.request(
+            `/api/course-packs/validations/${rejected.validationId}`,
+          )
+        ).status,
+      ).toBe(200);
+    }
+
+    expect(await readdir(stagingRoot)).toEqual([]);
+    expect(
+      connection.sqlite
+        .prepare("SELECT count(*) AS count FROM course_pack_quarantine")
+        .get(),
+    ).toEqual({ count: 2 });
+    expect(
+      connection.sqlite
+        .prepare("SELECT count(*) AS count FROM course_pack_manifests")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      connection.sqlite
+        .prepare("SELECT count(*) AS count FROM learning_sessions")
+        .get(),
+    ).toEqual({ count: 0 });
+  });
+
+  it("rejects commit when the staged raw draft changes", async () => {
+    const { app, connection, stagingRoot } = await fixture();
+    const validationResponse = await app.request(
+      "/api/course-packs/validate",
+      jsonRequest(createSequentialCoursePackAuthoringDraftFixture()),
+    );
+    const validation = CoursePackStagedValidationResponseSchema.parse(
+      await validationResponse.json(),
+    );
+    if (!validation.valid) throw new Error(JSON.stringify(validation.report));
+    const [stagedDirectory] = await readdir(stagingRoot);
+    if (!stagedDirectory) throw new Error("Staged Course Pack is missing");
+    await writeFile(
+      path.join(stagingRoot, stagedDirectory, "source.json"),
+      "{}",
+    );
+
+    const commit = await app.request(
+      `/api/course-packs/validations/${validation.validationId}/commit`,
+      jsonRequest({
+        operationId: "reject-changed-raw-draft",
+        action: "install",
+        expectedContentHash: validation.preview.contentHash,
+      }),
+    );
+    expect(commit.status).toBe(409);
+    expect(await commit.json()).toEqual({
+      error: "Staged Course Pack changed after validation",
+    });
+    expect(await readdir(stagingRoot)).toEqual([]);
+    expect(
+      connection.sqlite
+        .prepare("SELECT count(*) AS count FROM course_pack_manifests")
+        .get(),
+    ).toEqual({ count: 0 });
+  });
+
   it("returns bounded diagnostics and removes invalid staging bytes", async () => {
     const { app, connection, stagingRoot } = await fixture();
     const invalid = {
@@ -476,31 +1058,50 @@ describe("Course Pack HTTP lifecycle", () => {
       jsonRequest(invalid),
     );
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      valid: false;
-      validationId: string;
-      report: { diagnostics: Array<{ code: string }> };
-    };
-    expect(body.valid).toBe(false);
+    const body = CoursePackStagedValidationResponseSchema.parse(
+      await response.json(),
+    );
+    if (body.valid) throw new Error("Invalid Course Pack was accepted");
+    expect(body).toMatchObject({
+      valid: false,
+      sourceKind: "course-pack",
+      finalized: false,
+    });
     expect(body.report.diagnostics.map((item) => item.code)).toContain(
       "PACK_AUTHORITY_FIELD",
     );
+    expect(
+      body.report.diagnostics.every(
+        (diagnostic) =>
+          (diagnostic.ruleId === null ||
+            typeof diagnostic.ruleId === "string") &&
+          [
+            null,
+            "json-value",
+            "learner-markdown",
+            "educational-code",
+            "field-name",
+          ].includes(diagnostic.context),
+      ),
+    ).toBe(true);
     const restored = await app.request(
       `/api/course-packs/validations/${body.validationId}`,
     );
     expect(restored.status).toBe(200);
-    const restoredBody = (await restored.json()) as {
-      valid: boolean;
-      validationId: string;
-      report: { diagnostics: Array<{ code: string }> };
-    };
+    const restoredBody = CoursePackStagedValidationResponseSchema.parse(
+      await restored.json(),
+    );
     expect(restoredBody).toMatchObject({
       valid: false,
+      sourceKind: "course-pack",
+      finalized: false,
       validationId: body.validationId,
     });
     expect(Object.keys(restoredBody).toSorted()).toEqual([
       "expiresAt",
+      "finalized",
       "report",
+      "sourceKind",
       "storageAvailable",
       "valid",
       "validationId",

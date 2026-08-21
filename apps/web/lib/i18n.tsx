@@ -777,6 +777,8 @@ const enUS = {
     "UTF-8 JSON, up to 1 MiB. Invalid source bytes are not stored.",
   "courses.import.validationFailed":
     "Could not validate {filename}. The selected file is still available; check it and try again.",
+  "courses.import.responseContractFailed":
+    "Aptiloop received an invalid validation response for {filename}. The file was not staged or installed; retry the validation.",
   "courses.import.validate": "Validate Pack",
   "courses.intake.title": "Course Pack inspection",
   "courses.intake.description":
@@ -790,6 +792,10 @@ const enUS = {
   "courses.intake.loadFailed.title": "Could not restore this inspection",
   "courses.intake.loadFailed.description":
     "The staged validation could not be read safely. Retry the read or select the local file again.",
+  "courses.intake.responseContractFailed.title":
+    "This inspection response is invalid",
+  "courses.intake.responseContractFailed.description":
+    "The server response did not match the Course Pack response contract. Nothing was installed; retry the read or select the local file again.",
   "courses.intake.retry": "Retry",
   "courses.intake.reselect": "Select file again",
   "courses.storageUnavailable.title": "Local Course storage is unavailable",
@@ -860,6 +866,9 @@ const enUS = {
   "courses.preview.errors": "Errors: {count}",
   "courses.preview.validated": "Validated Preview",
   "courses.preview.ready": "Ready to install",
+  "courses.preview.finalizedDraft.title": "Authoring draft finalized locally",
+  "courses.preview.finalizedDraft.description":
+    "Aptiloop derived runtime requirements, canonicalized the document, and computed its immutable content hash before validation. Review this finalized Preview before committing it.",
   "courses.validation.expired.badge": "Validation expired",
   "courses.validation.expired.title": "Validation expired",
   "courses.validation.expired.description":
@@ -1195,7 +1204,7 @@ const enUS = {
   "authoring.entry.designer.description":
     "Start with the guided Course Designer. AI can return a typed proposal only; you review it before Apply.",
   "authoring.entry.designer.next":
-    "Name the Course and describe the learning goal. This creates an editable local Draft and opens Designer with the goal ready for a proposal.",
+    "Name the Course and describe the initial learning goal. This creates an editable local Draft and opens Designer in Discovery; proposal review and compilation remain later gates.",
   "authoring.entry.unselected":
     "Choose a path to reveal the shared local Draft details. No option is preselected.",
   "authoring.entry.continueHint": "Select a path to continue",
@@ -1205,13 +1214,13 @@ const enUS = {
     "Choose based on the model you actually have. Aptiloop checks technical compatibility for connected models, but it does not score model strength or output quality.",
   "authoring.external.title": "Use an external model",
   "authoring.external.description":
-    "Describe the Course once, then download a self-contained instruction file with the exact Course Pack V1 schema and template.",
+    "Provide a lightweight initial brief, then download a self-contained instruction that guides the external model through discovery, proposal review, and deterministic Course Pack finalization.",
   "authoring.external.guidance":
     "Prefer this path when another model offers stronger reasoning, broader context, web research, or tools that your connected model does not have.",
   "authoring.external.badge": "Aptiloop sends nothing",
   "authoring.external.start": "Prepare external instructions",
   "authoring.external.pageDescription":
-    "Complete the brief and download one model instruction file. Give it to the model you choose, then upload the returned JSON only through Course Pack import.",
+    "Complete the initial brief and download one model instruction file. The model asks only material missing questions and shows a Course proposal before compiling an authoring draft for local validation.",
   "authoring.external.form": "External model authoring brief",
   "authoring.external.privacyTitle": "External handoff",
   "authoring.external.privacyDescription":
@@ -1222,7 +1231,7 @@ const enUS = {
     "The authoring instruction file could not be prepared.",
   "authoring.external.uploadResult": "Upload the returned Course Pack",
   "authoring.external.nextStep":
-    "The model should return one UTF-8 JSON document. Treat it as untrusted and validate it at /courses/import.",
+    "Continue the conversation through Discovery and approve the Course proposal explicitly. Then upload the returned UTF-8 authoring draft or finalized Course Pack at /courses/import.",
   "authoring.connected.title": "Use the connected Course Designer",
   "authoring.connected.description":
     "Create an explicit local Draft from the same brief, then open guided Designer for typed proposals against that Draft.",
@@ -1491,14 +1500,14 @@ const enUS = {
   "authoring.designer.provenance": "Approved sources: {count}",
   "authoring.designer.revisionLabel": "Revision request",
   "authoring.designer.state.COMPILATION": "Compilation",
-  "authoring.designer.state.CURRICULUM_PROPOSAL": "Curriculum proposal",
+  "authoring.designer.state.CURRICULUM_PROPOSAL": "Course proposal",
   "authoring.designer.state.DIAGNOSTIC": "Diagnostic",
   "authoring.designer.state.DISCOVERY": "Discovery",
-  "authoring.designer.state.DRAFT_REQUEST": "Draft request",
+  "authoring.designer.state.DRAFT_REQUEST": "Initial brief",
   "authoring.designer.state.FAILED": "Failed",
   "authoring.designer.state.PUBLISHED": "Published",
   "authoring.designer.state.USER_REVIEW": "User review",
-  "authoring.designer.state.VALIDATION": "Validation",
+  "authoring.designer.state.VALIDATION": "Validation and repair",
   "authoring.designer.reject": "Reject",
   "authoring.designer.status.applied": "Applied",
   "authoring.designer.status.proposed": "Needs review",
@@ -2392,6 +2401,8 @@ const ruRU: Record<MessageKey, string> = {
     "UTF-8 JSON, не более 1 MiB. Невалидные исходные байты не сохраняются.",
   "courses.import.validationFailed":
     "Не удалось проверить файл {filename}. Выбранный файл сохранён: проверьте его и повторите попытку.",
+  "courses.import.responseContractFailed":
+    "Aptiloop получил некорректный ответ проверки для файла {filename}. Файл не был сохранён во временную область и не был установлен; повторите проверку.",
   "courses.import.validate": "Проверить Pack",
   "courses.intake.title": "Проверка Course Pack",
   "courses.intake.description":
@@ -2405,6 +2416,10 @@ const ruRU: Record<MessageKey, string> = {
   "courses.intake.loadFailed.title": "Не удалось восстановить проверку",
   "courses.intake.loadFailed.description":
     "Безопасно прочитать сохранённую проверку не удалось. Повторите чтение или снова выберите локальный файл.",
+  "courses.intake.responseContractFailed.title":
+    "Ответ сохранённой проверки некорректен",
+  "courses.intake.responseContractFailed.description":
+    "Ответ сервера не соответствует контракту ответа Course Pack. Ничего не установлено; повторите чтение или снова выберите локальный файл.",
   "courses.intake.retry": "Повторить",
   "courses.intake.reselect": "Выбрать файл повторно",
   "courses.storageUnavailable.title": "Локальное хранилище курсов недоступно",
@@ -2475,6 +2490,10 @@ const ruRU: Record<MessageKey, string> = {
   "courses.preview.errors": "Ошибок: {count}",
   "courses.preview.validated": "Проверенный предпросмотр",
   "courses.preview.ready": "Готов к установке",
+  "courses.preview.finalizedDraft.title":
+    "Авторский черновик финализирован локально",
+  "courses.preview.finalizedDraft.description":
+    "Aptiloop вывел runtime-требования, канонизировал документ и вычислил неизменяемый хеш содержимого до проверки. Проверьте этот финализированный предпросмотр перед сохранением.",
   "courses.validation.expired.badge": "Проверка истекла",
   "courses.validation.expired.title": "Срок проверки истёк",
   "courses.validation.expired.description":
@@ -2807,7 +2826,7 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.entry.designer.description":
     "Начните с направляемого Course Designer. AI возвращает только типизированное предложение, которое вы проверяете перед применением.",
   "authoring.entry.designer.next":
-    "Назовите курс и опишите учебную цель. Будет создан редактируемый локальный черновик, а Designer откроется с готовой целью для предложения.",
+    "Назовите курс и опишите начальную учебную цель. Будет создан редактируемый локальный черновик, а Designer откроется на этапе уточнения; проверка предложения и компиляция останутся отдельными следующими этапами.",
   "authoring.entry.unselected":
     "Выберите путь, чтобы открыть общие данные локального черновика. Ни один вариант не выбран заранее.",
   "authoring.entry.continueHint": "Выберите путь, чтобы продолжить",
@@ -2817,13 +2836,13 @@ const ruRU: Record<MessageKey, string> = {
     "Ориентируйтесь на модель, которая у вас действительно есть. Aptiloop проверяет техническую совместимость подключённых моделей, но не оценивает их силу и качество результата.",
   "authoring.external.title": "Использовать внешнюю модель",
   "authoring.external.description":
-    "Опишите курс один раз и скачайте самодостаточную инструкцию с точной схемой и шаблоном Course Pack V1.",
+    "Заполните краткий начальный бриф и скачайте самодостаточную инструкцию, которая проведёт внешнюю модель через уточнение требований, проверку предложения курса и детерминированную финализацию Course Pack.",
   "authoring.external.guidance":
     "Выберите этот путь, если другая модель лучше рассуждает, держит больше контекста, умеет искать в интернете или располагает нужными инструментами.",
   "authoring.external.badge": "Aptiloop ничего не отправляет",
   "authoring.external.start": "Подготовить инструкцию",
   "authoring.external.pageDescription":
-    "Заполните бриф и скачайте один файл-инструкцию. Передайте его выбранной модели, а полученный JSON загрузите только через импорт Course Pack.",
+    "Заполните начальный бриф и скачайте один файл-инструкцию. Модель задаст только существенные уточняющие вопросы и покажет предложение курса до компиляции авторского черновика для локальной проверки.",
   "authoring.external.form": "Бриф для внешней модели",
   "authoring.external.privacyTitle": "Передача внешней модели",
   "authoring.external.privacyDescription":
@@ -2834,7 +2853,7 @@ const ruRU: Record<MessageKey, string> = {
     "Не удалось подготовить файл-инструкцию для авторинга.",
   "authoring.external.uploadResult": "Загрузить полученный Course Pack",
   "authoring.external.nextStep":
-    "Модель должна вернуть один UTF-8 JSON-документ. Считайте его недоверенным и проверьте на /courses/import.",
+    "Продолжите диалог на этапе Discovery и явно утвердите предложение курса. Затем загрузите полученный UTF-8 авторский черновик или финализированный Course Pack на /courses/import.",
   "authoring.connected.title": "Использовать подключённый Course Designer",
   "authoring.connected.description":
     "Создайте явный локальный черновик из того же брифа и откройте Designer для типизированных предложений к этому черновику.",
@@ -3106,14 +3125,14 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.designer.provenance": "Одобренных источников: {count}",
   "authoring.designer.revisionLabel": "Запрос на доработку",
   "authoring.designer.state.COMPILATION": "Компиляция",
-  "authoring.designer.state.CURRICULUM_PROPOSAL": "Предложение программы",
+  "authoring.designer.state.CURRICULUM_PROPOSAL": "Предложение курса",
   "authoring.designer.state.DIAGNOSTIC": "Диагностика",
   "authoring.designer.state.DISCOVERY": "Уточнение",
-  "authoring.designer.state.DRAFT_REQUEST": "Черновик запроса",
+  "authoring.designer.state.DRAFT_REQUEST": "Начальный бриф",
   "authoring.designer.state.FAILED": "Ошибка",
   "authoring.designer.state.PUBLISHED": "Опубликовано",
   "authoring.designer.state.USER_REVIEW": "Проверка пользователем",
-  "authoring.designer.state.VALIDATION": "Валидация",
+  "authoring.designer.state.VALIDATION": "Валидация и исправление",
   "authoring.designer.reject": "Отклонить",
   "authoring.designer.status.applied": "Применено",
   "authoring.designer.status.proposed": "Нужна проверка",

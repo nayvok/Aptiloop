@@ -54,6 +54,8 @@ const brief = {
   accessibility: "Prefer concise text",
   constraints: "No framework",
 };
+const TEST_BUILD_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const originalBuildCommit = process.env.APTILOOP_BUILD_COMMIT;
 
 function renderCreation(
   children: ReactNode,
@@ -169,6 +171,7 @@ function connectedSettings(
 }
 
 beforeEach(() => {
+  process.env.APTILOOP_BUILD_COMMIT = TEST_BUILD_COMMIT;
   window.localStorage.clear();
   fetchMock.mockReset();
   pushMock.mockReset();
@@ -187,6 +190,11 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  if (originalBuildCommit === undefined) {
+    delete process.env.APTILOOP_BUILD_COMMIT;
+  } else {
+    process.env.APTILOOP_BUILD_COMMIT = originalBuildCommit;
+  }
 });
 
 describe("Course creation brief", () => {
@@ -377,11 +385,13 @@ describe("Course creation brief", () => {
     );
     expect(contents).toContain('"format": "aptiloop.course-pack"');
     expect(contents).toContain("/courses/import");
-    expect(contents).toContain("Return the final Course Pack JSON only");
+    expect(contents).toContain(
+      "Emit exactly one UTF-8 JSON document conforming to the embedded hashless authoring-draft schema",
+    );
     expect(contents).toContain("@aptiloop/course-authoring-kit@0.1.0");
-    expect(contents).toContain("Course Pack V1 structural scaffold");
+    expect(contents).toContain("Hashless authoring-draft scaffold");
     expect(contents).toContain('"ownership": "unresolved"');
-    expect(contents).toContain("deliberately not installable as provided");
+    expect(contents).toContain("deliberately not installable unchanged");
     expect(contents).not.toContain("development-course-pack");
     expect(contents).not.toContain("development-kernel-basics");
     expect(contents).not.toContain("Aptiloop development fixture");

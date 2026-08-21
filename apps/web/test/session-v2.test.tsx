@@ -318,7 +318,9 @@ function makeUnit(type: UnitType) {
           ? [{ type: "checklist", requiredItemIds: [`${type}-required`] }]
           : type === "quiz"
             ? [{ type: "score", minimum: 0.5, minimumAttempts: 2 }]
-            : [{ type: "attempts", minimum: 1 }],
+            : type === "checkpoint"
+              ? [{ type: "acknowledgement" }]
+              : [{ type: "attempts", minimum: 1 }],
     unlockRules: [],
     optional: false,
     depthLevel: "foundation",
@@ -1325,6 +1327,38 @@ describe("guided versioned session", () => {
       await screen.findByText("Активность завершена и сохранена"),
     ).toBeInTheDocument();
   });
+  it("actively refreshes the learning path after completing a session", async () => {
+    const ready = makeSession("checkpoint", "ready");
+    const active = replaceProgress(
+      ready,
+      "in_progress",
+      progressPayload("checkpoint"),
+    );
+    const completed = replaceProgress(active, "completed", {
+      type: "checkpoint",
+      acknowledged: true,
+    });
+    apiMock
+      .mockResolvedValueOnce({ session: ready })
+      .mockResolvedValueOnce({ session: active })
+      .mockResolvedValueOnce({ session: completed });
+    const { client } = renderWithQuery(<SessionClient />);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Начать активность" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Подтвердить checkpoint" }),
+    );
+
+    await vi.waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["learning-path"],
+      });
+    });
+    expect(await screen.findByText("Урок завершён")).toBeInTheDocument();
+  });
 
   it("shows a block transition after finishing the previous block", async () => {
     const session = makeMultiSession([
@@ -2212,8 +2246,9 @@ describe("guided versioned session", () => {
     expect(
       within(shell.parentElement!).getByText("Не мутировать input"),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Открыть практику" }));
-    expect(pushMock).toHaveBeenCalledWith("/exercise?sessionId=session-v2");
+    expect(
+      screen.getByRole("link", { name: "Открыть практику" }),
+    ).toHaveAttribute("href", "/exercise?sessionId=session-v2");
   });
 
   it("creates the server-derived summary and completes the day with its persisted evidence id", async () => {

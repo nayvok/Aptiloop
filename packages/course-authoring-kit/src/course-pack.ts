@@ -23,8 +23,11 @@ import {
 } from "./strict-json.js";
 
 export const COURSE_PACK_FORMAT = "aptiloop.course-pack" as const;
+export const COURSE_PACK_AUTHORING_DRAFT_FORMAT =
+  "aptiloop.course-pack-authoring-draft" as const;
 export const COURSE_PACK_FORMAT_VERSION = 1 as const;
-export const COURSE_PACK_VALIDATOR_VERSION = "m3-v1" as const;
+export const COURSE_PACK_FORMAT_MINOR_VERSION = 1 as const;
+export const COURSE_PACK_VALIDATOR_VERSION = "m3-v3" as const;
 
 const MAX_LIST_ITEMS = 500;
 const MAX_SHORT_TEXT = 500;
@@ -298,27 +301,142 @@ export const CoursePackLessonSchema = z
     goal: text,
     estimatedMinutes: z.number().int().positive().max(100_000),
     knowledgeNodeIds: sortedUniqueIds(),
+    prerequisiteLessonIds: sortedUniqueIds().optional(),
     entryActivityIds: sortedUniqueIds().min(1),
     activities: z.array(CoursePackActivitySchema).min(1).max(MAX_LIST_ITEMS),
   })
   .strict();
 
+export const CoursePackAuthoringDraftLessonV1Schema =
+  CoursePackLessonSchema.extend({
+    prerequisiteLessonIds: sortedUniqueIds(),
+  });
+
+const coursePackContentFields = {
+  course: CoursePackCourseSchema,
+  knowledge: CoursePackKnowledgeSchema,
+  localizations: z.array(CoursePackLocalizationSchema).max(50),
+  lessons: z.array(CoursePackLessonSchema).min(1).max(MAX_LIST_ITEMS),
+} as const;
+
 export const CoursePackV1Schema = z
   .object({
     format: z.literal(COURSE_PACK_FORMAT),
     formatVersion: z.literal(COURSE_PACK_FORMAT_VERSION),
-    course: CoursePackCourseSchema,
+    formatMinorVersion: z.literal(COURSE_PACK_FORMAT_MINOR_VERSION).optional(),
     revision: CoursePackRevisionSchema,
     requirements: CoursePackRequirementsSchema,
-    knowledge: CoursePackKnowledgeSchema,
-    localizations: z.array(CoursePackLocalizationSchema).max(50),
-    lessons: z.array(CoursePackLessonSchema).min(1).max(MAX_LIST_ITEMS),
+    ...coursePackContentFields,
   })
-  .strict();
+  .strict()
+  .superRefine(validateLessonPrerequisiteVersionShape);
 
 export type CoursePackV1 = z.infer<typeof CoursePackV1Schema>;
 
+export const CoursePackAuthoringDraftRevisionV1Schema = z
+  .object({
+    revisionKey: StableCourseIdSchema,
+    revisionNumber: z.number().int().positive().max(1_000_000),
+    parentRevisionKey: StableCourseIdSchema.nullable(),
+    branchKind: z.enum(["upstream", "personal"]),
+    basedOnContentHash: sha256.nullable(),
+  })
+  .strict()
+  .superRefine((revision, context) => {
+    if (revision.revisionNumber === 1 && revision.parentRevisionKey !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["parentRevisionKey"],
+        message: "A root revision cannot declare a parent",
+      });
+    }
+    if (revision.revisionNumber > 1 && revision.parentRevisionKey === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["parentRevisionKey"],
+        message: "A non-root revision requires a parent",
+      });
+    }
+    if (
+      revision.branchKind === "upstream" &&
+      revision.basedOnContentHash !== null
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["basedOnContentHash"],
+        message: "An upstream revision cannot declare a personal base hash",
+      });
+    }
+    if (
+      revision.branchKind === "personal" &&
+      (revision.parentRevisionKey === null ||
+        revision.basedOnContentHash === null)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["basedOnContentHash"],
+        message:
+          "A personal revision requires a parent and immutable base hash",
+      });
+    }
+  });
+
+export const CoursePackAuthoringDraftV1Schema = z
+  .object({
+    format: z.literal(COURSE_PACK_AUTHORING_DRAFT_FORMAT),
+    formatVersion: z.literal(COURSE_PACK_FORMAT_VERSION),
+    formatMinorVersion: z.literal(COURSE_PACK_FORMAT_MINOR_VERSION),
+    revision: CoursePackAuthoringDraftRevisionV1Schema,
+    course: CoursePackCourseSchema,
+    knowledge: CoursePackKnowledgeSchema,
+    localizations: z.array(CoursePackLocalizationSchema).max(50),
+    lessons: z
+      .array(CoursePackAuthoringDraftLessonV1Schema)
+      .min(1)
+      .max(MAX_LIST_ITEMS),
+  })
+  .strict();
+export type CoursePackAuthoringDraftV1 = z.infer<
+  typeof CoursePackAuthoringDraftV1Schema
+>;
+
+function validateLessonPrerequisiteVersionShape(
+  pack: {
+    readonly formatMinorVersion?: number | undefined;
+    readonly lessons: readonly {
+      readonly prerequisiteLessonIds?: readonly string[] | undefined;
+    }[];
+  },
+  context: z.RefinementCtx,
+): void {
+  pack.lessons.forEach((lesson, index) => {
+    if (
+      pack.formatMinorVersion === COURSE_PACK_FORMAT_MINOR_VERSION &&
+      lesson.prerequisiteLessonIds === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["lessons", index, "prerequisiteLessonIds"],
+        message: "Current Course Packs require explicit lesson prerequisites",
+      });
+    }
+    if (
+      pack.formatMinorVersion === undefined &&
+      lesson.prerequisiteLessonIds !== undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["lessons", index, "prerequisiteLessonIds"],
+        message:
+          "Lesson prerequisites require formatMinorVersion 1; legacy V1 omits both fields",
+      });
+    }
+  });
+}
+
 export type CoursePackDiagnosticSeverity = "error" | "warning";
+export type CoursePackDiagnosticContext =
+  "json-value" | "learner-markdown" | "educational-code" | "field-name";
 
 export interface CoursePackDiagnostic {
   readonly code: string;
@@ -326,6 +444,8 @@ export interface CoursePackDiagnostic {
   readonly path: string;
   readonly entityId: string | null;
   readonly message: string;
+  readonly ruleId: string | null;
+  readonly context: CoursePackDiagnosticContext | null;
 }
 
 export interface CoursePackValidationReport {
@@ -388,6 +508,94 @@ export interface CoursePackValidationOptions extends StrictJsonParseOptions {
   readonly registry?: CoursePackRegistry;
 }
 
+export type CoursePackSourceKind =
+  "course-pack" | "authoring-draft" | "unknown";
+
+export type CoursePackPreparationResult =
+  | (Extract<CoursePackValidationResult, { readonly valid: true }> & {
+      readonly sourceKind: CoursePackSourceKind;
+      readonly finalized: boolean;
+      readonly preparedBytes: Uint8Array;
+    })
+  | (Extract<CoursePackValidationResult, { readonly valid: false }> & {
+      readonly sourceKind: CoursePackSourceKind;
+      readonly finalized: boolean;
+      readonly preparedBytes: null;
+    });
+
+/**
+ * Accepts either a finalized Course Pack or a hashless Authoring Draft.
+ * Draft finalization is pure: the caller-owned value and source bytes are never
+ * mutated, and the returned final Pack is validated through the same boundary.
+ */
+export function prepareCoursePackBytes(
+  bytes: Uint8Array,
+  options: CoursePackValidationOptions = {},
+): CoursePackPreparationResult {
+  let input: unknown;
+  try {
+    input = parseStrictJson(bytes, options);
+  } catch (error) {
+    return preparationResult(invalidJsonResult(error), "unknown", false);
+  }
+
+  const sourceKind: CoursePackSourceKind = isRecord(input)
+    ? input.format === COURSE_PACK_AUTHORING_DRAFT_FORMAT
+      ? "authoring-draft"
+      : input.format === COURSE_PACK_FORMAT
+        ? "course-pack"
+        : "unknown"
+    : "unknown";
+  const registry = options.registry ?? CORE_M3_COURSE_PACK_REGISTRY;
+  if (sourceKind !== "authoring-draft") {
+    return preparationResult(
+      validateCoursePackInput(input, registry),
+      sourceKind,
+      false,
+    );
+  }
+
+  const diagnostics: CoursePackDiagnostic[] = [];
+  const parsed = CoursePackAuthoringDraftV1Schema.safeParse(input);
+  if (!parsed.success) {
+    scanUntrustedValues(input, [], diagnostics);
+    diagnostics.push(
+      ...parsed.error.issues.map((issue) =>
+        createDiagnostic(
+          "PACK_DRAFT_SHAPE_INVALID",
+          "error",
+          jsonPointer(issue.path),
+          null,
+          issue.message,
+        ),
+      ),
+    );
+    return preparationResult(invalidResult(diagnostics), sourceKind, false);
+  }
+
+  const finalizedPack = finalizeCoursePackAuthoringDraft(parsed.data);
+  return preparationResult(
+    validateCoursePackInput(finalizedPack, registry),
+    sourceKind,
+    true,
+  );
+}
+
+function preparationResult(
+  result: CoursePackValidationResult,
+  sourceKind: CoursePackSourceKind,
+  finalized: boolean,
+): CoursePackPreparationResult {
+  return result.valid
+    ? {
+        ...result,
+        sourceKind,
+        finalized,
+        preparedBytes: new TextEncoder().encode(result.canonicalJson),
+      }
+    : { ...result, sourceKind, finalized, preparedBytes: null };
+}
+
 export function validateCoursePackBytes(
   bytes: Uint8Array,
   options: CoursePackValidationOptions = {},
@@ -396,25 +604,38 @@ export function validateCoursePackBytes(
   try {
     input = parseStrictJson(bytes, options);
   } catch (error) {
-    const diagnostic =
-      error instanceof StrictJsonError
-        ? createDiagnostic(
-            `PACK_JSON_${error.code}`,
-            "error",
-            "",
-            null,
-            `${error.message} (byte/character offset ${error.offset})`,
-          )
-        : createDiagnostic(
-            "PACK_JSON_INVALID",
-            "error",
-            "",
-            null,
-            "Course Pack JSON could not be parsed",
-          );
-    return invalidResult([diagnostic]);
+    return invalidJsonResult(error);
   }
+  return validateCoursePackInput(
+    input,
+    options.registry ?? CORE_M3_COURSE_PACK_REGISTRY,
+  );
+}
 
+function invalidJsonResult(error: unknown): CoursePackValidationResult {
+  const diagnostic =
+    error instanceof StrictJsonError
+      ? createDiagnostic(
+          `PACK_JSON_${error.code}`,
+          "error",
+          "",
+          null,
+          `${error.message} (byte/character offset ${error.offset})`,
+        )
+      : createDiagnostic(
+          "PACK_JSON_INVALID",
+          "error",
+          "",
+          null,
+          "Course Pack JSON could not be parsed",
+        );
+  return invalidResult([diagnostic]);
+}
+
+function validateCoursePackInput(
+  input: unknown,
+  registry: CoursePackRegistry,
+): CoursePackValidationResult {
   const diagnostics: CoursePackDiagnostic[] = [];
   scanUntrustedValues(input, [], diagnostics);
   const parsed = CoursePackV1Schema.safeParse(input);
@@ -434,11 +655,7 @@ export function validateCoursePackBytes(
   }
 
   const pack = parsed.data;
-  validatePackSemantics(
-    pack,
-    options.registry ?? CORE_M3_COURSE_PACK_REGISTRY,
-    diagnostics,
-  );
+  validatePackSemantics(pack, registry, diagnostics);
   const canonical = canonicalCoursePackJson(pack);
   const contentHash = calculateCoursePackContentHash(pack);
   if (pack.revision.contentHash !== contentHash) {
@@ -521,6 +738,55 @@ export function finalizeCoursePack(input: CoursePackV1): CoursePackV1 {
   });
 }
 
+export function deriveCoursePackRequirements(
+  lessons: readonly CoursePackV1["lessons"][number][],
+): CoursePackV1["requirements"] {
+  return CoursePackRequirementsSchema.parse({
+    activityTypes: uniqueSorted(
+      lessons.flatMap((lesson) =>
+        lesson.activities.map((activity) => activity.type),
+      ),
+    ),
+    capabilities: uniqueSorted(
+      lessons.flatMap((lesson) =>
+        lesson.activities.flatMap((activity) => activity.capabilityIds),
+      ),
+    ),
+    environmentIds: [],
+    checkIds: uniqueSorted(
+      lessons.flatMap((lesson) =>
+        lesson.activities.flatMap((activity) =>
+          activity.payload.type === "exercise"
+            ? [activity.payload.testCommandId]
+            : [],
+        ),
+      ),
+    ),
+  });
+}
+
+export function finalizeCoursePackAuthoringDraft(
+  input: CoursePackAuthoringDraftV1,
+): CoursePackV1 {
+  const draft = CoursePackAuthoringDraftV1Schema.parse(input);
+  return finalizeCoursePack(
+    CoursePackV1Schema.parse({
+      format: COURSE_PACK_FORMAT,
+      formatVersion: draft.formatVersion,
+      formatMinorVersion: draft.formatMinorVersion,
+      course: draft.course,
+      revision: {
+        ...draft.revision,
+        contentHash: `sha256:${"0".repeat(64)}`,
+      },
+      requirements: deriveCoursePackRequirements(draft.lessons),
+      knowledge: draft.knowledge,
+      localizations: draft.localizations,
+      lessons: draft.lessons,
+    }),
+  );
+}
+
 function validatePackSemantics(
   pack: CoursePackV1,
   registry: CoursePackRegistry,
@@ -529,6 +795,7 @@ function validatePackSemantics(
   validateLocaleManifest(pack, diagnostics);
   validateIdentityAndOrdering(pack, diagnostics);
   validateGraphAndReferences(pack, registry, diagnostics);
+  validateActivitySemantics(pack, diagnostics);
   validateRequirements(pack, registry, diagnostics);
   validateProvenance(pack, diagnostics);
   validateKnowledge(pack, diagnostics);
@@ -769,6 +1036,7 @@ function validateGraphAndReferences(
   registry: CoursePackRegistry,
   diagnostics: CoursePackDiagnostic[],
 ): void {
+  validateLessonPrerequisiteGraph(pack, diagnostics);
   const knowledgeNodes = new Set(
     pack.knowledge.nodes.map((node) => node.knowledgeNodeId),
   );
@@ -885,52 +1153,295 @@ function validateGraphAndReferences(
   });
 }
 
+const completionCriterionByActivity = {
+  briefing: "acknowledgement",
+  study: "acknowledgement",
+  recall: "attempts",
+  "teacher-dialogue": "dialogue",
+  quiz: "score",
+  "code-reading": "fields",
+  exercise: "exercise",
+  review: "exercise",
+  interview: "attempts",
+  summary: "fields",
+  checkpoint: "acknowledgement",
+  "spaced-review": "attempts",
+} as const;
+
+function validateActivitySemantics(
+  pack: CoursePackV1,
+  diagnostics: CoursePackDiagnostic[],
+): void {
+  const knownKnowledgeNodes = new Set(
+    pack.knowledge.nodes.map((node) => node.knowledgeNodeId),
+  );
+  pack.lessons.forEach((lesson, lessonIndex) => {
+    const activities = new Map(
+      lesson.activities.map((activity) => [activity.activityId, activity]),
+    );
+    lesson.activities.forEach((activity, activityIndex) => {
+      const basePath = `/lessons/${lessonIndex}/activities/${activityIndex}`;
+      const questionIds = new Set<string>();
+      activity.protectedMaterial.questions.forEach(
+        (question, questionIndex) => {
+          if (questionIds.has(question.id)) {
+            diagnostics.push(
+              createDiagnostic(
+                "PACK_QUESTION_ID_DUPLICATE",
+                "error",
+                `${basePath}/protectedMaterial/questions/${questionIndex}/id`,
+                activity.activityId,
+                `Duplicate protected question ID: ${question.id}`,
+              ),
+            );
+          }
+          questionIds.add(question.id);
+        },
+      );
+
+      const expectedCriterion = completionCriterionByActivity[activity.type];
+      activity.completionCriteria.forEach((criterion, criterionIndex) => {
+        const criterionPath = `${basePath}/completionCriteria/${criterionIndex}`;
+        if (criterion.type !== expectedCriterion) {
+          diagnostics.push(
+            createDiagnostic(
+              "PACK_COMPLETION_CRITERION_INCOMPATIBLE",
+              "error",
+              criterionPath,
+              activity.activityId,
+              `${activity.type} activities require ${expectedCriterion} completion evidence`,
+            ),
+          );
+          return;
+        }
+        if (
+          criterion.type === "dialogue" &&
+          activity.payload.type === "teacher-dialogue" &&
+          (criterion.minimumTurns !== activity.payload.minimumTurns ||
+            criterion.requiresRevision !== activity.payload.requiresRevision)
+        ) {
+          diagnostics.push(
+            createDiagnostic(
+              "PACK_COMPLETION_CRITERION_MISMATCH",
+              "error",
+              criterionPath,
+              activity.activityId,
+              "Dialogue completion must exactly match the teacher-dialogue payload",
+            ),
+          );
+        }
+        if (
+          criterion.type === "score" &&
+          activity.payload.type === "quiz" &&
+          (criterion.minimum !== activity.payload.minimumScore ||
+            criterion.minimumAttempts > activity.payload.questionIds.length)
+        ) {
+          diagnostics.push(
+            createDiagnostic(
+              "PACK_COMPLETION_CRITERION_MISMATCH",
+              "error",
+              criterionPath,
+              activity.activityId,
+              "Quiz score completion must match the payload and cannot require more questions than the quiz exposes",
+            ),
+          );
+        }
+        if (criterion.type === "fields") {
+          const expectedFields =
+            activity.type === "code-reading"
+              ? ["explanation", "prediction", "verbalFix"]
+              : ["summaryId"];
+          if (!sameStringSets(criterion.required, expectedFields)) {
+            diagnostics.push(
+              createDiagnostic(
+                "PACK_COMPLETION_CRITERION_MISMATCH",
+                "error",
+                criterionPath,
+                activity.activityId,
+                `${activity.type} completion requires exactly: ${expectedFields.join(", ")}`,
+              ),
+            );
+          }
+        }
+        if (
+          criterion.type === "attempts" &&
+          activity.payload.type === "spaced-review" &&
+          criterion.minimum > activity.payload.topicIds.length
+        ) {
+          diagnostics.push(
+            createDiagnostic(
+              "PACK_COMPLETION_CRITERION_MISMATCH",
+              "error",
+              criterionPath,
+              activity.activityId,
+              "Spaced-review attempts cannot exceed the declared topic count",
+            ),
+          );
+        }
+      });
+
+      if (activity.payload.type === "quiz") {
+        const questionsById = new Map(
+          activity.protectedMaterial.questions.map((question) => [
+            question.id,
+            question,
+          ]),
+        );
+        activity.payload.questionIds.forEach((questionId, questionIndex) => {
+          const question = questionsById.get(questionId);
+          if (
+            question &&
+            (question.options.length < 2 ||
+              question.correctOptionIds.length < 1)
+          ) {
+            diagnostics.push(
+              createDiagnostic(
+                "PACK_QUESTION_EVALUATION_INVALID",
+                "error",
+                `${basePath}/payload/questionIds/${questionIndex}`,
+                activity.activityId,
+                "A quiz question requires at least two public options and one protected correct option",
+              ),
+            );
+          }
+        });
+      }
+
+      if (activity.payload.type === "review") {
+        const exercise = activities.get(activity.payload.exerciseUnitId);
+        if (!exercise || exercise.type !== "exercise") {
+          diagnostics.push(
+            createDiagnostic(
+              "PACK_REVIEW_REFERENCE_INVALID",
+              "error",
+              `${basePath}/payload/exerciseUnitId`,
+              activity.activityId,
+              "A review must reference an exercise in the same lesson",
+            ),
+          );
+        }
+      }
+
+      if (activity.payload.type === "spaced-review") {
+        const knownNodes = knownKnowledgeNodes;
+        activity.payload.topicIds.forEach((topicId, topicIndex) => {
+          if (!knownNodes.has(topicId)) {
+            diagnostics.push(
+              createDiagnostic(
+                "PACK_KNOWLEDGE_REFERENCE_MISSING",
+                "error",
+                `${basePath}/payload/topicIds/${topicIndex}`,
+                activity.activityId,
+                `Unknown KnowledgeNode: ${topicId}`,
+              ),
+            );
+          }
+        });
+      }
+    });
+  });
+}
+
+function validateLessonPrerequisiteGraph(
+  pack: CoursePackV1,
+  diagnostics: CoursePackDiagnostic[],
+): void {
+  const lessonIndexById = new Map(
+    pack.lessons.map((lesson, index) => [lesson.lessonId, index]),
+  );
+  pack.lessons.forEach((lesson, lessonIndex) => {
+    (lesson.prerequisiteLessonIds ?? []).forEach(
+      (prerequisiteId, prerequisiteIndex) => {
+        const path = `/lessons/${lessonIndex}/prerequisiteLessonIds/${prerequisiteIndex}`;
+        if (!lessonIndexById.has(prerequisiteId)) {
+          diagnostics.push(
+            createDiagnostic(
+              "PACK_LESSON_GRAPH_REFERENCE_MISSING",
+              "error",
+              path,
+              lesson.lessonId,
+              `Unknown prerequisite lesson: ${prerequisiteId}`,
+            ),
+          );
+        } else if (prerequisiteId === lesson.lessonId) {
+          diagnostics.push(
+            createDiagnostic(
+              "PACK_LESSON_GRAPH_SELF_REFERENCE",
+              "error",
+              path,
+              lesson.lessonId,
+              "A lesson cannot require itself",
+            ),
+          );
+        }
+      },
+    );
+  });
+
+  const complete = new Set<string>();
+  const active = new Set<string>();
+  const visit = (lessonId: string): void => {
+    if (complete.has(lessonId)) return;
+    active.add(lessonId);
+    const lessonIndex = lessonIndexById.get(lessonId)!;
+    const lesson = pack.lessons[lessonIndex]!;
+    (lesson.prerequisiteLessonIds ?? []).forEach(
+      (prerequisiteId, prerequisiteIndex) => {
+        if (
+          prerequisiteId === lessonId ||
+          !lessonIndexById.has(prerequisiteId)
+        ) {
+          return;
+        }
+        if (active.has(prerequisiteId)) {
+          diagnostics.push(
+            createDiagnostic(
+              "PACK_LESSON_GRAPH_CYCLE",
+              "error",
+              `/lessons/${lessonIndex}/prerequisiteLessonIds/${prerequisiteIndex}`,
+              lessonId,
+              "Lesson prerequisite relationships must be acyclic",
+            ),
+          );
+          return;
+        }
+        visit(prerequisiteId);
+      },
+    );
+    active.delete(lessonId);
+    complete.add(lessonId);
+  };
+  for (const lesson of pack.lessons) visit(lesson.lessonId);
+}
+
 function validateRequirements(
   pack: CoursePackV1,
   registry: CoursePackRegistry,
   diagnostics: CoursePackDiagnostic[],
 ): void {
-  const derivedActivityTypes = uniqueSorted(
-    pack.lessons.flatMap((lesson) =>
-      lesson.activities.map((activity) => activity.type),
-    ),
-  );
-  const derivedCapabilities = uniqueSorted(
-    pack.lessons.flatMap((lesson) =>
-      lesson.activities.flatMap((activity) => activity.capabilityIds),
-    ),
-  );
-  const derivedCheckIds = uniqueSorted(
-    pack.lessons.flatMap((lesson) =>
-      lesson.activities.flatMap((activity) =>
-        activity.payload.type === "exercise"
-          ? [activity.payload.testCommandId]
-          : [],
-      ),
-    ),
-  );
+  const derived = deriveCoursePackRequirements(pack.lessons);
   validateExactRequirement(
     "activityTypes",
     pack.requirements.activityTypes,
-    derivedActivityTypes,
+    derived.activityTypes,
     diagnostics,
   );
   validateExactRequirement(
     "capabilities",
     pack.requirements.capabilities,
-    derivedCapabilities,
+    derived.capabilities,
     diagnostics,
   );
   validateExactRequirement(
     "checkIds",
     pack.requirements.checkIds,
-    derivedCheckIds,
+    derived.checkIds,
     diagnostics,
   );
   validateExactRequirement(
     "environmentIds",
     pack.requirements.environmentIds,
-    [],
+    derived.environmentIds,
     diagnostics,
   );
 
@@ -1159,6 +1670,7 @@ function validateProtectedSeparation(
   pack: CoursePackV1,
   diagnostics: CoursePackDiagnostic[],
 ): void {
+  const visible = learnerVisiblePackStrings(pack);
   pack.lessons.forEach((lesson, lessonIndex) => {
     lesson.activities.forEach((activity, activityIndex) => {
       const protectedValues = [
@@ -1169,14 +1681,11 @@ function validateProtectedSeparation(
           ...question.commonMistakes,
         ]),
       ].filter((value): value is string => value !== null);
-      const visible = [
-        activity.title,
-        activity.description,
-        ...visiblePayloadStrings(activity.payload),
-      ];
       if (
         protectedValues.some((protectedValue) =>
-          visible.some((value) => value === protectedValue),
+          visible.some((value) =>
+            containsProtectedValue(value, protectedValue),
+          ),
         )
       ) {
         diagnostics.push(
@@ -1185,12 +1694,77 @@ function validateProtectedSeparation(
             "error",
             `/lessons/${lessonIndex}/activities/${activityIndex}`,
             activity.activityId,
-            "Protected evaluation material is duplicated in learner-visible content",
+            "Protected evaluation material appears in learner-visible Course content",
           ),
         );
       }
     });
   });
+}
+
+function learnerVisiblePackStrings(pack: CoursePackV1): string[] {
+  const result = [pack.course.title, pack.course.description];
+  for (const node of pack.knowledge.nodes) {
+    result.push(node.title, node.description);
+  }
+  for (const snapshot of pack.knowledge.sourceSnapshots) {
+    result.push(snapshot.title);
+    if (snapshot.attribution !== null) result.push(snapshot.attribution);
+    if (typeof snapshot.content === "string") result.push(snapshot.content);
+  }
+  for (const lesson of pack.lessons) {
+    result.push(lesson.title, lesson.description, lesson.goal);
+    for (const activity of lesson.activities) {
+      result.push(
+        activity.title,
+        activity.description,
+        ...visiblePayloadStrings(activity.payload),
+        ...activity.protectedMaterial.questions.flatMap((question) => [
+          question.prompt,
+          ...question.options.map((option) => option.label),
+        ]),
+      );
+    }
+  }
+  for (const localization of pack.localizations) {
+    for (const value of Object.values(localization.fields)) {
+      if (typeof value === "string") result.push(value);
+      else result.push(...value);
+    }
+  }
+  return result;
+}
+
+function containsProtectedValue(
+  visible: string,
+  protectedValue: string,
+): boolean {
+  const normalizedVisible = normalizeComparableText(visible);
+  const normalizedProtected = normalizeComparableText(protectedValue);
+  if (normalizedVisible === normalizedProtected) return true;
+  let offset = normalizedVisible.indexOf(normalizedProtected);
+  while (offset !== -1) {
+    const before = normalizedVisible[offset - 1];
+    const after = normalizedVisible[offset + normalizedProtected.length];
+    if (
+      (!isLetterOrNumber(normalizedProtected[0]) ||
+        !isLetterOrNumber(before)) &&
+      (!isLetterOrNumber(normalizedProtected.at(-1)) ||
+        !isLetterOrNumber(after))
+    ) {
+      return true;
+    }
+    offset = normalizedVisible.indexOf(normalizedProtected, offset + 1);
+  }
+  return false;
+}
+
+function normalizeComparableText(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+function isLetterOrNumber(value: string | undefined): boolean {
+  return value !== undefined && /[\p{L}\p{N}]/u.test(value);
 }
 
 const FORBIDDEN_FIELD_NAMES = new Set([
@@ -1242,21 +1816,35 @@ const SECRET_PATTERNS = [
   /(?:^|[\s{[(,;])(?:password|passphrase|api[\s_-]*key|access[\s_-]*token|client[\s_-]*secret|private[\s_-]*key)\s+(?:is\s+)?["'][^"'\r\n]{6,}["']/iu,
   /https:\/\/[^\s/?#]+:(?:[^\s@/?#]{6,})@/iu,
 ];
-const ACTIVE_CONTENT_PATTERNS = [
-  /<\s*(?:script|iframe|object|embed|link|meta)\b/iu,
-  /\bon(?:error|load|click|focus|mouseover)\s*=/iu,
-  /\bjavascript\s*:/iu,
-  /\bdata\s*:\s*text\/html/iu,
-  /!\[[^\]]*\]\(\s*https?:\/\//iu,
-];
-const FORBIDDEN_PATH_PATTERNS = [
-  /^[A-Za-z]:[\\/]/u,
-  /^\\\\/u,
-  /^\/\//u,
-  /^\/(?!\/)/u,
-  /(?:^|[\\/])\.\.(?:[\\/]|$)/u,
-  /^\\\\[.?]\\/u,
-];
+const ACTIVE_CONTENT_RULES = [
+  {
+    ruleId: "active-html-element",
+    pattern: /<\s*(?:script|iframe|object|embed|link|meta)\b/iu,
+  },
+  {
+    ruleId: "event-handler-attribute",
+    pattern: /\bon[a-z][a-z0-9:_-]*\s*=/iu,
+    allowedInEducationalCode: true,
+    allowedInFencedMarkdown: true,
+  },
+  { ruleId: "javascript-url", pattern: /\bjavascript\s*:/iu },
+  { ruleId: "html-data-url", pattern: /\bdata\s*:\s*text\/html/iu },
+  {
+    ruleId: "remote-markdown-image",
+    pattern: /!\[[^\]]*\]\(\s*https?:\/\//iu,
+  },
+] as const;
+const FORBIDDEN_PATH_RULES = [
+  { ruleId: "windows-drive-path", pattern: /^[A-Za-z]:[\\/]/u },
+  { ruleId: "unc-path", pattern: /^\\\\/u },
+  { ruleId: "network-path", pattern: /^\/\//u },
+  { ruleId: "absolute-posix-path", pattern: /^\/(?!\/)/u },
+  {
+    ruleId: "parent-traversal-path",
+    pattern: /(?:^|[\\/])\.\.(?:[\\/]|$)/u,
+  },
+  { ruleId: "windows-device-path", pattern: /^\\\\[.?]\\/u },
+] as const;
 
 function scanUntrustedValues(
   value: unknown,
@@ -1264,6 +1852,7 @@ function scanUntrustedValues(
   diagnostics: CoursePackDiagnostic[],
 ): void {
   if (typeof value === "string") {
+    const context = scanContext(path);
     if (SECRET_PATTERNS.some((pattern) => pattern.test(value))) {
       diagnostics.push(
         createDiagnostic(
@@ -1272,10 +1861,26 @@ function scanUntrustedValues(
           jsonPointer(path),
           null,
           "Secret-shaped values are forbidden in Course Packs",
+          "secret-shaped-value",
+          context,
         ),
       );
     }
-    if (ACTIVE_CONTENT_PATTERNS.some((pattern) => pattern.test(value))) {
+    for (const rule of ACTIVE_CONTENT_RULES) {
+      if (
+        "allowedInEducationalCode" in rule &&
+        rule.allowedInEducationalCode &&
+        context === "educational-code"
+      ) {
+        continue;
+      }
+      const scanValue =
+        "allowedInFencedMarkdown" in rule &&
+        rule.allowedInFencedMarkdown &&
+        context === "learner-markdown"
+          ? maskFencedCode(value)
+          : value;
+      if (!rule.pattern.test(scanValue)) continue;
       diagnostics.push(
         createDiagnostic(
           "PACK_ACTIVE_CONTENT",
@@ -1283,10 +1888,13 @@ function scanUntrustedValues(
           jsonPointer(path),
           null,
           "Active or automatically fetched content is forbidden",
+          rule.ruleId,
+          context,
         ),
       );
     }
-    if (FORBIDDEN_PATH_PATTERNS.some((pattern) => pattern.test(value))) {
+    for (const rule of FORBIDDEN_PATH_RULES) {
+      if (!rule.pattern.test(value)) continue;
       diagnostics.push(
         createDiagnostic(
           "PACK_LOCAL_PATH_VALUE",
@@ -1294,10 +1902,14 @@ function scanUntrustedValues(
           jsonPointer(path),
           null,
           "Absolute, device, UNC, or traversal path values are forbidden",
+          rule.ruleId,
+          context,
         ),
       );
     }
-    if (/^https:\/\//iu.test(value)) validateSafeUrl(value, path, diagnostics);
+    if (/^https:\/\//iu.test(value)) {
+      validateSafeUrl(value, path, diagnostics, context);
+    }
     return;
   }
   if (Array.isArray(value)) {
@@ -1316,7 +1928,9 @@ function scanUntrustedValues(
           "error",
           jsonPointer([...path, key]),
           null,
-          `Authority-bearing field is forbidden: ${key}`,
+          "Authority-bearing fields are forbidden in Course Packs",
+          "authority-field",
+          "field-name",
         ),
       );
     }
@@ -1324,10 +1938,46 @@ function scanUntrustedValues(
   }
 }
 
+function scanContext(
+  path: readonly (string | number)[],
+): CoursePackDiagnosticContext {
+  let field: string | undefined;
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    const part = path[index];
+    if (typeof part === "string") {
+      field = part;
+      break;
+    }
+  }
+  const parent = path[path.length - 2];
+  if (parent === "payload" && (field === "snippet" || field === "template")) {
+    return "educational-code";
+  }
+  if (
+    field === "body" ||
+    field === "prompt" ||
+    field === "openingPrompt" ||
+    field === "description" ||
+    field === "goal" ||
+    field?.includes("/payload/body") === true
+  ) {
+    return "learner-markdown";
+  }
+  return "json-value";
+}
+
+function maskFencedCode(value: string): string {
+  return value.replace(
+    /(^|\r?\n)[ \t]{0,3}(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)[\s\S]*?(?:\r?\n[ \t]{0,3}\2[ \t]*(?=\r?\n|$)|$)/gu,
+    "$1",
+  );
+}
+
 function validateSafeUrl(
   value: string,
   path: readonly (string | number)[],
   diagnostics: CoursePackDiagnostic[],
+  context: CoursePackDiagnosticContext,
 ): void {
   try {
     const url = new URL(value);
@@ -1348,6 +1998,8 @@ function validateSafeUrl(
         jsonPointer(path),
         null,
         "URL must be credential-free HTTPS and must not target a local network",
+        "url-policy",
+        context,
       ),
     );
   }
@@ -1452,6 +2104,7 @@ function visiblePayloadStrings(
       return [
         ...payload.acceptanceCriteria,
         ...payload.constraints,
+        payload.template,
         payload.hintPolicy,
         payload.reviewPolicy,
       ];
@@ -1591,8 +2244,10 @@ function createDiagnostic(
   path: string,
   entityId: string | null,
   message: string,
+  ruleId: string | null = null,
+  context: CoursePackDiagnosticContext | null = null,
 ): CoursePackDiagnostic {
-  return { code, severity, path, entityId, message };
+  return { code, severity, path, entityId, message, ruleId, context };
 }
 
 function sortDiagnostics(diagnostics: CoursePackDiagnostic[]): void {
@@ -1626,6 +2281,18 @@ function sameStrings(
   return (
     left.length === right.length &&
     left.every((value, index) => value === right[index])
+  );
+}
+
+function sameStringSets(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  const leftSet = new Set(left);
+  return (
+    leftSet.size === left.length &&
+    left.length === right.length &&
+    right.every((value) => leftSet.has(value))
   );
 }
 
