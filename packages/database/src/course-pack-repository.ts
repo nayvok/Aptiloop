@@ -8,7 +8,7 @@ import {
   type CoursePackV1,
   type CoursePackValidationReport,
 } from "@aptiloop/course-authoring-kit";
-import { CourseOperationIdSchema } from "@aptiloop/shared";
+import { ClientError, CourseOperationIdSchema } from "@aptiloop/shared";
 
 import { adaptationBranchIdForRevision } from "./adaptation-branch.js";
 import { withTransaction, type DatabaseConnection } from "./database.js";
@@ -156,10 +156,14 @@ export class CoursePackRepository {
     const pack = CoursePackV1Schema.parse(input.pack);
     assertSha256(input.sourceBytesHash, "Course Pack source bytes hash");
     if (!input.report.valid || input.report.errors !== 0) {
-      throw new Error("Course Pack installation requires a zero-error report");
+      throw new ClientError(
+        400,
+        "Course Pack installation requires a zero-error report",
+      );
     }
     if (input.canonicalJson !== canonicalJson(pack)) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Course Pack canonical JSON does not match the validated pack",
       );
     }
@@ -167,7 +171,8 @@ export class CoursePackRepository {
       UTF8_ENCODER.encode(input.canonicalJson),
     );
     if (!supportedValidation.valid) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Course Pack installation requires app-supported validation",
       );
     }
@@ -175,7 +180,10 @@ export class CoursePackRepository {
       supportedValidation.canonicalJson !== input.canonicalJson ||
       supportedValidation.contentHash !== pack.revision.contentHash
     ) {
-      throw new Error("Course Pack app-supported validation is inconsistent");
+      throw new ClientError(
+        400,
+        "Course Pack app-supported validation is inconsistent",
+      );
     }
 
     return withTransaction(this.#connection, () => {
@@ -403,7 +411,10 @@ export class CoursePackRepository {
     );
     const canonical = canonicalJson(parsed);
     if (canonical !== row.canonical_json) {
-      throw new Error("Stored Course Pack canonical bytes are inconsistent");
+      throw new ClientError(
+        400,
+        "Stored Course Pack canonical bytes are inconsistent",
+      );
     }
     return canonical;
   }
@@ -714,7 +725,10 @@ export class CoursePackRepository {
             scopedId("activity", targetRevisionId, activity.activityId),
           );
         if (result.changes !== 1) {
-          throw new Error("Course Pack activity projection is incomplete");
+          throw new ClientError(
+            400,
+            "Course Pack activity projection is incomplete",
+          );
         }
       }
     }
@@ -860,7 +874,10 @@ export class CoursePackRepository {
         const learnerSources = activity.sourceSnapshotIds.map((snapshotId) => {
           const snapshot = sourceSnapshots.get(snapshotId);
           if (!snapshot) {
-            throw new Error("Course Pack source projection is incomplete");
+            throw new ClientError(
+              400,
+              "Course Pack source projection is incomplete",
+            );
           }
           return {
             id: scopedId("source", pack.revision.revisionKey, snapshotId),
@@ -1258,7 +1275,10 @@ export class CoursePackRepository {
       )
       .run(pack.revision.contentHash, now, now, pack.revision.revisionKey);
     if (published.changes !== 1) {
-      throw new Error("Course Pack manifest revision could not be published");
+      throw new ClientError(
+        400,
+        "Course Pack manifest revision could not be published",
+      );
     }
     const projection = this.#connection.sqlite
       .prepare(`SELECT status, content_hash FROM course_revisions WHERE id = ?`)
@@ -1268,7 +1288,10 @@ export class CoursePackRepository {
       projection?.status !== "published" ||
       projection.content_hash !== pack.revision.contentHash
     ) {
-      throw new Error("Course Pack manifest projection is inconsistent");
+      throw new ClientError(
+        400,
+        "Course Pack manifest projection is inconsistent",
+      );
     }
   }
 
@@ -1586,7 +1609,10 @@ export class CoursePackRepository {
       )
       .run(now, now, pack.revision.revisionKey);
     if (archived.changes !== 1) {
-      throw new Error("Course Pack manifest source could not be archived");
+      throw new ClientError(
+        400,
+        "Course Pack manifest source could not be archived",
+      );
     }
   }
 
@@ -1754,7 +1780,8 @@ export class CoursePackRepository {
 
   #assertStorage(): void {
     if (!this.hasStorage()) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Course Pack storage is unavailable until the approved M3 migration is applied",
       );
     }
@@ -1774,13 +1801,17 @@ function prerequisiteInsertionOrder<T>(
     const id = stableId(item);
     if (complete.has(id)) return;
     if (active.has(id)) {
-      throw new Error("Course Pack prerequisite insertion graph has a cycle");
+      throw new ClientError(
+        400,
+        "Course Pack prerequisite insertion graph has a cycle",
+      );
     }
     active.add(id);
     for (const prerequisiteId of prerequisiteIds(item)) {
       const prerequisite = itemById.get(prerequisiteId);
       if (prerequisite === undefined) {
-        throw new Error(
+        throw new ClientError(
+          400,
           "Course Pack prerequisite insertion graph is incomplete",
         );
       }
@@ -1792,7 +1823,10 @@ function prerequisiteInsertionOrder<T>(
   };
   for (const item of items) visit(item);
   if (ordered.length !== items.length) {
-    throw new Error("Course Pack prerequisite insertion graph is ambiguous");
+    throw new ClientError(
+      400,
+      "Course Pack prerequisite insertion graph is ambiguous",
+    );
   }
   return ordered;
 }
@@ -1829,10 +1863,16 @@ function jsonUnitPrerequisiteIds(value: string): readonly string[] {
   try {
     parsed = JSON.parse(value) as unknown;
   } catch {
-    throw new Error("Course Pack activity prerequisite projection is invalid");
+    throw new ClientError(
+      400,
+      "Course Pack activity prerequisite projection is invalid",
+    );
   }
   if (!Array.isArray(parsed)) {
-    throw new Error("Course Pack activity prerequisite projection is invalid");
+    throw new ClientError(
+      400,
+      "Course Pack activity prerequisite projection is invalid",
+    );
   }
   return parsed.map((candidate) => {
     if (
@@ -1840,7 +1880,8 @@ function jsonUnitPrerequisiteIds(value: string): readonly string[] {
       typeof candidate !== "object" ||
       Array.isArray(candidate)
     ) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Course Pack activity prerequisite projection is invalid",
       );
     }
@@ -1850,7 +1891,8 @@ function jsonUnitPrerequisiteIds(value: string): readonly string[] {
       typeof rule.unitId !== "string" ||
       Object.keys(rule).sort().join(",") !== "type,unitId"
     ) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Course Pack activity prerequisite projection is invalid",
       );
     }

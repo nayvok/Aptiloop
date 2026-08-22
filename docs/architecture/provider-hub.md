@@ -177,6 +177,8 @@ Examples:
 - Stream exceeds byte/event/deadline budget → cancel and return `budget_exceeded`; persist only bounded diagnostic/provenance.
 - Provider emits invalid evaluator output → `invalid_output`; kernel sees no evidence.
 
+**Implemented baseline.** Managed-connection and sign-in HTTP routes (`/api/settings/ai/*`) surface intended client failures as typed `ClientError` values with exact preserved messages/statuses (unknown/expired sign-in operation → 404 on status reads, 400 elsewhere; connection-disabled conflicts → 409 on removal). Unexpected internal failures — credential-store or SQLite faults, provider-contract violations — are logged server-side with a diagnostic ID and returned as a generic 500 `{ error, diagnosticId }` payload without raw internals.
+
 ## Typed tools and safety
 
 The Hub exposes no provider-native shell, filesystem, edit, patch, network/browser, credential, or arbitrary RPC tools. Persisted policies are finite allowlists; `AptiloopTypedToolHost` exposes only the intersection of an allowlist and installed app-owned definitions. Current Pi definitions are the Course Designer handlers. Each installed call is schema-validated, scope-checked by its handler, budgeted, and default-denied.

@@ -18,6 +18,7 @@ import {
   type CoursePackRepository,
 } from "@aptiloop/database";
 import {
+  ClientError,
   CoursePackStagedValidationResponseSchema,
   type CoursePackStagedValidationResponse,
 } from "@aptiloop/shared";
@@ -539,7 +540,10 @@ function boundedStagedReport(
     diagnostics.pop();
   }
   if (Buffer.byteLength(JSON.stringify(bounded), "utf8") > byteLimit) {
-    throw new Error("Course Pack validation report exceeds the staging limit");
+    throw new ClientError(
+      400,
+      "Course Pack validation report exceeds the staging limit",
+    );
   }
   return bounded;
 }

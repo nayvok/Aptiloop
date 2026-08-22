@@ -18,6 +18,8 @@ Learner session/path DTO не содержит protected reference answers и qu
 
 Local client header не заменяет auth; защита опирается также на loopback bind и Origin. Не выставляйте orchestrator в сеть.
 
+**Implemented baseline.** Классификация клиентских ошибок явная: предназначенные для browser отклонения бросаются как типизированный `ClientError` (`packages/shared/src/errors.ts`) со статусом `400 | 404 | 409` и точным сообщением; глобальный `onError` не классифицирует ошибки по текстовым префиксам сообщений. Неожиданные внутренние сбои возвращают generic `{ error: "Internal server error", diagnosticId }` со статусом 500 и логируются серверно с тем же diagnosticId. Роуты управления провайдерами (`/api/settings/ai/*`) следуют тому же контракту через узкие catch: ожидаемые ошибки сохраняют точные тексты и статусы, всё остальное — generic 500 + diagnosticId без утечки internals. Trusted-check план для legacy Node окружения резолвится при старте orchestrator'а с проверкой существования `npm_execpath` / fallback `npm-cli.js`; отсутствие кандидата — fail-fast ошибка старта с понятным сообщением вместо тихого падения spawn при выполнении проверки.
+
 ## Filesystem и Git
 
 Templates разрешаются внутри `WORKSPACE_ROOT`; попытки создаются только внутри `EXERCISE_ATTEMPTS_ROOT`. Canonical path checks отклоняют traversal, absolute/drive/UNC/device paths, control characters, Windows reserved names, alternate-data-stream syntax и symlink/junction/reparse escape.

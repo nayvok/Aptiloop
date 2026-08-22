@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,10 +49,11 @@ import {
   AptiloopAiRoleSchema,
   AptiloopToolNameSchema,
   type AptiloopToolName,
+  ClientError,
   type ReviewResult,
   type ProviderId,
 } from "@aptiloop/shared";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 
@@ -128,27 +130,6 @@ const mutationMethods: Readonly<Record<string, true>> = {
   POST: true,
   PUT: true,
 };
-const knownClientFailurePrefixes = [
-  "Course ",
-  "Current ",
-  "Evidence ",
-  "Exercise ",
-  "Learning ",
-  "New ",
-  "No ",
-  "Only ",
-  "Path ",
-  "Persisted ",
-  "Review ",
-  "Session ",
-  "Snapshot ",
-  "Stored ",
-  "Summary ",
-  "This ",
-  "Unit ",
-  "Unknown ",
-  "Versioned ",
-] as const;
 const stepLabels = [
   ["review", "Повторение"],
   ["theory", "Теория"],
@@ -190,6 +171,8 @@ export interface AppOptions {
     afterTrustedCheckRun?: () => Promise<void> | void;
     beforeReviewCommit?: () => Promise<void> | void;
   };
+  /** @internal Deterministic npm-cli resolution seam for disposable tests. */
+  npmCliPath?: string | null;
 }
 
 interface AttemptRecord {
@@ -392,6 +375,7 @@ export function createApp(options: AppOptions = {}) {
   loadRootDevelopmentEnvironment(projectRoot);
   const startupConfig =
     options.startupConfig ?? parseOrchestratorStartupConfig({});
+  const npmTest = npmTestCommand(options.npmCliPath);
   const databasePath =
     options.databasePath ??
     resolveDatabasePath(
@@ -524,7 +508,6 @@ export function createApp(options: AppOptions = {}) {
       ? { developmentFixture: options.developmentProviderFixture }
       : {}),
   });
-  const npmTest = npmTestCommand();
   const executionFabric =
     options.executionFabric ??
     createCoreExecutionFabric({
@@ -592,16 +575,15 @@ export function createApp(options: AppOptions = {}) {
     if (unknownError instanceof CourseSessionContextError) {
       return context.json({ error: unknownError.message }, 409);
     }
+    if (unknownError instanceof ClientError) {
+      return context.json({ error: unknownError.message }, unknownError.status);
+    }
     if (
       unknownError instanceof Error &&
       (unknownError.message === safeAgentFailureMessage ||
-        unknownError.message === safeAgentCancellationMessage ||
-        isKnownClientFailure(unknownError.message))
+        unknownError.message === safeAgentCancellationMessage)
     ) {
-      const status = /^unknown\b|\bnot found\b/iu.test(unknownError.message)
-        ? 404
-        : 400;
-      return context.json({ error: unknownError.message }, status);
+      return context.json({ error: unknownError.message }, 400);
     }
     const diagnosticId = randomUUID();
     console.error("orchestrator_request_failed", {
@@ -2031,7 +2013,10 @@ export function createApp(options: AppOptions = {}) {
     const resolved = await resolveExerciseContext(state, attempt.sessionId);
     const { exercise } = resolved;
     if (exercise.templateExerciseId !== attempt.exerciseId) {
-      throw new Error("Exercise attempt does not belong to this session");
+      throw new ClientError(
+        400,
+        "Exercise attempt does not belong to this session",
+      );
     }
     const review = await requestExerciseReview(state, {
       attempt,
@@ -2163,7 +2148,7 @@ export function createApp(options: AppOptions = {}) {
         .update(row.bundleJson)
         .digest("hex")}`;
       if (observedSha256 !== row.evidenceSha256) {
-        throw new Error("Review capsule integrity check failed");
+        throw new ClientError(400, "Review capsule integrity check failed");
       }
       return context.json({
         id: row.id,
@@ -2263,7 +2248,7 @@ export function createApp(options: AppOptions = {}) {
       const connection = await state.providerManagement.create(input);
       return context.json({ created: true, connection }, 201);
     } catch (error) {
-      return context.json({ error: safeProviderManagementMessage(error) }, 400);
+      return providerManagementErrorResponse(context, error);
     }
   });
   app.put(
@@ -2279,10 +2264,7 @@ export function createApp(options: AppOptions = {}) {
         );
         return context.json({ saved: true });
       } catch (error) {
-        return context.json(
-          { error: safeProviderManagementMessage(error) },
-          400,
-        );
+        return providerManagementErrorResponse(context, error);
       }
     },
   );
@@ -2295,10 +2277,7 @@ export function createApp(options: AppOptions = {}) {
         );
         return context.json({ disabled: true });
       } catch (error) {
-        return context.json(
-          { error: safeProviderManagementMessage(error) },
-          400,
-        );
+        return providerManagementErrorResponse(context, error);
       }
     },
   );
@@ -2314,15 +2293,13 @@ export function createApp(options: AppOptions = {}) {
       await cancelProviderSessionsForConnection(state, connectionId);
       return context.json({ removed: true });
     } catch (error) {
-      const status =
+      if (
         error instanceof ProviderHubError &&
         error.failure.code === "connection_disabled"
-          ? 409
-          : 400;
-      return context.json(
-        { error: safeProviderManagementMessage(error) },
-        status,
-      );
+      ) {
+        return providerManagementErrorResponse(context, error, 409);
+      }
+      return providerManagementErrorResponse(context, error);
     } finally {
       retirement?.rollback();
     }
@@ -2336,10 +2313,7 @@ export function createApp(options: AppOptions = {}) {
         );
         return context.json({ enabled: true });
       } catch (error) {
-        return context.json(
-          { error: safeProviderManagementMessage(error) },
-          400,
-        );
+        return providerManagementErrorResponse(context, error);
       }
     },
   );
@@ -2352,10 +2326,7 @@ export function createApp(options: AppOptions = {}) {
         );
         return context.json({ started: true, operationId }, 202);
       } catch (error) {
-        return context.json(
-          { error: safeProviderManagementMessage(error) },
-          400,
-        );
+        return providerManagementErrorResponse(context, error);
       }
     },
   );
@@ -2365,7 +2336,7 @@ export function createApp(options: AppOptions = {}) {
         state.providerManagement.loginStatus(context.req.param("operationId")),
       );
     } catch (error) {
-      return context.json({ error: safeProviderManagementMessage(error) }, 404);
+      return providerManagementErrorResponse(context, error, 404);
     }
   });
   app.post("/api/settings/ai/login/:operationId/answer", async (context) => {
@@ -2378,7 +2349,7 @@ export function createApp(options: AppOptions = {}) {
       );
       return context.json({ accepted: true });
     } catch (error) {
-      return context.json({ error: safeProviderManagementMessage(error) }, 400);
+      return providerManagementErrorResponse(context, error);
     }
   });
   app.post("/api/settings/ai/login/:operationId/cancel", (context) => {
@@ -2488,12 +2459,6 @@ function validateWebOrigin(origin: string): string {
 function isJsonContentType(contentType: string | undefined): boolean {
   return (
     contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json"
-  );
-}
-
-function isKnownClientFailure(message: string): boolean {
-  return knownClientFailurePrefixes.some((prefix) =>
-    message.startsWith(prefix),
   );
 }
 
@@ -2737,7 +2702,8 @@ function toSessionResponse(
   detail: Awaited<ReturnType<LearningRepository["getSession"]>>,
 ) {
   const question = detail.questions[0];
-  if (!question) throw new Error("No question for this learning day");
+  if (!question)
+    throw new ClientError(400, "No question for this learning day");
   const savedAnswer = question.attempts.at(-1)?.answer;
   return {
     id: detail.session.id,
@@ -2798,7 +2764,7 @@ async function requireAttempt(
        FROM exercise_attempts WHERE id = ?`,
     )
     .get(attemptId) as AttemptRecord | undefined;
-  if (!attempt) throw new Error("Unknown exercise attempt");
+  if (!attempt) throw new ClientError(404, "Unknown exercise attempt");
   if (forMutation) {
     assertCourseScopedSessionSideEffectAllowed(
       state.connection,
@@ -2818,10 +2784,16 @@ async function requireAttempt(
       realpath(trustedWorkspace),
     ]);
   } catch {
-    throw new Error("Exercise attempt workspace is unavailable or untrusted");
+    throw new ClientError(
+      400,
+      "Exercise attempt workspace is unavailable or untrusted",
+    );
   }
   if (path.relative(trustedRealPath, storedRealPath) !== "") {
-    throw new Error("Exercise attempt workspace is unavailable or untrusted");
+    throw new ClientError(
+      400,
+      "Exercise attempt workspace is unavailable or untrusted",
+    );
   }
   return { ...attempt, workspacePath: trustedRealPath };
 }
@@ -3086,19 +3058,35 @@ function toTestRunResponse(run: TestRunRecord) {
   };
 }
 
-function npmTestCommand(): { executable: string; args: string[] } {
+function npmTestCommand(overrideNpmCliPath?: string | null): {
+  executable: string;
+  args: string[];
+} {
   if (process.platform !== "win32") {
     return { executable: "npm", args: ["test"] };
   }
-  const npmCli =
-    process.env.npm_execpath ??
-    path.join(
-      path.dirname(process.execPath),
-      "node_modules",
-      "npm",
-      "bin",
-      "npm-cli.js",
+  const fallback = path.join(
+    path.dirname(process.execPath),
+    "node_modules",
+    "npm",
+    "bin",
+    "npm-cli.js",
+  );
+  const candidates =
+    overrideNpmCliPath === undefined
+      ? [process.env.npm_execpath, fallback]
+      : overrideNpmCliPath === null
+        ? []
+        : [overrideNpmCliPath, fallback];
+  const probed = candidates.filter(
+    (candidate): candidate is string => typeof candidate === "string",
+  );
+  const npmCli = probed.find((candidate) => existsSync(candidate));
+  if (!npmCli) {
+    throw new Error(
+      `npm-cli.js was not found for trusted checks; expected npm_execpath or ${fallback}. Start the orchestrator through npm so trusted checks can run.`,
     );
+  }
   return { executable: process.execPath, args: [npmCli, "test"] };
 }
 function requireAttemptCourseRevisionId(
@@ -3112,7 +3100,10 @@ function requireAttemptCourseRevisionId(
     )
     .get(sessionId) as { revisionId: string } | undefined;
   if (!row)
-    throw new Error("Exercise session has no immutable Course revision");
+    throw new ClientError(
+      400,
+      "Exercise session has no immutable Course revision",
+    );
   return row.revisionId;
 }
 
@@ -3639,7 +3630,10 @@ async function resolveExerciseWorkspace(
   const portablePath = curriculumPath.replaceAll("\\", "/");
   const prefix = "workspaces/exercises/";
   if (!portablePath.startsWith(prefix)) {
-    throw new Error("Exercise path is outside the curriculum workspace");
+    throw new ClientError(
+      400,
+      "Exercise path is outside the curriculum workspace",
+    );
   }
   return resolveWorkspacePath(
     workspaceRoot,
@@ -3670,7 +3664,10 @@ async function resolveExerciseContext(
           candidate.payload.exerciseId === requestedExerciseId),
     );
     if (!unit || unit.payload.type !== "exercise") {
-      throw new Error("Exercise does not belong to this session snapshot");
+      throw new ClientError(
+        400,
+        "Exercise does not belong to this session snapshot",
+      );
     }
     const template = loadTrustedExerciseTemplate(
       state.connection,
@@ -3697,7 +3694,8 @@ async function resolveExerciseContext(
   const exercise = requestedExerciseId
     ? detail.exercises.find((candidate) => candidate.id === requestedExerciseId)
     : detail.exercises[0];
-  if (!exercise) throw new Error("Exercise does not belong to this session");
+  if (!exercise)
+    throw new ClientError(400, "Exercise does not belong to this session");
   return {
     sessionId: detail.session.id,
     exercise: {
@@ -3749,11 +3747,32 @@ function loadTrustedExerciseTemplate(
   );
 }
 
-function safeProviderManagementMessage(error: unknown): string {
+function providerManagementErrorResponse(
+  context: Context,
+  error: unknown,
+  status: 400 | 404 | 409 = 400,
+): Response {
   if (error instanceof z.ZodError) {
-    return error.issues[0]?.message ?? "Provider configuration is invalid";
+    return context.json(
+      {
+        error: error.issues[0]?.message ?? "Provider configuration is invalid",
+      },
+      status,
+    );
   }
-  return error instanceof Error && error.message.trim()
-    ? error.message.slice(0, 500)
-    : "Provider configuration failed";
+  if (error instanceof ClientError) {
+    return context.json({ error: error.message }, status);
+  }
+  if (error instanceof ProviderHubError) {
+    return context.json({ error: error.message }, status);
+  }
+  const diagnosticId = randomUUID();
+  console.error("provider_management_request_failed", {
+    diagnosticId,
+    errorName: error instanceof Error ? error.name : "NonErrorThrown",
+  });
+  return context.json(
+    { error: "Provider configuration failed", diagnosticId },
+    500,
+  );
 }

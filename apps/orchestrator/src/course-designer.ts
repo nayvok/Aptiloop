@@ -14,6 +14,7 @@ import {
 } from "@aptiloop/database";
 import { getLatestPrompt } from "@aptiloop/prompt-library";
 import {
+  ClientError,
   CourseDesignerPendingDisclosureSchema,
   CourseDesignerRequestSchema,
   CourseDesignerPendingDisclosureResponseSchema,
@@ -608,7 +609,10 @@ export function createCourseDesignerTools(
             connection,
           ).getVersionGraph(metadata.versionId);
           if (authoringDraftHash(graph) !== metadata.draftHash) {
-            throw new Error("Course draft changed during the provider turn");
+            throw new ClientError(
+              400,
+              "Course draft changed during the provider turn",
+            );
           }
           return {
             content: [

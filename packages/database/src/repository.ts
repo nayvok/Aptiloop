@@ -4,6 +4,7 @@ import {
   resolveExplicitUnitDefinitions,
 } from "@aptiloop/learning-core";
 import {
+  ClientError,
   SessionSnapshotSchema,
   UnitProgressPayloadSchema,
   UnitProgressSchema,
@@ -245,7 +246,8 @@ export class LearningRepository {
       const day = this.#connection.sqlite
         .prepare("SELECT id FROM curriculum_days WHERE id = ?")
         .get(input.dayId);
-      if (!day) throw new Error(`Unknown curriculum day: ${input.dayId}`);
+      if (!day)
+        throw new ClientError(404, `Unknown curriculum day: ${input.dayId}`);
       const globalActive = this.#connection.sqlite
         .prepare(
           "SELECT id, day_id FROM learning_sessions WHERE status = 'active' ORDER BY updated_at DESC LIMIT 1",
@@ -293,7 +295,8 @@ export class LearningRepository {
       .innerJoin(curriculumDays, eq(curriculumDays.id, learningSessions.dayId))
       .where(eq(learningSessions.id, sessionId))
       .limit(1);
-    if (!row) throw new Error(`Unknown learning session: ${sessionId}`);
+    if (!row)
+      throw new ClientError(404, `Unknown learning session: ${sessionId}`);
 
     const topicRows = await this.#connection.db
       .select({ id: topics.id, slug: topics.slug, title: topics.title })
@@ -451,7 +454,10 @@ export class LearningRepository {
         })
       | undefined;
     if (!dayRow)
-      throw new Error(`Unknown versioned curriculum day: ${input.dayId}`);
+      throw new ClientError(
+        404,
+        `Unknown versioned curriculum day: ${input.dayId}`,
+      );
     const current = await this.getCurrentVersionedSession(dayRow.curriculum_id);
     if (current) {
       if (current.snapshot.day.id !== input.dayId) {
@@ -723,7 +729,10 @@ export class LearningRepository {
       )
       .get(input.courseId, input.revisionId) as { id: string } | undefined;
     if (!target)
-      throw new Error("Course selection requires a published revision");
+      throw new ClientError(
+        400,
+        "Course selection requires a published revision",
+      );
 
     const active = this.#connection.sqlite
       .prepare(
@@ -809,7 +818,10 @@ export class LearningRepository {
       )
       .get(sessionId) as { snapshot_json: string } | undefined;
     if (!sessionRow || !snapshotRow) {
-      throw new Error(`Unknown versioned learning session: ${sessionId}`);
+      throw new ClientError(
+        404,
+        `Unknown versioned learning session: ${sessionId}`,
+      );
     }
     const storedSnapshot = SessionSnapshotSchema.parse(
       JSON.parse(snapshotRow.snapshot_json),
@@ -893,14 +905,17 @@ export class LearningRepository {
       )
       .get(input.sessionId, input.unitId) as
       { unit_type: string; progress_json: string } | undefined;
-    if (!unitRow) throw new Error("Unknown session unit progress");
+    if (!unitRow) throw new ClientError(404, "Unknown session unit progress");
     const unitType = UnitTypeSchema.parse(unitRow.unit_type);
     const status = UnitStatusSchema.parse(input.status);
     const payload = UnitProgressPayloadSchema.parse(
       input.progress ?? JSON.parse(unitRow.progress_json),
     );
     if (payload.type !== unitType) {
-      throw new Error("Unit progress payload type must match its unit type");
+      throw new ClientError(
+        400,
+        "Unit progress payload type must match its unit type",
+      );
     }
     const result = this.#connection.sqlite
       .prepare(
@@ -928,7 +943,7 @@ export class LearningRepository {
         input.unitId,
       );
     if (result.changes !== 1)
-      throw new Error("Unknown active session unit progress");
+      throw new ClientError(404, "Unknown active session unit progress");
     const detail = this.getVersionedSession(input.sessionId);
     const progress = detail.unitProgress.find(
       (item) => item.unitId === input.unitId,
@@ -989,12 +1004,16 @@ export class LearningRepository {
         .get(sessionId, unitId) as
         { unit_type: string; unit_status: string; status: string } | undefined;
       if (!target) {
-        throw new Error(
+        throw new ClientError(
+          400,
           "Evidence target is not a unit in the versioned session",
         );
       }
       if (target.status !== "active") {
-        throw new Error("New unit evidence requires an active session");
+        throw new ClientError(
+          400,
+          "New unit evidence requires an active session",
+        );
       }
       if (target.unit_type !== expectedUnitType) {
         throw new Error(
@@ -1002,7 +1021,10 @@ export class LearningRepository {
         );
       }
       if (target.unit_status !== "in_progress") {
-        throw new Error("New unit evidence requires an in-progress unit");
+        throw new ClientError(
+          400,
+          "New unit evidence requires an in-progress unit",
+        );
       }
 
       const row: VersionedUnitEvidenceRow = {
@@ -1065,7 +1087,10 @@ export class LearningRepository {
       )
       .get(sessionId);
     if (!session) {
-      throw new Error("Unknown active or completed versioned session");
+      throw new ClientError(
+        404,
+        "Unknown active or completed versioned session",
+      );
     }
 
     const select = `SELECT id, session_id, unit_id, evidence_type, operation_id,
@@ -1138,7 +1163,10 @@ export class LearningRepository {
         )
         .get(input.exerciseAttemptId, input.sessionId);
       if (!attempt)
-        throw new Error("Exercise attempt does not belong to the session");
+        throw new ClientError(
+          400,
+          "Exercise attempt does not belong to the session",
+        );
     }
     const id = this.#id();
     this.#connection.sqlite
@@ -1244,7 +1272,10 @@ export class LearningRepository {
         )
         .get(input.sessionId) as { dayId: string; status: string } | undefined;
       if (!session)
-        throw new Error(`Unknown learning session: ${input.sessionId}`);
+        throw new ClientError(
+          404,
+          `Unknown learning session: ${input.sessionId}`,
+        );
       if (session.status !== "active")
         throw new Error("Answers can only be added to an active session");
       const question = this.#connection.sqlite
@@ -1301,10 +1332,13 @@ export class LearningRepository {
         .prepare("SELECT status FROM learning_sessions WHERE id = ?")
         .get(input.sessionId) as { status: string } | undefined;
       if (!session)
-        throw new Error(`Unknown learning session: ${input.sessionId}`);
+        throw new ClientError(
+          404,
+          `Unknown learning session: ${input.sessionId}`,
+        );
       if (session.status === "completed") return;
       if (session.status !== "active")
-        throw new Error("Only an active session can be completed");
+        throw new ClientError(400, "Only an active session can be completed");
 
       const mistakeIds = new Map<string, string>();
       for (const item of input.mistakes ?? []) {
@@ -1455,7 +1489,7 @@ export class LearningRepository {
       .set({ ...patch, updatedAt: this.#now() })
       .where(eq(flashcards.id, id))
       .returning();
-    if (!row) throw new Error(`Unknown flashcard: ${id}`);
+    if (!row) throw new ClientError(404, `Unknown flashcard: ${id}`);
     return row;
   }
 
@@ -1555,7 +1589,10 @@ export class LearningRepository {
         .prepare("SELECT id FROM agent_conversations WHERE id = ?")
         .get(input.conversationId);
       if (!conversation)
-        throw new Error(`Unknown conversation: ${input.conversationId}`);
+        throw new ClientError(
+          404,
+          `Unknown conversation: ${input.conversationId}`,
+        );
       const latest = this.#connection.sqlite
         .prepare(
           "SELECT COALESCE(MAX(sequence), 0) AS sequence FROM agent_messages WHERE conversation_id = ?",

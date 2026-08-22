@@ -1,4 +1,5 @@
 import {
+  ClientError,
   CourseLessonSchema,
   CourseRevisionSchema,
   CourseSchema,
@@ -278,7 +279,7 @@ export class CourseFoundationRepository {
       )
       .get(revisionRow.course_id) as CourseRow | undefined;
     if (!courseRow)
-      throw new Error("Stored Course revision has no parent Course");
+      throw new ClientError(400, "Stored Course revision has no parent Course");
 
     const lessonRows = this.#connection.sqlite
       .prepare(

@@ -4,6 +4,7 @@ import {
   validateActivityGraph,
 } from "@aptiloop/learning-core";
 import {
+  ClientError,
   CourseEntityIdSchema,
   CourseLocaleSchema,
   UnitUnlockRuleSchema,
@@ -323,7 +324,8 @@ function loadVersionGraph(
   const versionRow = connection.sqlite
     .prepare("SELECT * FROM curriculum_versions WHERE id = ?")
     .get(versionId) as VersionRow | undefined;
-  if (!versionRow) throw new Error(`Unknown curriculum version: ${versionId}`);
+  if (!versionRow)
+    throw new ClientError(404, `Unknown curriculum version: ${versionId}`);
   const hasCoursesTable =
     connection.sqlite
       .prepare(
@@ -745,7 +747,10 @@ export function publishDraftCurriculumVersionWithinTransaction(
 ): CurriculumVersion {
   const graph = loadVersionGraph(connection, input.versionId);
   if (graph.version.status !== "draft") {
-    throw new Error("Only a draft curriculum version can be published");
+    throw new ClientError(
+      400,
+      "Only a draft curriculum version can be published",
+    );
   }
   if (isCoursePackManifestRevision(connection, input.versionId)) {
     throw new Error("Imported Course Pack manifest revision is immutable");
@@ -835,7 +840,8 @@ export function publishDraftCurriculumVersionWithinTransaction(
       head_revision_id: string | null;
     }>;
     if (activeBranch.length > 1) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Course has ambiguous active personal adaptation branches",
       );
     }
@@ -1052,7 +1058,8 @@ export class CurriculumAuthoringRepository {
         "SELECT * FROM curriculum_weeks WHERE version_id = ? AND stable_id = ?",
       )
       .get(input.versionId, input.targetStableId) as WeekRow | undefined;
-    if (!current) throw new Error(`Unknown week: ${input.targetStableId}`);
+    if (!current)
+      throw new ClientError(404, `Unknown week: ${input.targetStableId}`);
     this.#connection.sqlite
       .prepare(
         `UPDATE curriculum_weeks
@@ -1146,7 +1153,8 @@ export class CurriculumAuthoringRepository {
         "SELECT * FROM curriculum_days_v2 WHERE version_id = ? AND stable_id = ?",
       )
       .get(input.versionId, input.targetStableId) as DayRow | undefined;
-    if (!current) throw new Error(`Unknown day: ${input.targetStableId}`);
+    if (!current)
+      throw new ClientError(404, `Unknown day: ${input.targetStableId}`);
     this.#connection.sqlite
       .prepare(
         `UPDATE curriculum_days_v2
@@ -1194,9 +1202,9 @@ export class CurriculumAuthoringRepository {
   #addUnit(input: AddUnitInput): CurriculumUnit {
     this.#assertDraft(input.versionId);
     if (!unitTypes.has(input.type))
-      throw new Error(`Unknown unit type: ${input.type}`);
+      throw new ClientError(404, `Unknown unit type: ${input.type}`);
     if (!input.completionCriteria.length) {
-      throw new Error("Unit completion criteria cannot be empty");
+      throw new ClientError(400, "Unit completion criteria cannot be empty");
     }
     const day = this.#connection.sqlite
       .prepare("SELECT version_id FROM curriculum_days_v2 WHERE id = ?")
@@ -1277,15 +1285,17 @@ export class CurriculumAuthoringRepository {
         "SELECT * FROM curriculum_units WHERE version_id = ? AND stable_id = ?",
       )
       .get(input.versionId, input.targetStableId) as UnitRow | undefined;
-    if (!current) throw new Error(`Unknown unit: ${input.targetStableId}`);
+    if (!current)
+      throw new ClientError(404, `Unknown unit: ${input.targetStableId}`);
     const type = input.type ?? current.type;
-    if (!unitTypes.has(type)) throw new Error(`Unknown unit type: ${type}`);
+    if (!unitTypes.has(type))
+      throw new ClientError(404, `Unknown unit type: ${type}`);
     const payload =
       input.payload === undefined
         ? parseObject(current.payload_json, "unit payload")
         : input.payload;
     if (payload.type !== type) {
-      throw new Error("Unit payload type must match unit type");
+      throw new ClientError(400, "Unit payload type must match unit type");
     }
     const completionCriteria =
       input.completionCriteria === undefined
@@ -1295,7 +1305,7 @@ export class CurriculumAuthoringRepository {
           )
         : input.completionCriteria;
     if (completionCriteria.length === 0) {
-      throw new Error("Unit completion criteria cannot be empty");
+      throw new ClientError(400, "Unit completion criteria cannot be empty");
     }
     this.#connection.sqlite
       .prepare(
@@ -1528,7 +1538,8 @@ export class CurriculumAuthoringRepository {
     const version = this.#connection.sqlite
       .prepare("SELECT status FROM curriculum_versions WHERE id = ?")
       .get(versionId) as { status: string } | undefined;
-    if (!version) throw new Error(`Unknown curriculum version: ${versionId}`);
+    if (!version)
+      throw new ClientError(404, `Unknown curriculum version: ${versionId}`);
     if (version.status !== "draft") {
       throw new Error("Published curriculum version is immutable");
     }
@@ -1541,7 +1552,8 @@ export class CurriculumAuthoringRepository {
     const row = this.#connection.sqlite
       .prepare("SELECT * FROM curriculum_versions WHERE id = ?")
       .get(versionId) as VersionRow | undefined;
-    if (!row) throw new Error(`Unknown curriculum version: ${versionId}`);
+    if (!row)
+      throw new ClientError(404, `Unknown curriculum version: ${versionId}`);
     return mapVersion(row);
   }
 

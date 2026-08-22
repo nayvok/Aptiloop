@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { afterEach, describe, expect, it, type TestContext } from "vitest";
+import { afterEach, describe, expect, it, vi, type TestContext } from "vitest";
 import { z } from "zod";
 
 import { MockAgentProvider } from "@aptiloop/agent-core/mock";
@@ -867,6 +867,108 @@ describe("orchestrator vertical flow", () => {
       { method: "POST", body: "{}" },
     );
     expect(enabled.status).toBe(200);
+  });
+
+  it("keeps provider management client errors explicit and reports internal failures as logged 500s", async () => {
+    const { app, state } = runtime();
+    const created = await request(app, "/api/settings/ai/connections", {
+      method: "POST",
+      body: JSON.stringify({
+        catalogId: "openai-api",
+        displayName: "Boundary probe",
+        apiKey: "sk-boundary-test-secret",
+      }),
+    });
+    expect(created.status).toBe(201);
+    const connectionId = z
+      .object({ connection: z.object({ connectionId: z.string() }) })
+      .parse(await created.json()).connection.connectionId;
+
+    const unknownLoginStatus = await request(
+      app,
+      "/api/settings/ai/login/00000000-0000-4000-8000-000000000000",
+    );
+    expect(unknownLoginStatus.status).toBe(404);
+    expect(await unknownLoginStatus.json()).toEqual({
+      error: "Unknown or expired sign-in operation",
+    });
+
+    const unknownLoginAnswer = await request(
+      app,
+      "/api/settings/ai/login/00000000-0000-4000-8000-000000000000/answer",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          promptId: "00000000-0000-4000-8000-000000000001",
+          answer: "ignored",
+        }),
+      },
+    );
+    expect(unknownLoginAnswer.status).toBe(400);
+    expect(await unknownLoginAnswer.json()).toEqual({
+      error: "Sign-in operation is not active",
+    });
+
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    try {
+      state.providerManagement.setApiKey = async () => {
+        throw new Error("simulated credential store failure");
+      };
+      const internalFailure = await request(
+        app,
+        `/api/settings/ai/connections/${encodeURIComponent(connectionId)}/credential`,
+        { method: "PUT", body: JSON.stringify({ apiKey: "sk-next-secret-1" }) },
+      );
+      expect(internalFailure.status).toBe(500);
+      const failureBody = z
+        .object({ error: z.string(), diagnosticId: z.string().min(1) })
+        .parse(await internalFailure.json());
+      expect(failureBody.error).toBe("Provider configuration failed");
+      expect(
+        consoleError.mock.calls.some(
+          ([channel]) => channel === "provider_management_request_failed",
+        ),
+      ).toBe(true);
+    } finally {
+      consoleError.mockRestore();
+      delete (state.providerManagement as unknown as Record<string, unknown>)
+        .setApiKey;
+    }
+
+    const recovered = await request(
+      app,
+      `/api/settings/ai/connections/${encodeURIComponent(connectionId)}/credential`,
+      { method: "PUT", body: JSON.stringify({ apiKey: "sk-recovered-key-1" }) },
+    );
+    expect(recovered.status).toBe(200);
+  });
+
+  it.runIf(process.platform === "win32")(
+    "fails fast at startup when no npm-cli candidate exists for trusted checks",
+    () => {
+      const missingNpmCli = path.join(
+        tmpdir(),
+        "aptiloop-missing-npm-cli",
+        "npm-cli.js",
+      );
+      expect(existsSync(missingNpmCli)).toBe(false);
+      expect(() => runtime({ npmCliPath: null })).toThrowError(
+        /npm-cli\.js was not found for trusted checks/,
+      );
+    },
+  );
+
+  it("starts when an explicit npm-cli candidate exists", async () => {
+    const probeRoot = mkdtempSync(path.join(tmpdir(), "aptiloop-npm-cli-"));
+    roots.push(probeRoot);
+    const npmCliPath = path.join(probeRoot, "npm-cli.js");
+    writeFileSync(npmCliPath, "/* trusted-check probe */");
+    const { state } = runtime({ npmCliPath });
+    expect(
+      state.executionFabric.describeEnvironment("apt.compat.node24.local.v1"),
+    ).toBeDefined();
   });
 
   it("removes a managed connection, clears its credential, and turns assigned roles off", async () => {

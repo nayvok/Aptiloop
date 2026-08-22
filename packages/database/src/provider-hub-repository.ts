@@ -1,5 +1,6 @@
 import {
   AiDisclosureSchema,
+  ClientError,
   ProviderCapabilityProfileSchema,
   ProviderConnectionSchema,
   ProviderTurnProvenanceSchema,
@@ -402,7 +403,10 @@ export class ProviderHubRepository {
     return rows.map(({ operationId }) => {
       const disclosure = this.getDisclosure(operationId);
       if (!disclosure) {
-        throw new Error(`Unknown disclosure operation: ${operationId}`);
+        throw new ClientError(
+          404,
+          `Unknown disclosure operation: ${operationId}`,
+        );
       }
       return disclosure;
     });
@@ -543,7 +547,10 @@ export class ProviderHubRepository {
     this.#transaction(() => {
       const current = this.getDisclosure(operationId);
       if (!current)
-        throw new Error(`Unknown disclosure operation: ${operationId}`);
+        throw new ClientError(
+          404,
+          `Unknown disclosure operation: ${operationId}`,
+        );
       if (current.status !== expected) {
         throw new Error(
           `Disclosure ${operationId} is ${current.status}, expected ${expected}`,

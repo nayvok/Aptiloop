@@ -1203,6 +1203,90 @@ describe("restart-safe interview v2", () => {
     expect(rejectedProviderOverride.status).toBe(400);
   });
 
+  it("records repeated follow-up failures without accumulating rows", async () => {
+    const mock = new TrackingInterviewer("mock", "mock-deterministic");
+    const { state, providers } = createState(mock);
+    const app = createTestApp(state);
+    const setup = {
+      operationId: "follow-up-failure-idempotency",
+      topics: ["closures"],
+      difficulty: "foundation",
+      questionCount: 2,
+    } as const;
+
+    const started = await request(app, "/api/interviews/v2", setup);
+    expect(started.status).toBe(201);
+    const { id } = (await started.json()) as { id: string };
+
+    providers.mock = new FailingInterviewer();
+    const answer = {
+      operationId: "follow-up-failure-answer",
+      answer: "A closure retains access to bindings from its lexical scope.",
+    } as const;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const failed = await request(
+        app,
+        `/api/interviews/v2/${id}/answers`,
+        answer,
+      );
+      expect(failed.status).toBe(503);
+    }
+
+    const failureRows = state.connection.sqlite
+      .prepare(
+        `SELECT count(*) AS count FROM agent_messages
+         WHERE conversation_id = (
+           SELECT id FROM agent_conversations WHERE role = 'interviewer'
+         ) AND status IN ('failed', 'cancelled')`,
+      )
+      .get() as { count: number };
+    expect(failureRows.count).toBe(1);
+
+    const completedRows = state.connection.sqlite
+      .prepare(
+        `SELECT count(*) AS count FROM agent_messages
+         WHERE conversation_id = (
+           SELECT id FROM agent_conversations WHERE role = 'interviewer'
+         ) AND status = 'completed'`,
+      )
+      .get() as { count: number };
+    expect(completedRows.count).toBe(2);
+
+    providers.mock = new MockAgentProvider();
+    const retried = await request(
+      app,
+      `/api/interviews/v2/${id}/answers`,
+      answer,
+    );
+    expect(retried.status).toBe(200);
+    const retriedBody = (await retried.json()) as {
+      transcript: Array<{ role: string; content: string }>;
+    };
+    expect(retriedBody.transcript.map((message) => message.role)).toEqual([
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    const finalFailureRows = state.connection.sqlite
+      .prepare(
+        `SELECT count(*) AS count FROM agent_messages
+         WHERE conversation_id = (
+           SELECT id FROM agent_conversations WHERE role = 'interviewer'
+         ) AND status IN ('failed', 'cancelled')`,
+      )
+      .get() as { count: number };
+    expect(finalFailureRows.count).toBe(1);
+    const finalRows = state.connection.sqlite
+      .prepare(
+        `SELECT count(*) AS count FROM agent_messages
+         WHERE conversation_id = (
+           SELECT id FROM agent_conversations WHERE role = 'interviewer'
+         ) AND status = 'completed'`,
+      )
+      .get() as { count: number };
+    expect(finalRows.count).toBe(3);
+  });
+
   it("keeps production no-AI setup write-free and retryable", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";

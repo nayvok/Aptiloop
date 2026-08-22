@@ -1,3 +1,5 @@
+import { ClientError } from "@aptiloop/shared";
+
 export const VERSIONED_EVIDENCE_TYPES = [
   "recall-attempt",
   "quiz-answer",
@@ -65,7 +67,7 @@ export function validateEvidenceIdentifier(
     value.trim().length === 0 ||
     value.length > MAX_IDENTIFIER_LENGTH
   ) {
-    throw new Error(`${label} must contain 1 to 200 characters`);
+    throw new ClientError(400, `${label} must contain 1 to 200 characters`);
   }
   return value;
 }
@@ -79,17 +81,22 @@ function normalizeJsonValue(
   if (typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
-      throw new Error(
+      throw new ClientError(
+        400,
         `Evidence payload contains a non-finite number at ${path}`,
       );
     }
     return value;
   }
   if (typeof value !== "object") {
-    throw new Error(`Evidence payload contains a non-JSON value at ${path}`);
+    throw new ClientError(
+      400,
+      `Evidence payload contains a non-JSON value at ${path}`,
+    );
   }
   if (ancestors.has(value)) {
-    throw new Error(
+    throw new ClientError(
+      400,
       `Evidence payload contains a circular reference at ${path}`,
     );
   }
@@ -102,7 +109,8 @@ function normalizeJsonValue(
     }
     const prototype = Object.getPrototypeOf(value) as object | null;
     if (prototype !== Object.prototype && prototype !== null) {
-      throw new Error(
+      throw new ClientError(
+        400,
         `Evidence payload contains a non-plain object at ${path}`,
       );
     }
@@ -126,7 +134,8 @@ export function serializeEvidencePayload(payload: unknown): {
   const value = normalizeJsonValue(payload, new Set(), "payload");
   const json = JSON.stringify(value);
   if (Buffer.byteLength(json, "utf8") > MAX_EVIDENCE_PAYLOAD_BYTES) {
-    throw new Error(
+    throw new ClientError(
+      400,
       `Evidence payload exceeds ${MAX_EVIDENCE_PAYLOAD_BYTES} bytes`,
     );
   }
@@ -150,7 +159,7 @@ export function validateEvidenceCorrectness(
 ): number | null {
   if (correctness === undefined || correctness === null) return null;
   if (!Number.isFinite(correctness) || correctness < 0 || correctness > 1) {
-    throw new Error("Evidence correctness must be between 0 and 1");
+    throw new ClientError(400, "Evidence correctness must be between 0 and 1");
   }
   return correctness;
 }

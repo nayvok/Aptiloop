@@ -11,6 +11,7 @@ import {
 } from "@aptiloop/database";
 import { getLatestPrompt } from "@aptiloop/prompt-library";
 import {
+  ClientError,
   InterviewDisclosureContinuationSchema,
   InterviewPendingDisclosureSchema,
   type AiDisclosure,
@@ -659,7 +660,13 @@ export function registerInterviewV2Routes(
             throw error;
           }
         } catch (error) {
-          recordProviderFailure(state, stored.setup.conversationId, error);
+          recordProviderFailure(
+            state,
+            stored.setup.conversationId,
+            interview.id,
+            body.operationId,
+            error,
+          );
           return providerFailureResponse(context, error);
         }
       }
@@ -1242,7 +1249,7 @@ function readInterviewRow(state: InterviewV2State, id: string): InterviewRow {
        FROM interview_sessions WHERE id = ?`,
     )
     .get(id) as InterviewRow | undefined;
-  if (!row) throw new Error(`Unknown interview: ${id}`);
+  if (!row) throw new ClientError(404, `Unknown interview: ${id}`);
   InterviewStatusSchema.parse(row.status);
   return row;
 }
@@ -1335,7 +1342,7 @@ function resolveInterviewSetup(
         snapshotBytesHash: string;
       }
     | undefined;
-  if (!row) throw new Error("Unknown linked Interview unit");
+  if (!row) throw new ClientError(404, "Unknown linked Interview unit");
   const snapshot = SessionSnapshotSchema.parse(JSON.parse(row.snapshotJson));
   const { contentHash, ...snapshotCore } = snapshot;
   const unit = snapshot.units.find(
@@ -1524,7 +1531,7 @@ function readConversation(state: InterviewV2State, id: string) {
        FROM agent_conversations WHERE id = ? AND role = 'interviewer'`,
     )
     .get(id) as { providerId: string; modelId: string } | undefined;
-  if (!row) throw new Error(`Unknown interview conversation: ${id}`);
+  if (!row) throw new ClientError(404, `Unknown interview conversation: ${id}`);
   return row;
 }
 
@@ -1608,6 +1615,8 @@ function cleanupFailedInterviewSetup(
 function recordProviderFailure(
   state: InterviewV2State,
   conversationId: string,
+  interviewId: string,
+  operationId: string,
   error: unknown,
 ): void {
   const status =
@@ -1622,6 +1631,7 @@ function recordProviderFailure(
         ? "Запрос интервьюера был отменён."
         : "Интервьюер временно недоступен.",
     status,
+    idempotencyKey: messageKey(interviewId, "follow-up-failure", operationId),
   });
 }
 
@@ -1701,7 +1711,7 @@ function deterministicId(prefix: string, operationId: string): string {
 
 function messageKey(
   interviewId: string,
-  kind: "opening" | "answer" | "follow-up",
+  kind: "opening" | "answer" | "follow-up" | "follow-up-failure",
   operationId: string,
 ): string {
   return `${interviewId}:${kind}:${createHash("sha256")

@@ -149,6 +149,8 @@ Database triggers enforce the historical mutation boundary independently of repo
 
 The normative requirement is complete arithmetic reconciliation, valid closed statuses, and zero target orphans; quarantined records never become approved target content merely because the accounting balances. Dated observed row counts, active-database hashes, and postflight results belong to the [M2 migration/recovery runbook](migration/m2-course-foundations-runbook.md) and [Core Alpha migration strategy](migration/core-alpha-migration-strategy.md), not this model contract.
 
+**Implemented baseline.** Count-column semantics differ between transform versions by contract. The single `m2-v1` run row is written by the Course foundations backfill itself and carries the authoritative per-row counts: `source_row_count` equals its provenance row count, and `mapped_count + quarantined_count + intentionally_unmapped_count` reconciles to it exactly. The `m2-v2`, `m2-v3`, and `m2-v4` run rows record schema-only correction, hardening, and quarantine-immutability transforms that perform no source-row mapping, so their count columns are zero by design; their authority is the recorded `source_database_digest`, `source_rows_digest`, and approved-backup binding, never the count columns. These zeros are a fixed ledger contract that existing migrated databases already satisfy; tooling must not backfill, reinterpret, or compare them against the `m2-v1` counts.
+
 ## Exact admitted schemas
 
 Ordinary startup and writable CLIs admit only the exact current `0000`–`0020` migration ledger/schema/trigger contract. Dated observed schema hashes are recorded with migration evidence rather than embedded as a timeless domain invariant.

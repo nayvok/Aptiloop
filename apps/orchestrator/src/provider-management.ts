@@ -17,6 +17,7 @@ import {
   type LearningRepository,
 } from "@aptiloop/database";
 import {
+  ClientError,
   ProviderLoginStatusSchema,
   type ProviderConnection,
   type ProviderLoginEvent,
@@ -210,20 +211,25 @@ export class ProviderManagementService {
     const input = CreateProviderConnectionSchema.parse(rawInput);
     const entry = getPiProviderCatalogEntry(input.catalogId);
     if (entry.authKind === "api-key" && !input.apiKey) {
-      throw new Error(`${entry.displayName} requires an API key`);
+      throw new ClientError(400, `${entry.displayName} requires an API key`);
     }
     if (entry.authKind !== "api-key" && input.apiKey) {
-      throw new Error(`${entry.displayName} does not accept an API key`);
+      throw new ClientError(
+        400,
+        `${entry.displayName} does not accept an API key`,
+      );
     }
     const endpointKind =
       "endpointKind" in entry ? entry.endpointKind : undefined;
     if (endpointKind && input.modelIds.length === 0) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "An OpenAI-compatible provider requires at least one exact model id",
       );
     }
     if (!endpointKind && (input.baseUrl || input.modelIds.length > 0)) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Built-in providers own their endpoint and model catalog",
       );
     }
@@ -318,7 +324,8 @@ export class ProviderManagementService {
       const config = this.#requiredConfig(connectionId);
       const entry = getPiProviderCatalogEntry(config.catalogId);
       if (entry.authKind !== "api-key") {
-        throw new Error(
+        throw new ClientError(
+          400,
           `${entry.displayName} does not use API-key authentication`,
         );
       }
@@ -341,7 +348,8 @@ export class ProviderManagementService {
       const config = this.#requiredConfig(connectionId);
       const entry = getPiProviderCatalogEntry(config.catalogId);
       if (entry.authKind !== "local") {
-        throw new Error(
+        throw new ClientError(
+          400,
           `${entry.displayName} requires credentials to reconnect`,
         );
       }
@@ -382,7 +390,7 @@ export class ProviderManagementService {
     await this.ensureLoaded();
     const parsedConnectionId = StableConnectionIdSchema.parse(connectionId);
     if (this.#retiringConnectionIds.has(parsedConnectionId)) {
-      throw new Error("Provider connection is being removed");
+      throw new ClientError(400, "Provider connection is being removed");
     }
     this.#retiringConnectionIds.add(parsedConnectionId);
     try {
@@ -451,7 +459,8 @@ export class ProviderManagementService {
       const config = this.#requiredConfig(connectionId);
       const entry = getPiProviderCatalogEntry(config.catalogId);
       if (entry.authKind !== "subscription") {
-        throw new Error(
+        throw new ClientError(
+          400,
           `${entry.displayName} does not use subscription sign-in`,
         );
       }
@@ -466,7 +475,8 @@ export class ProviderManagementService {
             candidate.status === "running",
         )
       ) {
-        throw new Error(
+        throw new ClientError(
+          400,
           "A sign-in operation is already running for this connection",
         );
       }
@@ -535,7 +545,8 @@ export class ProviderManagementService {
   loginStatus(operationId: string): ProviderLoginStatus {
     this.#pruneLoginOperations();
     const operation = this.#loginOperations.get(operationId);
-    if (!operation) throw new Error("Unknown or expired sign-in operation");
+    if (!operation)
+      throw new ClientError(404, "Unknown or expired sign-in operation");
     return ProviderLoginStatusSchema.parse({
       operationId: operation.operationId,
       connectionId: operation.connectionId,
@@ -549,11 +560,11 @@ export class ProviderManagementService {
   answerLogin(operationId: string, promptId: string, answer: string): void {
     const operation = this.#loginOperations.get(operationId);
     if (!operation || operation.status !== "running") {
-      throw new Error("Sign-in operation is not active");
+      throw new ClientError(400, "Sign-in operation is not active");
     }
     const prompt = operation.prompt;
     if (!prompt || prompt.promptId !== promptId) {
-      throw new Error("Sign-in prompt is no longer active");
+      throw new ClientError(400, "Sign-in prompt is no longer active");
     }
     const normalizedAnswer = normalizeProviderLoginAnswer(prompt.view, answer);
     operation.prompt = null;
@@ -694,7 +705,8 @@ export class ProviderManagementService {
       this.#blockedConnectionIdentityIds.has(config.connectionId) ||
       !this.#hasExpectedConnectionIdentity(config, connection)
     ) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Managed provider connection metadata does not match the reviewed catalog",
       );
     }
@@ -702,13 +714,14 @@ export class ProviderManagementService {
 
   #assertConnectionWritable(connectionId: string): void {
     if (this.#shuttingDown) {
-      throw new Error("Provider management is shutting down");
+      throw new ClientError(400, "Provider management is shutting down");
     }
     if (this.#retiringConnectionIds.has(connectionId)) {
-      throw new Error("Provider connection is being removed");
+      throw new ClientError(400, "Provider connection is being removed");
     }
     if (this.#blockedConnectionIdentityIds.has(connectionId)) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Managed provider connection metadata does not match the reviewed catalog",
       );
     }
@@ -782,7 +795,8 @@ export class ProviderManagementService {
   #requiredConfig(connectionId: string): ManagedProviderConnection {
     const parsedId = StableConnectionIdSchema.parse(connectionId);
     const config = this.#configs.get(parsedId);
-    if (!config) throw new Error("Managed provider connection was not found");
+    if (!config)
+      throw new ClientError(400, "Managed provider connection was not found");
     return config;
   }
 
@@ -790,7 +804,8 @@ export class ProviderManagementService {
     const connection = this.#hubRepository
       .listConnections()
       .find((candidate) => candidate.connectionId === connectionId);
-    if (!connection) throw new Error("Provider connection was not found");
+    if (!connection)
+      throw new ClientError(400, "Provider connection was not found");
     return connection;
   }
 
@@ -890,13 +905,14 @@ function hasValidPersistedProviderConfig(
 function uniqueModelIds(modelIds: readonly string[]): string[] {
   const result = [...new Set(modelIds.map((modelId) => modelId.trim()))];
   if (result.length !== modelIds.length) {
-    throw new Error("Local model ids must be unique");
+    throw new ClientError(400, "Local model ids must be unique");
   }
   return result;
 }
 
 function validateLoopbackOpenAiBaseUrl(value: string | undefined): string {
-  if (!value) throw new Error("A local provider requires a loopback base URL");
+  if (!value)
+    throw new ClientError(400, "A local provider requires a loopback base URL");
   const url = new URL(value);
   const hostname = url.hostname.toLowerCase();
   if (
@@ -908,7 +924,8 @@ function validateLoopbackOpenAiBaseUrl(value: string | undefined): string {
     url.hash ||
     !["/v1", "/v1/"].includes(url.pathname)
   ) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "Local model endpoints must be loopback HTTP URLs ending in /v1",
     );
   }
@@ -918,7 +935,8 @@ function validateLoopbackOpenAiBaseUrl(value: string | undefined): string {
 
 function validateExternalOpenAiBaseUrl(value: string | undefined): string {
   if (!value) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "A custom OpenAI-compatible provider requires an HTTPS base URL",
     );
   }
@@ -949,7 +967,8 @@ function validateExternalOpenAiBaseUrl(value: string | undefined): string {
     deniedSuffixes.some((suffix) => hostname.endsWith(suffix)) ||
     !pathname.endsWith("/v1")
   ) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "Custom provider endpoints must be public HTTPS hostnames on port 443 with a path ending in /v1",
     );
   }
@@ -1021,14 +1040,15 @@ export function normalizeProviderLoginAnswer(
   const normalizedAnswer = answer.trim();
   if (prompt.kind === "github-enterprise-domain") {
     if (normalizedAnswer.length > 0) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "GitHub Enterprise sign-in is not supported by the current endpoint policy",
       );
     }
     return "";
   }
   if (!normalizedAnswer) {
-    throw new Error("Sign-in prompt requires an answer");
+    throw new ClientError(400, "Sign-in prompt requires an answer");
   }
   if (
     prompt.type === "select" &&
@@ -1036,7 +1056,10 @@ export function normalizeProviderLoginAnswer(
       normalizedAnswer as (typeof prompt.options)[number],
     )
   ) {
-    throw new Error("Sign-in prompt answer is not an allowed option");
+    throw new ClientError(
+      400,
+      "Sign-in prompt answer is not an allowed option",
+    );
   }
   return normalizedAnswer;
 }

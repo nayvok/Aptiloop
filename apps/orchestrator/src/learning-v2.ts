@@ -23,7 +23,6 @@ import {
   resolveExplicitUnitDefinitions,
   selectLessonNextAction,
   transitionUnitProgression,
-  LearningKernelConflictError,
   type LearningKernelEvidenceBody,
   type LearningKernelFact,
   type LearningKernelFactProvenance,
@@ -39,6 +38,7 @@ import {
   type UnitProgressionEvent,
 } from "@aptiloop/learning-core";
 import {
+  ClientError,
   CourseEntityIdSchema,
   LearningKnowledgeNodeIdSchema,
   LearningMistakesResponseSchema,
@@ -359,7 +359,8 @@ export function registerVersionedLearningRoutes(
       );
       assertReviewExecutionAvailable(execution, at);
       if (body.executionContextHash !== execution.executionContextHash) {
-        throw new LearningKernelConflictError(
+        throw new ClientError(
+          400,
           "Review execution context is stale or mismatched",
         );
       }
@@ -613,7 +614,7 @@ export function registerVersionedLearningRoutes(
       const detail = await requireVerifiedSessionDetail(state, sessionId);
       const unit = detail.snapshot.units.find((item) => item.id === unitId);
       if (!unit || unit.type !== "teacher-dialogue") {
-        throw new Error("Unknown teacher-dialogue unit");
+        throw new ClientError(404, "Unknown teacher-dialogue unit");
       }
       const messages = state.connection.sqlite
         .prepare(
@@ -657,7 +658,7 @@ export function registerVersionedLearningRoutes(
         if (
           !unit.questions.some((question) => question.id === body.questionId)
         ) {
-          throw new Error("Unknown recall question");
+          throw new ClientError(404, "Unknown recall question");
         }
         const recorded = state.repository.recordVersionedUnitEvidence({
           sessionId,
@@ -688,7 +689,8 @@ export function registerVersionedLearningRoutes(
         });
         const firstByQuestion = firstRecallEvidenceByQuestion(unit, attempts);
         const first = firstByQuestion.get(body.questionId);
-        if (!first) throw new Error("Persisted recall attempt disappeared");
+        if (!first)
+          throw new ClientError(400, "Persisted recall attempt disappeared");
         const answers = unit.questions.flatMap((question) => {
           const evidence = firstByQuestion.get(question.id);
           return evidence
@@ -754,13 +756,13 @@ export function registerVersionedLearningRoutes(
           const question = privateUnit.questions.find(
             (candidate) => candidate.id === answer.questionId,
           );
-          if (!question) throw new Error("Unknown quiz question");
+          if (!question) throw new ClientError(404, "Unknown quiz question");
           if (
             !question.options.some(
               (option) => option.id === answer.selectedOptionId,
             )
           ) {
-            throw new Error("Unknown public quiz option");
+            throw new ClientError(404, "Unknown public quiz option");
           }
           const correct = question.correctOptionIds.includes(
             answer.selectedOptionId,
@@ -990,7 +992,8 @@ export function registerVersionedLearningRoutes(
           payload_json: string;
         }>;
         if (existingForUnit.length > 1) {
-          throw new Error(
+          throw new ClientError(
+            400,
             "Summary evidence identity is ambiguous for this unit",
           );
         }
@@ -1009,7 +1012,8 @@ export function registerVersionedLearningRoutes(
           existingForUnit[0] &&
           existingByOperation.id !== existingForUnit[0].id
         ) {
-          throw new Error(
+          throw new ClientError(
+            400,
             "Summary evidence identity conflicts with operation ID",
           );
         }
@@ -1080,7 +1084,10 @@ export function registerVersionedLearningRoutes(
       const unitId = context.req.param("unitId");
       const detail = state.repository.getVersionedSession(sessionId);
       if (detail.session.status !== "active") {
-        throw new Error("Only an active session can change unit progress");
+        throw new ClientError(
+          400,
+          "Only an active session can change unit progress",
+        );
       }
       const unit = detail.snapshot.units.find(
         (candidate) => candidate.id === unitId,
@@ -1088,16 +1095,20 @@ export function registerVersionedLearningRoutes(
       const current = detail.unitProgress.find(
         (candidate) => candidate.unitId === unitId,
       );
-      if (!unit || !current) throw new Error("Unknown session unit");
+      if (!unit || !current) throw new ClientError(404, "Unknown session unit");
       if (body.payload && body.payload.type !== unit.type) {
-        throw new Error("Unit progress payload type must match its unit type");
+        throw new ClientError(
+          400,
+          "Unit progress payload type must match its unit type",
+        );
       }
       const payload = isServerOwnedEvidenceUnit(unit.type)
         ? current.payload
         : unit.type === "summary" && body.status === "completed"
           ? body.payload
           : (body.payload ?? current.payload);
-      if (!payload) throw new Error("Unit progress payload is required");
+      if (!payload)
+        throw new ClientError(400, "Unit progress payload is required");
 
       if (body.status === current.status) {
         if (current.status === "completed") {
@@ -1122,7 +1133,7 @@ export function registerVersionedLearningRoutes(
       }
 
       const event = transitionEvent(current.status, body.status, unitId);
-      if (!event) throw new Error("Unit transition is not allowed");
+      if (!event) throw new ClientError(400, "Unit transition is not allowed");
       if (event.type === "complete") {
         assertCompletionCriteria(
           state.connection,
@@ -1145,7 +1156,10 @@ export function registerVersionedLearningRoutes(
         event,
       );
       if (!transition.valid) {
-        throw new Error(`Unit transition rejected: ${transition.reason}`);
+        throw new ClientError(
+          400,
+          `Unit transition rejected: ${transition.reason}`,
+        );
       }
 
       const lessonComplete = isLessonComplete(definitions, transition.progress);
@@ -1633,13 +1647,15 @@ async function requireReviewExecution(
     for (const review of projection.reviewItems) {
       if (reviewExecutionId(scope, review.id) !== executionId) continue;
       const source = readReviewSource(state.connection, scope, review);
-      if (!source) throw new Error("Review source activity is unavailable");
+      if (!source)
+        throw new ClientError(400, "Review source activity is unavailable");
       const verified = readVerifiedReviewSnapshot(
         state,
         scope,
         source.activityId,
       );
-      if (!verified) throw new Error("Review activity snapshot is unavailable");
+      if (!verified)
+        throw new ClientError(400, "Review activity snapshot is unavailable");
       matches.push({
         scope,
         review,
@@ -1658,11 +1674,10 @@ async function requireReviewExecution(
     }
   }
   if (matches.length !== 1) {
-    throw new Error(
-      matches.length === 0
-        ? "Unknown Review execution"
-        : "Review execution identity is ambiguous",
-    );
+    if (matches.length === 0) {
+      throw new ClientError(404, "Unknown Review execution");
+    }
+    throw new ClientError(400, "Review execution identity is ambiguous");
   }
   return matches[0]!;
 }
@@ -1672,7 +1687,7 @@ function assertReviewExecutionAvailable(
   asOf: string,
 ): void {
   if (!isLearningKernelReviewDue(execution.review, asOf)) {
-    throw new Error("Review execution is no longer pending and due");
+    throw new ClientError(400, "Review execution is no longer pending and due");
   }
 }
 
@@ -1771,7 +1786,7 @@ async function readExistingReviewSubmission(
   }
   const selected = await readSelectedKernelProjections(state, kernelRepository);
   if (!selected.some((record) => sameKernelScope(record.scope, scope))) {
-    throw new Error("Unknown Review execution");
+    throw new ClientError(404, "Unknown Review execution");
   }
 
   const facts = kernelRepository.readFacts(scope);
@@ -1800,7 +1815,8 @@ async function readExistingReviewSubmission(
     scope,
     submit.body.activityId,
   );
-  if (!verified) throw new Error("Review activity snapshot is unavailable");
+  if (!verified)
+    throw new ClientError(400, "Review activity snapshot is unavailable");
 
   const expectedSubmit: LearningKernelFact = {
     schemaVersion: 1,
@@ -1899,7 +1915,8 @@ function buildReviewSubmissionResponse(
     completed.completionEvidenceId !== submitFactId ||
     !nextReview
   ) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "Review submission did not produce a completed cycle and successor",
     );
   }
@@ -1923,8 +1940,9 @@ function sameKernelScope(
   );
 }
 
-function reviewSubmissionConflict(): LearningKernelConflictError {
-  return new LearningKernelConflictError(
+function reviewSubmissionConflict(): ClientError {
+  return new ClientError(
+    400,
     "Learning Kernel operation ID is already bound to different input",
   );
 }
@@ -2026,7 +2044,7 @@ function readReviewSource(
     learningKernelSha256(fact) !== row.fact_hash ||
     Date.parse(fact.occurredAt) !== row.occurred_at
   ) {
-    throw new Error("Stored Learning Kernel fact is inconsistent");
+    throw new ClientError(400, "Stored Learning Kernel fact is inconsistent");
   }
   const activityId =
     fact.body.type === "correction"
@@ -2128,16 +2146,17 @@ async function requireOwnedCourseRevision(
 ): Promise<CourseFoundationRevision> {
   const target =
     await state.courseFoundationRepository.getCourseRevision(revisionId);
-  if (!target) throw new Error(`Unknown Course revision: ${revisionId}`);
+  if (!target)
+    throw new ClientError(404, `Unknown Course revision: ${revisionId}`);
   if (
     target.course.id !== courseId ||
     target.revision.id !== revisionId ||
     target.revision.courseId !== courseId
   ) {
-    throw new Error("Course and revision IDs do not match");
+    throw new ClientError(400, "Course and revision IDs do not match");
   }
   if (publishedOnly && target.revision.status !== "published") {
-    throw new Error("Course path requires a published revision");
+    throw new ClientError(400, "Course path requires a published revision");
   }
   assertFoundationRevisionOwnership(target);
   return target;
@@ -2148,7 +2167,7 @@ function assertFoundationRevisionOwnership(
 ): void {
   const lessonIds = new Set(target.lessons.map((lesson) => lesson.id));
   if (lessonIds.size !== target.lessons.length) {
-    throw new Error("Course revision contains duplicate lesson IDs");
+    throw new ClientError(400, "Course revision contains duplicate lesson IDs");
   }
   const revisionActivityIds = new Set<string>();
   for (const lesson of target.lessons) {
@@ -2159,17 +2178,26 @@ function assertFoundationRevisionOwnership(
         (prerequisiteId) => !lessonIds.has(prerequisiteId),
       )
     ) {
-      throw new Error("Course revision contains an invalid lesson scope");
+      throw new ClientError(
+        400,
+        "Course revision contains an invalid lesson scope",
+      );
     }
     const lessonActivityIds = new Set(
       lesson.activities.map((activity) => activity.id),
     );
     if (lessonActivityIds.size !== lesson.activities.length) {
-      throw new Error("Course lesson contains duplicate activity IDs");
+      throw new ClientError(
+        400,
+        "Course lesson contains duplicate activity IDs",
+      );
     }
     for (const entryActivityId of lesson.entryActivityIds) {
       if (!lessonActivityIds.has(entryActivityId)) {
-        throw new Error("Course lesson entry activity is out of scope");
+        throw new ClientError(
+          400,
+          "Course lesson entry activity is out of scope",
+        );
       }
     }
     for (const activity of lesson.activities) {
@@ -2179,7 +2207,10 @@ function assertFoundationRevisionOwnership(
         activity.lessonId !== lesson.id ||
         revisionActivityIds.has(activity.id)
       ) {
-        throw new Error("Course revision contains an invalid activity scope");
+        throw new ClientError(
+          400,
+          "Course revision contains an invalid activity scope",
+        );
       }
       revisionActivityIds.add(activity.id);
       if (
@@ -2187,7 +2218,10 @@ function assertFoundationRevisionOwnership(
           (prerequisiteId) => !lessonActivityIds.has(prerequisiteId),
         )
       ) {
-        throw new Error("Course activity prerequisite is out of lesson scope");
+        throw new ClientError(
+          400,
+          "Course activity prerequisite is out of lesson scope",
+        );
       }
     }
   }
@@ -2211,7 +2245,8 @@ function requireTargetLesson(
   const lesson = target.lessons.find(
     (candidate) => candidate.id === expectedLesson.id,
   );
-  if (!lesson) throw new Error("Course revision does not own the lesson");
+  if (!lesson)
+    throw new ClientError(400, "Course revision does not own the lesson");
   const expectedDefinitions = resolveExplicitUnitDefinitions(
     expectedLesson.units.map((activity) => ({
       id: activity.id,
@@ -2260,7 +2295,10 @@ function requireTargetLesson(
       );
     })
   ) {
-    throw new Error("Course lesson graph does not match the source lesson");
+    throw new ClientError(
+      400,
+      "Course lesson graph does not match the source lesson",
+    );
   }
   return lesson;
 }
@@ -2282,7 +2320,7 @@ async function requireCourseTargetForLesson(
        WHERE lesson.id = ? AND revision.status = 'published'`,
     )
     .get(lessonId) as { version_id: string; curriculum_id: string } | undefined;
-  if (!source) throw new Error(`Unknown Course lesson: ${lessonId}`);
+  if (!source) throw new ClientError(404, `Unknown Course lesson: ${lessonId}`);
   const ownedTarget = await requireOwnedCourseRevision(
     state,
     source.curriculum_id,
@@ -2351,7 +2389,10 @@ async function readCompatibilityCourseTarget(
       selected.revisionId,
     )
   ) {
-    throw new Error(`Unknown Course revision: ${selected.revisionId}`);
+    throw new ClientError(
+      404,
+      `Unknown Course revision: ${selected.revisionId}`,
+    );
   }
   return selected;
 }
@@ -2385,13 +2426,13 @@ async function readLearnerPath(
     target.revision.status !== "published" &&
     (!pinnedToCurrentSession || target.revision.status !== "archived")
   ) {
-    throw new Error("Course path requires a published revision");
+    throw new ClientError(400, "Course path requires a published revision");
   }
   if (
     target === null &&
     !hasQuarantinedRevisionCompatibility(state, courseId, revisionId)
   ) {
-    throw new Error(`Unknown Course revision: ${revisionId}`);
+    throw new ClientError(404, `Unknown Course revision: ${revisionId}`);
   }
   const sourceCourse = state.connection.sqlite
     .prepare(
@@ -2410,7 +2451,10 @@ async function readLearnerPath(
       }
     | undefined;
   if (!sourceCourse) {
-    throw new Error("Course revision has no compatible published source");
+    throw new ClientError(
+      400,
+      "Course revision has no compatible published source",
+    );
   }
 
   const authoring = new CurriculumAuthoringRepository(state.connection);
@@ -2424,7 +2468,10 @@ async function readLearnerPath(
       (graph.version.revision !== target.revision.revisionNumber ||
         graph.version.contentHash !== target.revision.contentHash))
   ) {
-    throw new Error("Course revision does not match its compatible source");
+    throw new ClientError(
+      400,
+      "Course revision does not match its compatible source",
+    );
   }
   const sourceLessons = graph.weeks.flatMap((week) => week.days);
   if (
@@ -2434,7 +2481,10 @@ async function readLearnerPath(
       sourceLessons.map((lesson) => lesson.id),
     )
   ) {
-    throw new Error("Course lessons do not match the compatible source");
+    throw new ClientError(
+      400,
+      "Course lessons do not match the compatible source",
+    );
   }
   if (target !== null) {
     const lessonIdByStableId = new Map(
@@ -2626,7 +2676,7 @@ function requireCurrentPathKernelState(
   currentStep: string | null;
 } {
   if (detail.session.status !== "active") {
-    throw new Error("Current Course path session is not active");
+    throw new ClientError(400, "Current Course path session is not active");
   }
   const scope = kernelRepository.resolveSessionScope(detail.session.id);
   const projection = kernelRepository.reproject(scope, observedAt);
@@ -2637,7 +2687,10 @@ function requireCurrentPathKernelState(
     (unit) => unit.stableId === detail.session.currentStep,
   );
   if (!persistedStep) {
-    throw new Error("Current Course path step is outside its session snapshot");
+    throw new ClientError(
+      400,
+      "Current Course path step is outside its session snapshot",
+    );
   }
   const kernelProgressIds = new Set(
     projection.progress.map((item) => item.unitId),
@@ -2647,7 +2700,8 @@ function requireCurrentPathKernelState(
     kernelProgressIds.size !== snapshotById.size ||
     projection.progress.some((item) => !snapshotById.has(item.unitId))
   ) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "Learning Kernel progress does not match the session snapshot",
     );
   }
@@ -2656,7 +2710,8 @@ function requireCurrentPathKernelState(
   }
   const kernelStep = snapshotById.get(projection.nextAction.activityId);
   if (!kernelStep || kernelStep.stableId !== detail.session.currentStep) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "Persisted current step conflicts with the Learning Kernel next action",
     );
   }
@@ -2666,7 +2721,8 @@ function requireCurrentPathKernelState(
   const expectedStatus =
     projection.nextAction.reasonCode === "resume" ? "in_progress" : "ready";
   if (kernelProgress?.status !== expectedStatus) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "Learning Kernel next action has an invalid progress state",
     );
   }
@@ -2705,7 +2761,7 @@ async function requireSessionCourseContext(
       }
     | undefined;
   if (!sourceSnapshot) {
-    throw new Error("Learning session source snapshot is missing");
+    throw new ClientError(400, "Learning session source snapshot is missing");
   }
   const compatibilityContext =
     persistedContext === null &&
@@ -2729,7 +2785,7 @@ async function requireSessionCourseContext(
       : null;
   const context = persistedContext ?? compatibilityContext;
   if (context === null) {
-    throw new Error("Learning session has no Course context");
+    throw new ClientError(400, "Learning session has no Course context");
   }
   const storedSnapshot = SessionSnapshotSchema.parse(
     JSON.parse(sourceSnapshot.snapshot_json),
@@ -2750,7 +2806,8 @@ async function requireSessionCourseContext(
     detail.snapshot.day.id !== context.lessonId ||
     detail.session.curriculumDayV2Id !== context.lessonId
   ) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "Learning session Course context does not match its snapshot",
     );
   }
@@ -2794,7 +2851,8 @@ async function requireSessionCourseContext(
         );
       })
     ) {
-      throw new Error(
+      throw new ClientError(
+        400,
         "Learning session activities do not match its Course lesson",
       );
     }
@@ -2946,7 +3004,7 @@ function requireCurrentSummaryTarget(
   unitId: string,
 ): CurriculumUnit {
   if (detail.session.status !== "active") {
-    throw new Error("Summary requires an active learning session");
+    throw new ClientError(400, "Summary requires an active learning session");
   }
   const unit = detail.snapshot.units.find(
     (candidate) => candidate.id === unitId,
@@ -2954,15 +3012,15 @@ function requireCurrentSummaryTarget(
   const progress = detail.unitProgress.find(
     (candidate) => candidate.unitId === unitId,
   );
-  if (!unit || !progress) throw new Error("Unknown session unit");
+  if (!unit || !progress) throw new ClientError(404, "Unknown session unit");
   if (unit.type !== "summary") {
-    throw new Error("This endpoint requires a summary unit");
+    throw new ClientError(400, "This endpoint requires a summary unit");
   }
   if (
     progress.status !== "in_progress" ||
     detail.session.currentStep !== unit.stableId
   ) {
-    throw new Error("Summary requires the current in-progress unit");
+    throw new ClientError(400, "Summary requires the current in-progress unit");
   }
   return unit;
 }
@@ -2983,9 +3041,9 @@ function readPersistedSummary(
   const progress = detail.unitProgress.find(
     (candidate) => candidate.unitId === unitId,
   );
-  if (!unit || !progress) throw new Error("Unknown session unit");
+  if (!unit || !progress) throw new ClientError(404, "Unknown session unit");
   if (unit.type !== "summary" || progress.payload.type !== "summary") {
-    throw new Error("This endpoint requires a summary unit");
+    throw new ClientError(400, "This endpoint requires a summary unit");
   }
   if (
     progress.status !== "completed" &&
@@ -2995,10 +3053,13 @@ function readPersistedSummary(
       detail.session.currentStep === unit.stableId
     )
   ) {
-    throw new Error("Persisted summary is not available for this unit state");
+    throw new ClientError(
+      400,
+      "Persisted summary is not available for this unit state",
+    );
   }
   if (!progress.payload.summaryId) {
-    throw new Error("Summary not found for this session unit");
+    throw new ClientError(404, "Summary not found for this session unit");
   }
   const evidence = connection.sqlite
     .prepare(
@@ -3009,7 +3070,10 @@ function readPersistedSummary(
     .get(progress.payload.summaryId, detail.session.id, unitId) as
     { id: string; payload_json: string; created_at: number } | undefined;
   if (!evidence) {
-    throw new Error("Summary evidence not found for this session unit");
+    throw new ClientError(
+      404,
+      "Summary evidence not found for this session unit",
+    );
   }
   const persisted = parsePersistedSummary(evidence.payload_json);
   const authority =
@@ -3055,7 +3119,10 @@ function parsePersistedSummary(payloadJson: string): {
   }
   const legacy = legacyDaySummarySchema.safeParse(payload.summary);
   if (!legacy.success) {
-    throw new Error("Persisted summary payload does not match a known shape");
+    throw new ClientError(
+      400,
+      "Persisted summary payload does not match a known shape",
+    );
   }
   return {
     summary: migrateLegacyDaySummary(legacy.data),
@@ -3193,7 +3260,10 @@ function projectCanonicalSummaryAuthority(
     scope.revisionId !== detail.snapshot.curriculumVersionId ||
     scope.sessionId !== detail.session.id
   ) {
-    throw new Error("Summary Kernel authority does not match session scope");
+    throw new ClientError(
+      400,
+      "Summary Kernel authority does not match session scope",
+    );
   }
   const sourceFactIds =
     acceptedBefore === undefined
@@ -3211,7 +3281,10 @@ function projectCanonicalSummaryAuthority(
           ),
         ];
   if (sourceFactIds.length === 0) {
-    throw new Error("Summary Kernel authority has an empty fact frontier");
+    throw new ClientError(
+      400,
+      "Summary Kernel authority has an empty fact frontier",
+    );
   }
   const projection = kernelRepository.reprojectFrontier(
     scope,
@@ -3237,7 +3310,11 @@ function readSummaryEvidenceCreatedAt(
        WHERE id = ? AND evidence_type = 'summary'`,
     )
     .get(evidenceId) as { created_at: number } | undefined;
-  if (!row) throw new Error("Summary evidence acceptance boundary is missing");
+  if (!row)
+    throw new ClientError(
+      400,
+      "Summary evidence acceptance boundary is missing",
+    );
   return row.created_at;
 }
 
@@ -3253,7 +3330,10 @@ function verifyPersistedSummaryAuthority(
     authority.scope.branchId !== scope.branchId ||
     authority.scope.sessionId !== scope.sessionId
   ) {
-    throw new Error("Persisted Summary authority belongs to another scope");
+    throw new ClientError(
+      400,
+      "Persisted Summary authority belongs to another scope",
+    );
   }
   const projection = kernelRepository.reprojectFrontier(
     scope,
@@ -3269,7 +3349,8 @@ function verifyPersistedSummaryAuthority(
       authority.sourceFactIds,
     )
   ) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "Persisted Summary authority diverges from the Learning Kernel",
     );
   }
@@ -3289,7 +3370,10 @@ function resolveSummaryKnowledgeNodeIds(
     ),
   ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   if (knowledgeNodeIds.length === 0) {
-    throw new Error("Summary requires exact Course knowledge-node scope");
+    throw new ClientError(
+      400,
+      "Summary requires exact Course knowledge-node scope",
+    );
   }
   return knowledgeNodeIds;
 }
@@ -3314,7 +3398,10 @@ function derivePersistedDaySummary(
   );
   const quiz = detail.unitProgress.find((item) => item.payload.type === "quiz");
   if (quiz?.payload.type !== "quiz" || quiz.payload.score === null) {
-    throw new Error("Summary requires persisted quiz progress with a score");
+    throw new ClientError(
+      400,
+      "Summary requires persisted quiz progress with a score",
+    );
   }
   const correctQuestionIds = new Set(quiz.payload.correctQuestionIds);
   const incorrectQuestionIds = quiz.payload.attemptedQuestionIds.filter(
@@ -3362,7 +3449,10 @@ function assertPersistedSummaryEvidence(
   payload: UnitProgressPayload,
 ): void {
   if (payload.type !== "summary" || !payload.summaryId) {
-    throw new Error("Summary completion requires persisted summary evidence");
+    throw new ClientError(
+      400,
+      "Summary completion requires persisted summary evidence",
+    );
   }
   const evidence = connection.sqlite
     .prepare(
@@ -3372,7 +3462,10 @@ function assertPersistedSummaryEvidence(
     )
     .get(payload.summaryId, sessionId, unitId);
   if (!evidence) {
-    throw new Error("Summary ID does not match persisted session evidence");
+    throw new ClientError(
+      400,
+      "Summary ID does not match persisted session evidence",
+    );
   }
 }
 
@@ -3382,7 +3475,7 @@ function requireEvidenceTarget(
   expectedType: "recall" | "quiz" | "code-reading",
 ): CurriculumUnit {
   if (detail.session.status !== "active") {
-    throw new Error("New unit evidence requires an active session");
+    throw new ClientError(400, "New unit evidence requires an active session");
   }
   const unit = detail.snapshot.units.find(
     (candidate) => candidate.id === unitId,
@@ -3390,15 +3483,21 @@ function requireEvidenceTarget(
   const progress = detail.unitProgress.find(
     (candidate) => candidate.unitId === unitId,
   );
-  if (!unit || !progress) throw new Error("Unknown session unit");
+  if (!unit || !progress) throw new ClientError(404, "Unknown session unit");
   if (unit.type !== expectedType) {
-    throw new Error(`This evidence endpoint requires a ${expectedType} unit`);
+    throw new ClientError(
+      400,
+      `This evidence endpoint requires a ${expectedType} unit`,
+    );
   }
   if (
     progress.status !== "in_progress" ||
     detail.session.currentStep !== unit.stableId
   ) {
-    throw new Error("New unit evidence requires the current in-progress unit");
+    throw new ClientError(
+      400,
+      "New unit evidence requires the current in-progress unit",
+    );
   }
   return unit;
 }
@@ -3410,7 +3509,7 @@ function readPrivateSnapshot(
   const row = connection.sqlite
     .prepare("SELECT snapshot_json FROM session_snapshots WHERE session_id = ?")
     .get(sessionId) as { snapshot_json: string } | undefined;
-  if (!row) throw new Error("Unknown versioned session snapshot");
+  if (!row) throw new ClientError(404, "Unknown versioned session snapshot");
   return SessionSnapshotSchema.parse(JSON.parse(row.snapshot_json));
 }
 
@@ -3420,9 +3519,9 @@ function requirePrivateUnit(
   expectedType: CurriculumUnit["type"],
 ): CurriculumUnit {
   const unit = snapshot.units.find((candidate) => candidate.id === unitId);
-  if (!unit) throw new Error("Unknown private snapshot unit");
+  if (!unit) throw new ClientError(404, "Unknown private snapshot unit");
   if (unit.type !== expectedType) {
-    throw new Error(`Snapshot unit type must be ${expectedType}`);
+    throw new ClientError(400, `Snapshot unit type must be ${expectedType}`);
   }
   return unit;
 }
@@ -3438,7 +3537,7 @@ function quizAnswerOperationId(
 
 function evidenceString(payload: unknown, key: string): string {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new Error("Persisted evidence payload must be an object");
+    throw new ClientError(400, "Persisted evidence payload must be an object");
   }
   const value = (payload as Record<string, unknown>)[key];
   if (typeof value !== "string") {
@@ -3510,7 +3609,8 @@ async function assertDayCanStart(
     target.revisionId,
   );
   if (prerequisiteStableIds.some((stableId) => !completed.has(stableId))) {
-    throw new Error(
+    throw new ClientError(
+      400,
       "Learning day is locked until its declared prerequisites are completed",
     );
   }
@@ -3545,7 +3645,8 @@ function persistTransition(
       const previous = detail.unitProgress.find(
         (item) => item.unitId === next.unitId,
       );
-      if (!previous) throw new Error("Session unit progress is incomplete");
+      if (!previous)
+        throw new ClientError(400, "Session unit progress is incomplete");
       if (previous.status === next.status) continue;
       const progressPayload =
         next.unitId === changedUnitId ? changedPayload : previous.payload;
@@ -3563,7 +3664,10 @@ function persistTransition(
         next.unitId,
       );
       if (result.changes !== 1) {
-        throw new Error("Versioned unit transition could not be persisted");
+        throw new ClientError(
+          400,
+          "Versioned unit transition could not be persisted",
+        );
       }
     }
 
@@ -3575,7 +3679,7 @@ function persistTransition(
         (unit) => unit.id === currentProgress?.unitId,
       );
       if (!currentUnit) {
-        throw new Error("Current unit is missing from the snapshot");
+        throw new ClientError(400, "Current unit is missing from the snapshot");
       }
       const result = connection.sqlite
         .prepare(
@@ -3598,7 +3702,10 @@ function persistTransition(
         )
         .run(now, now, detail.session.id);
       if (result.changes !== 1) {
-        throw new Error("Only an active versioned session can be completed");
+        throw new ClientError(
+          400,
+          "Only an active versioned session can be completed",
+        );
       }
     }
   });
@@ -3635,7 +3742,10 @@ async function latestSessionsByDayStableId(
       context.revisionId !== revisionId ||
       context.lessonId !== row.lesson_id
     ) {
-      throw new Error("Path session has an invalid Course revision scope");
+      throw new ClientError(
+        400,
+        "Path session has an invalid Course revision scope",
+      );
     }
     result.set(row.stable_id, { id: row.id, status: row.status });
   }
@@ -3800,7 +3910,7 @@ function assertCompletionCriteria(
     if (failed) failures.push(criterion);
   }
   if (failures.length) {
-    throw new Error("Unit completion criteria are not satisfied");
+    throw new ClientError(400, "Unit completion criteria are not satisfied");
   }
 }
 
@@ -4502,7 +4612,11 @@ function resolveLegacyKernelActivity(
     )
     .get(scope.courseId, scope.revisionId, stableActivityId) as
     { id: string; knowledge_node_ids_json: string } | undefined;
-  if (!row) throw new Error("Session activity has no Course activity mapping");
+  if (!row)
+    throw new ClientError(
+      400,
+      "Session activity has no Course activity mapping",
+    );
   return {
     id: row.id,
     knowledgeNodeIds: LearningKnowledgeNodeIdSchema.array().parse(
@@ -4517,7 +4631,7 @@ function toObservedAt(value: unknown): string {
       ? new Date(value)
       : new Date();
   if (Number.isNaN(date.getTime())) {
-    throw new Error("Evidence timestamp is invalid");
+    throw new ClientError(400, "Evidence timestamp is invalid");
   }
   return date.toISOString();
 }
