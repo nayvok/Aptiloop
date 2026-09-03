@@ -269,10 +269,10 @@ describe("adaptation branch lifecycle", () => {
       firstPack.revision.revisionKey,
     );
 
-    repository.uninstall({
-      operationId: "uninstall-v1",
-      revisionId: firstPack.revision.revisionKey,
-      confirmRevisionKey: firstPack.revision.revisionKey,
+    repository.deleteCourse({
+      operationId: "delete-v1-course",
+      courseId: firstPack.course.courseKey,
+      confirmCourseKey: firstPack.course.courseKey,
     });
     const secondPack = nextRevision(firstPack, 2);
     installPack(repository, secondPack, "install-v2", validationId(2));
@@ -427,10 +427,10 @@ describe("adaptation branch lifecycle", () => {
         .get(personal.revision.revisionKey),
     ).toEqual({ adaptation_branch_id: branchId });
 
-    repository.uninstall({
-      operationId: "uninstall-personal-head",
-      revisionId: personal.revision.revisionKey,
-      confirmRevisionKey: personal.revision.revisionKey,
+    repository.deleteCourse({
+      operationId: "delete-personal-course",
+      courseId: personal.course.courseKey,
+      confirmCourseKey: personal.course.courseKey,
     });
     expect(
       connection.sqlite

@@ -43,11 +43,11 @@ const commitSchema = z
     expectedContentHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
   })
   .strict();
-const uninstallSchema = z
+const deleteCourseSchema = z
   .object({
     operationId: z.string().trim().min(1).max(200),
-    revisionId: z.string().trim().min(1).max(200),
-    confirmRevisionKey: z.string().trim().min(1).max(200),
+    courseId: z.string().trim().min(1).max(200),
+    confirmCourseKey: z.string().trim().min(1).max(200),
   })
   .strict();
 
@@ -418,7 +418,7 @@ export function registerCoursePackRoutes(
     });
   });
 
-  app.post("/api/course-packs/uninstall", async (context) => {
+  app.post("/api/course-packs/delete", async (context) => {
     if (!repository.hasStorage()) {
       return context.json(
         {
@@ -428,9 +428,9 @@ export function registerCoursePackRoutes(
         503,
       );
     }
-    const body = uninstallSchema.parse(await context.req.json());
+    const body = deleteCourseSchema.parse(await context.req.json());
     try {
-      return context.json({ result: repository.uninstall(body) });
+      return context.json({ result: repository.deleteCourse(body) });
     } catch (error) {
       if (error instanceof CoursePackRepositoryError) {
         return context.json(

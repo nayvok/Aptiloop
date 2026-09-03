@@ -78,26 +78,28 @@ export interface CoursePackLibraryItem {
   readonly revisionNumber: number;
   readonly contentHash: string;
   readonly revisionStatus: "draft" | "published" | "archived";
-  readonly lifecycleAction: CoursePackLifecycleAction;
+  readonly lifecycleAction: CoursePackInstallAction;
   readonly importedAt: string;
 }
 
-export interface UninstallCoursePackInput {
+export interface DeleteCoursePackInput {
   readonly operationId: string;
-  readonly revisionId: string;
-  readonly confirmRevisionKey: string;
+  readonly courseId: string;
+  readonly confirmCourseKey: string;
 }
 
-export interface UninstallCoursePackResult {
-  readonly revisionId: string;
-  readonly lifecycleAction: "uninstall";
+export interface DeleteCoursePackResult {
+  readonly courseId: string;
+  readonly lifecycleAction: "delete";
   readonly retainedEvidenceCount: number;
+  readonly deletedRevisionCount: number;
   readonly idempotent: boolean;
 }
 
-interface RevisionStatusRow {
+interface CourseDeletionRow {
   course_id: string;
-  status: "draft" | "published" | "archived";
+  course_key: string;
+  manifest_revision_id: string;
 }
 
 export class CoursePackRepository {
@@ -360,6 +362,29 @@ export class CoursePackRepository {
            WHERE latest.revision_id = manifest.revision_id
             ORDER BY latest.occurred_at DESC, latest.rowid DESC LIMIT 1
          )
+         WHERE event.action IN ('install', 'open-as-draft')
+           AND NOT EXISTS (
+             SELECT 1
+             FROM course_pack_lifecycle_events latest_course_event
+             JOIN course_pack_manifests latest_course_manifest
+               ON latest_course_manifest.revision_id = latest_course_event.revision_id
+             JOIN course_revisions latest_course_revision
+               ON latest_course_revision.id = latest_course_manifest.revision_id
+             WHERE latest_course_revision.course_id = course.id
+               AND latest_course_event.action = 'uninstall'
+               AND latest_course_event.rowid = (
+                 SELECT candidate_event.rowid
+                 FROM course_pack_lifecycle_events candidate_event
+                 JOIN course_pack_manifests candidate_manifest
+                   ON candidate_manifest.revision_id = candidate_event.revision_id
+                 JOIN course_revisions candidate_revision
+                   ON candidate_revision.id = candidate_manifest.revision_id
+                 WHERE candidate_revision.course_id = course.id
+                 ORDER BY candidate_event.occurred_at DESC,
+                          candidate_event.rowid DESC
+                 LIMIT 1
+               )
+           )
          ORDER BY course.stable_id, revision.revision_number, revision.id`,
       )
       .all() as Array<{
@@ -371,7 +396,7 @@ export class CoursePackRepository {
       status: "draft" | "published" | "archived";
       content_hash: string;
       imported_at: number;
-      action: CoursePackLifecycleAction;
+      action: CoursePackInstallAction;
     }>;
     return rows.map((row) => ({
       courseId: row.course_id,
@@ -402,7 +427,21 @@ export class CoursePackRepository {
     if (!this.hasStorage()) return null;
     const row = this.#connection.sqlite
       .prepare(
-        `SELECT canonical_json FROM course_pack_manifests WHERE revision_id = ?`,
+        `SELECT manifest.canonical_json
+         FROM course_pack_manifests manifest
+         JOIN course_revisions revision ON revision.id = manifest.revision_id
+         WHERE manifest.revision_id = ?
+           AND (
+             SELECT latest_event.action
+             FROM course_pack_lifecycle_events latest_event
+             JOIN course_pack_manifests latest_manifest
+               ON latest_manifest.revision_id = latest_event.revision_id
+             JOIN course_revisions latest_revision
+               ON latest_revision.id = latest_manifest.revision_id
+             WHERE latest_revision.course_id = revision.course_id
+             ORDER BY latest_event.occurred_at DESC, latest_event.rowid DESC
+             LIMIT 1
+           ) != 'uninstall'`,
       )
       .get(revisionId) as { canonical_json: string } | undefined;
     if (!row) return null;
@@ -419,20 +458,48 @@ export class CoursePackRepository {
     return canonical;
   }
 
-  uninstall(input: UninstallCoursePackInput): UninstallCoursePackResult {
+  deleteCourse(input: DeleteCoursePackInput): DeleteCoursePackResult {
     this.#assertStorage();
     const operationId = CourseOperationIdSchema.parse(input.operationId);
-    if (input.confirmRevisionKey !== input.revisionId) {
-      throw new CoursePackRepositoryError(
-        "conflict",
-        "Course Pack uninstall confirmation does not match revision",
-      );
-    }
     return withTransaction(this.#connection, () => {
+      const course = this.#connection.sqlite
+        .prepare(
+          `SELECT course.id AS course_id, course.stable_id AS course_key,
+                  manifest.revision_id AS manifest_revision_id
+           FROM courses course
+           JOIN course_revisions revision ON revision.course_id = course.id
+           JOIN course_pack_manifests manifest ON manifest.revision_id = revision.id
+           WHERE course.id = ?
+           ORDER BY manifest.imported_at DESC, manifest.rowid DESC
+           LIMIT 1`,
+        )
+        .get(input.courseId) as CourseDeletionRow | undefined;
+      if (!course) {
+        throw new CoursePackRepositoryError(
+          "not_found",
+          "Unknown Course Pack Course",
+        );
+      }
+      if (input.confirmCourseKey !== course.course_key) {
+        throw new CoursePackRepositoryError(
+          "conflict",
+          "Course deletion confirmation does not match Course",
+        );
+      }
+
       const existingOperation = this.#readLifecycleOperation(operationId);
       if (existingOperation) {
+        const existingCourse = this.#connection.sqlite
+          .prepare(
+            `SELECT revision.course_id
+             FROM course_pack_manifests manifest
+             JOIN course_revisions revision ON revision.id = manifest.revision_id
+             WHERE manifest.revision_id = ?`,
+          )
+          .get(existingOperation.revision_id) as
+          { course_id: string } | undefined;
         if (
-          existingOperation.revision_id !== input.revisionId ||
+          existingCourse?.course_id !== input.courseId ||
           existingOperation.action !== "uninstall"
         ) {
           throw new CoursePackRepositoryError(
@@ -441,25 +508,12 @@ export class CoursePackRepository {
           );
         }
         return {
-          revisionId: input.revisionId,
-          lifecycleAction: "uninstall",
-          retainedEvidenceCount: this.#evidenceCount(input.revisionId),
+          courseId: input.courseId,
+          lifecycleAction: "delete",
+          retainedEvidenceCount: this.#evidenceCountForCourse(input.courseId),
+          deletedRevisionCount: this.#revisionCount(input.courseId),
           idempotent: true,
         };
-      }
-      const revision = this.#connection.sqlite
-        .prepare(
-          `SELECT revision.course_id, revision.status
-           FROM course_pack_manifests manifest
-           JOIN course_revisions revision ON revision.id = manifest.revision_id
-           WHERE manifest.revision_id = ?`,
-        )
-        .get(input.revisionId) as RevisionStatusRow | undefined;
-      if (!revision) {
-        throw new CoursePackRepositoryError(
-          "not_found",
-          "Unknown Course Pack revision",
-        );
       }
 
       const activeSession = this.#connection.sqlite
@@ -467,55 +521,50 @@ export class CoursePackRepository {
           `SELECT session.id
            FROM learning_sessions session
            JOIN session_course_contexts context ON context.session_id = session.id
-           WHERE context.course_id = ? AND context.revision_id = ?
-             AND session.status = 'active'
+           WHERE context.course_id = ? AND session.status = 'active'
            LIMIT 1`,
         )
-        .get(revision.course_id, input.revisionId) as
-        { id: string } | undefined;
+        .get(input.courseId) as { id: string } | undefined;
       if (activeSession) {
         throw new CoursePackRepositoryError(
           "active_session",
-          "Course Pack revision is pinned by an active learning session",
+          "Course is pinned by an active learning session",
         );
       }
 
       const now = this.#now();
-      if (revision.status === "published") {
-        this.#connection.sqlite
-          .prepare(
-            `UPDATE course_revisions
-             SET status = 'archived', archived_at = ?, updated_at = ?
-             WHERE id = ? AND status = 'published'`,
-          )
-          .run(now, now, input.revisionId);
-      }
+      this.#connection.sqlite
+        .prepare(
+          `UPDATE course_revisions
+           SET status = 'archived', archived_at = ?, updated_at = ?
+           WHERE course_id = ? AND status != 'archived'`,
+        )
+        .run(now, now, input.courseId);
       this.#connection.sqlite
         .prepare(
           `UPDATE curriculum_versions
            SET status = 'archived', archived_at = ?, updated_at = ?
-           WHERE id = ? AND status = 'published'`,
+           WHERE curriculum_id = ? AND status != 'archived'`,
         )
-        .run(now, now, input.revisionId);
+        .run(now, now, input.courseId);
       this.#connection.sqlite
         .prepare(
           `UPDATE curricula SET active_version_id = NULL, updated_at = ?
-           WHERE id = ? AND active_version_id = ?`,
+           WHERE id = ?`,
         )
-        .run(now, revision.course_id, input.revisionId);
+        .run(now, input.courseId);
       this.#connection.sqlite
         .prepare(
           `UPDATE courses SET active_revision_id = NULL, updated_at = ?
-           WHERE id = ? AND active_revision_id = ?`,
+           WHERE id = ?`,
         )
-        .run(now, revision.course_id, input.revisionId);
+        .run(now, input.courseId);
       this.#connection.sqlite
         .prepare(
           `UPDATE adaptation_branches SET status = 'archived', updated_at = ?
-           WHERE course_id = ? AND status = 'active'
-             AND (base_revision_id = ? OR head_revision_id = ?)`,
+           WHERE course_id = ? AND status = 'active'`,
         )
-        .run(now, revision.course_id, input.revisionId, input.revisionId);
+        .run(now, input.courseId);
       this.#connection.sqlite
         .prepare(
           `UPDATE learner_state
@@ -524,25 +573,13 @@ export class CoursePackRepository {
              SELECT context.session_id
              FROM session_course_contexts context
              JOIN learning_sessions session ON session.id = context.session_id
-             WHERE context.course_id = ? AND context.revision_id = ?
-               AND session.status != 'active'
+             WHERE context.course_id = ? AND session.status != 'active'
            )`,
         )
-        .run(now, revision.course_id, input.revisionId);
+        .run(now, input.courseId);
       this.#connection.sqlite
-        .prepare(
-          `DELETE FROM learner_course_states
-           WHERE course_id = ? AND active_revision_id = ?
-             AND NOT EXISTS (
-               SELECT 1
-               FROM session_course_contexts context
-               JOIN learning_sessions session ON session.id = context.session_id
-               WHERE context.course_id = learner_course_states.course_id
-                 AND context.revision_id = learner_course_states.active_revision_id
-                 AND session.status = 'active'
-             )`,
-        )
-        .run(revision.course_id, input.revisionId);
+        .prepare(`DELETE FROM learner_course_states WHERE course_id = ?`)
+        .run(input.courseId);
       this.#connection.sqlite
         .prepare(
           `UPDATE learner_course_states
@@ -566,7 +603,10 @@ export class CoursePackRepository {
              )`,
         )
         .run(now);
-      const retainedEvidenceCount = this.#evidenceCount(input.revisionId);
+      const retainedEvidenceCount = this.#evidenceCountForCourse(
+        input.courseId,
+      );
+      const deletedRevisionCount = this.#revisionCount(input.courseId);
       this.#connection.sqlite
         .prepare(
           `INSERT INTO course_pack_lifecycle_events
@@ -575,15 +615,20 @@ export class CoursePackRepository {
         )
         .run(
           this.#id(),
-          input.revisionId,
+          course.manifest_revision_id,
           operationId,
           now,
-          canonicalJson({ retainedEvidenceCount }),
+          canonicalJson({
+            courseId: input.courseId,
+            deletedRevisionCount,
+            retainedEvidenceCount,
+          }),
         );
       return {
-        revisionId: input.revisionId,
-        lifecycleAction: "uninstall",
+        courseId: input.courseId,
+        lifecycleAction: "delete",
         retainedEvidenceCount,
+        deletedRevisionCount,
         idempotent: false,
       };
     });
@@ -1769,12 +1814,21 @@ export class CoursePackRepository {
       .get(revisionId) as { action: CoursePackLifecycleAction } | undefined;
   }
 
-  #evidenceCount(revisionId: string): number {
+  #evidenceCountForCourse(courseId: string): number {
     const row = this.#connection.sqlite
       .prepare(
-        `SELECT count(*) AS count FROM evidence_facts WHERE revision_id = ?`,
+        `SELECT count(*) AS count FROM evidence_facts WHERE course_id = ?`,
       )
-      .get(revisionId) as { count: number };
+      .get(courseId) as { count: number };
+    return row.count;
+  }
+
+  #revisionCount(courseId: string): number {
+    const row = this.#connection.sqlite
+      .prepare(
+        `SELECT count(*) AS count FROM course_revisions WHERE course_id = ?`,
+      )
+      .get(courseId) as { count: number };
     return row.count;
   }
 

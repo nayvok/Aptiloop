@@ -1343,7 +1343,8 @@ function resolveInterviewSetup(
       }
     | undefined;
   if (!row) throw new ClientError(404, "Unknown linked Interview unit");
-  const snapshot = SessionSnapshotSchema.parse(JSON.parse(row.snapshotJson));
+  const rawSnapshot = JSON.parse(row.snapshotJson) as unknown;
+  const snapshot = SessionSnapshotSchema.parse(rawSnapshot);
   const { contentHash, ...snapshotCore } = snapshot;
   const unit = snapshot.units.find(
     (candidate) => candidate.id === request.unitId,
@@ -1362,7 +1363,7 @@ function resolveInterviewSetup(
     hashCanonicalJson(snapshotCore) !== row.snapshotHash ||
     createHash("sha256").update(row.snapshotJson).digest("hex") !==
       row.snapshotBytesHash ||
-    canonicalJson(snapshot) !== row.snapshotJson
+    canonicalJson(rawSnapshot) !== canonicalJson(snapshot)
   ) {
     throw new Error(
       "Linked Interview scope is not an exact current snapshot unit",

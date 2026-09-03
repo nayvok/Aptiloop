@@ -2079,15 +2079,16 @@ export function InterviewClient({
   return (
     <div
       data-slot="interview-session"
-      className="flex w-full min-w-0 flex-col gap-6"
+      className="flex w-full min-w-0 flex-col gap-4 lg:h-[calc(100dvh-var(--shell-bar-size,4.5rem)-4rem)] lg:min-h-0"
     >
-      {returnToSession}
+      {embedded ? returnToSession : null}
       <InterviewHeader
         embedded={embedded}
         title={t("interview.title")}
         description={t("interview.session.description")}
+        actions={returnToSession}
       />
-      <div className="w-full min-w-0">
+      <div className="w-full min-w-0 lg:min-h-0 lg:flex-1">
         <InterviewChatView
           interview={interview}
           action={action}

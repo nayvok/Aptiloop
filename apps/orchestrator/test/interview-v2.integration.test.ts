@@ -6,7 +6,6 @@ import path from "node:path";
 import type { AgentProvider } from "@aptiloop/agent-core";
 import { MockAgentProvider } from "@aptiloop/agent-core/mock";
 import {
-  canonicalJson,
   hashCanonicalJson,
   migrateDatabase,
   openDatabase,
@@ -697,7 +696,9 @@ describe("restart-safe interview v2", () => {
       capturedAt: new Date(now).toISOString(),
     };
     const snapshotHash = hashCanonicalJson(snapshotCore);
-    const snapshotJson = canonicalJson({
+    // Runtime session snapshots are immutable and semantically canonical, but
+    // their persisted byte representation is not required to sort object keys.
+    const snapshotJson = JSON.stringify({
       ...snapshotCore,
       contentHash: snapshotHash,
     });

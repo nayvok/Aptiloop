@@ -30,7 +30,7 @@ There is no down migration. Whole-file recovery from one of the four named appro
 
 ## M3–M5 additive migration record
 
-**Implemented baseline (2026-08-10):** `0011_course_pack_lifecycle` adds immutable manifest, installation, staging, provenance, and quarantine records without allowing raw invalid bytes into active storage. Import is hash-confirmed and transactional; uninstall archives the installation and preserves Course/session/evidence history.
+**Implemented baseline (2026-08-10):** `0011_course_pack_lifecycle` adds immutable manifest, installation, staging, provenance, and quarantine records without allowing raw invalid bytes into active storage. Import is hash-confirmed and transactional. The current Course-level delete contract appends the compatible lifecycle tombstone, removes every revision from user-facing library projections, and preserves immutable completed session/evidence history; an active scoped session rejects deletion.
 
 `0012_learning_kernel` adds append-only accepted facts, immutable projection history, a rebuildable current projection, mastery/mistake/review state, and provenance/quarantine. Reconciliation maps only provable legacy progress and quarantines ambiguous summaries. Versioned operations persist kernel facts before derived projections, and replay from one accepted frontier reproduces canonical bytes/hash.
 

@@ -113,7 +113,7 @@ const libraryItemSchema = z
     revisionNumber: z.number().int().positive(),
     contentHash: hashSchema,
     revisionStatus: z.enum(["draft", "published", "archived"]),
-    lifecycleAction: z.enum(["install", "open-as-draft", "uninstall"]),
+    lifecycleAction: z.enum(["install", "open-as-draft"]),
     importedAt: z.string().datetime(),
   })
   .strict();
@@ -645,14 +645,14 @@ function CoursePackClient({
     onError: (error: unknown) =>
       toast.error(presentFailure(error, "coursePack.select", t).message),
   });
-  const uninstall = useMutation({
-    mutationFn: async (item: CoursePackLibraryItem) =>
-      api("/course-packs/uninstall", {
+  const deleteCourse = useMutation({
+    mutationFn: async (course: LearningCourse) =>
+      api("/course-packs/delete", {
         method: "POST",
         body: JSON.stringify({
           operationId: globalThis.crypto.randomUUID(),
-          revisionId: item.revisionId,
-          confirmRevisionKey: item.revisionId,
+          courseId: course.id,
+          confirmCourseKey: course.stableId,
         }),
       }),
     onSuccess: async () => {
@@ -661,13 +661,13 @@ function CoursePackClient({
         queryClient.invalidateQueries({ queryKey: ["learning-courses"] }),
         queryClient.invalidateQueries({ queryKey: ["learning-path"] }),
       ]);
-      toast.success(t("courses.notice.uninstalled"));
+      toast.success(t("courses.notice.deleted"));
     },
     onError: (error: unknown) =>
       toast.error(
         getErrorCode(error) === "active_session"
           ? t("courses.error.activeSessionPinned")
-          : presentFailure(error, "coursePack.uninstall", t).message,
+          : presentFailure(error, "coursePack.delete", t).message,
       ),
   });
 
@@ -1500,9 +1500,9 @@ function CoursePackClient({
                             selectCourse.variables?.courseId === course.id &&
                             selectCourse.variables.revisionId === revision.id
                           }
-                          uninstallingRevisionId={
-                            uninstall.isPending
-                              ? (uninstall.variables?.revisionId ?? null)
+                          deletingCourseId={
+                            deleteCourse.isPending
+                              ? (deleteCourse.variables?.id ?? null)
                               : null
                           }
                           onSelect={() =>
@@ -1523,7 +1523,7 @@ function CoursePackClient({
                               );
                             });
                           }}
-                          onUninstall={(item) => uninstall.mutate(item)}
+                          onDelete={() => deleteCourse.mutate(course)}
                           {...(packItem ? { packItem } : {})}
                         />
                       ),
@@ -2095,10 +2095,10 @@ function CourseLibraryRow({
   packItem,
   current,
   selecting,
-  uninstallingRevisionId,
+  deletingCourseId,
   onSelect,
   onExport,
-  onUninstall,
+  onDelete,
 }: {
   course: LearningCourse;
   revision: LearningCourseRevision;
@@ -2106,10 +2106,10 @@ function CourseLibraryRow({
   packItem?: CoursePackLibraryItem;
   current: boolean;
   selecting: boolean;
-  uninstallingRevisionId: string | null;
+  deletingCourseId: string | null;
   onSelect: () => void;
   onExport: (item: CoursePackLibraryItem) => void;
-  onUninstall: (item: CoursePackLibraryItem) => void;
+  onDelete: () => void;
 }) {
   const { formatDate, locale, t } = useI18n();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -2133,11 +2133,9 @@ function CourseLibraryRow({
   const selectable = revision.status === "published";
   const studioAvailable = !packItem && revision.status === "published";
   const exportable = Boolean(packItem);
-  const removable = Boolean(
-    packItem && packItem.lifecycleAction !== "uninstall",
-  );
-  const uninstalling = uninstallingRevisionId === revision.id;
-  const maintenancePending = selecting || uninstalling;
+  const removable = revisionEntries.some((entry) => entry.packItem);
+  const deleting = deletingCourseId === course.id;
+  const maintenancePending = selecting || deleting;
   const statusDotClass =
     revision.status === "published"
       ? "bg-success"
@@ -2324,7 +2322,7 @@ function CourseLibraryRow({
                   <DropdownMenuGroup>
                     <DropdownMenuItem
                       variant="destructive"
-                      disabled={uninstalling}
+                      disabled={deleting}
                       onSelect={() => setRemoveOpen(true)}
                     >
                       <TrashIcon aria-hidden />
@@ -2340,9 +2338,7 @@ function CourseLibraryRow({
       <CourseRevisionDisclosure
         course={course}
         revisionEntries={revisionEntries}
-        uninstallingRevisionId={uninstallingRevisionId}
         onExport={onExport}
-        onUninstall={onUninstall}
       />
       {detailsOpen ? (
         <TableRow className="grid @min-[60rem]/course-library:table-row">
@@ -2362,10 +2358,10 @@ function CourseLibraryRow({
         <AlertDialog open={removeOpen} onOpenChange={setRemoveOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>{t("courses.remove.title")}</AlertDialogTitle>
+              <AlertDialogTitle>{t("courses.delete.title")}</AlertDialogTitle>
               <AlertDialogDescription>
-                {t("courses.remove.description", {
-                  revisionId: revision.id,
+                {t("courses.delete.description", {
+                  title: course.title,
                 })}
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -2375,13 +2371,13 @@ function CourseLibraryRow({
               </AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
-                disabled={uninstalling}
+                disabled={deleting}
                 onClick={() => {
-                  if (packItem) onUninstall(packItem);
+                  onDelete();
                 }}
               >
-                {uninstalling ? <Spinner data-icon="inline-start" /> : null}
-                {t("courses.action.removeFromLibrary")}
+                {deleting ? <Spinner data-icon="inline-start" /> : null}
+                {t("courses.action.deletePermanently")}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -2394,213 +2390,147 @@ function CourseLibraryRow({
 function CourseRevisionDisclosure({
   course,
   revisionEntries,
-  uninstallingRevisionId,
   onExport,
-  onUninstall,
 }: {
   course: LearningCourse;
   revisionEntries: readonly CourseRevisionLibraryEntry[];
-  uninstallingRevisionId: string | null;
   onExport: (item: CoursePackLibraryItem) => void;
-  onUninstall: (item: CoursePackLibraryItem) => void;
 }) {
   const { formatDate, locale, t } = useI18n();
   const contentId = useId();
   const [open, setOpen] = useState(false);
-  const [removeTarget, setRemoveTarget] =
-    useState<CoursePackLibraryItem | null>(null);
 
   if (revisionEntries.length <= 1) return null;
 
   const revisionsLabel = t("courses.library.revisions", {
     count: revisionEntries.length.toLocaleString(locale),
   });
-  const removePending =
-    removeTarget !== null && uninstallingRevisionId === removeTarget.revisionId;
-
   return (
-    <>
-      <TableRow className="grid @min-[60rem]/course-library:table-row">
-        <TableCell
-          colSpan={4}
-          className="min-w-0 whitespace-normal border-t-0 px-4 py-2 @min-[60rem]/course-library:px-6"
-        >
-          <Collapsible open={open} onOpenChange={setOpen}>
-            <CollapsibleTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="min-h-11 max-w-full justify-start px-2"
-                aria-label={`${course.title}: ${revisionsLabel}`}
-                aria-controls={contentId}
-              >
-                <BookOpenIcon data-icon="inline-start" aria-hidden />
-                <span className="min-w-0 truncate">{revisionsLabel}</span>
-                <CaretDownIcon
-                  data-icon="inline-end"
-                  aria-hidden
-                  className={cn("transition-transform", open && "rotate-180")}
-                />
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent id={contentId}>
-              <ul className="mt-2 flex min-w-0 flex-col gap-2 pb-2">
-                {revisionEntries.map(({ revision, packItem }) => {
-                  const revisionLabel = t("courses.library.revisionNumber", {
-                    revision: revision.revisionNumber.toLocaleString(locale),
-                  });
-                  const openPath =
-                    revision.status === "draft"
-                      ? `/courses/studio?version=${encodeURIComponent(revision.id)}`
-                      : revision.status === "published"
-                        ? `/courses/${encodeURIComponent(course.id)}/revisions/${encodeURIComponent(revision.id)}`
-                        : null;
-                  const openLabel =
-                    revision.status === "draft"
-                      ? t("courses.action.edit")
-                      : t("courses.action.open");
-                  const itemUninstalling =
-                    uninstallingRevisionId === revision.id;
-                  const removable =
-                    packItem?.lifecycleAction !== "uninstall" &&
-                    packItem !== undefined;
-
-                  return (
-                    <li
-                      key={revision.id}
-                      aria-label={revisionLabel}
-                      className="flex min-w-0 flex-col gap-3 rounded-control border border-border bg-surface-soft p-3 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="font-medium">{revisionLabel}</span>
-                          <Badge
-                            variant={
-                              revision.status === "published"
-                                ? "success"
-                                : revision.status === "draft"
-                                  ? "warning"
-                                  : "outline"
-                            }
-                          >
-                            {t(statusLabels[revision.status])}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 break-words text-xs text-muted-foreground">
-                          {packItem
-                            ? t("courses.library.importedAt", {
-                                date: formatDate(packItem.importedAt),
-                              })
-                            : t("courses.library.localRevision")}
-                        </p>
+    <TableRow className="grid @min-[60rem]/course-library:table-row">
+      <TableCell
+        colSpan={4}
+        className="min-w-0 whitespace-normal border-t-0 px-4 py-2 @min-[60rem]/course-library:px-6"
+      >
+        <Collapsible open={open} onOpenChange={setOpen}>
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="min-h-11 max-w-full justify-start px-2"
+              aria-label={`${course.title}: ${revisionsLabel}`}
+              aria-controls={contentId}
+            >
+              <BookOpenIcon data-icon="inline-start" aria-hidden />
+              <span className="min-w-0 truncate">{revisionsLabel}</span>
+              <CaretDownIcon
+                data-icon="inline-end"
+                aria-hidden
+                className={cn("transition-transform", open && "rotate-180")}
+              />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent id={contentId}>
+            <ul className="mt-2 flex min-w-0 flex-col gap-2 pb-2">
+              {revisionEntries.map(({ revision, packItem }) => {
+                const revisionLabel = t("courses.library.revisionNumber", {
+                  revision: revision.revisionNumber.toLocaleString(locale),
+                });
+                const openPath =
+                  revision.status === "draft"
+                    ? `/courses/studio?version=${encodeURIComponent(revision.id)}`
+                    : revision.status === "published"
+                      ? `/courses/${encodeURIComponent(course.id)}/revisions/${encodeURIComponent(revision.id)}`
+                      : null;
+                const openLabel =
+                  revision.status === "draft"
+                    ? t("courses.action.edit")
+                    : t("courses.action.open");
+                return (
+                  <li
+                    key={revision.id}
+                    aria-label={revisionLabel}
+                    className="flex min-w-0 flex-col gap-3 rounded-control border border-border bg-surface-soft p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="font-medium">{revisionLabel}</span>
+                        <Badge
+                          variant={
+                            revision.status === "published"
+                              ? "success"
+                              : revision.status === "draft"
+                                ? "warning"
+                                : "outline"
+                          }
+                        >
+                          {t(statusLabels[revision.status])}
+                        </Badge>
                       </div>
-                      <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
-                        {openPath ? (
-                          <Button
-                            asChild
-                            size="sm"
-                            variant="outline"
-                            className="min-h-11 md:min-h-11"
+                      <p className="mt-1 break-words text-xs text-muted-foreground">
+                        {packItem
+                          ? t("courses.library.importedAt", {
+                              date: formatDate(packItem.importedAt),
+                            })
+                          : t("courses.library.localRevision")}
+                      </p>
+                    </div>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
+                      {openPath ? (
+                        <Button
+                          asChild
+                          size="sm"
+                          variant="outline"
+                          className="min-h-11 md:min-h-11"
+                        >
+                          <Link
+                            href={openPath}
+                            aria-label={`${openLabel} · ${revisionLabel}`}
                           >
-                            <Link
-                              href={openPath}
-                              aria-label={`${openLabel} · ${revisionLabel}`}
-                            >
-                              {openLabel}
-                              <ArrowSquareOutIcon
-                                data-icon="inline-end"
-                                aria-hidden
-                              />
-                            </Link>
-                          </Button>
-                        ) : (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="min-h-11 md:min-h-11"
-                            disabled
-                            aria-label={`${t("courses.action.unavailable")} · ${revisionLabel}`}
-                          >
-                            {t("courses.action.unavailable")}
-                          </Button>
-                        )}
-                        {packItem ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="min-h-11 md:min-h-11"
-                            aria-label={`${t("courses.action.export")} · ${revisionLabel}`}
-                            onClick={() => onExport(packItem)}
-                          >
-                            <DownloadSimpleIcon
-                              data-icon="inline-start"
+                            {openLabel}
+                            <ArrowSquareOutIcon
+                              data-icon="inline-end"
                               aria-hidden
                             />
-                            {t("courses.action.export")}
-                          </Button>
-                        ) : null}
-                        {removable ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            className="min-h-11 md:min-h-11"
-                            disabled={itemUninstalling}
-                            aria-busy={itemUninstalling}
-                            aria-label={`${t("courses.action.remove")} · ${revisionLabel}`}
-                            onClick={() => setRemoveTarget(packItem)}
-                          >
-                            {itemUninstalling ? (
-                              <Spinner data-icon="inline-start" aria-hidden />
-                            ) : (
-                              <TrashIcon data-icon="inline-start" aria-hidden />
-                            )}
-                            {t("courses.action.remove")}
-                          </Button>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </CollapsibleContent>
-          </Collapsible>
-        </TableCell>
-      </TableRow>
-      <AlertDialog
-        open={removeTarget !== null}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) setRemoveTarget(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("courses.remove.title")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("courses.remove.description", {
-                revisionId: removeTarget?.revisionId ?? "",
+                          </Link>
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="min-h-11 md:min-h-11"
+                          disabled
+                          aria-label={`${t("courses.action.unavailable")} · ${revisionLabel}`}
+                        >
+                          {t("courses.action.unavailable")}
+                        </Button>
+                      )}
+                      {packItem ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="min-h-11 md:min-h-11"
+                          aria-label={`${t("courses.action.export")} · ${revisionLabel}`}
+                          onClick={() => onExport(packItem)}
+                        >
+                          <DownloadSimpleIcon
+                            data-icon="inline-start"
+                            aria-hidden
+                          />
+                          {t("courses.action.export")}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </li>
+                );
               })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("courses.action.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={removePending}
-              onClick={() => {
-                if (removeTarget) onUninstall(removeTarget);
-              }}
-            >
-              {removePending ? <Spinner data-icon="inline-start" /> : null}
-              {t("courses.action.removeFromLibrary")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+            </ul>
+          </CollapsibleContent>
+        </Collapsible>
+      </TableCell>
+    </TableRow>
   );
 }
 

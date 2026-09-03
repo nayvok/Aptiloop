@@ -221,6 +221,36 @@ export class CourseFoundationRepository {
   }
 
   async listCourses(): Promise<readonly CourseFoundationSummary[]> {
+    const deletedCourseIds = new Set<string>();
+    const hasCoursePackLifecycle = Boolean(
+      this.#connection.sqlite
+        .prepare(
+          `SELECT 1 AS present FROM sqlite_schema
+           WHERE type = 'table' AND name = 'course_pack_lifecycle_events'`,
+        )
+        .get(),
+    );
+    if (hasCoursePackLifecycle) {
+      const deletedRows = this.#connection.sqlite
+        .prepare(
+          `SELECT course_id
+           FROM (
+             SELECT revision.course_id, event.action,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY revision.course_id
+                      ORDER BY event.occurred_at DESC, event.rowid DESC
+                    ) AS lifecycle_rank
+             FROM course_pack_lifecycle_events event
+             JOIN course_pack_manifests manifest
+               ON manifest.revision_id = event.revision_id
+             JOIN course_revisions revision
+               ON revision.id = manifest.revision_id
+           )
+           WHERE lifecycle_rank = 1 AND action = 'uninstall'`,
+        )
+        .all() as Array<{ course_id: string }>;
+      for (const row of deletedRows) deletedCourseIds.add(row.course_id);
+    }
     const courseRows = this.#connection.sqlite
       .prepare(
         `SELECT id, stable_id, title, description, primary_locale,
@@ -251,10 +281,12 @@ export class CourseFoundationRepository {
       });
       revisionsByCourse.set(revision.courseId, summaries);
     }
-    return courseRows.map((row) => ({
-      ...mapCourse(row),
-      revisions: revisionsByCourse.get(row.id) ?? [],
-    }));
+    return courseRows
+      .filter((row) => !deletedCourseIds.has(row.id))
+      .map((row) => ({
+        ...mapCourse(row),
+        revisions: revisionsByCourse.get(row.id) ?? [],
+      }));
   }
 
   async getCourseRevision(

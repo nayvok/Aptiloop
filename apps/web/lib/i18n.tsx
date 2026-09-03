@@ -338,8 +338,8 @@ const enUS = {
     "The local Course library could not be loaded.",
   "failure.operation.coursePackSelect":
     "The Course could not be selected. Try again.",
-  "failure.operation.coursePackUninstall":
-    "The Course revision could not be removed. Try again.",
+  "failure.operation.coursePackDelete":
+    "The Course could not be deleted. Try again.",
   "failure.operation.coursePackExport":
     "The Course Pack could not be exported. Try again.",
   "courses.validation.diagnostic.unsafe":
@@ -767,7 +767,7 @@ const enUS = {
   "courses.status.archived": "Archived",
   "courses.error.validateFirst": "Validate the Course Pack first.",
   "courses.error.activeSessionPinned":
-    "Return to the active lesson and finish it before removing this Course Pack. Your current session and progress remain available.",
+    "Finish the active lesson before deleting this Course. Aptiloop will not interrupt or discard an active session.",
   "courses.notice.installed":
     "Course Pack installed. Opening the learning path.",
   "courses.notice.draftSaved": "Course Pack saved as a draft.",
@@ -775,8 +775,8 @@ const enUS = {
     "This exact Course Pack revision was already installed. Opening the existing learning path.",
   "courses.notice.draftAlreadySaved":
     "This Course Pack was already saved as a local draft. Opening the existing draft.",
-  "courses.notice.uninstalled":
-    "Course Pack removed from the active library. History was preserved.",
+  "courses.notice.deleted":
+    "Course deleted from Courses. It cannot be restored from the library.",
   "courses.notice.selected":
     "This Course revision is now current. Home will use its deterministic path and next action.",
   "courses.create.primaryPath": "Primary authoring path",
@@ -951,13 +951,13 @@ const enUS = {
   "courses.action.previewRevision": "Preview revision",
   "courses.action.makeCurrent": "Make current",
   "courses.action.export": "Export",
-  "courses.action.remove": "Remove",
+  "courses.action.remove": "Delete Course",
   "courses.action.more": "More actions for {title}",
-  "courses.remove.title": "Remove Course Pack from the library?",
-  "courses.remove.description":
-    "Revision {revisionId} will be archived. The Course Pack, sessions, and learning facts are not deleted, so replay and history remain auditable.",
+  "courses.delete.title": "Permanently delete this Course?",
+  "courses.delete.description":
+    "“{title}” and all of its revisions will disappear from Courses and cannot be restored. Completed learning records remain only as immutable internal evidence.",
   "courses.action.cancel": "Cancel",
-  "courses.action.removeFromLibrary": "Remove from library",
+  "courses.action.deletePermanently": "Delete permanently",
   "courses.export.error": "Export failed ({status})",
   "practice.error.protectedField": "Protected curriculum field received",
   "practice.error.noActiveSession": "There is no active lesson",
@@ -1989,8 +1989,8 @@ const ruRU: Record<MessageKey, string> = {
     "Не удалось загрузить локальную библиотеку курсов.",
   "failure.operation.coursePackSelect":
     "Не удалось выбрать курс. Повторите попытку.",
-  "failure.operation.coursePackUninstall":
-    "Не удалось удалить ревизию курса. Повторите попытку.",
+  "failure.operation.coursePackDelete":
+    "Не удалось удалить курс. Повторите попытку.",
   "failure.operation.coursePackExport":
     "Не удалось экспортировать Course Pack. Повторите попытку.",
   "courses.validation.diagnostic.unsafe":
@@ -2422,15 +2422,15 @@ const ruRU: Record<MessageKey, string> = {
   "courses.status.archived": "Архивный",
   "courses.error.validateFirst": "Сначала проверьте Course Pack.",
   "courses.error.activeSessionPinned":
-    "Вернитесь к активному занятию и завершите его перед удалением Course Pack. Текущая сессия и прогресс остаются доступны.",
+    "Завершите активное занятие перед удалением курса. Aptiloop не прервёт и не отбросит активную сессию.",
   "courses.notice.installed": "Course Pack установлен. Открываем учебный путь.",
   "courses.notice.draftSaved": "Course Pack сохранён как черновик.",
   "courses.notice.alreadyInstalled":
     "Эта точная ревизия Course Pack уже установлена. Открываем существующий учебный путь.",
   "courses.notice.draftAlreadySaved":
     "Этот Course Pack уже сохранён как локальный черновик. Открываем существующий черновик.",
-  "courses.notice.uninstalled":
-    "Course Pack удалён из активной библиотеки. История сохранена.",
+  "courses.notice.deleted":
+    "Курс удалён из раздела «Курсы». Восстановить его из библиотеки нельзя.",
   "courses.notice.selected":
     "Эта ревизия курса стала текущей. Главная будет использовать её детерминированный маршрут и следующее действие.",
   "courses.create.primaryPath": "Основной путь создания",
@@ -2606,13 +2606,13 @@ const ruRU: Record<MessageKey, string> = {
   "courses.action.previewRevision": "Предпросмотр ревизии",
   "courses.action.makeCurrent": "Сделать текущей",
   "courses.action.export": "Экспорт",
-  "courses.action.remove": "Удалить",
+  "courses.action.remove": "Удалить курс",
   "courses.action.more": "Другие действия для курса «{title}»",
-  "courses.remove.title": "Удалить Course Pack из библиотеки?",
-  "courses.remove.description":
-    "Ревизия {revisionId} станет архивной. Course Pack, сессии и факты обучения не удаляются, чтобы replay и история оставались проверяемыми.",
+  "courses.delete.title": "Удалить курс без возможности восстановления?",
+  "courses.delete.description":
+    "Курс «{title}» и все его ревизии исчезнут из раздела «Курсы», восстановить их из библиотеки будет нельзя. Завершённая история обучения останется только как неизменяемое внутреннее подтверждение.",
   "courses.action.cancel": "Отмена",
-  "courses.action.removeFromLibrary": "Удалить из библиотеки",
+  "courses.action.deletePermanently": "Удалить навсегда",
   "courses.export.error": "Не удалось экспортировать ({status})",
   "practice.error.protectedField":
     "Получено защищённое поле учебного материала",

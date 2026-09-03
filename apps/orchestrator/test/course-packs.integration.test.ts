@@ -90,7 +90,7 @@ function jsonRequest(body: unknown): RequestInit {
 }
 
 describe("Course Pack HTTP lifecycle", () => {
-  it("validates, previews, commits, exports, and explicitly uninstalls", async () => {
+  it("validates, commits, exports, and permanently removes a Course from the library", async () => {
     const { app, connection, stagingRoot } = await fixture();
     const pack = createDevelopmentCoursePackFixture();
     const validationResponse = await app.request(
@@ -407,28 +407,28 @@ describe("Course Pack HTTP lifecycle", () => {
     expect(reimported.valid).toBe(true);
     expect(reimported.contentHash).toBe(pack.revision.contentHash);
 
-    const wrongUninstall = await app.request(
-      "/api/course-packs/uninstall",
+    const wrongDelete = await app.request(
+      "/api/course-packs/delete",
       jsonRequest({
-        operationId: "uninstall-wrong",
-        revisionId: pack.revision.revisionKey,
-        confirmRevisionKey: "wrong",
+        operationId: "delete-wrong",
+        courseId: pack.course.courseKey,
+        confirmCourseKey: "wrong",
       }),
     );
-    expect(wrongUninstall.status).toBe(409);
+    expect(wrongDelete.status).toBe(409);
 
-    const uninstall = await app.request(
-      "/api/course-packs/uninstall",
+    const blockedDelete = await app.request(
+      "/api/course-packs/delete",
       jsonRequest({
-        operationId: "uninstall-pack",
-        revisionId: pack.revision.revisionKey,
-        confirmRevisionKey: pack.revision.revisionKey,
+        operationId: "delete-pack",
+        courseId: pack.course.courseKey,
+        confirmCourseKey: pack.course.courseKey,
       }),
     );
-    expect(uninstall.status).toBe(409);
-    expect(await uninstall.json()).toEqual({
+    expect(blockedDelete.status).toBe(409);
+    expect(await blockedDelete.json()).toEqual({
       code: "active_session",
-      error: "Course Pack revision is pinned by an active learning session",
+      error: "Course is pinned by an active learning session",
     });
     const resumablePath = await app.request("/api/learning/path");
     expect(resumablePath.status).toBe(200);
@@ -458,17 +458,22 @@ describe("Course Pack HTTP lifecycle", () => {
         Date.UTC(2026, 7, 10, 1),
         startedBody.session.id,
       );
-    const uninstallAfterSession = await app.request(
-      "/api/course-packs/uninstall",
+    const deleteAfterSession = await app.request(
+      "/api/course-packs/delete",
       jsonRequest({
-        operationId: "uninstall-pack-after-session",
-        revisionId: pack.revision.revisionKey,
-        confirmRevisionKey: pack.revision.revisionKey,
+        operationId: "delete-pack-after-session",
+        courseId: pack.course.courseKey,
+        confirmCourseKey: pack.course.courseKey,
       }),
     );
-    expect(uninstallAfterSession.status).toBe(200);
-    expect(await uninstallAfterSession.json()).toMatchObject({
-      result: { lifecycleAction: "uninstall", retainedEvidenceCount: 0 },
+    expect(deleteAfterSession.status).toBe(200);
+    expect(await deleteAfterSession.json()).toMatchObject({
+      result: {
+        courseId: pack.course.courseKey,
+        lifecycleAction: "delete",
+        deletedRevisionCount: 1,
+        retainedEvidenceCount: 0,
+      },
     });
     expect(await (await app.request("/api/learning/path")).json()).toEqual({
       curriculum: null,
@@ -482,12 +487,20 @@ describe("Course Pack HTTP lifecycle", () => {
     expect(await retainedSession.json()).toMatchObject({
       session: { id: startedBody.session.id, status: "completed" },
     });
-    const libraryAfterUninstall = (await (
+    const libraryAfterDelete = (await (
       await app.request("/api/course-packs")
     ).json()) as { packs: unknown[] };
-    expect(libraryAfterUninstall.packs).toEqual([
-      expect.objectContaining({ lifecycleAction: "uninstall" }),
-    ]);
+    expect(libraryAfterDelete.packs).toEqual([]);
+    expect(await (await app.request("/api/learning/courses")).json()).toEqual({
+      courses: [],
+    });
+    expect(
+      (
+        await app.request(
+          `/api/course-packs/export?revisionId=${encodeURIComponent(pack.revision.revisionKey)}`,
+        )
+      ).status,
+    ).toBe(404);
   });
 
   it("finalizes a sequential draft and unlocks its next lesson through real progress", async () => {

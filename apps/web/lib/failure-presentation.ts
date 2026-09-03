@@ -17,7 +17,7 @@ export type FailureOperation =
   | "course.instructions.download"
   | "coursePack.library.load"
   | "coursePack.select"
-  | "coursePack.uninstall"
+  | "coursePack.delete"
   | "coursePack.export"
   | "studio.load"
   | "studio.action";
@@ -35,7 +35,7 @@ const operationMessageKeys = {
     "failure.operation.courseInstructionsDownload",
   "coursePack.library.load": "failure.operation.coursePackLibraryLoad",
   "coursePack.select": "failure.operation.coursePackSelect",
-  "coursePack.uninstall": "failure.operation.coursePackUninstall",
+  "coursePack.delete": "failure.operation.coursePackDelete",
   "coursePack.export": "failure.operation.coursePackExport",
   "studio.load": "failure.operation.studioLoad",
   "studio.action": "failure.operation.studioAction",

@@ -11,6 +11,8 @@ const alertVariants = cva(
         default: "bg-card text-card-foreground",
         warning:
           "border-warning/45 bg-warning/10 text-foreground *:data-[slot=alert-title]:text-warning-foreground *:data-[slot=alert-description]:text-foreground [&>svg]:text-warning-foreground",
+        success:
+          "border-success/35 bg-success/10 text-foreground *:data-[slot=alert-title]:text-success-foreground *:data-[slot=alert-description]:text-foreground [&>svg]:text-success-foreground",
         destructive:
           "border-destructive/30 bg-destructive/10 text-foreground *:data-[slot=alert-title]:text-destructive *:data-[slot=alert-description]:text-foreground [&>svg]:text-destructive",
       },
@@ -66,4 +68,17 @@ function AlertDescription({
   );
 }
 
-export { Alert, AlertTitle, AlertDescription };
+function AlertAction({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="alert-action"
+      className={cn(
+        "col-start-2 mt-3 flex flex-wrap items-center gap-2 sm:absolute sm:inset-y-0 sm:right-4 sm:col-start-auto sm:mt-0 sm:items-center",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export { Alert, AlertTitle, AlertDescription, AlertAction };

@@ -873,9 +873,9 @@ describe("CoursePackRepository", () => {
     );
   });
 
-  it("quarantines diagnostics only and explicitly uninstalls without deletion", () => {
+  it("deletes a Course from the library while retaining immutable records", async () => {
     const database = connection();
-    const ids = ["quarantine-record", "z-install-event", "a-uninstall-event"];
+    const ids = ["quarantine-record", "z-install-event", "a-delete-event"];
     let id = 0;
     const repository = new CoursePackRepository(database, {
       now: () => Date.UTC(2026, 7, 10),
@@ -906,7 +906,7 @@ describe("CoursePackRepository", () => {
     const pack = createDevelopmentCoursePackFixture();
     const { sourceBytes, validation } = validated(pack);
     repository.install({
-      operationId: "install-for-uninstall",
+      operationId: "install-for-delete",
       validationId: "66666666-6666-4666-8666-666666666661",
       action: "install",
       sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
@@ -915,30 +915,43 @@ describe("CoursePackRepository", () => {
       report: validation.report,
     });
     expect(() =>
-      repository.uninstall({
-        operationId: "uninstall-wrong-confirmation",
-        revisionId: pack.revision.revisionKey,
-        confirmRevisionKey: "wrong",
+      repository.deleteCourse({
+        operationId: "delete-wrong-confirmation",
+        courseId: pack.course.courseKey,
+        confirmCourseKey: "wrong",
       }),
     ).toThrow(/confirmation/u);
-    const uninstalled = repository.uninstall({
-      operationId: "uninstall-pack",
-      revisionId: pack.revision.revisionKey,
-      confirmRevisionKey: pack.revision.revisionKey,
+    const deleted = repository.deleteCourse({
+      operationId: "delete-course",
+      courseId: pack.course.courseKey,
+      confirmCourseKey: pack.course.courseKey,
     });
-    expect(uninstalled).toEqual({
-      revisionId: pack.revision.revisionKey,
-      lifecycleAction: "uninstall",
+    expect(deleted).toEqual({
+      courseId: pack.course.courseKey,
+      lifecycleAction: "delete",
       retainedEvidenceCount: 0,
+      deletedRevisionCount: 1,
       idempotent: false,
     });
-    expect(repository.list()[0]).toMatchObject({
-      revisionStatus: "archived",
-      lifecycleAction: "uninstall",
-    });
+    expect(repository.list()).toEqual([]);
+    await expect(
+      new CourseFoundationRepository(database).listCourses(),
+    ).resolves.toEqual([]);
+    expect(
+      database.sqlite
+        .prepare(`SELECT status FROM course_revisions WHERE id = ?`)
+        .get(pack.revision.revisionKey),
+    ).toEqual({ status: "archived" });
+    expect(
+      repository.deleteCourse({
+        operationId: "delete-course",
+        courseId: pack.course.courseKey,
+        confirmCourseKey: pack.course.courseKey,
+      }),
+    ).toMatchObject({ lifecycleAction: "delete", idempotent: true });
     expect(() =>
       repository.install({
-        operationId: "reinstall-after-uninstall",
+        operationId: "reinstall-after-delete",
         validationId: "66666666-6666-4666-8666-666666666662",
         action: "install",
         sourceBytesHash: coursePackSourceBytesHash(sourceBytes),
@@ -947,9 +960,9 @@ describe("CoursePackRepository", () => {
         report: validation.report,
       }),
     ).toThrow(/different lifecycle action/u);
-    expect(repository.exportCanonicalJson(pack.revision.revisionKey)).toBe(
-      canonicalCoursePackJson(pack),
-    );
+    expect(
+      repository.exportCanonicalJson(pack.revision.revisionKey),
+    ).toBeNull();
     expect(() =>
       database.sqlite
         .prepare(
@@ -959,9 +972,9 @@ describe("CoursePackRepository", () => {
     ).toThrow("Course Pack manifest is immutable");
   });
 
-  it("selects a deterministic remaining Course after uninstall and passes exact-current admission", async () => {
+  it("selects a deterministic remaining Course after deletion and passes exact-current admission", async () => {
     const projectRoot = mkdtempSync(
-      join(tmpdir(), "aptiloop-course-uninstall-selection-"),
+      join(tmpdir(), "aptiloop-course-delete-selection-"),
     );
     const dataDirectory = join(projectRoot, ".data");
     const databasePath = join(dataDirectory, "dev-learning-harness.sqlite");
@@ -1010,10 +1023,10 @@ describe("CoursePackRepository", () => {
         revisionId: secondPack.revision.revisionKey,
       });
 
-      repository.uninstall({
-        operationId: "uninstall-selected-course",
-        revisionId: secondPack.revision.revisionKey,
-        confirmRevisionKey: secondPack.revision.revisionKey,
+      repository.deleteCourse({
+        operationId: "delete-selected-course",
+        courseId: secondPack.course.courseKey,
+        confirmCourseKey: secondPack.course.courseKey,
       });
       expect(
         database.sqlite

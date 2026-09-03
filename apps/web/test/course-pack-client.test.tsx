@@ -1932,8 +1932,8 @@ describe("Course library", () => {
     );
   });
 
-  it("exposes every imported revision with revision-scoped Pack actions", async () => {
-    let uninstallBlocked = true;
+  it("keeps revision export scoped and deletes the Course only after confirmation", async () => {
+    let deletionBlocked = true;
     const invalidateQueries = vi.spyOn(
       QueryClient.prototype,
       "invalidateQueries",
@@ -2008,13 +2008,11 @@ describe("Course library", () => {
           ],
         };
       }
-      if (path === "/course-packs/uninstall") {
-        if (uninstallBlocked) {
-          uninstallBlocked = false;
+      if (path === "/course-packs/delete") {
+        if (deletionBlocked) {
+          deletionBlocked = false;
           throw Object.assign(
-            new Error(
-              "Course Pack revision is pinned by an active learning session",
-            ),
+            new Error("Course is pinned by an active learning session"),
             { code: "active_session", status: 409 },
           );
         }
@@ -2097,53 +2095,63 @@ describe("Course library", () => {
       screen.getByRole("heading", { name: "Course one" }),
     ).toBeInTheDocument();
 
-    fireEvent.click(
-      within(revisionTwo).getByRole("button", {
-        name: "Удалить · Ревизия 2",
+    expect(
+      within(revisionTwo).queryByRole("button", { name: /Удалить/u }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.pointerDown(
+      within(courseRow as HTMLElement).getByRole("button", {
+        name: "Другие действия для курса «Course one»",
       }),
+      { button: 0, ctrlKey: false },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Удалить курс" }),
     );
     expect(
       await screen.findByRole("alertdialog", {
-        name: "Удалить Course Pack из библиотеки?",
+        name: "Удалить курс без возможности восстановления?",
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Ревизия revision-2 станет архивной/u),
+      screen.getByText(/Курс «Course one» и все его ревизии исчезнут/u),
     ).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Удалить из библиотеки" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Удалить навсегда" }));
 
     await waitFor(() =>
       expect(toastErrorMock).toHaveBeenCalledWith(
-        "Вернитесь к активному занятию и завершите его перед удалением Course Pack. Текущая сессия и прогресс остаются доступны.",
+        "Завершите активное занятие перед удалением курса. Aptiloop не прервёт и не отбросит активную сессию.",
       ),
     );
     await waitFor(() =>
       expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
     );
-    fireEvent.click(
-      within(revisionTwo).getByRole("button", {
-        name: "Удалить · Ревизия 2",
+    fireEvent.pointerDown(
+      within(courseRow as HTMLElement).getByRole("button", {
+        name: "Другие действия для курса «Course one»",
       }),
+      { button: 0, ctrlKey: false },
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "Удалить из библиотеки" }),
+      await screen.findByRole("menuitem", { name: "Удалить курс" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Удалить навсегда" }),
     );
 
     await waitFor(() =>
       expect(apiMock).toHaveBeenCalledWith(
-        "/course-packs/uninstall",
+        "/course-packs/delete",
         expect.objectContaining({
           method: "POST",
           body: expect.stringMatching(
-            /"revisionId":"revision-2".*"confirmRevisionKey":"revision-2"/u,
+            /"courseId":"course-1".*"confirmCourseKey":"course-1"/u,
           ),
         }),
       ),
     );
     expect(toastSuccessMock).toHaveBeenCalledWith(
-      "Course Pack удалён из активной библиотеки. История сохранена.",
+      "Курс удалён из раздела «Курсы». Восстановить его из библиотеки нельзя.",
     );
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["learning-path"],

@@ -20,6 +20,7 @@ import { Markdown } from "@/components/ui/markdown";
 import { Progress } from "@/components/ui/progress";
 import {
   Message,
+  MessageAvatar,
   MessageContent,
   MessageHeader,
 } from "@/components/ui/message";
@@ -84,9 +85,9 @@ export function InterviewChatView({
   return (
     <div
       aria-busy={action !== null}
-      className="flex min-w-0 flex-col bg-background"
+      className="flex min-w-0 flex-col bg-background lg:h-full lg:min-h-0"
     >
-      <div data-slot="interview-question-progress" className="pb-4">
+      <div data-slot="interview-question-progress" className="shrink-0 pb-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold">
             {t("interview.session.questionProgress", {
@@ -105,14 +106,14 @@ export function InterviewChatView({
           aria-label={answeredProgress}
         />
       </div>
-      <MessageScrollerProvider>
-        <MessageScroller className="h-[clamp(20rem,40vh,30rem)] flex-none">
+      <MessageScrollerProvider autoScroll>
+        <MessageScroller className="min-h-64 flex-1 rounded-focus bg-surface-soft/25 lg:min-h-0">
           <MessageScrollerViewport
             role="region"
             aria-label={t("interview.chat.transcript")}
-            className="py-6 pr-2"
+            className="px-3 py-6 sm:px-5"
           >
-            <MessageScrollerContent className="mx-0 max-w-none">
+            <MessageScrollerContent className="mx-0 max-w-none gap-6">
               {interview.transcript.length === 0 && !waitingForQuestion ? (
                 <div className="my-auto w-full max-w-xl py-12 text-left">
                   <p className="font-medium">{t("interview.opening.status")}</p>
@@ -141,11 +142,14 @@ export function InterviewChatView({
                       align={assistant ? "start" : "end"}
                       aria-label={label}
                     >
+                      <MessageAvatar aria-hidden>
+                        {label.slice(0, 1)}
+                      </MessageAvatar>
                       <MessageContent>
                         <MessageHeader>{label}</MessageHeader>
                         <Bubble
                           align={assistant ? "start" : "end"}
-                          variant={assistant ? "ghost" : "secondary"}
+                          variant={assistant ? "muted" : "secondary"}
                         >
                           <BubbleContent
                             role={live ? "status" : undefined}
@@ -171,11 +175,14 @@ export function InterviewChatView({
                     align="start"
                     aria-label={t("interview.chat.interviewer")}
                   >
+                    <MessageAvatar aria-hidden>
+                      {t("interview.chat.interviewer").slice(0, 1)}
+                    </MessageAvatar>
                     <MessageContent>
                       <MessageHeader>
                         {t("interview.chat.interviewer")}
                       </MessageHeader>
-                      <Bubble align="start" variant="ghost">
+                      <Bubble align="start" variant="muted">
                         <BubbleContent>
                           <span
                             role="status"
@@ -198,7 +205,7 @@ export function InterviewChatView({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      <div className="flex min-w-0 flex-col gap-3 pt-4">
+      <div className="flex min-w-0 shrink-0 flex-col gap-3 pt-3">
         {actionError ? (
           <Alert id="interview-chat-error" variant="destructive">
             <AlertDescription>{actionError}</AlertDescription>
@@ -266,7 +273,7 @@ export function InterviewChatView({
               {!waitingForQuestion ? (
                 <InputGroupAddon
                   align="block-end"
-                  className="flex-wrap justify-end gap-2 border-t border-border/60 pt-3"
+                  className="flex-wrap justify-end gap-2 pt-3"
                 >
                   {retryAction ? (
                     <InputGroupButton

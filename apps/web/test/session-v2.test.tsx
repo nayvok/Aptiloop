@@ -2284,7 +2284,8 @@ describe("guided versioned session", () => {
       document.querySelectorAll('[data-slot="activity-frame"]'),
     ).toHaveLength(1);
     expect(activity).toContainElement(generate as HTMLElement);
-    expect(generate).toHaveClass("border-y");
+    expect(generate).toHaveClass("rounded-focus", "bg-surface-soft/40");
+    expect(generate).not.toHaveClass("border-y");
     expect(generate).not.toHaveClass("bg-surface-soft", "rounded-xl");
     fireEvent.click(generateButton);
     expect(
@@ -2299,7 +2300,8 @@ describe("guided versioned session", () => {
     const metrics = document.querySelector('[data-slot="summary-metrics"]');
     const insights = document.querySelector('[data-slot="summary-insights"]');
     const actions = document.querySelector('[data-slot="summary-actions"]');
-    expect(summary).toHaveClass("divide-y", "border-y");
+    expect(summary).toHaveClass("gap-5");
+    expect(summary).not.toHaveClass("divide-y", "border-y");
     expect(metrics?.tagName).toBe("DL");
     for (const section of [narrative, metrics, insights, actions]) {
       expect(section).not.toHaveClass(

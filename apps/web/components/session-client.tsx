@@ -8,6 +8,7 @@ import {
   ArrowUpRightIcon,
   ArrowRightIcon,
   CheckIcon,
+  ChalkboardTeacherIcon,
   CircleIcon,
   ListIcon,
   PaperPlaneTiltIcon,
@@ -36,7 +37,16 @@ import {
 import { useI18n, type MessageKey } from "@/lib/i18n";
 import { DayPlanRail, DayPlanSheet } from "@/components/day-plan";
 import { Badge } from "@/components/ui/badge";
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,11 +59,28 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Field,
+  FieldContent,
+  FieldDescription,
   FieldGroup,
   FieldLabel,
   FieldLegend,
   FieldSet,
+  FieldTitle,
 } from "@/components/ui/field";
+import {
+  Message,
+  MessageAvatar,
+  MessageContent,
+  MessageHeader,
+} from "@/components/ui/message";
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -647,7 +674,9 @@ export function SessionClient() {
     const previousIdentity = previousFocusIdentityRef.current;
     previousFocusIdentityRef.current = focusIdentity;
     if (previousIdentity && previousIdentity !== focusIdentity) {
-      lessonFocusRef.current?.focus();
+      const lessonFocus = lessonFocusRef.current;
+      lessonFocus?.focus({ preventScroll: true });
+      lessonFocus?.scrollIntoView?.({ block: "start", inline: "nearest" });
     }
   }, [focusIdentity]);
   const pageRouteContext = useMemo<RouteContext | null>(() => {
@@ -893,7 +922,7 @@ export function SessionClient() {
           role="group"
           aria-label={focusedUnit.title}
           tabIndex={-1}
-          className="mx-auto w-full max-w-[72rem] min-w-0 scroll-mt-28 px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-6 sm:py-7 lg:px-8 lg:py-8 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-2"
+          className="mx-auto w-full max-w-[72rem] min-w-0 scroll-mt-56 px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:scroll-mt-44 sm:px-6 sm:py-7 lg:px-8 lg:py-8 @min-[72rem]/lesson:col-start-1 @min-[72rem]/lesson:row-start-2"
         >
           {showBlockTransition && activeBlock ? (
             <BlockTransition
@@ -1425,16 +1454,12 @@ function UnitBody(props: UnitBodyProps) {
   const Renderer = activityRendererRegistry[props.unit.type];
   if (!Renderer) {
     return (
-      <div
-        role="alert"
-        data-slot="unsupported-activity"
-        className="rounded-md border border-warning/40 bg-warning/10 p-4"
-      >
-        <p className="font-medium">{t("activity.unsupported.title")}</p>
-        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+      <Alert data-slot="unsupported-activity" variant="warning">
+        <AlertTitle>{t("activity.unsupported.title")}</AlertTitle>
+        <AlertDescription>
           {t("activity.unsupported.description")}
-        </p>
-      </div>
+        </AlertDescription>
+      </Alert>
     );
   }
   return <Renderer {...props} />;
@@ -1455,46 +1480,45 @@ function Checklist({
   if (!items.length) return null;
   const requiredCount = items.filter((item) => item.required).length;
   return (
-    <fieldset data-slot="unit-checklist" className="flex flex-col gap-2">
-      <legend className="pb-1 text-sm font-medium">
+    <FieldSet data-slot="unit-checklist" className="gap-3">
+      <FieldLegend variant="label" className="mb-0">
         {t("session.checklist.title")}
-      </legend>
-      <p className="pb-1 text-xs leading-5 text-muted-foreground">
+      </FieldLegend>
+      <FieldDescription>
         {t("session.checklist.help")}
         {requiredCount > 0 ? t("session.checklist.requiredHelp") : ""}
-      </p>
-      <div className="flex flex-col divide-y divide-border/60 border-y border-border/60 px-1">
+      </FieldDescription>
+      <FieldGroup data-slot="checkbox-group" className="gap-2">
         {items.map((item) => (
-          <label
-            key={item.id}
-            className="flex min-h-11 items-start gap-3 py-3 text-sm leading-6 outline-none focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background"
-          >
-            <input
-              type="checkbox"
-              checked={checked.includes(item.id)}
-              disabled={disabled}
-              onChange={() => onToggle(item.id)}
-              className="mt-1 size-4 shrink-0 accent-primary"
-            />
-            <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-              {item.label}
-              {item.required ? (
-                <span className="text-muted-foreground">
-                  {" "}
-                  · {t("session.checklist.required")}
-                </span>
-              ) : null}
-            </span>
-          </label>
+          <FieldLabel key={item.id} htmlFor={`checklist-${item.id}`}>
+            <Field orientation="horizontal" data-disabled={disabled}>
+              <Checkbox
+                id={`checklist-${item.id}`}
+                checked={checked.includes(item.id)}
+                disabled={disabled}
+                onCheckedChange={() => onToggle(item.id)}
+              />
+              <FieldContent>
+                <FieldTitle className="break-words [overflow-wrap:anywhere]">
+                  {item.label}
+                </FieldTitle>
+                {item.required ? (
+                  <FieldDescription>
+                    {t("session.checklist.required")}
+                  </FieldDescription>
+                ) : null}
+              </FieldContent>
+            </Field>
+          </FieldLabel>
         ))}
-      </div>
-      <p className="pt-1 text-xs text-muted-foreground">
+      </FieldGroup>
+      <FieldDescription>
         {t("session.checklist.count", {
           checked: checked.length,
           total: items.length,
         })}
-      </p>
-    </fieldset>
+      </FieldDescription>
+    </FieldSet>
   );
 }
 
@@ -1766,7 +1790,7 @@ function StudyUnit({
           }))
         }
       />
-      <Field className="border-y border-border/60 py-5">
+      <Field className="rounded-focus bg-surface-soft/45 p-4 sm:p-5">
         <FieldLabel htmlFor={`notes-${unit.id}`}>
           {t("session.study.notes")}
         </FieldLabel>
@@ -1788,9 +1812,9 @@ function StudyUnit({
         />
       </Field>
       {!complete ? (
-        <div className="flex flex-col gap-2 border-t border-border/60 pt-5 sm:flex-row sm:justify-end">
+        <ButtonGroup className="w-full flex-col self-end sm:w-auto sm:flex-row">
           <Button
-            className="w-full sm:w-auto"
+            className="w-full sm:w-auto sm:min-w-32"
             variant="outline"
             disabled={pending}
             onClick={() => void save("in_progress")}
@@ -1798,14 +1822,14 @@ function StudyUnit({
             {t("session.study.save")}
           </Button>
           <Button
-            className="w-full sm:w-auto"
+            className="w-full sm:w-auto sm:min-w-32"
             disabled={pending || !required.every((id) => checked.includes(id))}
             onClick={() => void save("completed")}
           >
             {t("session.study.complete")}
             <CheckIcon aria-hidden />
           </Button>
-        </div>
+        </ButtonGroup>
       ) : (
         <CompletedNote />
       )}
@@ -1915,11 +1939,11 @@ function RecallUnit({
   }
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col divide-y divide-border/60">
+      <FieldGroup className="gap-4">
         {unit.questions.map((question, index) => (
           <Field
             key={question.id}
-            className="flex flex-col gap-3 py-5 first:pt-0 last:pb-0"
+            className="flex flex-col gap-3 rounded-focus bg-surface-soft/40 p-4 sm:p-5"
           >
             <FieldLabel
               className="w-full min-w-0"
@@ -1974,17 +1998,14 @@ function RecallUnit({
             ) : null}
           </Field>
         ))}
-      </div>
-      <p
-        id={`recall-help-${unit.id}`}
-        className="border-y border-border/60 py-3 text-xs leading-5 text-muted-foreground"
-      >
-        {t("session.recall.firstAttempt")}
-      </p>
+      </FieldGroup>
+      <Alert id={`recall-help-${unit.id}`} className="bg-surface-soft/45">
+        <AlertDescription>{t("session.recall.firstAttempt")}</AlertDescription>
+      </Alert>
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : allAnswered ? (
-        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+        <div className="flex justify-stretch pt-1 sm:justify-end">
           <Button
             className="w-full sm:w-auto"
             disabled={pending}
@@ -2339,12 +2360,13 @@ function TeacherDialogueUnit({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <div className="flex min-w-0 flex-col gap-1.5 border-y border-border/60 py-4 text-sm leading-6 sm:py-5">
-        <p className="font-semibold">{t("session.tutor.task")}</p>
-        <p className="max-w-[68ch] break-words text-muted-foreground [overflow-wrap:anywhere]">
+      <Alert className="bg-surface-soft/45">
+        <ChalkboardTeacherIcon aria-hidden />
+        <AlertTitle>{t("session.tutor.task")}</AlertTitle>
+        <AlertDescription className="max-w-[68ch] break-words [overflow-wrap:anywhere]">
           {opening}
-        </p>
-      </div>
+        </AlertDescription>
+      </Alert>
       {history.isPending && !localMessages ? (
         <LoadingState
           label="session.loading"
@@ -2358,38 +2380,57 @@ function TeacherDialogueUnit({
           retry={() => void history.refetch()}
         />
       ) : (
-        <ol
-          data-slot="teacher-transcript"
-          aria-label={t("session.tutor.history")}
-          className="flex max-h-96 min-w-0 flex-col gap-2 overflow-y-auto border-y border-border/60 py-3 sm:py-4"
-        >
-          {messages.length ? (
-            messages.map((message) => (
-              <li
-                key={message.id}
-                className={cn(
-                  "flex min-w-0 max-w-[92%] flex-col gap-1 rounded-control px-3 py-2.5 text-sm leading-6",
-                  message.role === "user"
-                    ? "self-end bg-accent text-foreground"
-                    : "border border-border/60 bg-background text-foreground",
+        <MessageScrollerProvider>
+          <MessageScroller
+            data-slot="teacher-transcript"
+            className="h-[clamp(18rem,44vh,32rem)] rounded-focus bg-surface-soft/25"
+          >
+            <MessageScrollerViewport
+              role="region"
+              aria-label={t("session.tutor.history")}
+              className="px-3 py-5 sm:px-5"
+            >
+              <MessageScrollerContent className="mx-0 max-w-none gap-5">
+                {messages.length ? (
+                  messages.map((message, index) => {
+                    const learner = message.role === "user";
+                    const label = learner
+                      ? t("session.tutor.you")
+                      : t("session.tutor.name");
+                    return (
+                      <MessageScrollerItem
+                        key={message.id}
+                        scrollAnchor={index === messages.length - 1}
+                      >
+                        <Message align={learner ? "end" : "start"}>
+                          <MessageAvatar aria-hidden>
+                            {label.slice(0, 1)}
+                          </MessageAvatar>
+                          <MessageContent>
+                            <MessageHeader>{label}</MessageHeader>
+                            <Bubble
+                              align={learner ? "end" : "start"}
+                              variant={learner ? "secondary" : "muted"}
+                            >
+                              <BubbleContent className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                                {message.content || "…"}
+                              </BubbleContent>
+                            </Bubble>
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    );
+                  })
+                ) : (
+                  <p className="my-auto py-10 text-sm text-muted-foreground">
+                    {t("session.tutor.emptyHistory")}
+                  </p>
                 )}
-              >
-                <span className="block text-xs font-medium">
-                  {message.role === "user"
-                    ? t("session.tutor.you")
-                    : t("session.tutor.name")}
-                </span>
-                <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                  {message.content || "…"}
-                </span>
-              </li>
-            ))
-          ) : (
-            <li className="text-sm text-muted-foreground">
-              {t("session.tutor.emptyHistory")}
-            </li>
-          )}
-        </ol>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton />
+          </MessageScroller>
+        </MessageScrollerProvider>
       )}
       {providerError ? (
         <QueryError
@@ -2408,7 +2449,7 @@ function TeacherDialogueUnit({
       ) : (
         <>
           {!canComplete ? (
-            <Field className="border-y border-border/60 py-5">
+            <Field className="rounded-focus bg-surface-soft/40 p-4 sm:p-5">
               <FieldLabel htmlFor={`teacher-revision-${unit.id}`}>
                 {answeringFollowUp
                   ? t("session.tutor.followUpLabel")
@@ -2436,7 +2477,7 @@ function TeacherDialogueUnit({
               />
             </Field>
           ) : null}
-          <div className="flex flex-col gap-2 border-t border-border/60 pt-5 sm:flex-row sm:justify-end">
+          <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:justify-end">
             {streaming ? (
               <Button
                 className="w-full sm:w-auto"
@@ -2577,19 +2618,16 @@ function QuizUnit({
   return (
     <div className="flex flex-col gap-6">
       {invalidQuestions.length ? (
-        <p
-          role="alert"
-          className="border-y border-destructive/30 bg-destructive/5 py-4 text-sm text-destructive"
-        >
-          {t("session.quiz.invalid")}
-        </p>
+        <Alert variant="destructive">
+          <AlertTitle>{t("session.quiz.invalid")}</AlertTitle>
+        </Alert>
       ) : null}
       {unit.questions.map((question, index) => {
         const result = results?.find((item) => item.questionId === question.id);
         return (
           <FieldSet
             key={question.id}
-            className="gap-3 border-b border-border/60 pb-5 last:border-b-0 last:pb-0"
+            className="gap-4 rounded-focus bg-surface-soft/35 p-4 sm:p-5"
           >
             <FieldLegend className="mb-0 min-w-0 break-words text-base leading-6 [overflow-wrap:anywhere]">
               {index + 1}. {question.prompt}
@@ -2609,56 +2647,54 @@ function QuizUnit({
                   },
                 }))
               }
-              className="gap-0 divide-y divide-border/60 border-y border-border/60"
+              className="gap-2"
             >
               {question.options.map((option) => (
                 <FieldLabel
                   key={option.id}
                   htmlFor={`quiz-${question.id}-${option.id}`}
-                  className="min-h-11 w-full min-w-0 cursor-pointer items-center gap-3 px-3 py-2 text-sm transition-colors hover:bg-accent has-data-[state=checked]:bg-accent motion-reduce:transition-none"
+                  className="cursor-pointer transition-colors hover:border-primary/40 hover:bg-accent/60 motion-reduce:transition-none"
                 >
-                  <RadioGroupItem
-                    id={`quiz-${question.id}-${option.id}`}
-                    value={option.id}
-                  />
-                  <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-                    {option.label}
-                  </span>
+                  <Field orientation="horizontal">
+                    <RadioGroupItem
+                      id={`quiz-${question.id}-${option.id}`}
+                      value={option.id}
+                    />
+                    <FieldContent>
+                      <FieldTitle className="min-w-0 break-words [overflow-wrap:anywhere]">
+                        {option.label}
+                      </FieldTitle>
+                    </FieldContent>
+                  </Field>
                 </FieldLabel>
               ))}
             </RadioGroup>
             {result ? (
-              <p
-                className={cn(
-                  "border-y px-3 py-2 text-sm font-medium",
-                  result.correct
-                    ? "border-success/25 bg-success/10 text-success-foreground"
-                    : "border-warning/35 bg-warning/20 text-warning-foreground",
-                )}
-              >
-                {result.correct
-                  ? t("session.quiz.correct")
-                  : t("session.quiz.retryNeeded")}
-              </p>
+              <Alert variant={result.correct ? "success" : "warning"}>
+                <AlertTitle>
+                  {result.correct
+                    ? t("session.quiz.correct")
+                    : t("session.quiz.retryNeeded")}
+                </AlertTitle>
+              </Alert>
             ) : null}
           </FieldSet>
         );
       })}
       {payload.score !== null ? (
-        <p
-          role="status"
-          className="border-y border-border/60 py-3 text-sm font-medium"
-        >
-          {t("session.quiz.score", {
-            score: Math.round(payload.score * 100),
-            minimum: Math.round(minimumScore * 100),
-          })}
-        </p>
+        <Alert role="status" variant={passed ? "success" : "warning"}>
+          <AlertTitle>
+            {t("session.quiz.score", {
+              score: Math.round(payload.score * 100),
+              minimum: Math.round(minimumScore * 100),
+            })}
+          </AlertTitle>
+        </Alert>
       ) : null}
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : passed ? (
-        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+        <div className="flex justify-stretch pt-1 sm:justify-end">
           <Button
             className="w-full sm:w-auto"
             disabled={pending}
@@ -2669,26 +2705,28 @@ function QuizUnit({
           </Button>
         </div>
       ) : scored && !retrying ? (
-        <div className="flex flex-col items-start gap-4 border-y border-warning/35 bg-warning/20 py-4 text-warning-foreground sm:flex-row sm:items-center sm:justify-between sm:py-5">
-          <p className="max-w-[60ch] text-sm leading-6">
+        <Alert variant="warning" className="sm:pr-44">
+          <AlertDescription className="max-w-[60ch]">
             {t("session.quiz.retryDescription")}
-          </p>
-          <Button
-            className="w-full sm:w-auto"
-            type="button"
-            variant="outline"
-            disabled={pending || invalidQuestions.length > 0}
-            onClick={() => {
-              draft.clear({ type: "quiz", answers: {} });
-              setResults(null);
-              setRetrying(true);
-            }}
-          >
-            {t("session.quiz.retry")}
-          </Button>
-        </div>
+          </AlertDescription>
+          <AlertAction>
+            <Button
+              className="w-full sm:w-auto"
+              type="button"
+              variant="outline"
+              disabled={pending || invalidQuestions.length > 0}
+              onClick={() => {
+                draft.clear({ type: "quiz", answers: {} });
+                setResults(null);
+                setRetrying(true);
+              }}
+            >
+              {t("session.quiz.retry")}
+            </Button>
+          </AlertAction>
+        </Alert>
       ) : (
-        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+        <div className="flex justify-stretch pt-1 sm:justify-end">
           <Button
             className="w-full sm:w-auto"
             disabled={pending || !allAnswered || invalidQuestions.length > 0}
@@ -2775,7 +2813,7 @@ function CodeReadingUnit({
   return (
     <div className="flex flex-col gap-6">
       {unit.payload.type === "code-reading" ? (
-        <pre className="max-w-full overflow-x-auto border-y border-border/60 bg-surface-soft/60 p-4 font-mono text-sm leading-6">
+        <pre className="max-w-full overflow-x-auto rounded-focus bg-surface-soft/60 p-4 font-mono text-sm leading-6">
           <code>{unit.payload.snippet}</code>
         </pre>
       ) : null}
@@ -2787,7 +2825,7 @@ function CodeReadingUnit({
           {question.prompt}
         </p>
       ))}
-      <FieldGroup className="gap-0 divide-y divide-border/60 border-y border-border/60">
+      <FieldGroup className="gap-4">
         {(
           [
             ["prediction", t("session.code.prediction")],
@@ -2795,7 +2833,10 @@ function CodeReadingUnit({
             ["verbalFix", t("session.code.verbalFix")],
           ] as const
         ).map(([field, label]) => (
-          <Field key={field} className="py-4">
+          <Field
+            key={field}
+            className="rounded-focus bg-surface-soft/40 p-4 sm:p-5"
+          >
             <FieldLabel htmlFor={`${field}-${unit.id}`}>{label}</FieldLabel>
             <Textarea
               id={`${field}-${unit.id}`}
@@ -2818,7 +2859,7 @@ function CodeReadingUnit({
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : saved ? (
-        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+        <div className="flex justify-stretch pt-1 sm:justify-end">
           <Button
             className="w-full sm:w-auto"
             disabled={pending}
@@ -2829,7 +2870,7 @@ function CodeReadingUnit({
           </Button>
         </div>
       ) : (
-        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+        <div className="flex justify-stretch pt-1 sm:justify-end">
           <Button
             className="w-full sm:w-auto"
             disabled={
@@ -2856,17 +2897,19 @@ function ExerciseHandoffUnit({ session, unit, progress }: UnitBodyProps) {
       : unit.completionCriteria.map((criterion) => criterion.type);
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid gap-6 border-y border-border/60 py-5 md:grid-cols-2 md:divide-x md:divide-border/60">
-        <InfoList
-          title={
-            unit.type === "review"
-              ? t("session.practice.reviewCriteria")
-              : t("session.practice.acceptance")
-          }
-          items={criteria}
-        />
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="rounded-focus bg-surface-soft/40 p-4 sm:p-5">
+          <InfoList
+            title={
+              unit.type === "review"
+                ? t("session.practice.reviewCriteria")
+                : t("session.practice.acceptance")
+            }
+            items={criteria}
+          />
+        </div>
         {unit.payload.type === "exercise" && unit.payload.constraints.length ? (
-          <div className="md:pl-6">
+          <div className="rounded-focus bg-surface-soft/40 p-4 sm:p-5">
             <InfoList
               title={t("session.practice.constraints")}
               items={unit.payload.constraints}
@@ -2880,7 +2923,7 @@ function ExerciseHandoffUnit({ session, unit, progress }: UnitBodyProps) {
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : (
-        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+        <div className="flex justify-stretch pt-1 sm:justify-end">
           <Button className="w-full sm:w-auto" asChild>
             <Link
               href={`/exercise?sessionId=${encodeURIComponent(session.id)}`}
@@ -2919,7 +2962,7 @@ function InterviewUnit({
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : hasReport ? (
-        <div className="flex flex-col items-start gap-4 border-y border-border/60 py-5">
+        <div className="flex flex-col items-start gap-4 rounded-focus bg-surface-soft/40 p-4 sm:p-5">
           <p className="max-w-[60ch] text-sm leading-6 text-muted-foreground">
             {t("session.interview.reportReady")}
           </p>
@@ -2949,7 +2992,7 @@ function InterviewUnit({
           </div>
         </div>
       ) : (
-        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+        <div className="flex justify-stretch pt-1 sm:justify-end">
           <Button className="w-full sm:w-auto" onClick={onInterview}>
             {t("session.interview.open")}
             <ArrowRightIcon aria-hidden />
@@ -3023,19 +3066,16 @@ function SummaryUnit({
         />
       ) : null}
       {result ? (
-        <div
-          data-slot="day-summary"
-          className="flex flex-col divide-y divide-border/60 border-y border-border/60"
-        >
-          <div data-slot="summary-narrative" className="py-5">
+        <div data-slot="day-summary" className="flex flex-col gap-5">
+          <div
+            data-slot="summary-narrative"
+            className="rounded-focus bg-surface-soft/40 p-4 sm:p-5"
+          >
             <p className="max-w-[68ch] break-words text-[0.9375rem] leading-6 [overflow-wrap:anywhere]">
               {summaryMessageText(t, result.summary.narrative)}
             </p>
           </div>
-          <dl
-            data-slot="summary-metrics"
-            className="grid divide-y divide-border/60 sm:grid-cols-3 sm:divide-x sm:divide-y-0"
-          >
+          <dl data-slot="summary-metrics" className="grid gap-3 sm:grid-cols-3">
             <SummaryMetric
               label={t("session.summary.quiz")}
               value={`${Math.round(result.summary.metrics.quizScore * 100)}%`}
@@ -3051,7 +3091,7 @@ function SummaryUnit({
           </dl>
           <section
             data-slot="summary-insights"
-            className="grid gap-8 py-5 lg:grid-cols-2"
+            className="grid gap-4 lg:grid-cols-2 [&>[data-slot=unit-info-list]]:rounded-focus [&>[data-slot=unit-info-list]]:bg-surface-soft/40 [&>[data-slot=unit-info-list]]:p-4 sm:[&>[data-slot=unit-info-list]]:p-5"
           >
             <InfoList
               title={t("session.summary.strengths")}
@@ -3074,10 +3114,7 @@ function SummaryUnit({
               }
             />
           </section>
-          <footer
-            data-slot="summary-actions"
-            className="flex flex-col gap-5 py-5"
-          >
+          <footer data-slot="summary-actions" className="flex flex-col gap-5">
             <p className="text-sm text-muted-foreground">
               {t("session.summary.counts", {
                 mistakes: result.summary.mistakeCandidates.length,
@@ -3115,7 +3152,7 @@ function SummaryUnit({
       ) : (
         <div
           data-slot="summary-generate"
-          className="flex flex-col items-start gap-4 border-y border-border/60 py-5 sm:flex-row sm:items-center sm:justify-between"
+          className="flex flex-col items-start gap-4 rounded-focus bg-surface-soft/40 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5"
         >
           <p className="max-w-[65ch] text-xs leading-5 text-muted-foreground">
             {t("session.summary.description")}
@@ -3137,7 +3174,7 @@ function SummaryUnit({
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="p-4 sm:p-5">
+    <div className="rounded-focus bg-surface-soft/40 p-4 sm:p-5">
       <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
       <dd className="mt-1 text-xl font-semibold tabular-nums">{value}</dd>
     </div>
@@ -3170,7 +3207,7 @@ function CheckpointUnit({ unit, progress, pending, patchUnit }: UnitBodyProps) {
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : (
-        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+        <div className="flex justify-stretch pt-1 sm:justify-end">
           <Button
             className="w-full sm:w-auto"
             disabled={pending}
@@ -3206,7 +3243,7 @@ function SpacedReviewUnit({ unit, progress }: UnitBodyProps) {
       {progress.status === "completed" ? (
         <CompletedNote />
       ) : (
-        <div className="flex justify-stretch border-t border-border/60 pt-5 sm:justify-end">
+        <div className="flex justify-stretch pt-1 sm:justify-end">
           <Button asChild className="w-full sm:w-auto" variant="outline">
             <Link href="/review">{t("nav.review")}</Link>
           </Button>
@@ -3350,12 +3387,9 @@ function InfoList({
 function CompletedNote() {
   const { t } = useI18n();
   return (
-    <p
-      role="status"
-      className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-control bg-success/10 px-3 py-2 text-sm font-medium text-success-foreground"
-    >
+    <Alert role="status" variant="success" className="max-w-xl">
       <CheckIcon aria-hidden />
-      {t("session.completed")}
-    </p>
+      <AlertTitle>{t("session.completed")}</AlertTitle>
+    </Alert>
   );
 }
