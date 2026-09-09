@@ -69,6 +69,8 @@ export interface CourseTransferRouteOptions {
   readonly connection: DatabaseConnection;
   readonly coursePacks: CoursePackRepository;
   readonly exerciseAttemptsRoot?: string;
+  /** App version recorded in exported transfer manifests as metadata. */
+  readonly originatingAppVersion: string;
   readonly now?: () => number;
   readonly id?: () => string;
   readonly validationTtlMilliseconds?: number;
@@ -104,7 +106,7 @@ export function registerCourseTransferRoutes(
     );
     const exported = await buildTransferExport(
       options.connection,
-      request,
+      { ...request, originatingAppVersion: options.originatingAppVersion },
       options.exerciseAttemptsRoot,
     );
     context.header("Cache-Control", "no-store");
@@ -175,6 +177,9 @@ export function registerCourseTransferRoutes(
     const validationId = validationIdSchema.parse(id());
     const preview = CourseTransferPreviewSchema.parse({
       ...validation.preview,
+      appVersionMatches:
+        validation.envelope.manifest.originatingAppVersion ===
+        options.originatingAppVersion,
       conflicts: previewCourseTransferConflicts(
         options.connection,
         validation.envelope,

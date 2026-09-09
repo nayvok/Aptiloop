@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   CoursePackStagedValidationReportSchema,
@@ -20,7 +21,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { api } from "@/lib/api";
 import { type MessageKey, useI18n } from "@/lib/i18n";
+
+const versionSchema = z
+  .object({
+    product: z.literal("Aptiloop"),
+    appVersion: z.string(),
+  })
+  .strict();
 
 export type DetectedFileFormat = "pack" | "transfer" | "unknown" | null;
 
@@ -373,12 +382,43 @@ export function TransferPreviewPanel({
   committing: boolean;
 }) {
   const { locale, t } = useI18n();
+  const versionInfo = useQuery({
+    queryKey: ["system", "version"],
+    queryFn: () =>
+      api<unknown>("/version").then((body) => versionSchema.parse(body)),
+    staleTime: 60_000,
+  });
   return (
     <div className="grid min-w-0 gap-6">
       <div>
         <h2 className="text-lg font-semibold">
           {t("courses.transfer.preview.courses")}
         </h2>
+        <div
+          className={`mt-3 flex min-w-0 flex-col gap-2 rounded-lg border p-3 text-sm ${
+            preview.mode === "learnerScope" ? "border-warning" : "border-border"
+          }`}
+        >
+          <p>
+            {preview.mode === "learnerScope"
+              ? t("courses.transfer.preview.mode.learnerScope")
+              : t("courses.transfer.preview.mode.full")}
+          </p>
+          <p className="text-muted-foreground">
+            {t("courses.transfer.preview.originatingVersion", {
+              version: preview.originatingAppVersion,
+            })}
+          </p>
+          {preview.appVersionMatches === false ? (
+            <p role="note" className="text-sm text-warning">
+              {t("courses.transfer.preview.appVersionMismatch", {
+                source: preview.originatingAppVersion,
+                current:
+                  versionInfo.data?.appVersion ?? preview.originatingAppVersion,
+              })}
+            </p>
+          ) : null}
+        </div>
         <ul className="mt-3 grid min-w-0 gap-2">
           {preview.courses.map((course) => (
             <li

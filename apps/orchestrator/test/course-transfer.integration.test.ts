@@ -100,11 +100,15 @@ async function jsonOrThrow(response: Response, step: string): Promise<unknown> {
 }
 
 describe("course transfer with active attempt restore", () => {
-  it("fails closed when the Course has no transferable content revision", async () => {
+  it("exports learnerScope-only progress and fails closed on a target without the installed revision", async () => {
     const source = runtime(true, "src");
     const courseRow = source.state.connection.sqlite
       .prepare(`SELECT id FROM courses ORDER BY id LIMIT 1`)
       .get() as { id: string };
+    // Seeded development revisions carry preserved legacy content hashes and
+    // are not representable as re-verifiable v1 revision snapshots, so the
+    // transfer exports learnerScope-only progress bound to the locally
+    // installed published revision (ADR 0012 decision 1).
     const exportResponse = await request(
       source.app,
       "/api/course-transfer/export",
@@ -118,21 +122,129 @@ describe("course transfer with active attempt restore", () => {
         }),
       },
     );
-    // Seeded development revisions carry preserved legacy content hashes and
-    // are not representable as re-verifiable v1 revision snapshots.
-    expect(exportResponse.status).toBe(409);
-    expect(await exportResponse.json()).toMatchObject({
-      error: expect.stringContaining("no transferable content revision"),
+    if (exportResponse.status !== 200) {
+      throw new Error(`export failed: ${await exportResponse.text()}`);
+    }
+    const envelopeText = await exportResponse.text();
+    const envelope = JSON.parse(envelopeText) as {
+      manifest: {
+        operationId: string;
+        mode: string;
+        originatingAppVersion: string;
+        learnerScopeCourses: Array<{
+          courseKey: string;
+          revisionKey: string;
+          revisionContentHash: string;
+        }>;
+      };
+    };
+    expect(envelope.manifest.mode).toBe("learnerScope");
+    expect(envelope.manifest.originatingAppVersion).toMatch(/^\d+\.\d+\.\d+$/u);
+    expect(envelope.manifest.learnerScopeCourses).toHaveLength(1);
+    expect(envelope.manifest.learnerScopeCourses[0]).toMatchObject({
+      courseKey: courseRow.id,
+      revisionContentHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+    });
+
+    // The preview and import surfaces the mode and app version explicitly.
+    const target = runtime(false, "dst-empty");
+    const validateResponse = await request(
+      target.app,
+      "/api/course-transfer/validate",
+      { method: "POST", body: envelopeText },
+    );
+    expect(validateResponse.status).toBe(200);
+    const validated = (await validateResponse.json()) as {
+      valid: boolean;
+      validationId: string;
+      envelopeHash: string;
+      preview: { mode: string; appVersionMatches: boolean };
+    };
+    expect(validated.valid).toBe(true);
+    expect(validated.preview.mode).toBe("learnerScope");
+    expect(validated.preview.appVersionMatches).toBe(true);
+
+    // The target does not hold the exact installed revision: commit fails
+    // closed with a precise diagnostic instead of attaching progress to a
+    // mismatched Course.
+    const commitResponse = await request(
+      target.app,
+      `/api/course-transfer/validations/${validated.validationId}/commit`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          operationId: envelope.manifest.operationId,
+          expectedEnvelopeHash: validated.envelopeHash,
+        }),
+      },
+    );
+    expect(commitResponse.status).toBe(409);
+    const rejection = (await commitResponse.json()) as {
+      diagnostics: Array<{ code: string; path: string }>;
+    };
+    expect(rejection.diagnostics[0]).toMatchObject({
+      code: "TRANSFER_INSTALLED_REVISION_UNRESOLVED",
+      path: "/manifest/learnerScopeCourses/0",
     });
   });
 
-  // Blocked on the v1 transfer contract: the only Courses that own `exercises`
-  // rows (required for attempt materialization) are seeded development
-  // Courses, and their revisions are not transferable in v1 (no pack manifest,
-  // legacy content hash). A full export -> validate -> commit route test with
-  // an active attempt needs an owner decision on either transferable seeded
-  // revisions or a learnerScope-only envelope for locally installed Courses.
-  it.skip("exports an active attempt and restores it as real ordered Git commits with source identities", async () => {
+  it("reports an originating app version mismatch as a non-blocking preview warning", async () => {
+    const source = runtime(true, "src");
+    const courseRow = source.state.connection.sqlite
+      .prepare(`SELECT id FROM courses ORDER BY id LIMIT 1`)
+      .get() as { id: string };
+    const exportResponse = await request(
+      source.app,
+      "/api/course-transfer/export",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          courseKeys: [courseRow.id],
+          includeHistory: true,
+          scopeNote: "Version mismatch probe",
+          operationId: randomUUID(),
+        }),
+      },
+    );
+    if (exportResponse.status !== 200) {
+      throw new Error(`export failed: ${await exportResponse.text()}`);
+    }
+    const envelopeText = await exportResponse.text();
+    const previousVersion = process.env.APTILOOP_APP_VERSION;
+    process.env.APTILOOP_APP_VERSION = "9.9.9";
+    let target: ReturnType<typeof runtime>;
+    try {
+      target = runtime(true, "dst-version");
+    } finally {
+      if (previousVersion === undefined) {
+        delete process.env.APTILOOP_APP_VERSION;
+      } else {
+        process.env.APTILOOP_APP_VERSION = previousVersion;
+      }
+    }
+    const validateResponse = await request(
+      target.app,
+      "/api/course-transfer/validate",
+      { method: "POST", body: envelopeText },
+    );
+    expect(validateResponse.status).toBe(200);
+    const validated = (await validateResponse.json()) as {
+      valid: boolean;
+      preview: {
+        mode: string;
+        originatingAppVersion: string;
+        appVersionMatches: boolean;
+      };
+    };
+    // App version is metadata only: the mismatch warns but never blocks.
+    expect(validated.valid).toBe(true);
+    expect(validated.preview.mode).toBe("learnerScope");
+    expect(validated.preview.originatingAppVersion).toMatch(/^\d+\.\d+\.\d+$/u);
+    expect(validated.preview.originatingAppVersion).not.toBe("9.9.9");
+    expect(validated.preview.appVersionMatches).toBe(false);
+  });
+
+  it("exports an active attempt and restores it as real ordered Git commits with source identities", async () => {
     const source = runtime(true, "src");
 
     const pathBody = (await jsonOrThrow(
@@ -221,12 +333,16 @@ describe("course transfer with active attempt restore", () => {
         }),
       },
     );
-    const envelopeText = (await jsonOrThrow(
-      exportResponse,
-      "POST /api/course-transfer/export",
-    )) as string;
+    if (exportResponse.status !== 200) {
+      throw new Error(`export failed: ${await exportResponse.text()}`);
+    }
+    const envelopeText = await exportResponse.text();
     const envelope = JSON.parse(envelopeText) as {
-      manifest: { operationId: string; attemptSnapshotCount: number };
+      manifest: {
+        operationId: string;
+        attemptSnapshotCount: number;
+        mode: string;
+      };
       learnerScope: {
         attemptSnapshots: Array<{
           attemptId: string;
@@ -241,6 +357,7 @@ describe("course transfer with active attempt restore", () => {
       };
     };
     expect(envelope.manifest.operationId).toBe(operationId);
+    expect(envelope.manifest.mode).toBe("learnerScope");
     expect(envelope.manifest.attemptSnapshotCount).toBe(1);
     const snapshot = envelope.learnerScope.attemptSnapshots[0]!;
     expect(snapshot.attemptId).toBe(attemptId);
@@ -324,5 +441,150 @@ describe("course transfer with active attempt restore", () => {
         "utf8",
       ),
     ).toBe("learner-authored transfer step\n");
+  });
+});
+
+describe("course transfer precise import diagnostics", () => {
+  it("fails closed with a precise code for an unknown transfer format", async () => {
+    const app = runtime(false, "fmt").app;
+    const response = await request(app, "/api/course-transfer/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        format: "aptiloop.course-transfer-v9",
+        formatVersion: 1,
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      valid: boolean;
+      diagnostics: Array<{ code: string; path: string }>;
+    };
+    expect(body.valid).toBe(false);
+    expect(body.diagnostics[0]).toMatchObject({
+      code: "TRANSFER_FORMAT_UNKNOWN",
+      path: "/format",
+    });
+  });
+
+  it("fails closed with re-export guidance for an older format version", async () => {
+    const app = runtime(false, "oldver").app;
+    const response = await request(app, "/api/course-transfer/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        format: "aptiloop.course-transfer-v1",
+        formatVersion: 0,
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      valid: boolean;
+      diagnostics: Array<{ code: string; message: string }>;
+    };
+    expect(body.valid).toBe(false);
+    expect(body.diagnostics[0]).toMatchObject({
+      code: "TRANSFER_FORMAT_OLDER",
+      path: "/formatVersion",
+    });
+    expect(body.diagnostics[0]!.message).toContain("re-export");
+  });
+
+  it("fails closed with update guidance for a newer format version", async () => {
+    const app = runtime(false, "newver").app;
+    const response = await request(app, "/api/course-transfer/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        format: "aptiloop.course-transfer-v1",
+        formatVersion: 99,
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      valid: boolean;
+      diagnostics: Array<{ code: string; message: string }>;
+    };
+    expect(body.valid).toBe(false);
+    expect(body.diagnostics[0]).toMatchObject({
+      code: "TRANSFER_FORMAT_NEWER",
+      path: "/formatVersion",
+    });
+    expect(body.diagnostics[0]!.message).toContain("update the app");
+  });
+
+  it("surfaces the exact pack validation diagnostics on transfer import", async () => {
+    const app = runtime(false, "packdiag").app;
+    const response = await request(app, "/api/course-transfer/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        format: "aptiloop.course-transfer-v1",
+        formatVersion: 1,
+        manifest: {
+          format: "aptiloop.course-transfer-v1",
+          formatVersion: 1,
+          createdAt: "2026-09-09T00:00:00.000Z",
+          operationId: "fmt-probe",
+          courseKeys: ["course-unknown"],
+          includeHistory: true,
+          scopeNote: "probe",
+          packCount: 1,
+          revisionSnapshotCount: 0,
+          revisionSnapshotByteCount: 0,
+          mode: "full",
+          originatingAppVersion: "0.1.0",
+          learnerScopeCourses: [],
+          factCount: 0,
+          sessionCount: 0,
+          skippedSessionCount: 0,
+          attemptSnapshotCount: 0,
+          attemptByteCount: 0,
+          droppedPendingTurnCount: 0,
+          excluded: [],
+        },
+        packs: [
+          {
+            courseKey: "course-unknown",
+            revisionKey: "revision-unknown",
+            revisionNumber: 1,
+            contentHash:
+              "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            canonicalJson: "{}",
+          },
+        ],
+        revisionSnapshots: [],
+        learnerScope: {
+          bindings: [],
+          facts: [],
+          snapshots: [],
+          checkpoints: [],
+          sessionRefs: [],
+          reviewItems: [],
+          learnerCoursePointers: [],
+          attemptSnapshots: [],
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      valid: boolean;
+      diagnostics: Array<{
+        code: string;
+        path: string;
+        entityId: string | null;
+      }>;
+    };
+    expect(body.valid).toBe(false);
+    const packDiagnostics = body.diagnostics.filter((diagnostic) =>
+      diagnostic.path.startsWith("/packs/revision-unknown"),
+    );
+    expect(packDiagnostics.length).toBeGreaterThan(0);
+    // The root cause is surfaced precisely, not flattened into a generic
+    // "pack invalid" message: the canonical pack body is not a valid Course
+    // Pack, so the returned code names the exact pack rule that failed.
+    expect(
+      packDiagnostics.some(
+        (diagnostic) =>
+          diagnostic.code.startsWith("PACK_") &&
+          diagnostic.entityId === "revision-unknown",
+      ),
+    ).toBe(true);
   });
 });

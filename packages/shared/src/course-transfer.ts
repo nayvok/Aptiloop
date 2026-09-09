@@ -32,6 +32,13 @@ import { z } from "zod";
  *
  * Unknown fields and unknown versions fail closed: every object schema is
  * `.strict()` and both `format` and `formatVersion` are literals.
+ *
+ * Two transfer modes exist (ADR 0012): `full` carries the Course content
+ * itself (packs and/or revision snapshots); `learnerScope` carries learner
+ * progress only and is valid only when the target already holds the exact
+ * installed Course revision bound in `manifest.learnerScopeCourses`. The
+ * originating app version is recorded in the manifest as metadata and is a
+ * non-blocking warning on import — never a hard compatibility contract.
  */
 
 export const COURSE_TRANSFER_FORMAT = "aptiloop.course-transfer-v1" as const;
@@ -108,6 +115,27 @@ export type CourseTransferSessionStatus = z.infer<
 
 export const CourseTransferExcludedSchema = z.enum(COURSE_TRANSFER_EXCLUDED_V1);
 
+/**
+ * learnerScope-only mode: the target already holds the exact Course revision,
+ * so the envelope carries no packs and no revision snapshots. The manifest
+ * binds the exported learner scope to the source's installed revision identity
+ * (course + revision + content hash); import fails closed when the target
+ * does not hold that exact revision.
+ */
+export const CourseTransferLearnerScopeCourseSchema = z
+  .object({
+    courseKey: StableIdSchema,
+    courseTitle: z.string().min(1).max(500),
+    revisionKey: StableIdSchema,
+    revisionNumber: z.number().int().positive(),
+    revisionContentHash: Sha256Schema,
+    primaryLocale: z.string().regex(LOCALE_PATTERN),
+  })
+  .strict();
+export type CourseTransferLearnerScopeCourse = z.infer<
+  typeof CourseTransferLearnerScopeCourseSchema
+>;
+
 export const CourseTransferExportRequestSchema = z
   .object({
     courseKeys: z.array(StableIdSchema).min(1).max(32),
@@ -136,6 +164,20 @@ export const CourseTransferManifestSchema = z
     packCount: z.number().int().nonnegative(),
     revisionSnapshotCount: z.number().int().nonnegative(),
     revisionSnapshotByteCount: z.number().int().nonnegative(),
+    /**
+     * Transfer mode. `full` closes all Course content via packs/revision
+     * snapshots; `learnerScope` carries progress only and requires the
+     * target to already hold the exact installed revisions below.
+     */
+    mode: z.enum(["full", "learnerScope"]),
+    /** Originating app version: metadata only, never a hard contract. */
+    originatingAppVersion: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9.\-+_]{0,99}$/u),
+    /** Bound installed revisions; non-empty only in learnerScope mode. */
+    learnerScopeCourses: z
+      .array(CourseTransferLearnerScopeCourseSchema)
+      .max(COURSE_TRANSFER_JSON_LIMITS_V1.maxCourses),
     factCount: z.number().int().nonnegative(),
     sessionCount: z.number().int().nonnegative(),
     skippedSessionCount: z.number().int().nonnegative(),
@@ -783,13 +825,57 @@ export const CourseTransferEnvelopeSchema = z
   })
   .strict()
   .superRefine((envelope, context) => {
-    if (envelope.packs.length + envelope.revisionSnapshots.length < 1) {
-      context.addIssue({
-        code: "custom",
-        path: ["packs"],
-        message:
-          "Transfer envelope must carry at least one pack or revision snapshot",
-      });
+    if (envelope.manifest.mode === "full") {
+      if (envelope.packs.length + envelope.revisionSnapshots.length < 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["packs"],
+          message:
+            "Transfer envelope must carry at least one pack or revision snapshot",
+        });
+      }
+      if (envelope.manifest.learnerScopeCourses.length !== 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["manifest", "learnerScopeCourses"],
+          message:
+            "learnerScope course bindings are only valid in learnerScope mode",
+        });
+      }
+    } else {
+      if (
+        envelope.packs.length !== 0 ||
+        envelope.revisionSnapshots.length !== 0
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["packs"],
+          message:
+            "learnerScope-only transfer must not carry packs or revision snapshots",
+        });
+      }
+      const scopeCourses = envelope.manifest.learnerScopeCourses;
+      if (scopeCourses.length < 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["manifest", "learnerScopeCourses"],
+          message:
+            "learnerScope-only transfer must bind at least one installed course revision",
+        });
+      }
+      const scopeKeys = new Set(scopeCourses.map((course) => course.courseKey));
+      if (
+        scopeKeys.size !== scopeCourses.length ||
+        envelope.manifest.courseKeys.length !== scopeCourses.length ||
+        envelope.manifest.courseKeys.some((key) => !scopeKeys.has(key))
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["manifest", "learnerScopeCourses"],
+          message:
+            "learnerScope course bindings must cover the exported course keys exactly once",
+        });
+      }
     }
     if (envelope.manifest.packCount !== envelope.packs.length) {
       context.addIssue({
@@ -1030,6 +1116,19 @@ export const CourseTransferPreviewSchema = z
     courses: z
       .array(CourseTransferPreviewCourseSchema)
       .max(COURSE_TRANSFER_JSON_LIMITS_V1.maxCourses),
+    /** Non-blocking transfer mode surfaced to the user before commit. */
+    mode: z.enum(["full", "learnerScope"]),
+    /** Originating app version from the manifest; informational only. */
+    originatingAppVersion: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9.\-+_]{0,99}$/u),
+    /**
+     * Whether the originating app version matches the target app version.
+     * `null` when the target version is unknown at preview build time; the
+     * orchestrator fills it for import previews. A mismatch is a warning,
+     * never a hard gate.
+     */
+    appVersionMatches: z.boolean().nullable(),
     packCount: z.number().int().nonnegative(),
     revisionSnapshotCount: z.number().int().nonnegative(),
     factCount: z.number().int().nonnegative(),

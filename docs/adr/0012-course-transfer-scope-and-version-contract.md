@@ -48,4 +48,18 @@ Owner scenarios: transferring Course progress and attempts between a user's own 
 
 ## Implementation status
 
-**Approved Core Alpha target:** the decisions above are normative for the finishing work of the "complete course transfer and attempt restore" slice. Code that materializes decision 1 and the full route proof lands in the next session; schema/validation changes for the version contract land with that work. No runtime evidence is claimed here.
+**Implemented baseline (2026-09-09).** Decision 1 and the version contract are
+materialized in the working tree: the transfer manifest carries `mode`
+(`full` | `learnerScope`), `originatingAppVersion`, and bound
+`learnerScopeCourses` (course/revision identity plus revision content hash);
+learnerScope-only export no longer hard-stops when a selected Course has no
+transferable content revision, and commit verifies the exact installed
+revision match before restoring any learner state, failing closed with a
+precise `TRANSFER_INSTALLED_REVISION_UNRESOLVED` diagnostic otherwise.
+Import previews surface the mode and a non-blocking app-version warning.
+Route proof passed in `apps/orchestrator/test/course-transfer.integration.test.ts`
+(learnerScope-only fail-closed on a target without the revision, preview
+version warning, and active attempt restore with source Git author
+identity). No runtime evidence is claimed for decision 3 (unknown Course
+types diagnostics) — that remains the separate precise-import-diagnostics
+slice.

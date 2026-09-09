@@ -2,7 +2,7 @@
 
 ## Entry point
 
-Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tree as user work: do not reset, discard, or delete data. Select one slice only. The current slice is **task6: complete course transfer and attempt restore**; the owner design decisions that unblock it are in the next-slice section and [ADR 0012](docs/adr/0012-course-transfer-scope-and-version-contract.md). Task5 (collision-safe install port selection) was closed in the previous session. After task6, the next slice is **Expose precise safe import diagnostics** (task7). Do not touch historical plans or audits.
+Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tree as user work: do not reset, discard, or delete data. Select one slice only. The current slice is **task7: expose precise safe import diagnostics** ([ADR 0012](docs/adr/0012-course-transfer-scope-and-version-contract.md) decision 3). Task6 (course transfer and attempt restore) was closed in the previous session — see the Task6 record below. Do not touch historical plans or audits.
 
 ## Original 11-task phased checklist
 
@@ -16,7 +16,7 @@ Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tr
 
 ### Course Portability
 
-- [ ] Complete course transfer and attempt restore
+- [x] Complete course transfer and attempt restore
 - [ ] Expose precise safe import diagnostics
 
 ### Learning Evolution
@@ -30,6 +30,22 @@ Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tr
 - [ ] Run full gates and runtime smoke
 
 All remaining unchecked items are **PAUSED** for the next session; this is not an external blocker.
+
+## Current slice brief: task7 — Expose precise safe import diagnostics
+
+Owner decision 3 in [ADR 0012](docs/adr/0012-course-transfer-scope-and-version-contract.md): a transfer whose Course references activity/evidence/check/environment types the app does not support must fail closed with precise code/path/entity diagnostics — no partial install, no silent skip.
+
+**Implemented in this session (2026-09-09):**
+
+- `validateCourseTransferBytes` (`packages/database/src/course-transfer.ts`) now fails closed with precise schema-contract diagnostics before Zod parsing: `TRANSFER_FORMAT_UNKNOWN` (`/format`), `TRANSFER_FORMAT_OLDER` (`/formatVersion`, "re-export from a current version"), `TRANSFER_FORMAT_NEWER` (`/formatVersion`, "update the app") — ADR decision 2 made explicit in transfer validation (unknown-top-level-shape already returned `TRANSFER_SHAPE_INVALID`).
+- Transfer pack validation no longer flattens root causes: an invalid pack now surfaces the exact pack diagnostics (`PACK_*`, child `path` under `/packs/<revisionKey>`, `entityId` = pack revision key or child entity) capped at `MAX_TRANSFER_DIAGNOSTICS`; `TRANSFER_PACK_INVALID` is kept only for identity-mismatch cases with no pack diagnostics.
+- Route tests added in `apps/orchestrator/test/course-transfer.integration.test.ts` (new `course transfer precise import diagnostics` describe): unknown format, older version, newer version, and nested pack diagnostics — 7/7 green in that file (3 task6 + 4 task7).
+
+**Remaining for task7 (next session):**
+
+- Per-entity unknown-type coverage audit is partially done: unknown Activity types already produce `PACK_GRAPH_UNKNOWN_ACTIVITY_TYPE` via `validateActivityGraph`; the unverified gaps are unknown **check/environment IDs** (`requirements.checkIds`/`environmentIds` vs installed trusted registries) and unknown **evidence types** (`PACK_COMPLETION_CRITERION_UNKNOWN` exists for custom criteria; plain unknown evidence kinds need a check in the pack validator).
+- UI: localized strings for the new diagnostic codes (`TRANSFER_FORMAT_*`) in `en-US`/`ru-RU` if surfaced as user-visible text; pack preview already renders diagnostics.
+- Gates: format, lint, typecheck, `test:fast`, build passed for the implemented part; run full `test:fast` + targeted E2E after the e2e orchestrator identity failure is resolved.
 
 ## Verified evidence
 
@@ -83,13 +99,25 @@ The next slice is the first unchecked Course Portability item, from current sour
 3. **Unknown Course types (activity/evidence/check/environment) fail closed** with precise code/path/entity diagnostics; no partial install, no silent skip.
 4. **Scope of the finishing session:** implement decision 1 and close the full route proof (export with active attempt → import on a profile where the same Course revision is already installed → restored exercise workspace + Git learner commits with source author identity). Do not start import diagnostics (task7), upgrade semantics (task8), or Learning Design (task9) in the same session.
 
-**Implementation brief for the next session (finishing task6)**
+**Implementation brief for the previous session (finishing task6) — DONE; see the Task6 record (closed) below.**
 
 - The v1 envelope schema (`packages/shared/src/course-transfer.ts`) must support the learnerScope-only mode: relax the "at least one pack or revision snapshot" super-refine only for the already-installed-Course case, add the originating app version to the manifest, and surface the mode + app-version warning in the export request and import preview.
 - `packages/database/src/course-transfer.ts`: replace the current `409 "no transferable content revision"` hard stop with decision-1 semantics (export learnerScope-only; on commit require the exact installed revision match, verify it, and reject otherwise). Existing full-envelope import behavior stays untouched.
 - `apps/orchestrator/src/course-transfer.ts` + `apps/orchestrator/src/app.ts`: route support for the new mode; the materializer already exists.
 - Close the skipped route proof in `apps/orchestrator/test/course-transfer.integration.test.ts` (the `it.skip`): source and target both run the seeded course (the only course with `exercises` rows today), source has an active session + attempt with a learner commit; export learnerScope-only, import on target, assert the restored `exercise_attempts` row points at a real workspace and the Git learner commit carries the source author identity (fresh baseline re-anchor plus restored commit).
 - Gates for the session: `npm run typecheck`, `npm run lint` (both packages touched), `npm run test:fast`, targeted `npm run test:e2e` only after the above, `npm run build`; record results.
+
+## Task6 record (closed)
+
+**Implemented baseline (2026-09-09)** — see [ADR 0012](docs/adr/0012-course-transfer-scope-and-version-contract.md) Implementation status.
+
+- `packages/shared/src/course-transfer.ts`: manifest now carries `mode` (`full`|`learnerScope`), `originatingAppVersion`, and `learnerScopeCourses` (courseKey, courseTitle, revisionKey, revisionNumber, revisionContentHash, primaryLocale). The envelope super-refine requires content only in `full` mode; learnerScope mode requires exactly one binding per exported course and forbids packs/revision snapshots. Preview schema surfaces mode + originating app version + nullable `appVersionMatches`.
+- `packages/database/src/course-transfer.ts`: `buildCourseTransferExport` no longer 409s on content-less Courses — it exports learnerScope-only and binds the installed published revision (`readPublishedCourseRevisions`), verifying scope/revision coverage (`assertLearnerScopeRevisionCoverage`). Commit (`commitCourseTransfer`) calls `verifyLearnerScopeInstalledRevisions` (fails closed with `TRANSFER_INSTALLED_REVISION_UNRESOLVED`) and `transferCommitComplete` requires the exact match even for idempotent replay. `curriculum_versions.content_hash` is normalized between bare hex and `sha256:` forms. `previewEnvelope` handles learnerScope courses.
+- `apps/orchestrator/src/{course-transfer,app}.ts`: export route injects `originatingAppVersion` from `readAppVersion(projectRoot)`; validate fills `appVersionMatches`; new `app.onError` branch renders `CourseTransferInvalidError` as 409 with diagnostics.
+- `apps/web/components/course-transfer-client.tsx` + `i18n.tsx` (en/ru): preview panel shows transfer mode, originating version, and a non-blocking `appVersionMismatch` warning fed by `useQuery("/version")`.
+- Route proof closed: `apps/orchestrator/test/course-transfer.integration.test.ts` — (1) learnerScope-only export succeeds, target without the installed revision fails closed with `TRANSFER_INSTALLED_REVISION_UNRESOLVED`; (2) app-version mismatch is a non-blocking preview warning (`appVersionMatches: false`, still valid); (3) active attempt with Ada Lovelace learner commit restores a real workspace and ordered Git commit with source author identity.
+
+**Gates (2026-09-09):** `format:check` ✔, `lint` 15/15 ✔, `typecheck` 15/15 ✔, `build` 15/15 ✔, transfer integration 3/3 ✔. `test:fast` — all suites green except `http-boundary.integration.test.ts` (3 of 3 in that file fail with concurrency/timeouts; proven pre-existing by running the same file on a stashed clean tree — identical 3 failed). `test:e2e` — orchestrator fails at `createApp` "Writable database identity is required before opening" (before any route registration; previous e2e-failure artifacts exist from 07.09), so E2E could not run in this session and is recorded as BLOCKED on infrastructure, not on task6 changes. Also applied on this session: removed a pre-existing unused import in `course-authoring-kit/src/course-pack.ts`, dead `#archiveCourseRevisions` and unused imports in `database`, and a `no-control-regex` pragma in `apps/web/lib/failure-presentation.ts` that were blocking `npm run lint` on the un-pushed main; these are lint-only cleanups with no behavior change.
 
 ## Task4 record (closed)
 

@@ -1042,6 +1042,14 @@ const enUS = {
   "courses.transfer.validationFailed":
     "The transfer file could not be validated. Nothing was imported.",
   "courses.transfer.preview.courses": "Courses in this transfer",
+  "courses.transfer.preview.mode.full":
+    "Full transfer — Course content is included in this file.",
+  "courses.transfer.preview.mode.learnerScope":
+    "Progress only — this transfer restores learner progress onto an already installed Course revision.",
+  "courses.transfer.preview.appVersionMismatch":
+    "Created with app version {source}; this build is {current}. App version is informational only — schema compatibility is what matters.",
+  "courses.transfer.preview.originatingVersion":
+    "Created with app version {version}.",
   "courses.transfer.preview.facts": "Learner facts: {count}",
   "courses.transfer.preview.sessions": "Sessions: {count}",
   "courses.transfer.preview.skippedSessions":
@@ -2821,6 +2829,14 @@ const ruRU: Record<MessageKey, string> = {
   "courses.transfer.validationFailed":
     "Не удалось проверить файл переноса. Ничего не импортировано.",
   "courses.transfer.preview.courses": "Курсы в этом переносе",
+  "courses.transfer.preview.mode.full":
+    "Полный перенос — содержимое курсов включено в этот файл.",
+  "courses.transfer.preview.mode.learnerScope":
+    "Только прогресс — этот перенос восстанавливает прогресс обучения на уже установленную ревизию курса.",
+  "courses.transfer.preview.appVersionMismatch":
+    "Файл создан версией приложения {source}; текущая версия — {current}. Версия приложения носит информационный характер — важна совместимость схемы.",
+  "courses.transfer.preview.originatingVersion":
+    "Создано версией приложения {version}.",
   "courses.transfer.preview.facts": "Фактов обучения: {count}",
   "courses.transfer.preview.sessions": "Сессий: {count}",
   "courses.transfer.preview.skippedSessions":

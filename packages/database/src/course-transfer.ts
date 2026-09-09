@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
@@ -27,12 +27,12 @@ import {
   CourseTransferEnvelopeSchema,
   CourseTransferExportRequestSchema,
   CourseTransferRevisionSnapshotCanonicalSchema,
-  transferBase64DecodedBytes,
   transferUtf8ByteLength,
   type CourseTransferCommitResult,
   type CourseTransferConflict,
   type CourseTransferCourseResolution,
   type CourseTransferEnvelope,
+  type CourseTransferLearnerScopeCourse,
   type CourseTransferPreview,
   type CourseTransferRevisionSnapshotCanonical,
   type CourseTransferPreviewCourse,
@@ -97,6 +97,8 @@ export interface CourseTransferExportInput {
   readonly includeHistory: true;
   readonly scopeNote: string;
   readonly operationId: string;
+  /** Originating app version, recorded in the manifest as metadata. */
+  readonly originatingAppVersion: string;
 }
 
 export interface CourseTransferExportResult {
@@ -242,12 +244,53 @@ export function buildCourseTransferExport(
     }
 
     const exported = exportLearnerScope(connection.sqlite, courseKeys);
-    if (packs.length === 0 && revisionSnapshots.length === 0) {
+    const learnerScopeCourses =
+      packs.length === 0 && revisionSnapshots.length === 0
+        ? readPublishedCourseRevisions(connection.sqlite, courseKeys)
+        : [];
+    if (
+      packs.length === 0 &&
+      revisionSnapshots.length === 0 &&
+      learnerScopeCourses.length === 0
+    ) {
       throw new ClientError(
         409,
-        "Course has no transferable content revision; legacy or development Course revisions cannot be transferred",
+        "Course has no transferable content revision and no installed published revision to bind learner progress to",
       );
     }
+    if (
+      packs.length !== 0 ||
+      revisionSnapshots.length !== 0 ||
+      learnerScopeCourses.length === 0
+    ) {
+      const closedCourses = new Set([
+        ...packs.map((pack) => pack.courseKey),
+        ...revisionSnapshots.map((snapshot) => snapshot.courseKey),
+      ]);
+      for (const courseKey of courseKeys) {
+        if (!closedCourses.has(courseKey)) {
+          throw new ClientError(
+            409,
+            `Course ${courseKey} has no transferable content revision; a full transfer envelope must close every selected Course`,
+          );
+        }
+      }
+    }
+    // In learnerScope mode the envelope carries no content, so the bound
+    // installed revision must be the exact revision the learner scope
+    // references. Anything else would fail closed on commit; reject at
+    // export with a precise diagnostic instead.
+    if (learnerScopeCourses.length !== 0) {
+      assertLearnerScopeRevisionCoverage(
+        connection.sqlite,
+        courseKeys,
+        learnerScopeCourses,
+      );
+    }
+    const transferMode =
+      packs.length === 0 && revisionSnapshots.length === 0
+        ? ("learnerScope" as const)
+        : ("full" as const);
     // Filesystem/Git evidence is owned by exercise-core. The database only
     // returns exact attempt descriptors below; the orchestrator enriches these
     // asynchronously and inserts verified snapshots before final hashing.
@@ -297,6 +340,9 @@ export function buildCourseTransferExport(
         packCount: packs.length,
         revisionSnapshotCount: revisionSnapshots.length,
         revisionSnapshotByteCount,
+        mode: transferMode,
+        originatingAppVersion: input.originatingAppVersion,
+        learnerScopeCourses,
         factCount: learnerScope.facts.length,
         sessionCount: learnerScope.sessionRefs.length,
         skippedSessionCount: exported.skippedSessionCount,
@@ -320,6 +366,9 @@ export function buildCourseTransferExport(
       ),
       packCount: packs.length,
       revisionSnapshotCount: revisionSnapshots.length,
+      mode: transferMode,
+      originatingAppVersion: input.originatingAppVersion,
+      appVersionMatches: true,
       factCount: learnerScope.facts.length,
       sessionCount: learnerScope.sessionRefs.length,
       skippedSessionCount: exported.skippedSessionCount,
@@ -378,6 +427,55 @@ export function validateCourseTransferBytes(
       envelopeHash,
     };
   }
+  const transferFormatProbe = parsed as {
+    format?: unknown;
+    formatVersion?: unknown;
+  };
+  if (
+    typeof transferFormatProbe === "object" &&
+    transferFormatProbe !== null &&
+    transferFormatProbe.format !== COURSE_TRANSFER_FORMAT
+  ) {
+    return {
+      valid: false,
+      envelope: null,
+      preview: null,
+      report: transferReport([
+        transferDiagnostic(
+          "TRANSFER_FORMAT_UNKNOWN",
+          "/format",
+          null,
+          `Unknown Course transfer format ${JSON.stringify(transferFormatProbe.format)}; update the app to import this file`,
+        ),
+      ]),
+      envelopeHash,
+    };
+  }
+  if (
+    typeof transferFormatProbe === "object" &&
+    transferFormatProbe !== null &&
+    typeof transferFormatProbe.formatVersion === "number" &&
+    transferFormatProbe.formatVersion !== COURSE_TRANSFER_FORMAT_VERSION
+  ) {
+    const older =
+      transferFormatProbe.formatVersion < COURSE_TRANSFER_FORMAT_VERSION;
+    return {
+      valid: false,
+      envelope: null,
+      preview: null,
+      report: transferReport([
+        transferDiagnostic(
+          older ? "TRANSFER_FORMAT_OLDER" : "TRANSFER_FORMAT_NEWER",
+          "/formatVersion",
+          null,
+          older
+            ? `Course transfer format version ${String(transferFormatProbe.formatVersion)} is older than ${String(COURSE_TRANSFER_FORMAT_VERSION)}; re-export from a current version`
+            : `Course transfer format version ${String(transferFormatProbe.formatVersion)} is newer than ${String(COURSE_TRANSFER_FORMAT_VERSION)}; update the app to import this file`,
+        ),
+      ]),
+      envelopeHash,
+    };
+  }
   const envelopeResult = CourseTransferEnvelopeSchema.safeParse(parsed);
   if (!envelopeResult.success) {
     return {
@@ -412,14 +510,31 @@ export function validateCourseTransferBytes(
       packValidation.pack.revision.revisionKey !== pack.revisionKey ||
       packValidation.pack.revision.revisionNumber !== pack.revisionNumber
     ) {
-      diagnostics.push(
-        transferDiagnostic(
-          "TRANSFER_PACK_INVALID",
-          `/packs/${pack.revisionKey}`,
-          pack.revisionKey,
-          `Transfer pack ${pack.revisionKey} did not pass Course Pack validation`,
-        ),
+      const children = packValidation.report.diagnostics.slice(
+        0,
+        MAX_TRANSFER_DIAGNOSTICS,
       );
+      if (children.length > 0) {
+        for (const child of children) {
+          diagnostics.push(
+            transferDiagnostic(
+              child.code,
+              `/packs/${pack.revisionKey}${child.path}`,
+              child.entityId ?? pack.revisionKey,
+              child.message,
+            ),
+          );
+        }
+      } else {
+        diagnostics.push(
+          transferDiagnostic(
+            "TRANSFER_PACK_INVALID",
+            `/packs/${pack.revisionKey}`,
+            pack.revisionKey,
+            `Transfer pack ${pack.revisionKey} did not pass Course Pack identity comparison`,
+          ),
+        );
+      }
     }
   }
   for (const snapshot of envelope.revisionSnapshots) {
@@ -776,6 +891,9 @@ export function commitCourseTransfer(
     ) {
       return transferCommitResult(connection.sqlite, envelope, true);
     }
+    if (envelope.manifest.mode === "learnerScope") {
+      verifyLearnerScopeInstalledRevisions(connection.sqlite, envelope);
+    }
     const restoredRevisionSnapshots = restoreRevisionSnapshots(
       connection,
       envelope,
@@ -839,6 +957,11 @@ function transferCommitComplete(
   operationId: string,
   envelope: CourseTransferEnvelope,
 ): boolean {
+  if (envelope.manifest.mode === "learnerScope") {
+    // Idempotent replay of a learnerScope-only envelope still requires the
+    // exact installed revision match; a mismatched target is never complete.
+    if (!learnerScopeInstalledRevisionsMatch(sqlite, envelope)) return false;
+  }
   for (const pack of envelope.packs) {
     const manifest = sqlite
       .prepare(
@@ -932,6 +1055,71 @@ function transferCommitComplete(
     }
   }
   return true;
+}
+
+/**
+ * learnerScope-only commit gate (ADR 0012 decision 1): the target must
+ * already hold the exact bound Course revision (course/revision identity
+ * plus revision content hash) before any learner state is restored.
+ */
+function learnerScopeInstalledRevisionsMatch(
+  sqlite: DatabaseSync,
+  envelope: CourseTransferEnvelope,
+): boolean {
+  for (const course of envelope.manifest.learnerScopeCourses) {
+    const row = sqlite
+      .prepare(
+        `SELECT content_hash FROM curriculum_versions
+          WHERE id = ? AND curriculum_id = ? AND status = 'published'`,
+      )
+      .get(course.revisionKey, course.courseKey) as
+      { content_hash: string | null } | undefined;
+    if (
+      row === undefined ||
+      row.content_hash !== course.revisionContentHash.slice("sha256:".length)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function verifyLearnerScopeInstalledRevisions(
+  sqlite: DatabaseSync,
+  envelope: CourseTransferEnvelope,
+): void {
+  for (const [
+    index,
+    course,
+  ] of envelope.manifest.learnerScopeCourses.entries()) {
+    const row = sqlite
+      .prepare(
+        `SELECT content_hash FROM curriculum_versions
+          WHERE id = ? AND curriculum_id = ? AND status = 'published'`,
+      )
+      .get(course.revisionKey, course.courseKey) as
+      { content_hash: string | null } | undefined;
+    if (row === undefined) {
+      throw transferInvalid(
+        "TRANSFER_INSTALLED_REVISION_UNRESOLVED",
+        `/manifest/learnerScopeCourses/${index}`,
+        course.revisionKey,
+        `Target does not hold the installed revision ${course.revisionKey} required by this learnerScope-only transfer; import the Course content first`,
+        envelope,
+      );
+    }
+    if (
+      row.content_hash !== course.revisionContentHash.slice("sha256:".length)
+    ) {
+      throw transferInvalid(
+        "TRANSFER_INSTALLED_REVISION_UNRESOLVED",
+        `/manifest/learnerScopeCourses/${index}/revisionContentHash`,
+        course.revisionKey,
+        `Installed revision ${course.revisionKey} is bound to different content than the exported learner scope`,
+        envelope,
+      );
+    }
+  }
 }
 
 function transferCommitResult(
@@ -2042,6 +2230,95 @@ function persistTransferProjection(
     );
 }
 
+/**
+ * Reads the installed published revisions of the selected courses for
+ * learnerScope-only transfer binding (ADR 0012 decision 1). The bound
+ * identity (course + revision + content hash) is recorded in the manifest
+ * and verified against the target on import; it fails closed on mismatch.
+ */
+function readPublishedCourseRevisions(
+  sqlite: DatabaseSync,
+  courseKeys: readonly string[],
+): CourseTransferLearnerScopeCourse[] {
+  if (courseKeys.length === 0) return [];
+  const placeholders = courseKeys.map(() => "?").join(", ");
+  const rows = sqlite
+    .prepare(
+      `SELECT course.id AS course_id, course.title AS course_title,
+              course.primary_locale AS primary_locale,
+              version.id AS revision_id, version.revision AS revision_number,
+              version.content_hash AS content_hash
+       FROM courses course
+       JOIN curriculum_versions version ON version.curriculum_id = course.id
+       WHERE course.id IN (${placeholders}) AND version.status = 'published'
+       ORDER BY course.id, version.revision, version.id`,
+    )
+    .all(...courseKeys) as Array<{
+    course_id: string;
+    course_title: string;
+    primary_locale: string;
+    revision_id: string;
+    revision_number: number;
+    content_hash: string | null;
+  }>;
+  const bindings: CourseTransferLearnerScopeCourse[] = [];
+  for (const row of rows) {
+    if (row.content_hash === null) {
+      throw new ClientError(
+        409,
+        `Course ${row.course_id} revision ${row.revision_id} has no content hash to bind learner progress to`,
+      );
+    }
+    bindings.push({
+      courseKey: row.course_id,
+      courseTitle: row.course_title,
+      revisionKey: row.revision_id,
+      revisionNumber: row.revision_number,
+      // curriculum_versions stores a bare hex digest; the transfer contract
+      // carries the sha256-prefixed form.
+      revisionContentHash: `sha256:${row.content_hash}`,
+      primaryLocale: row.primary_locale,
+    });
+  }
+  return bindings;
+}
+
+/**
+ * LearnerScope-only export must bind the exact revisions the exported
+ * learner scope references; anything else would silently attach progress to
+ * a different revision on the target.
+ */
+function assertLearnerScopeRevisionCoverage(
+  sqlite: DatabaseSync,
+  courseKeys: readonly string[],
+  bindings: readonly CourseTransferLearnerScopeCourse[],
+): void {
+  if (courseKeys.length === 0) return;
+  const placeholders = courseKeys.map(() => "?").join(", ");
+  const rows = sqlite
+    .prepare(
+      `SELECT DISTINCT context.course_id AS course_id,
+              context.revision_id AS revision_id
+       FROM session_course_contexts context
+       WHERE context.course_id IN (${placeholders})`,
+    )
+    .all(...courseKeys) as Array<{
+    course_id: string;
+    revision_id: string;
+  }>;
+  const bound = new Set(
+    bindings.map((binding) => `${binding.courseKey}|${binding.revisionKey}`),
+  );
+  for (const row of rows) {
+    if (!bound.has(`${row.course_id}|${row.revision_id}`)) {
+      throw new ClientError(
+        409,
+        `Course ${row.course_id} learner progress references revision ${row.revision_id} that is not the installed published revision`,
+      );
+    }
+  }
+}
+
 function exportLearnerScope(
   sqlite: DatabaseSync,
   courseKeys: readonly string[],
@@ -2118,9 +2395,6 @@ function exportLearnerScope(
       "Course transfer history exceeds the session limit",
     );
   }
-  const sessionStatusById = new Map(
-    sessionRows.map((row) => [row.id, row.status] as const),
-  );
   // Do not equate an active session with an in-flight provider operation.
   // Only persisted provider turns still in `started` state are dropped.
   const sessionIdPlaceholders = sessionIds.map(() => "?").join(", ");
@@ -2817,19 +3091,32 @@ function ensureTransferBranch(
 function previewEnvelope(
   envelope: CourseTransferEnvelope,
 ): CourseTransferPreview {
-  const courses: CourseTransferPreviewCourse[] = envelope.packs.map((pack) => {
-    const parsed = JSON.parse(pack.canonicalJson) as CoursePackV1;
-    return {
-      courseKey: pack.courseKey,
-      courseTitle: parsed.course.title,
-      revisionKey: pack.revisionKey,
-      revisionNumber: pack.revisionNumber,
-      contentHash: pack.contentHash,
-      primaryLocale: parsed.course.primaryLocale,
-    };
-  });
+  const courses: CourseTransferPreviewCourse[] =
+    envelope.manifest.mode === "learnerScope"
+      ? envelope.manifest.learnerScopeCourses.map((course) => ({
+          courseKey: course.courseKey,
+          courseTitle: course.courseTitle,
+          revisionKey: course.revisionKey,
+          revisionNumber: course.revisionNumber,
+          contentHash: course.revisionContentHash,
+          primaryLocale: course.primaryLocale,
+        }))
+      : envelope.packs.map((pack) => {
+          const parsed = JSON.parse(pack.canonicalJson) as CoursePackV1;
+          return {
+            courseKey: pack.courseKey,
+            courseTitle: parsed.course.title,
+            revisionKey: pack.revisionKey,
+            revisionNumber: pack.revisionNumber,
+            contentHash: pack.contentHash,
+            primaryLocale: parsed.course.primaryLocale,
+          };
+        });
   return {
     courses: courses.slice(0, COURSE_TRANSFER_JSON_LIMITS_V1.maxCourses),
+    mode: envelope.manifest.mode,
+    originatingAppVersion: envelope.manifest.originatingAppVersion,
+    appVersionMatches: null,
     packCount: envelope.manifest.packCount,
     revisionSnapshotCount: envelope.manifest.revisionSnapshotCount,
     factCount: envelope.manifest.factCount,

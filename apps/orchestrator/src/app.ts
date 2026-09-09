@@ -15,6 +15,7 @@ import {
   createCoursePackRepository,
   createCourseFoundationRepository,
   createLearningRepository,
+  CourseTransferInvalidError,
   learnerCourseStateTriggerGuardMigrationContract,
   migrateDatabase,
   openDatabase,
@@ -65,7 +66,8 @@ import {
 import { registerCurriculumEditorRoutes } from "./curriculum-editor.js";
 import { registerCoursePackRoutes } from "./course-packs.js";
 import { registerCourseTransferRoutes } from "./course-transfer.js";
-import { registerSystemRoutes } from "./system.js";
+import { boundedStagedReport } from "./course-packs.js";
+import { readAppVersion, registerSystemRoutes } from "./system.js";
 import { registerPersonalAdaptationRoutes } from "./personal-adaptations.js";
 import { registerInterviewV2Routes } from "./interview-v2.js";
 import {
@@ -606,6 +608,18 @@ export function createApp(options: AppOptions = {}) {
     if (unknownError instanceof CourseSessionContextError) {
       return context.json({ error: unknownError.message }, 409);
     }
+    if (unknownError instanceof CourseTransferInvalidError) {
+      const report = boundedStagedReport(unknownError.report, 100, 64 * 1_024);
+      return context.json(
+        {
+          error: unknownError.message,
+          envelopeHash: unknownError.envelopeHash,
+          report,
+          diagnostics: report.diagnostics,
+        },
+        409,
+      );
+    }
     if (unknownError instanceof ClientError) {
       return context.json({ error: unknownError.message }, unknownError.status);
     }
@@ -768,6 +782,7 @@ export function createApp(options: AppOptions = {}) {
     connection,
     coursePacks,
     exerciseAttemptsRoot: state.exerciseAttemptsRoot,
+    originatingAppVersion: readAppVersion(projectRoot),
     materializeAttemptWorkspace: async ({ attemptId, exerciseId }) => {
       const exercise = connection.sqlite
         .prepare(
