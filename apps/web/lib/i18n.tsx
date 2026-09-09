@@ -415,6 +415,8 @@ const enUS = {
     "Complete the required provenance, attribution, or terms information.",
   "courses.validation.diagnostic.requirement":
     "Correct or remove the unavailable Course requirement.",
+  "courses.validation.diagnostic.transfer":
+    "This transfer file was rejected before anything was imported. Fix the flagged part in the source app and re-export the transfer.",
   "courses.validation.diagnostic.generic":
     "This Course Pack field did not pass validation.",
   "courses.validation.report.summary":
@@ -2198,6 +2200,8 @@ const ruRU: Record<MessageKey, string> = {
     "Заполните обязательные сведения о происхождении, атрибуции или условиях.",
   "courses.validation.diagnostic.requirement":
     "Исправьте или удалите недоступное требование курса.",
+  "courses.validation.diagnostic.transfer":
+    "Файл переноса отклонён до импорта чего-либо. Исправьте указанную часть в исходном приложении и переэкспортируйте перенос.",
   "courses.validation.diagnostic.generic":
     "Это поле Course Pack не прошло проверку.",
   "courses.validation.report.summary":

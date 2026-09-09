@@ -60,6 +60,21 @@ Import previews surface the mode and a non-blocking app-version warning.
 Route proof passed in `apps/orchestrator/test/course-transfer.integration.test.ts`
 (learnerScope-only fail-closed on a target without the revision, preview
 version warning, and active attempt restore with source Git author
-identity). No runtime evidence is claimed for decision 3 (unknown Course
-types diagnostics) — that remains the separate precise-import-diagnostics
-slice.
+identity).
+
+**Decision 3 (unknown Course types fail closed with precise diagnostics) is
+implemented baseline (2026-09-09).** The precise-import-diagnostics slice
+closed the unknown-type coverage: unknown activity kinds were already
+rejected by `PACK_GRAPH_UNKNOWN_ACTIVITY_TYPE`; unknown check/environment
+IDs fail closed with `PACK_REQUIREMENT_UNAVAILABLE` (registry-of-record
+`CORE_M3_COURSE_PACK_REGISTRY` plus runtime registry, `entityId` = the
+unknown ID) and are surfaced as exact child `PACK_*` diagnostics by the
+transfer validator; unknown kernel evidence/body/provenance types are
+rejected before any write by `collectLearningKernelFactShapeIssues`
+(`packages/learning-core`) via `TRANSFER_FACT_UNKNOWN_TYPE` /
+`TRANSFER_FACT_SHAPE_INVALID` with the fact id as entity and an in-fact
+JSON-pointer path, verified again inside the commit transaction by
+`replayTransferFacts`. No partial install and no silent skip: an envelope
+with any unknown type never validates and never commits. Evidence:
+`packages/learning-core/test/fact-shape.test.ts` (6/6) and the transfer
+route suite (9/9), plus the full gates recorded in `HANDOFF.md`.

@@ -17,7 +17,7 @@ Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tr
 ### Course Portability
 
 - [x] Complete course transfer and attempt restore
-- [ ] Expose precise safe import diagnostics
+- [x] Expose precise safe import diagnostics
 
 ### Learning Evolution
 
@@ -41,11 +41,19 @@ Owner decision 3 in [ADR 0012](docs/adr/0012-course-transfer-scope-and-version-c
 - Transfer pack validation no longer flattens root causes: an invalid pack now surfaces the exact pack diagnostics (`PACK_*`, child `path` under `/packs/<revisionKey>`, `entityId` = pack revision key or child entity) capped at `MAX_TRANSFER_DIAGNOSTICS`; `TRANSFER_PACK_INVALID` is kept only for identity-mismatch cases with no pack diagnostics.
 - Route tests added in `apps/orchestrator/test/course-transfer.integration.test.ts` (new `course transfer precise import diagnostics` describe): unknown format, older version, newer version, and nested pack diagnostics — 7/7 green in that file (3 task6 + 4 task7).
 
+**Closed in this session (2026-09-09) — precise unknown-type coverage:**
+
+- `packages/learning-core/src/kernel.ts` now exports `collectLearningKernelFactShapeIssues(fact)`: a pure, per-fact structural contract check for kernel facts received as untrusted data. It mirrors the internal `validateFacts` exact-key/enum/provenance/authority rules but collects issues (classified `unknown-type` vs `invalid-shape` with JSON-pointer paths) instead of throwing, and never consults activities, other facts, storage, or ambient state. Cross-fact links and activity-scope rules still run in `validateFacts` before any projection is recomputed. Covered by `packages/learning-core/test/fact-shape.test.ts` (6 tests).
+- `validateCourseTransferBytes` now runs a new learnerScope-fact stage: facts whose canonical JSON does not verify hash/scope fail closed (`TRANSFER_FACT_UNVERIFIED`), and each fact's shape is checked before any write (`TRANSFER_FACT_UNKNOWN_TYPE` for unknown body/evidence/provenance types, `TRANSFER_FACT_SHAPE_INVALID` for structural violations), with `entityId` = fact id and the in-fact JSON-pointer path. `replayTransferFacts` repeats the shape check inside the commit transaction so commit cannot persist an unknown kernel type even if validation was bypassed.
+- Unknown check/environment IDs in Course Pack requirements were confirmed already fail closed: `validateRequirements` emits `PACK_REQUIREMENT_UNAVAILABLE` (`/requirements/{name}/{index}`, `entityId` = the unknown ID) against `CORE_M3_COURSE_PACK_REGISTRY`/app registry, and transfer surfaces those child diagnostics under `/packs/<revisionKey>`. The route test `names the exact unknown trusted check requirement in pack diagnostics` proves it (`missing-check` → `PACK_REQUIREMENT_UNAVAILABLE` at `.../requirements/checkIds/0`, `entityId: "missing-check"`).
+- UI: `apps/web/lib/failure-presentation.ts` gained a `transfer` diagnostic group (all `TRANSFER_*` codes) so transfer rejections render the localized `courses.validation.diagnostic.transfer` remediation ("rejected before anything was imported; fix in the source app and re-export"); `en-US` and `ru-RU` catalogs in `apps/web/lib/i18n.tsx` both carry the new key.
+- Route tests: `apps/orchestrator/test/course-transfer.integration.test.ts` is now 9/9 green (`course transfer precise import diagnostics` describe: 4 previous + unknown-check pack diagnostics + unknown/ malformed kernel fact types).
+
 **Remaining for task7 (next session):**
 
-- Per-entity unknown-type coverage audit is partially done: unknown Activity types already produce `PACK_GRAPH_UNKNOWN_ACTIVITY_TYPE` via `validateActivityGraph`; the unverified gaps are unknown **check/environment IDs** (`requirements.checkIds`/`environmentIds` vs installed trusted registries) and unknown **evidence types** (`PACK_COMPLETION_CRITERION_UNKNOWN` exists for custom criteria; plain unknown evidence kinds need a check in the pack validator).
-- UI: localized strings for the new diagnostic codes (`TRANSFER_FORMAT_*`) in `en-US`/`ru-RU` if surfaced as user-visible text; pack preview already renders diagnostics.
-- Gates: format, lint, typecheck, `test:fast`, build passed for the implemented part; run full `test:fast` + targeted E2E after the e2e orchestrator identity failure is resolved.
+- None blocking this slice; the remaining unchecked checklist items are PAUSED (upgrade semantics, Learning Design, documentation/scaffolding cleanup, full gates with E2E).
+
+**Gates (2026-09-09):** `format:check` ✔, `lint` 15/15 ✔, `typecheck` 15/15 ✔, `build -- --force` 15/15 ✔, learning-core fact-shape 6/6 ✔, transfer route suites 9/9 ✔, database fast 134 ✔, exercise-core 65/65 ✔. `test:fast` full run: all suites green except the pre-existing `apps/orchestrator/test/http-boundary.integration.test.ts` (3/3 timeouts/close, proven pre-existing earlier on a stashed clean tree) — unrelated to task7. E2E remains blocked on the known orchestrator identity/infrastructure issue from 07.09 (same as recorded in the task6 record).
 
 ## Verified evidence
 

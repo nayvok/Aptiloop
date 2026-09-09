@@ -13,6 +13,7 @@ import {
 } from "@aptiloop/course-authoring-kit";
 import {
   canonicalLearningKernelJson,
+  collectLearningKernelFactShapeIssues,
   learningKernelSha256,
   projectLearningKernel,
   type LearningKernelFact,
@@ -788,6 +789,7 @@ export function validateCourseTransferBytes(
       );
     }
   }
+  diagnostics.push(...collectTransferFactDiagnostics(envelope));
   if (diagnostics.length > 0) {
     return {
       valid: false,
@@ -1995,6 +1997,75 @@ function restoreRevisionSnapshots(
   return restored;
 }
 
+/**
+ * Structural per-fact contract check for learnerScope facts received as
+ * untrusted data (ADR 0012 decision 3): unknown kernel body/evidence/
+ * provenance types and malformed fact shapes fail closed with precise
+ * code/path/entity diagnostics instead of being installed partially or
+ * silently skipped. Cross-fact links and activity-scope rules still run in
+ * the kernel boundary before any projection is recomputed.
+ */
+function collectTransferFactDiagnostics(
+  envelope: CourseTransferEnvelope,
+): CoursePackDiagnostic[] {
+  const diagnostics: CoursePackDiagnostic[] = [];
+  for (const entry of envelope.learnerScope.facts) {
+    let fact: unknown;
+    try {
+      fact = JSON.parse(entry.canonicalJson) as unknown;
+    } catch {
+      diagnostics.push(
+        transferDiagnostic(
+          "TRANSFER_FACT_SHAPE_INVALID",
+          `/learnerScope/facts/${entry.id}`,
+          entry.id,
+          `Transfer fact ${entry.id} is not valid JSON`,
+        ),
+      );
+      continue;
+    }
+    try {
+      if (
+        canonicalLearningKernelJson(fact) !== entry.canonicalJson ||
+        learningKernelSha256(fact) !== entry.factHash
+      ) {
+        diagnostics.push(
+          transferDiagnostic(
+            "TRANSFER_FACT_UNVERIFIED",
+            `/learnerScope/facts/${entry.id}`,
+            entry.id,
+            `Transfer fact ${entry.id} hash does not verify`,
+          ),
+        );
+        continue;
+      }
+    } catch {
+      diagnostics.push(
+        transferDiagnostic(
+          "TRANSFER_FACT_SHAPE_INVALID",
+          `/learnerScope/facts/${entry.id}`,
+          entry.id,
+          `Transfer fact ${entry.id} is not canonicalizable kernel JSON`,
+        ),
+      );
+      continue;
+    }
+    for (const issue of collectLearningKernelFactShapeIssues(fact)) {
+      diagnostics.push(
+        transferDiagnostic(
+          issue.code === "unknown-type"
+            ? "TRANSFER_FACT_UNKNOWN_TYPE"
+            : "TRANSFER_FACT_SHAPE_INVALID",
+          `/learnerScope/facts/${entry.id}${issue.path}`,
+          entry.id,
+          issue.message,
+        ),
+      );
+    }
+  }
+  return diagnostics;
+}
+
 function replayTransferFacts(
   sqlite: DatabaseSync,
   envelope: CourseTransferEnvelope,
@@ -2063,6 +2134,19 @@ function replayTransferFacts(
         );
       }
       continue;
+    }
+    // Fail closed before any write: an unknown kernel type must never be
+    // persisted even when commit is reached without the validate stage.
+    for (const issue of collectLearningKernelFactShapeIssues(fact)) {
+      throw transferInvalid(
+        issue.code === "unknown-type"
+          ? "TRANSFER_FACT_UNKNOWN_TYPE"
+          : "TRANSFER_FACT_SHAPE_INVALID",
+        `/learnerScope/facts/${entry.id}${issue.path}`,
+        entry.id,
+        issue.message,
+        envelope,
+      );
     }
     replayed += insertRestoredKernelFact(
       sqlite,

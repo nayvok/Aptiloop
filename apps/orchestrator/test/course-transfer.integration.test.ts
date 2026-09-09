@@ -9,6 +9,16 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import {
+  canonicalJson,
+  finalizeCoursePackAuthoringDraft,
+} from "@aptiloop/course-authoring-kit";
+import { createRegistryMismatchCoursePackAuthoringDraftFixture } from "../../../packages/course-authoring-kit/test/fixture.js";
+import {
+  canonicalLearningKernelJson,
+  learningKernelSha256,
+  type LearningKernelFact,
+} from "@aptiloop/learning-core";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -586,5 +596,219 @@ describe("course transfer precise import diagnostics", () => {
           diagnostic.entityId === "revision-unknown",
       ),
     ).toBe(true);
+  });
+
+  it("names the exact unknown trusted check requirement in pack diagnostics", async () => {
+    const app = runtime(false, "reqdiag").app;
+    const pack = finalizeCoursePackAuthoringDraft(
+      createRegistryMismatchCoursePackAuthoringDraftFixture(),
+    );
+    const response = await request(app, "/api/course-transfer/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        format: "aptiloop.course-transfer-v1",
+        formatVersion: 1,
+        manifest: {
+          format: "aptiloop.course-transfer-v1",
+          formatVersion: 1,
+          createdAt: "2026-09-09T00:00:00.000Z",
+          operationId: "req-probe",
+          courseKeys: [pack.course.courseKey],
+          includeHistory: true,
+          scopeNote: "probe",
+          packCount: 1,
+          revisionSnapshotCount: 0,
+          revisionSnapshotByteCount: 0,
+          mode: "full",
+          originatingAppVersion: "0.1.0",
+          learnerScopeCourses: [],
+          factCount: 0,
+          sessionCount: 0,
+          skippedSessionCount: 0,
+          attemptSnapshotCount: 0,
+          attemptByteCount: 0,
+          droppedPendingTurnCount: 0,
+          excluded: [],
+        },
+        packs: [
+          {
+            courseKey: pack.course.courseKey,
+            revisionKey: pack.revision.revisionKey,
+            revisionNumber: pack.revision.revisionNumber,
+            contentHash: pack.revision.contentHash,
+            canonicalJson: canonicalJson(pack),
+          },
+        ],
+        revisionSnapshots: [],
+        learnerScope: {
+          bindings: [],
+          facts: [],
+          snapshots: [],
+          checkpoints: [],
+          sessionRefs: [],
+          reviewItems: [],
+          learnerCoursePointers: [],
+          attemptSnapshots: [],
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      valid: boolean;
+      diagnostics: Array<{
+        code: string;
+        path: string;
+        entityId: string | null;
+      }>;
+    };
+    expect(body.valid).toBe(false);
+    // ADR 0012 decision 3: an unknown trusted check ID fails closed with the
+    // precise code, pack-relative path, and the unknown ID as the entity.
+    expect(
+      body.diagnostics.find(
+        (diagnostic) => diagnostic.code === "PACK_REQUIREMENT_UNAVAILABLE",
+      ),
+    ).toMatchObject({
+      path: `/packs/${pack.revision.revisionKey}/requirements/checkIds/0`,
+      entityId: "missing-check",
+    });
+  });
+
+  it("fails closed with precise diagnostics for unknown kernel fact types", async () => {
+    const app = runtime(false, "factdiag").app;
+    const baseFact: LearningKernelFact = {
+      schemaVersion: 1,
+      courseId: "course-1",
+      revisionId: "revision-1",
+      branchId: "branch-1",
+      sessionId: "session-1",
+      id: "fact-unknown-type",
+      operationId: "operation-unknown-type",
+      occurredAt: "2026-09-09T00:00:00.000Z",
+      provenance: {
+        kind: "learner_submission",
+        sourceId: "browser-operation",
+        sourceHash: `sha256:${"a".repeat(64)}`,
+      },
+      body: {
+        type: "evidence",
+        activityId: "activity-1",
+        knowledgeNodeIds: ["node-1"],
+        dimension: "understanding",
+        evidenceType: "recall",
+        outcome: "unverified",
+        hintLevel: 0,
+        basisFactIds: [],
+      },
+    };
+    const unknownType: LearningKernelFact = {
+      ...baseFact,
+      body: {
+        ...baseFact.body,
+        evidenceType: "telepathy",
+      } as unknown as LearningKernelFact["body"],
+    };
+    const unknownShape = {
+      ...baseFact,
+      id: "fact-unknown-shape",
+      operationId: "operation-unknown-shape",
+      mysticPower: 9001,
+    };
+    const factEntry = (fact: LearningKernelFact) => ({
+      id: fact.id,
+      operationId: fact.operationId,
+      courseId: fact.courseId,
+      revisionId: fact.revisionId,
+      branchId: fact.branchId,
+      sessionId: fact.sessionId,
+      lessonId: "lesson-1",
+      activityId: "activity-1",
+      bodyType: fact.body.type,
+      occurredAt: fact.occurredAt,
+      acceptedAt: fact.occurredAt,
+      canonicalJson: canonicalLearningKernelJson(fact),
+      factHash: learningKernelSha256(fact),
+    });
+    const response = await request(app, "/api/course-transfer/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        format: "aptiloop.course-transfer-v1",
+        formatVersion: 1,
+        manifest: {
+          format: "aptiloop.course-transfer-v1",
+          formatVersion: 1,
+          createdAt: "2026-09-09T00:00:00.000Z",
+          operationId: "fact-probe",
+          courseKeys: ["course-unknown"],
+          includeHistory: true,
+          scopeNote: "probe",
+          packCount: 1,
+          revisionSnapshotCount: 0,
+          revisionSnapshotByteCount: 0,
+          mode: "full",
+          originatingAppVersion: "0.1.0",
+          learnerScopeCourses: [],
+          factCount: 2,
+          sessionCount: 0,
+          skippedSessionCount: 0,
+          attemptSnapshotCount: 0,
+          attemptByteCount: 0,
+          droppedPendingTurnCount: 0,
+          excluded: [],
+        },
+        packs: [
+          {
+            courseKey: "course-unknown",
+            revisionKey: "revision-unknown",
+            revisionNumber: 1,
+            contentHash:
+              "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            canonicalJson: "{}",
+          },
+        ],
+        revisionSnapshots: [],
+        learnerScope: {
+          bindings: [],
+          facts: [factEntry(unknownType), factEntry(unknownShape)],
+          snapshots: [],
+          checkpoints: [],
+          sessionRefs: [],
+          reviewItems: [],
+          learnerCoursePointers: [],
+          attemptSnapshots: [],
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      valid: boolean;
+      diagnostics: Array<{
+        code: string;
+        path: string;
+        entityId: string | null;
+        message: string;
+      }>;
+    };
+    expect(body.valid).toBe(false);
+    // ADR 0012 decision 3: an unknown evidence type is named precisely with
+    // the fact entity and the in-fact path, never flattened or skipped.
+    expect(
+      body.diagnostics.find(
+        (diagnostic) => diagnostic.code === "TRANSFER_FACT_UNKNOWN_TYPE",
+      ),
+    ).toMatchObject({
+      path: "/learnerScope/facts/fact-unknown-type/body/evidenceType",
+      entityId: "fact-unknown-type",
+      message: "Unknown evidence type: telepathy",
+    });
+    expect(
+      body.diagnostics.find(
+        (diagnostic) => diagnostic.code === "TRANSFER_FACT_SHAPE_INVALID",
+      ),
+    ).toMatchObject({
+      path: "/learnerScope/facts/fact-unknown-shape",
+      entityId: "fact-unknown-shape",
+      message: "fact contains unknown fields: mysticPower",
+    });
   });
 });

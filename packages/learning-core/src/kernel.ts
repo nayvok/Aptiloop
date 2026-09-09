@@ -1968,3 +1968,854 @@ function compareStrings(left: string, right: string): number {
 function round(value: number): number {
   return Math.round((value + Number.EPSILON) * 1_000) / 1_000;
 }
+
+const MAX_FACT_SHAPE_REVIEW_RESPONSE_CHARACTERS = 50_000;
+const EVIDENCE_TYPE_IDS = [
+  "recall",
+  "explanation",
+  "code_reading",
+  "implementation",
+  "debugging",
+  "interview",
+] as const;
+const EVIDENCE_OUTCOME_IDS = [
+  "unverified",
+  "incorrect",
+  "partial",
+  "correct",
+] as const;
+const FACT_PROVENANCE_KINDS = [
+  "learner_submission",
+  "deterministic_evaluator",
+  "trusted_check",
+  "reviewer",
+  "migration",
+] as const;
+const FACT_PROGRESS_TRANSITIONS = [
+  "start",
+  "pause",
+  "complete",
+  "skip",
+] as const;
+
+export type LearningKernelFactShapeIssueCode = "invalid-shape" | "unknown-type";
+
+export interface LearningKernelFactShapeIssue {
+  readonly code: LearningKernelFactShapeIssueCode;
+  /** JSON-pointer-style path inside the fact object ("" is the fact root). */
+  readonly path: string;
+  readonly message: string;
+}
+
+/**
+ * Structural, per-fact contract check for Learning Kernel facts received as
+ * untrusted data (course transfer envelopes, upgrade envelopes). It mirrors
+ * the exact-key, enum, provenance, and single-fact authority rules of the
+ * internal validateFacts boundary, but collects issues instead of throwing
+ * and never consults activities, other facts, storage, or ambient state:
+ * cross-fact links and activity-scope rules stay in validateFacts, which
+ * still runs before any projection is recomputed.
+ */
+export function collectLearningKernelFactShapeIssues(
+  fact: unknown,
+): readonly LearningKernelFactShapeIssue[] {
+  const issues: LearningKernelFactShapeIssue[] = [];
+  if (!isShapeObject(fact)) {
+    issues.push({
+      code: "invalid-shape",
+      path: "",
+      message: "fact must be an object",
+    });
+    return issues;
+  }
+  if (
+    !checkExactKeys(issues, fact, "", "fact", [
+      "schemaVersion",
+      "courseId",
+      "revisionId",
+      "branchId",
+      "sessionId",
+      "id",
+      "operationId",
+      "occurredAt",
+      "provenance",
+      "body",
+    ])
+  ) {
+    return issues;
+  }
+  if (
+    fact.schemaVersion !== LEARNING_KERNEL_FACT_SCHEMA_VERSION &&
+    fact.schemaVersion !== LEARNING_KERNEL_FACT_SCHEMA_VERSION_V2
+  ) {
+    issues.push({
+      code: "unknown-type",
+      path: "/schemaVersion",
+      message: `Unsupported Learning Kernel fact schema: ${stringifyShapeValue(fact.schemaVersion)}`,
+    });
+    return issues;
+  }
+  for (const key of [
+    "courseId",
+    "revisionId",
+    "branchId",
+    "sessionId",
+    "id",
+    "operationId",
+  ] as const) {
+    checkShapeIdentifier(issues, fact[key], `/${key}`, `fact.${key}`);
+  }
+  checkShapeIsoInstant(
+    issues,
+    fact.occurredAt,
+    "/occurredAt",
+    "fact.occurredAt",
+  );
+  if (!checkShapeProvenance(issues, fact.provenance, fact.schemaVersion)) {
+    return issues;
+  }
+  const provenance = fact.provenance;
+  if (!isShapeObject(provenance)) {
+    issues.push({
+      code: "invalid-shape",
+      path: "/provenance",
+      message: "fact.provenance must be an object",
+    });
+    return issues;
+  }
+  if (!isShapeObject(fact.body)) {
+    issues.push({
+      code: "invalid-shape",
+      path: "/body",
+      message: "fact.body must be an object",
+    });
+    return issues;
+  }
+  checkShapeBody(issues, fact.body, provenance);
+  return issues;
+}
+
+function checkShapeProvenance(
+  issues: LearningKernelFactShapeIssue[],
+  provenance: unknown,
+  schemaVersion: unknown,
+): boolean {
+  if (!isShapeObject(provenance)) {
+    issues.push({
+      code: "invalid-shape",
+      path: "/provenance",
+      message: "fact.provenance must be an object",
+    });
+    return false;
+  }
+  if (isMigrationProvenanceShape(provenance)) {
+    if (schemaVersion !== LEARNING_KERNEL_FACT_SCHEMA_VERSION_V2) {
+      issues.push({
+        code: "invalid-shape",
+        path: "/provenance",
+        message: "Migration lineage provenance requires fact schema v2",
+      });
+      return false;
+    }
+    if (
+      !checkExactKeys(
+        issues,
+        provenance,
+        "/provenance",
+        "migration provenance",
+        [
+          "kind",
+          "sourceId",
+          "sourceHash",
+          "sourceRevisionId",
+          "sourceFactId",
+          "sourceFactHash",
+          "sourceContractHash",
+          "targetContractHash",
+          "migratorVersion",
+          "originalProvenance",
+        ],
+      )
+    ) {
+      return false;
+    }
+    if (provenance.migratorVersion !== LEARNING_KERNEL_MIGRATOR_VERSION) {
+      issues.push({
+        code: "invalid-shape",
+        path: "/provenance/migratorVersion",
+        message: `Migration provenance requires migrator version ${LEARNING_KERNEL_MIGRATOR_VERSION}`,
+      });
+    }
+    checkShapeIdentifier(
+      issues,
+      provenance.sourceId,
+      "/provenance/sourceId",
+      "provenance.sourceId",
+    );
+    checkShapeHash(
+      issues,
+      provenance.sourceHash,
+      "/provenance/sourceHash",
+      "provenance.sourceHash",
+    );
+    checkShapeIdentifier(
+      issues,
+      provenance.sourceRevisionId,
+      "/provenance/sourceRevisionId",
+      "provenance.sourceRevisionId",
+    );
+    checkShapeIdentifier(
+      issues,
+      provenance.sourceFactId,
+      "/provenance/sourceFactId",
+      "provenance.sourceFactId",
+    );
+    checkShapeHash(
+      issues,
+      provenance.sourceFactHash,
+      "/provenance/sourceFactHash",
+      "provenance.sourceFactHash",
+    );
+    checkShapeHash(
+      issues,
+      provenance.sourceContractHash,
+      "/provenance/sourceContractHash",
+      "provenance.sourceContractHash",
+    );
+    checkShapeHash(
+      issues,
+      provenance.targetContractHash,
+      "/provenance/targetContractHash",
+      "provenance.targetContractHash",
+    );
+    if (isShapeObject(provenance.originalProvenance)) {
+      checkShapeLegacyProvenance(issues, provenance.originalProvenance, true);
+    } else {
+      issues.push({
+        code: "invalid-shape",
+        path: "/provenance/originalProvenance",
+        message:
+          "Migration provenance requires the original non-migration provenance",
+      });
+    }
+    return true;
+  }
+  if (schemaVersion !== LEARNING_KERNEL_FACT_SCHEMA_VERSION) {
+    issues.push({
+      code: "invalid-shape",
+      path: "/provenance",
+      message: "Fact schema v2 requires migration lineage provenance",
+    });
+    return false;
+  }
+  checkShapeLegacyProvenance(issues, provenance, false);
+  return true;
+}
+
+function checkShapeLegacyProvenance(
+  issues: LearningKernelFactShapeIssue[],
+  provenance: Record<string, unknown>,
+  isOriginalLineage: boolean,
+): void {
+  const label = isOriginalLineage
+    ? "migration original provenance"
+    : "fact provenance";
+  const prefix = isOriginalLineage
+    ? "/provenance/originalProvenance"
+    : "/provenance";
+  if (
+    !checkExactKeys(issues, provenance, prefix, label, [
+      "kind",
+      "sourceId",
+      "sourceHash",
+      "evaluatorVersion",
+      "checkId",
+      "checkVersion",
+      "workspaceHash",
+      "checkFactId",
+    ])
+  ) {
+    return;
+  }
+  if (!FACT_PROVENANCE_KINDS.includes(provenance.kind as never)) {
+    issues.push({
+      code: "unknown-type",
+      path: `${prefix}/kind`,
+      message: `Unknown fact provenance: ${stringifyShapeValue(provenance.kind)}`,
+    });
+    return;
+  }
+  const kind = provenance.kind as string;
+  if (isOriginalLineage && kind === "migration") {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/kind`,
+      message: "Migration original provenance cannot itself be a migration",
+    });
+    return;
+  }
+  checkShapeIdentifier(
+    issues,
+    provenance.sourceId,
+    `${prefix}/sourceId`,
+    "provenance.sourceId",
+  );
+  checkShapeHash(
+    issues,
+    provenance.sourceHash,
+    `${prefix}/sourceHash`,
+    "provenance.sourceHash",
+  );
+  if (
+    (kind === "deterministic_evaluator" || kind === "migration") &&
+    (typeof provenance.evaluatorVersion !== "string" ||
+      provenance.evaluatorVersion.trim() === "")
+  ) {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/evaluatorVersion`,
+      message: "Evaluator and migration provenance require a version",
+    });
+  }
+  if (kind === "trusted_check") {
+    checkShapeIdentifier(
+      issues,
+      provenance.checkId,
+      `${prefix}/checkId`,
+      "provenance.checkId",
+    );
+    checkShapeIdentifier(
+      issues,
+      provenance.checkVersion,
+      `${prefix}/checkVersion`,
+      "provenance.checkVersion",
+    );
+    checkShapeHash(
+      issues,
+      provenance.workspaceHash,
+      `${prefix}/workspaceHash`,
+      "provenance.workspaceHash",
+    );
+  }
+  if (kind === "reviewer") {
+    checkShapeIdentifier(
+      issues,
+      provenance.checkFactId,
+      `${prefix}/checkFactId`,
+      "provenance.checkFactId",
+    );
+    checkShapeHash(
+      issues,
+      provenance.workspaceHash,
+      `${prefix}/workspaceHash`,
+      "provenance.workspaceHash",
+    );
+  }
+}
+
+function checkShapeBody(
+  issues: LearningKernelFactShapeIssue[],
+  body: Record<string, unknown>,
+  provenance: Record<string, unknown>,
+): void {
+  const provenanceKind =
+    typeof provenance.kind === "string" ? provenance.kind : "";
+  switch (body.type) {
+    case "evidence":
+      checkShapeEvidenceBody(issues, body, "/body", provenanceKind);
+      return;
+    case "progress":
+      if (
+        !checkExactKeys(issues, body, "/body", "progress body", [
+          "type",
+          "activityId",
+          "transition",
+        ])
+      ) {
+        return;
+      }
+      checkShapeIdentifier(
+        issues,
+        body.activityId,
+        "/body/activityId",
+        "progress.activityId",
+      );
+      if (!FACT_PROGRESS_TRANSITIONS.includes(body.transition as never)) {
+        issues.push({
+          code: "unknown-type",
+          path: "/body/transition",
+          message: `Unknown progress transition: ${stringifyShapeValue(body.transition)}`,
+        });
+        return;
+      }
+      if (
+        (body.transition === "complete" || body.transition === "skip") &&
+        provenanceKind !== "deterministic_evaluator" &&
+        provenanceKind !== "migration"
+      ) {
+        issues.push({
+          code: "invalid-shape",
+          path: "/body/transition",
+          message: "Only a deterministic evaluator may emit terminal progress",
+        });
+      }
+      return;
+    case "correction":
+      if (
+        !checkExactKeys(issues, body, "/body", "correction body", [
+          "type",
+          "supersedesFactId",
+          "replacement",
+        ])
+      ) {
+        return;
+      }
+      checkShapeIdentifier(
+        issues,
+        body.supersedesFactId,
+        "/body/supersedesFactId",
+        "correction.supersedesFactId",
+      );
+      if (
+        provenanceKind !== "deterministic_evaluator" &&
+        provenanceKind !== "migration"
+      ) {
+        issues.push({
+          code: "invalid-shape",
+          path: "/body",
+          message:
+            "Only a deterministic evaluator or migration may correct a fact",
+        });
+      }
+      if (isShapeObject(body.replacement)) {
+        checkShapeEvidenceBody(
+          issues,
+          body.replacement,
+          "/body/replacement",
+          provenanceKind,
+        );
+      } else {
+        issues.push({
+          code: "invalid-shape",
+          path: "/body/replacement",
+          message: "Correction replacement must be an evidence body",
+        });
+      }
+      return;
+    case "review":
+      checkShapeIdentifier(
+        issues,
+        body.activityId,
+        "/body/activityId",
+        "review.activityId",
+      );
+      checkShapeIdentifier(
+        issues,
+        body.reviewItemId,
+        "/body/reviewItemId",
+        "review.reviewItemId",
+      );
+      checkShapeReviewBody(issues, body, provenanceKind);
+      return;
+    default:
+      issues.push({
+        code: "unknown-type",
+        path: "/body/type",
+        message: `Unknown Learning Kernel fact type: ${stringifyShapeValue(body.type)}`,
+      });
+  }
+}
+
+function checkShapeReviewBody(
+  issues: LearningKernelFactShapeIssue[],
+  body: Record<string, unknown>,
+  provenanceKind: string,
+): void {
+  switch (body.transition) {
+    case "dismiss":
+      checkExactKeys(issues, body, "/body", "review dismiss body", [
+        "type",
+        "activityId",
+        "reviewItemId",
+        "transition",
+      ]);
+      if (provenanceKind !== "learner_submission") {
+        issues.push({
+          code: "invalid-shape",
+          path: "/body/transition",
+          message: "Only a learner submission may dismiss a review item",
+        });
+      }
+      return;
+    case "submit":
+      if (
+        !checkExactKeys(issues, body, "/body", "review submit body", [
+          "type",
+          "activityId",
+          "reviewItemId",
+          "transition",
+          "response",
+          "activitySnapshotHash",
+          "executionContextHash",
+        ])
+      ) {
+        return;
+      }
+      if (provenanceKind !== "learner_submission") {
+        issues.push({
+          code: "invalid-shape",
+          path: "/body/transition",
+          message: "Only a learner submission may submit a review response",
+        });
+      }
+      if (
+        typeof body.response !== "string" ||
+        body.response.trim() === "" ||
+        body.response.length > MAX_FACT_SHAPE_REVIEW_RESPONSE_CHARACTERS
+      ) {
+        issues.push({
+          code: "invalid-shape",
+          path: "/body/response",
+          message: `review.response must be a non-blank string of at most ${MAX_FACT_SHAPE_REVIEW_RESPONSE_CHARACTERS} characters`,
+        });
+      }
+      checkShapeHash(
+        issues,
+        body.activitySnapshotHash,
+        "/body/activitySnapshotHash",
+        "review.activitySnapshotHash",
+      );
+      checkShapeHash(
+        issues,
+        body.executionContextHash,
+        "/body/executionContextHash",
+        "review.executionContextHash",
+      );
+      return;
+    case "complete":
+      checkExactKeys(issues, body, "/body", "review complete body", [
+        "type",
+        "activityId",
+        "reviewItemId",
+        "transition",
+        "completionEvidenceFactId",
+      ]);
+      if (provenanceKind !== "deterministic_evaluator") {
+        issues.push({
+          code: "invalid-shape",
+          path: "/body/transition",
+          message: "Only a deterministic evaluator may complete a review item",
+        });
+      }
+      checkShapeIdentifier(
+        issues,
+        body.completionEvidenceFactId,
+        "/body/completionEvidenceFactId",
+        "review.completionEvidenceFactId",
+      );
+      return;
+    default:
+      issues.push({
+        code: "unknown-type",
+        path: "/body/transition",
+        message: `Unknown review transition: ${stringifyShapeValue(body.transition)}`,
+      });
+  }
+}
+
+function checkShapeEvidenceBody(
+  issues: LearningKernelFactShapeIssue[],
+  body: Record<string, unknown>,
+  prefix: string,
+  provenanceKind: string,
+): void {
+  if (
+    !checkExactKeys(issues, body, prefix, "evidence body", [
+      "type",
+      "activityId",
+      "knowledgeNodeIds",
+      "dimension",
+      "evidenceType",
+      "outcome",
+      "hintLevel",
+      "basisFactIds",
+      "errorFamily",
+    ])
+  ) {
+    return;
+  }
+  checkShapeIdentifier(
+    issues,
+    body.activityId,
+    `${prefix}/activityId`,
+    "evidence.activityId",
+  );
+  const knowledgeNodeIds = checkShapeIdentifierList(
+    issues,
+    body.knowledgeNodeIds,
+    `${prefix}/knowledgeNodeIds`,
+    "evidence knowledge node",
+  );
+  if (knowledgeNodeIds !== null && knowledgeNodeIds.length === 0) {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/knowledgeNodeIds`,
+      message: "Evidence knowledge nodes must not be empty",
+    });
+  }
+  if (!MASTERY_DIMENSIONS.includes(body.dimension as never)) {
+    issues.push({
+      code: "unknown-type",
+      path: `${prefix}/dimension`,
+      message: `Unknown mastery dimension: ${stringifyShapeValue(body.dimension)}`,
+    });
+  }
+  if (!EVIDENCE_TYPE_IDS.includes(body.evidenceType as never)) {
+    issues.push({
+      code: "unknown-type",
+      path: `${prefix}/evidenceType`,
+      message: `Unknown evidence type: ${stringifyShapeValue(body.evidenceType)}`,
+    });
+  }
+  if (!EVIDENCE_OUTCOME_IDS.includes(body.outcome as never)) {
+    issues.push({
+      code: "unknown-type",
+      path: `${prefix}/outcome`,
+      message: `Unknown evidence outcome: ${stringifyShapeValue(body.outcome)}`,
+    });
+    return;
+  }
+  const outcome = body.outcome as string;
+  if (
+    typeof body.hintLevel !== "number" ||
+    !Number.isInteger(body.hintLevel) ||
+    body.hintLevel < 0 ||
+    body.hintLevel > 5
+  ) {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/hintLevel`,
+      message: "Evidence hint level must be 0 through 5",
+    });
+  }
+  const basisFactIds = checkShapeIdentifierList(
+    issues,
+    body.basisFactIds,
+    `${prefix}/basisFactIds`,
+    "evidence basis fact",
+  );
+  if (body.errorFamily !== undefined) {
+    checkShapeIdentifier(
+      issues,
+      body.errorFamily,
+      `${prefix}/errorFamily`,
+      "evidence.errorFamily",
+    );
+  }
+  if (
+    outcome !== "unverified" &&
+    basisFactIds !== null &&
+    basisFactIds.length === 0
+  ) {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/basisFactIds`,
+      message: "Verified evidence requires at least one persisted basis fact",
+    });
+  }
+  if (provenanceKind === "learner_submission" && outcome !== "unverified") {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/outcome`,
+      message: "Learner submissions cannot assert correctness",
+    });
+  }
+  if (
+    provenanceKind === "deterministic_evaluator" &&
+    outcome === "unverified"
+  ) {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/outcome`,
+      message:
+        "Deterministic evaluator evidence must have an evaluated outcome",
+    });
+  }
+  if (
+    provenanceKind === "trusted_check" &&
+    (outcome === "unverified" ||
+      outcome === "partial" ||
+      (body.evidenceType !== "implementation" &&
+        body.evidenceType !== "debugging"))
+  ) {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/outcome`,
+      message:
+        "Trusted checks emit correct or incorrect implementation/debugging evidence",
+    });
+  }
+  if (
+    provenanceKind === "reviewer" &&
+    (outcome === "correct" || outcome === "unverified")
+  ) {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/outcome`,
+      message: "A reviewer cannot independently emit correct mastery evidence",
+    });
+  }
+  if (provenanceKind === "migration" && outcome === "correct") {
+    issues.push({
+      code: "invalid-shape",
+      path: `${prefix}/outcome`,
+      message: "Migrated evidence cannot be silently upgraded to correct",
+    });
+  }
+}
+
+function isMigrationProvenanceShape(
+  provenance: Record<string, unknown>,
+): boolean {
+  return (
+    provenance.kind === "migration" &&
+    typeof provenance.sourceRevisionId === "string" &&
+    typeof provenance.sourceFactId === "string" &&
+    typeof provenance.sourceFactHash === "string" &&
+    typeof provenance.sourceContractHash === "string" &&
+    typeof provenance.targetContractHash === "string" &&
+    typeof provenance.migratorVersion === "string" &&
+    isShapeObject(provenance.originalProvenance)
+  );
+}
+
+function checkExactKeys(
+  issues: LearningKernelFactShapeIssue[],
+  value: Record<string, unknown>,
+  prefix: string,
+  label: string,
+  allowedKeys: readonly string[],
+): boolean {
+  const allowed = new Set(allowedKeys);
+  const unknownKeys = Object.keys(value)
+    .filter((key) => !allowed.has(key))
+    .sort(compareStrings);
+  if (unknownKeys.length > 0) {
+    issues.push({
+      code: "invalid-shape",
+      path: prefix,
+      message: `${label} contains unknown fields: ${unknownKeys.join(", ")}`,
+    });
+    return false;
+  }
+  return true;
+}
+
+function checkShapeIdentifier(
+  issues: LearningKernelFactShapeIssue[],
+  value: unknown,
+  path: string,
+  label: string,
+): void {
+  if (typeof value !== "string" || value.trim() === "" || value.length > 500) {
+    issues.push({
+      code: "invalid-shape",
+      path,
+      message: `${label} must be a non-empty string`,
+    });
+  }
+}
+
+function checkShapeHash(
+  issues: LearningKernelFactShapeIssue[],
+  value: unknown,
+  path: string,
+  label: string,
+): void {
+  if (typeof value !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(value)) {
+    issues.push({
+      code: "invalid-shape",
+      path,
+      message: `${label} must be a SHA-256 hash`,
+    });
+  }
+}
+
+function checkShapeIdentifierList(
+  issues: LearningKernelFactShapeIssue[],
+  value: unknown,
+  path: string,
+  label: string,
+): readonly string[] | null {
+  if (!Array.isArray(value)) {
+    issues.push({
+      code: "invalid-shape",
+      path,
+      message: `${label} IDs must be an array`,
+    });
+    return null;
+  }
+  const seen = new Set<string>();
+  let valid = true;
+  value.forEach((entry, index) => {
+    if (
+      typeof entry !== "string" ||
+      entry.trim() === "" ||
+      entry.length > 500
+    ) {
+      issues.push({
+        code: "invalid-shape",
+        path: `${path}/${index}`,
+        message: `${label} ID must be a non-empty string`,
+      });
+      valid = false;
+      return;
+    }
+    if (seen.has(entry)) {
+      issues.push({
+        code: "invalid-shape",
+        path: `${path}/${index}`,
+        message: `Duplicate ${label} ID: ${entry}`,
+      });
+      valid = false;
+      return;
+    }
+    seen.add(entry);
+  });
+  return valid ? [...seen].sort(compareStrings) : null;
+}
+
+function checkShapeIsoInstant(
+  issues: LearningKernelFactShapeIssue[],
+  value: unknown,
+  path: string,
+  label: string,
+): void {
+  if (typeof value !== "string") {
+    issues.push({
+      code: "invalid-shape",
+      path,
+      message: `${label} must be an ISO instant`,
+    });
+    return;
+  }
+  const timestamp = Date.parse(value);
+  if (
+    !Number.isFinite(timestamp) ||
+    new Date(timestamp).toISOString() !== value
+  ) {
+    issues.push({
+      code: "invalid-shape",
+      path,
+      message: `Invalid canonical ISO instant: ${value}`,
+    });
+  }
+}
+
+function isShapeObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringifyShapeValue(value: unknown): string {
+  return typeof value === "string" ? value : String(value);
+}
