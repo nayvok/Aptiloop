@@ -10,6 +10,7 @@ Historical documents preserve decision and migration context. They are not curre
 - [Product contract](../PRODUCT.md) — normative product intent, users, boundaries, and release behavior.
 - [Roadmap](../ROADMAP.md) — mixed current milestone status ledger and release gate.
 - [Repository rules](../AGENTS.md) — mandatory engineering, security, data, language, and verification rules.
+- [Session handoff](../HANDOFF.md) — current slice, evidence boundaries, and paused checklist for the next session.
 
 ## Current product specifications
 

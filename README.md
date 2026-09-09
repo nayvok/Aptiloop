@@ -41,7 +41,7 @@ npm ci
 npm start
 ```
 
-Open <http://127.0.0.1:3000>. The documented launcher builds and starts the local production-mode web and orchestrator processes on loopback. No `.env` file or provider sidecar is required. The app is loopback-only and has no authentication or authorization; do not expose it to a LAN, tunnel, public proxy, or the Internet.
+Open <http://127.0.0.1:10101>. The documented launcher builds and starts the local production-mode web and orchestrator processes on loopback. No `.env` file or provider sidecar is required. The app is loopback-only and has no authentication or authorization; do not expose it to a LAN, tunnel, public proxy, or the Internet.
 
 <p align="center">
   <img src="docs/readme/course-overview-desktop.jpg" width="900" alt="Aptiloop Course overview with the next lesson, deterministic progress, and finite learning stages" />
@@ -61,6 +61,10 @@ Open <http://127.0.0.1:3000>. The documented launcher builds and starts the loca
 - Export a sanitized local profile and restore it offline into a fresh profile without overwriting or merging an active profile.
 
 Manual authoring is complete without AI. Applying a proposal changes only a Draft; validation, learner Preview, Change review, and explicit Publish are separate operations. Repository exercise fixtures are development evidence, not bundled production Courses.
+
+### Implemented baseline: installed GitHub Releases updater
+
+The installed updater is documented in [Deployment Models](docs/architecture/deployment-models.md#installed-updater-baseline). Settings can check release metadata and explicit apply is available for installed releases; source-checkout and Compose apply remain refused/image-owned. Its evidence is limited to local release-fixture interception and disposable Windows installed roots. Public GitHub tagged-release operation, macOS/Linux updates, and post-switch rollback remain **UNVERIFIED**.
 
 ## Architecture map
 
@@ -160,9 +164,14 @@ Useful repository commands:
 | `npm run data:export`                                     | Create a sanitized local-profile transfer bundle   |
 | `npm run data:restore -- --source <bundle.aptiloop-data>` | Restore one bundle offline; never overwrite        |
 
-Read [Development](docs/development.md) before changing behavior and [Repository rules](AGENTS.md) before contributing.
+### Implemented baseline: npm bootstrap smoke
 
-## Focused documentation
+The npm bootstrap package and runtime bundle were verified in a disposable external
+prefix. The shebang-correct Windows `.bin/aptiloop.cmd` shim returned version
+`0.1.0` and help containing `Usage: aptiloop <command> [options]` from an
+unrelated working directory. The shim then started with spaced runtime and data
+paths; local loopback health, `/api/version`, HTML, and `/icon.svg` returned
+successfully, and `aptiloop stop` terminated the owned process tree. The `.verify/bootstrap-proof-shebang/aptiloop-0.1.0.tgz` artifact is intermediate fixture evidence, not a final release proof; repack the current tree for durable evidence. This remains a local smoke only, not publication to npm or GitHub.
 
 - [Product contract](PRODUCT.md)
 - [Architecture](ARCHITECTURE.md)

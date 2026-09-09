@@ -148,6 +148,12 @@ Due-review scheduling, due reasons, evidence provenance, and the typed Review-su
 
 The M12 technical preflight recorded on 2026-08-10 is dated historical **Implemented baseline** evidence for the tree reviewed at that time, not evidence for later changes or release acceptance. That run covered clean install, fast verification, 4/4 E2E, loopback local-process/Compose launches, non-overwriting backup/restore/rollback, trusted Node/Python checks, SBOM/dependency policy, distribution-content inspection, responsive browser QA, hosted CI, and an authenticated OpenCode Zen smoke without fallback. The public source repository is licensed under Apache-2.0 but remains distinct from a tagged Core Alpha release. Third-party notices, content/fixture terms, trademark review, artifact authorization, and owner sign-off remain release gates.
 
+### Installed GitHub Releases updater
+
+**Implemented baseline**
+
+The installed updater's current contract and evidence boundary are documented in [Deployment Models](docs/architecture/deployment-models.md#installed-updater-baseline). Settings metadata checks and explicit apply target installed releases; source-checkout apply is refused. Public GitHub tagged-release operation, macOS/Linux runtime updates, and post-switch rollback remain **UNVERIFIED**.
+
 ## Approval gates
 
 **Approved Core Alpha target**

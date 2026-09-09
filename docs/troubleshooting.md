@@ -52,10 +52,10 @@ The process-mode approved-backup/migration capability does not authorize Compose
 
 ## Ports or E2E locks are busy
 
-Normal development uses `3000/8787`; E2E uses `3100/8887`.
+Normal development uses `3000/8787`; the local production build uses `10101/8787`; E2E uses `3100/8887`.
 
 ```powershell
-Get-NetTCPConnection -LocalPort 3000,8787,3100,8887 -ErrorAction SilentlyContinue |
+Get-NetTCPConnection -LocalPort 10101,8787,3000,3100,8887 -ErrorAction SilentlyContinue |
   Select-Object LocalPort,State,OwningProcess
 ```
 
@@ -67,6 +67,14 @@ npm run test:e2e
 ```
 
 On failure, inspect `.verify/e2e-failures/<run-id>/`. E2E is intentionally serialized and has no retries.
+
+## Installed updater failed or rolled back
+
+An update operation is persisted under `<data-root>/updates/operations/<operation-id>.json`; terminal failure is recorded with phase `rollback` and an evidence directory at `<data-root>/updates/evidence/<operation-id>/`. Inspect the operation record and retained `failed-runtime`, `failed-runtime-installed`, or `failed-database.sqlite` evidence when present. A failed operation may report that cutover never occurred, or that the previous runtime/database were restored; treat that persisted message as the observed result, not as acceptance of post-switch rollback (which remains **UNVERIFIED**). Do not infer success from a downloaded asset, metadata response, or process exit alone. Public GitHub tagged-release operation is unverified; current evidence is only local release-fixture interception and disposable Windows installed roots.
+
+## An update lock is malformed or stale
+
+The updater uses `<data-root>/updates/apply.lock` to serialize cutovers. A live owner causes a fail-fast contention error (or is treated as the same operation when the operation ID matches). A malformed, incomplete, or otherwise un-reclaimable lock is never removed automatically and fails safely. A parseable lock is reclaimable only when its recorded process ID is proven not alive; an `EPERM` probe is treated as alive. Preserve the lock and operation evidence for inspection rather than deleting or editing runtime/data files.
 
 ## A lesson does not resume after reload
 

@@ -21,12 +21,61 @@ The committed `compose.yaml` is **loopback/local only and is not authenticated p
 
 No row in the future section is a promise that the behavior exists.
 
+### Installed runtime baseline
+
+The installed-runtime profile is part of the **Implemented baseline**. Its runtime root and
+data root are independent app-owned paths; the writable database authority is exactly
+`<data-root>/dev-learning-harness.sqlite`. Startup rejects a database path that does not
+match that exact location and rejects reparse/symlinked data ancestors before opening it.
+The source-checkout profile retains its separate `.data/dev-learning-harness.sqlite`
+authority; installed mode does not relax source-checkout path policy.
+
+The bundled Next proxy uses the configured `WEB_ORIGIN` as an exact HTTP loopback origin.
+It accepts the configured browser `Origin`, rejects loopback aliases and other
+cross-origin mutation requests, overwrites the client identity header, streams multi-MiB
+bodies without a small fixed cap, and propagates early SSE chunks and upstream
+cancellation. These are local loopback acceptance properties, not authentication or a
+public-release/self-hosting claim. Verification uses disposable temporary roots and
+ephemeral loopback ports only.
+
+### Installed updater baseline
+
+**Implemented baseline**
+
+Settings metadata checks and explicit CLI apply target GitHub Releases only. The updater selects one exact supported asset for the host: `aptiloop-runtime-win32-x64.zip`, `aptiloop-runtime-darwin-x64.tar.gz`, `aptiloop-runtime-darwin-arm64.tar.gz`, `aptiloop-runtime-linux-x64.tar.gz`, or `aptiloop-runtime-linux-arm64.tar.gz`. It bounds metadata/download/archive work, requires the GitHub asset digest and the matching `SHA256SUMS` entry to agree, and rejects unsupported or malformed releases before cutover.
+
+For an apply, the service is quiesced before an approved backup. The candidate is migrated and started on temporary loopback ports for health checks; only then is its immutable release installed and the runtime pointer and database files atomically replaced for cutover. A previously running service is restarted and health-checked. Failure evidence is retained under the operation evidence directory; the rollback path targets the trusted previous release but post-switch rollback remains **UNVERIFIED**. Apply operations are serialized and fail fast on contention. Source-checkout apply is refused; updater behavior does not perform `git pull`.
+
+Evidence is limited exactly to local release-fixture interception and disposable Windows installed roots. Public GitHub tagged-release operation and macOS/Linux runtime updates remain unverified.
+
+### Installed port selection contract
+
+**Implemented baseline** per [ADR 0011](../adr/0011-collision-safe-install-port-selection.md). The installed CLI resolves ports for every start path in one order: explicit flags > `APTILOOP_PORT`/`APTILOOP_ORCHESTRATOR_PORT` > persisted `<data-dir>/config.json` > preferred defaults `10101`/`8787`, loopback-only. Pinned ports never hop and fail closed when occupied. Unpinned setup/start is automatic only for the first successful bind: `aptiloop init` and `service install` record the preference without probing or reserving, the first bind walks the disjoint deterministic ranges `web 10101–10111` / `orchestrator 8787–8797`, and the concrete winner is persisted atomically with fallback disarmed until `aptiloop config reset-ports`. Only an `EADDRINUSE`-shaped bind failure is a collision; any other startup failure keeps its own reason. A loopback occupant that identifies itself as Aptiloop through the orchestrator version endpoint is reused or opened, never killed or treated as a collision. A create-only instance lock per data dir prevents duplicate starts. Update health checks run on ephemeral OS-assigned loopback ports and never on the user's pair; the stable launcher environment scrubs launcher-owned port variables so inherited shells cannot override the resolved pair. npm postinstall never inspects or reserves ports.
+
+### Per-user service and shortcut baseline
+
+The installed CLI owns one per-user background service entry and launches it through the
+stable installed launcher, with an explicit Node executable, persisted loopback ports, and
+the selected data directory. Service start is independent from login autostart; toggling
+autostart changes only the login trigger and does not remove learner data. Desktop and
+menu shortcuts target the stable CLI launcher with the `open` command, never a raw
+JavaScript file association. Uninstall removes only these app-owned service and shortcut
+entries and leaves the data directory intact.
+
+On Windows, native verification used a uniquely named disposable scheduled task and
+shortcuts under a temporary root; the fixed `Aptiloop` task and user links were not
+overwritten. The host permitted the `/TR` task and shortcut proof, but denied the
+renderer-backed autostart trigger toggle with `ERROR_ACCESS_DENIED`; that toggle is
+therefore covered by the adapter contract and supported-plan smoke, not claimed as a
+host-verified install. macOS launchd and Linux systemd behavior is covered by adapter
+contract tests; no host runtime claim is made for those platforms here.
+
 ## Implemented local process model
 
 The source defaults are:
 
 - orchestrator direct mode accepts only `127.0.0.1`, `::1`, or `localhost` and defaults to `127.0.0.1:8787`;
-- web defaults to `127.0.0.1:3000` through local development tooling;
+- web production default is `127.0.0.1:10101` (`APTILOOP_PORT` override; local development tooling uses `127.0.0.1:3000`);
 - the active SQLite path is `.data/dev-learning-harness.sqlite`;
 - new approved backups use explicit active-source preflight and non-overwriting destinations under `.data/approved-backups`; historical candidates/backups remain quarantined unless a separate reconciliation approves them;
 - trusted templates are at `workspaces/exercises`, attempts at `.data/exercise-attempts`, and fixed compatibility/Core Node/Python Environment Pack/check descriptors are app-distributed;
@@ -40,7 +89,7 @@ M5 native checks run with the current user's authority. App-owned exact plans, m
 
 The committed Compose topology has two services:
 
-- `web`, published at `127.0.0.1:3000`;
+- `web`, published at `127.0.0.1:10101`;
 - `orchestrator`, published at `127.0.0.1:8787`;
 - a private service-to-service URL from web to orchestrator;
 - named `harness-data` and `harness-attempts` volumes;

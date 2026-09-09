@@ -23,6 +23,29 @@ Never claim a target is implemented without direct runtime evidence.
 - Do not overwrite unrelated work or delete historical data to simplify a migration.
 - Keep documentation in English unless editing an explicitly localized Course resource.
 
+## Vibe orchestration policy
+
+When Vibe mode is active, optimize execution for correctness and limited model quota.
+
+- Split broad requests into independent, narrowly scoped workstreams before spawning workers.
+- Default to `fast` for repository exploration, code search, straightforward implementation,
+  repetitive edits, migrations, documentation, and targeted test/type/lint fixes.
+- Use `good` only for architecture, ambiguous debugging, cross-cutting refactors,
+  difficult judgment calls, or reviewing/correcting `fast` output.
+- Prefer at most one `good` worker at a time. When parallelism is useful, prefer
+  one `good` and one `fast` worker on independent workstreams.
+- Have `good` decide and design; delegate already-decided mechanical execution to `fast`.
+- Keep one persistent worker session per workstream. Use `vibe_send` for follow-up on
+  the same workstream instead of spawning a replacement session.
+- Kill a worker only when its workstream is complete, clearly stuck, or no longer relevant.
+- Give every worker a self-contained brief with scope, relevant files, constraints,
+  acceptance criteria, and the smallest verification commands needed for its change.
+- Do not run broad repository-wide checks repeatedly during implementation.
+  Use targeted checks while iterating, then run the applicable full verification gate
+  after the integrated change is ready.
+- The Director owns decomposition, routing, verification, and final acceptance.
+  Never accept a worker's completion claim without inspecting the relevant result.
+
 ## Product boundaries
 
 **Approved Core Alpha target**

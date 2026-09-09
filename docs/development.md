@@ -41,11 +41,52 @@ npm ci
 npm start
 ```
 
-The production launcher builds the workspaces and then starts the built web and orchestrator services under the same sanitized environment. It forces `NODE_ENV=production`, fixed loopback endpoints, and repository-owned data/workspace paths during both build and runtime; it does not load `.env`, expose development Mock, or seed the development curriculum. If either service exits, the launcher terminates the sibling process tree. On Unix, it sends `SIGTERM` to the detached service groups and allows 30 seconds for provider turns and trusted checks to drain before escalating to `SIGKILL`. On Windows, `Ctrl+C` reaches the shared console children directly; the launcher observes them for the same 30-second drain window before using `taskkill /T /F` as a forced fallback. A fatal sibling exit uses immediate tree cleanup because no interactive graceful signal preceded it. The orchestrator itself rejects new API work during shutdown, cancels and drains provider setup/streams and check process groups, drains every already-admitted API handler or response stream, and only then closes SQLite.
+The production launcher builds the workspaces and then starts the built web UI on `127.0.0.1:10101` (override with `APTILOOP_PORT`) and the orchestrator on `127.0.0.1:8787` (override with `APTILOOP_ORCHESTRATOR_PORT`) under the same sanitized environment. It forces `NODE_ENV=production`, fixed loopback endpoints, and repository-owned data/workspace paths during both build and runtime; it does not load `.env`, expose development Mock, or seed the development curriculum. If either service exits, the launcher terminates the sibling process tree. On Unix, it sends `SIGTERM` to the detached service groups and allows 30 seconds for provider turns and trusted checks to drain before escalating to `SIGKILL`. On Windows, `Ctrl+C` reaches the shared console children directly; the launcher observes them for the same 30-second drain window before using `taskkill /T /F` as a forced fallback, then exits.
 
 On Unix desktop sessions, only the orchestrator runtime receives `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, and `DBUS_SESSION_BUS_ADDRESS` so it can launch the configured local editor. These variables are not supplied to the production build or web service, and provider secrets, proxy credentials, `NODE_OPTIONS`, and SSH-agent variables remain excluded.
 
 Use `npm run dev` only for repository development. It intentionally uses watchers and the explicit development composition, including development fixtures and deterministic Mock where policy permits.
+
+## Installed npm workflow
+
+**Document status:** **Implemented baseline** for the local installed-runtime workflow.
+
+Install the published CLI package (Node.js 24+):
+
+```powershell
+npm install --global aptiloop
+aptiloop init
+aptiloop start --open
+```
+
+`aptiloop init` checks Node and the build/runtime files, selects the OS data directory unless `--data-dir` or `APTILOOP_DATA_DIR` is set, and records the preferred loopback pair. The first unpinned start (or background service start) tries the preferred pair and a bounded fallback range only when a bind collision is observed; once both services are ready, the actual pair is persisted and later starts stay on it. Explicit `--port`, `--orch-port`, `APTILOOP_PORT`, and `APTILOOP_ORCHESTRATOR_PORT` values are pinned and never hop. Use `aptiloop config show` to inspect the effective paths and ports, and `aptiloop config reset-ports` to explicitly re-arm automatic first-start selection.
+
+The browser is `http://127.0.0.1:<web-port>` and the orchestrator readiness endpoint is `http://127.0.0.1:<orchestrator-port>/health/ready`. `aptiloop status`, `aptiloop health --wait`, `aptiloop open`, and `aptiloop stop` are the supported lifecycle commands. `aptiloop service install --autostart` followed by `aptiloop service start` installs a user-level background service (launchd/systemd/Task Scheduler); `aptiloop service status|stop|restart|uninstall` manages it without deleting the data directory.
+
+The data directory contains `config.json`, `runtime-state/` logs and status, SQLite data (the configured `DATABASE_URL` path), update operation records, and bounded update evidence. Provider credentials remain in the app-owned protected credential store; do not copy the data directory while services are writing. Use the approved database backup/export procedures for durable migration or machine recovery.
+
+Check and apply a release explicitly:
+
+```powershell
+aptiloop update check
+aptiloop update apply --version vX.Y.Z
+aptiloop status
+aptiloop health --wait
+```
+
+The CLI asks the running orchestrator to verify the exact tag and waits for the operation ID. The updater creates a non-overwriting, integrity/foreign-key/schema/migration-ledger-verified database snapshot, downloads the platform bundle, checks the release manifest and SHA-256 digests, migrates and health-checks an isolated candidate, switches the pointer/database atomically, and verifies post-switch readiness. A failed operation records rollback evidence and restores the previous runtime/database when an approved backup exists; inspect `updates/operations/` and `updates/evidence/<operation-id>/` before retrying. Updates never auto-apply.
+
+For the loopback Compose topology, update the image explicitly and keep the paired private volumes together:
+
+```powershell
+docker compose config
+docker compose build --pull
+docker compose up -d
+docker compose ps
+docker compose logs -f orchestrator web
+```
+
+Before a Compose update or host migration, follow [Self-Hosting Aptiloop](../SELF_HOSTING.md#loopback-compose-backup-and-restore) for the paired cold backup/restore procedure. Do not copy a live SQLite file or restore the database volume without its matching private runtime volume.
 
 ## Local configuration
 
@@ -53,7 +94,7 @@ Use `npm run dev` only for repository development. It intentionally uses watcher
 | ------------------------ | ----------------------------------- | ------------------------------------------------------------------------ |
 | `HOST`                   | `127.0.0.1`                         | Orchestrator bind; direct mode rejects non-loopback hosts.               |
 | `PORT`                   | `8787`                              | Orchestrator port.                                                       |
-| `WEB_ORIGIN`             | `http://127.0.0.1:3000`             | Exact browser Origin accepted for mutations.                             |
+| `WEB_ORIGIN`             | `http://127.0.0.1:10101`            | Exact browser Origin accepted for mutations.                             |
 | `ORCHESTRATOR_URL`       | `http://127.0.0.1:8787`             | Next server-side API target.                                             |
 | `NEXT_DIST_DIR`          | `.next`                             | Next output; E2E supplies an isolated launcher-owned directory.          |
 | `NODE_ENV`               | `development` via local launcher    | Explicit `development`/`test` permits deterministic Mock; otherwise Off. |
