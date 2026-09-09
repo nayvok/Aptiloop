@@ -45,7 +45,7 @@ export interface AttemptTransferBlob {
   readonly contentBase64: string;
 }
 
-export interface AttemptTransferCommit extends ExerciseLearnerCommit {}
+export type AttemptTransferCommit = ExerciseLearnerCommit;
 export interface AttemptTransferSnapshot {
   readonly trustedTemplateId: string;
   readonly baselineCommit: string;
@@ -63,6 +63,8 @@ const SECRET_BASENAME_PATTERN =
   /^(?:\.env(?:\..*)?|.*\.(?:pem|key|pfx|p12|kdbx)|id_(?:rsa|ed25519|ecdsa)(?:\.pub)?|credentials\.json|secrets\.json)$/iu;
 const SECRET_CONTENT_PATTERN =
   /(?:\b(?:sk-[A-Za-z0-9_-]{16,}|gh[opusr]_[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{16,})\b)|(?:\b(?:api[_-]?key|authorization|bearer|credential|password|secret|token)\b\s*[:=]\s*["']?[A-Za-z0-9_./+=:-]{8,})/iu;
+const AUTHOR_DATE_PATTERN =
+  /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/u;
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -83,6 +85,41 @@ function assertGitSha(value: string, label: string): void {
 function assertSha256(value: string, label: string): void {
   if (!SHA256_PATTERN.test(value)) {
     throw new AttemptTransferError("INVALID_SNAPSHOT", `${label} is malformed`);
+  }
+}
+
+/**
+ * Validates bounded learner-commit identity fields before they reach the Git
+ * environment. The values become `GIT_AUTHOR_*` environment variables, so
+ * control characters, line breaks, and overlong input are rejected instead of
+ * corrupting restored commit headers.
+ */
+function assertTransferAuthorIdentity(commit: AttemptTransferCommit): void {
+  for (const [label, value] of [
+    ["author name", commit.authorName],
+    ["author email", commit.authorEmail],
+  ] as const) {
+    if (
+      value.length === 0 ||
+      value.length > 500 ||
+      // eslint-disable-next-line no-control-regex -- identity env values must reject control characters.
+      /[\u0000-\u001f\u007f]/u.test(value)
+    ) {
+      throw new AttemptTransferError(
+        "INVALID_SNAPSHOT",
+        `Learner commit ${label} is malformed`,
+      );
+    }
+  }
+  if (
+    commit.authoredAt.length > 40 ||
+    !AUTHOR_DATE_PATTERN.test(commit.authoredAt) ||
+    Number.isNaN(Date.parse(commit.authoredAt))
+  ) {
+    throw new AttemptTransferError(
+      "INVALID_SNAPSHOT",
+      `Learner commit author date is malformed: ${commit.sourceCommit}`,
+    );
   }
 }
 
@@ -375,12 +412,14 @@ async function runTrustedGitCommand(
   root: string,
   args: readonly string[],
   input?: string,
+  env?: Readonly<Record<string, string>>,
 ): Promise<string> {
   const runner = new AllowedProcessRunner(
     {
       "git-transfer-command": {
         executable: "git",
         args,
+        ...(env === undefined ? {} : { env }),
         timeoutMs: 30_000,
         maxOutputBytes: 64 * 1024,
       },
@@ -691,7 +730,15 @@ function isCanonicalBase64(value: string): boolean {
   );
 }
 
-/** Verifies hashes/sizes and restores regular files only. Never executes. */
+/**
+ * Verifies hashes/sizes and restores regular files only. Never executes.
+ * Imported content is re-anchored onto the destination's own trusted-template
+ * baseline: the snapshot baseline identifies the source machine, while the
+ * restored local baseline commit (optionally pinned by
+ * `expectedBaselineCommit`) owns the local Git identity. Learner commits are
+ * replayed as real ordered commits with their source author identity and the
+ * source commit SHA preserved in the commit message.
+ */
 export async function restoreExerciseAttempt(options: {
   destinationRoot: string;
   snapshot: AttemptTransferSnapshot;
@@ -718,6 +765,7 @@ export async function restoreExerciseAttempt(options: {
         "Learner commit history is not a linear chain from the trusted baseline",
       );
     }
+    assertTransferAuthorIdentity(commit);
     if (sha256Prefixed(commit.patch) !== commit.patchHash) {
       throw new AttemptTransferError(
         "HASH_MISMATCH",
@@ -773,8 +821,9 @@ export async function restoreExerciseAttempt(options: {
   }
   const baselineBefore = await getExerciseDiffForTransfer(
     canonicalRoot,
-    snapshot.baselineCommit,
+    options.expectedBaselineCommit,
   );
+  const localBaseline = baselineBefore.baselineCommit;
   if (
     baselineBefore.patch.length > 0 ||
     baselineBefore.untrackedFiles.length > 0
@@ -940,6 +989,11 @@ export async function restoreExerciseAttempt(options: {
         "-",
       ],
       `Aptiloop imported learner commit ${commit.sourceCommit}\n\n${commit.subject}\n`,
+      {
+        GIT_AUTHOR_NAME: commit.authorName,
+        GIT_AUTHOR_EMAIL: commit.authorEmail,
+        GIT_AUTHOR_DATE: commit.authoredAt,
+      },
     );
     const restoredHead = (
       await runTrustedGitCommand(canonicalRoot, [
@@ -998,7 +1052,7 @@ export async function restoreExerciseAttempt(options: {
     }
   }
   const restoredUncommitted = await getExerciseUncommittedDiff(canonicalRoot, {
-    expectedBaselineCommit: snapshot.baselineCommit,
+    expectedBaselineCommit: localBaseline,
     maxOutputBytes: ATTEMPT_TRANSFER_DIFF_BUDGET,
   });
   if (
@@ -1014,7 +1068,7 @@ export async function restoreExerciseAttempt(options: {
   if (snapshot.learnerCommits.length === 0) {
     const after = await getExerciseDiffForTransfer(
       canonicalRoot,
-      snapshot.baselineCommit,
+      localBaseline,
     );
     if (after.truncated) {
       throw new AttemptTransferError(
@@ -1050,10 +1104,18 @@ export async function restoreExerciseAttempt(options: {
 
 async function getExerciseDiffForTransfer(
   root: string,
-  baselineCommit: string,
+  baselineCommit?: string,
 ): Promise<ExerciseDiff> {
-  return getExerciseDiff(root, {
-    expectedBaselineCommit: baselineCommit,
-    maxOutputBytes: ATTEMPT_TRANSFER_DIFF_BUDGET,
-  });
+  return getExerciseDiff(
+    root,
+    baselineCommit === undefined
+      ? {
+          allowMarkerBaseline: true,
+          maxOutputBytes: ATTEMPT_TRANSFER_DIFF_BUDGET,
+        }
+      : {
+          expectedBaselineCommit: baselineCommit,
+          maxOutputBytes: ATTEMPT_TRANSFER_DIFF_BUDGET,
+        },
+  );
 }

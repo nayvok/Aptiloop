@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   cp,
   lstat,
@@ -190,6 +191,107 @@ describe("portable exercise attempt evidence", () => {
       }),
     ).rejects.toThrow(/ignored workspace file|secret/i);
   });
+
+  it("replays learner commits onto a fresh local baseline with source author identity", async () => {
+    const { workspace, destination, baseline } = await fixture();
+    await writeFile(path.join(workspace, "answer.ts"), "changed\n");
+    runGit(workspace, ["add", "--all", "--", "."]);
+    runGit(workspace, [
+      "-c",
+      "user.name=Ada Lovelace",
+      "-c",
+      "user.email=ada@example.test",
+      "commit",
+      "--no-verify",
+      "--quiet",
+      "--allow-empty",
+      "-m",
+      "learner step",
+    ]);
+    const snapshot = await snapshotExerciseAttempt({
+      workspaceRoot: workspace,
+      trustedTemplateId: "exercise-template-1",
+      baselineCommit: baseline,
+    });
+    expect(snapshot.learnerCommits).toHaveLength(1);
+    const sourceCommit = snapshot.learnerCommits[0]!;
+
+    // Simulate another machine: the restored workspace receives its own
+    // timestamp-dependent local baseline instead of the source baseline.
+    await rm(path.join(destination, ".git"), { recursive: true, force: true });
+    await delayUntilNextSecond();
+    const localBaseline = (await ensureExerciseBaseline(destination)).commit;
+    expect(localBaseline).not.toBe(baseline);
+
+    const result = await restoreExerciseAttempt({
+      destinationRoot: destination,
+      snapshot,
+    });
+    expect(result.restoredFiles).toBe(0);
+    await expect(
+      readFile(path.join(destination, "answer.ts"), "utf8"),
+    ).resolves.toBe("changed\n");
+
+    const log = runGit(destination, [
+      "log",
+      "--reverse",
+      "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%B",
+      `${localBaseline}..HEAD`,
+    ]);
+    const fields = log
+      .split("\u0000")
+      .map((part) => part.replace(/\r?\n$/u, ""))
+      .filter((part) => part.length > 0);
+    expect(fields).toHaveLength(6);
+    const [, parentCommit, authorName, authorEmail, authoredAt, body] =
+      fields as string[];
+    expect(parentCommit).toBe(localBaseline);
+    expect(authorName).toBe("Ada Lovelace");
+    expect(authorEmail).toBe("ada@example.test");
+    expect(authoredAt).toBe(sourceCommit.authoredAt);
+    expect(body).toContain(
+      `Aptiloop imported learner commit ${sourceCommit.sourceCommit}`,
+    );
+    expect(body).toContain("learner step");
+  });
+
+  it("rejects malformed learner author identity before writing", async () => {
+    const { workspace, destination, baseline } = await fixture();
+    await writeFile(path.join(workspace, "answer.ts"), "changed\n");
+    runGit(workspace, ["add", "--all", "--", "."]);
+    runGit(workspace, [
+      "-c",
+      "user.name=Ada Lovelace",
+      "-c",
+      "user.email=ada@example.test",
+      "commit",
+      "--no-verify",
+      "--quiet",
+      "--allow-empty",
+      "-m",
+      "learner step",
+    ]);
+    const snapshot = await snapshotExerciseAttempt({
+      workspaceRoot: workspace,
+      trustedTemplateId: "exercise-template-1",
+      baselineCommit: baseline,
+    });
+    const tampered = {
+      ...snapshot,
+      learnerCommits: [
+        { ...snapshot.learnerCommits[0]!, authorName: "Ada\nLovelace" },
+      ],
+    };
+    await expect(
+      restoreExerciseAttempt({
+        destinationRoot: destination,
+        snapshot: tampered,
+      }),
+    ).rejects.toThrow("Learner commit author name is malformed");
+    await expect(
+      readFile(path.join(destination, "answer.ts"), "utf8"),
+    ).resolves.toBe("template\n");
+  });
 });
 
 async function fixture(): Promise<{
@@ -211,4 +313,17 @@ async function fixture(): Promise<{
 
 function sha256(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function runGit(cwd: string, args: readonly string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" });
+}
+
+/** Ensures a later Git commit lands in a different timestamp second. */
+async function delayUntilNextSecond(): Promise<void> {
+  const started = new Date();
+  const millisecondsIntoSecond = started.getMilliseconds();
+  await new Promise((resolve) =>
+    setTimeout(resolve, 1001 - millisecondsIntoSecond),
+  );
 }
