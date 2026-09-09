@@ -3,15 +3,38 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   canonicalJson,
   CoursePackV1Schema,
+  finalizeCoursePack,
   validateCoursePackBytes,
   type CoursePackDiagnostic,
   type CoursePackV1,
   type CoursePackValidationReport,
 } from "@aptiloop/course-authoring-kit";
-import { ClientError, CourseOperationIdSchema } from "@aptiloop/shared";
+import {
+  activityContractHash,
+  canonicalLearningKernelJson,
+  isMigrationProvenance,
+  learningKernelSha256,
+  projectLearningKernel,
+  type LearningKernelFact,
+  type LearningKernelFactBody,
+  type LearningKernelNonMigrationProvenance,
+} from "@aptiloop/learning-core";
+import {
+  ClientError,
+  CourseOperationIdSchema,
+  CoursePackUpgradeModeSchema,
+  CourseTransferEnvelopeSchema,
+  COURSE_TRANSFER_JSON_LIMITS_V1,
+  type CoursePackUpgradeMode,
+} from "@aptiloop/shared";
 
 import { adaptationBranchIdForRevision } from "./adaptation-branch.js";
 import { withTransaction, type DatabaseConnection } from "./database.js";
+import {
+  ensureKernelSessionStubDay,
+  insertRestoredKernelFact,
+  readRevisionActivities,
+} from "./kernel-restore.js";
 
 const UTF8_ENCODER = new TextEncoder();
 
@@ -96,10 +119,100 @@ export interface DeleteCoursePackResult {
   readonly idempotent: boolean;
 }
 
+export interface UpgradeCourseToRevisionInput {
+  readonly operationId: string;
+  readonly validationId: string;
+  readonly pack: CoursePackV1;
+  readonly canonicalJson: string;
+  readonly report: CoursePackValidationReport;
+  readonly sourceBytesHash: string;
+  readonly mode: CoursePackUpgradeMode;
+  readonly sideBySideSuffix?: string | undefined;
+  readonly adaptationResolutions?: readonly {
+    conflictId: string;
+    resolution: "use-upstream" | "keep-personal";
+  }[];
+}
+
+export interface CoursePackUpgradeResult {
+  readonly courseId: string;
+  readonly revisionId: string;
+  readonly contentHash: string;
+  readonly mode: CoursePackUpgradeMode;
+  readonly installed: boolean;
+  readonly idempotent: boolean;
+  readonly replayedFactCount: number;
+  readonly supersededEvidenceCount: number;
+  readonly carriedCount: number;
+  readonly revalidationCount: number;
+  readonly sideBySideCourseKey: string | null;
+}
+
+export interface CourseUpgradePreview {
+  readonly currentRevisionId: string;
+  readonly currentRevisionNumber: number;
+  readonly incomingRevisionNumber: number;
+  readonly sideBySideKeyPreview: string;
+}
+
 interface CourseDeletionRow {
   course_id: string;
   course_key: string;
   manifest_revision_id: string;
+}
+
+interface UpgradeActivityRow {
+  id: string;
+  lesson_id: string;
+  stable_id: string;
+  activity_type: string;
+  order_index: number;
+  required: number;
+  capability_ids_json: string;
+  knowledge_node_ids_json: string;
+  completion_criteria_json: string;
+  payload_json: string;
+  protected_material_json: string;
+}
+
+function parseUpgradeJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function parseUpgradeStringArray(value: string): readonly string[] {
+  const parsed = parseUpgradeJson(value);
+  return Array.isArray(parsed)
+    ? parsed.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function upgradeActivityContract(row: UpgradeActivityRow): string {
+  return activityContractHash({
+    type: row.activity_type,
+    schemaVersion: 1,
+    required: row.required === 1,
+    payload: parseUpgradeJson(row.payload_json),
+    completionCriteria: parseUpgradeJson(row.completion_criteria_json),
+    capabilityIds: parseUpgradeStringArray(row.capability_ids_json),
+    knowledgeNodeIds: parseUpgradeStringArray(row.knowledge_node_ids_json),
+    protectedMaterial: parseUpgradeJson(row.protected_material_json),
+  });
+}
+
+function equalStringSets(
+  left: Iterable<string>,
+  right: Iterable<string>,
+): boolean {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return (
+    leftSet.size === rightSet.size &&
+    [...leftSet].every((value) => rightSet.has(value))
+  );
 }
 
 export class CoursePackRepository {
@@ -632,6 +745,1033 @@ export class CoursePackRepository {
         idempotent: false,
       };
     });
+  }
+  /**
+   * Workstream A (Step 7): three-way course upgrade. A separate repository
+   * method next to install (never install flags): the trigger is an import
+   * with the same courseKey but a bigger revisionNumber and a valid
+   * parentRevisionKey. The default mode keeps progress; side-by-side installs
+   * a renamed Course; replace-with-backup archives first. Every mode is
+   * transactional and idempotent by operationId, and fails closed with no
+   * partial write. Active sessions stay pinned to their snapshot (their
+   * contexts are never rewritten); replace-with-backup refuses while any
+   * session is still active.
+   */
+  previewUpgrade(
+    courseKey: string,
+    pack: CoursePackV1,
+  ): CourseUpgradePreview | null {
+    if (!this.hasStorage()) return null;
+    if (pack.course.courseKey !== courseKey) return null;
+    const course = this.#connection.sqlite
+      .prepare(`SELECT id, active_revision_id FROM courses WHERE id = ?`)
+      .get(courseKey) as
+      { id: string; active_revision_id: string | null } | undefined;
+    if (!course) return null;
+    const revisions = this.#connection.sqlite
+      .prepare(
+        `SELECT id, revision_number FROM course_revisions
+         WHERE course_id = ? ORDER BY revision_number DESC`,
+      )
+      .all(courseKey) as Array<{ id: string; revision_number: number }>;
+    const latest = revisions[0];
+    if (!latest) return null;
+    if (pack.revision.revisionNumber <= latest.revision_number) return null;
+    if (pack.revision.parentRevisionKey === null) return null;
+    if (!revisions.some((row) => row.id === pack.revision.parentRevisionKey)) {
+      return null;
+    }
+    const current =
+      revisions.find((row) => row.id === course.active_revision_id) ?? latest;
+    return {
+      currentRevisionId: current.id,
+      currentRevisionNumber: current.revision_number,
+      incomingRevisionNumber: pack.revision.revisionNumber,
+      sideBySideKeyPreview:
+        `${courseKey}-r${pack.revision.revisionNumber}`.slice(0, 200),
+    };
+  }
+
+  upgradeCourseToRevision(
+    input: UpgradeCourseToRevisionInput,
+  ): CoursePackUpgradeResult {
+    this.#assertStorage();
+    const operationId = CourseOperationIdSchema.parse(input.operationId);
+    const validationId = CourseOperationIdSchema.parse(input.validationId);
+    const mode = CoursePackUpgradeModeSchema.parse(input.mode);
+    const pack = CoursePackV1Schema.parse(input.pack);
+    assertSha256(input.sourceBytesHash, "Course Pack source bytes hash");
+    if (!input.report.valid || input.report.errors !== 0) {
+      throw new ClientError(
+        400,
+        "Course Pack upgrade requires a zero-error report",
+      );
+    }
+    if (input.canonicalJson !== canonicalJson(pack)) {
+      throw new ClientError(
+        400,
+        "Course Pack canonical JSON does not match the validated pack",
+      );
+    }
+    const supportedValidation = validateCoursePackBytes(
+      UTF8_ENCODER.encode(input.canonicalJson),
+    );
+    if (!supportedValidation.valid) {
+      throw new ClientError(
+        400,
+        "Course Pack upgrade requires app-supported validation",
+      );
+    }
+    if (
+      supportedValidation.canonicalJson !== input.canonicalJson ||
+      supportedValidation.contentHash !== pack.revision.contentHash
+    ) {
+      throw new ClientError(
+        400,
+        "Course Pack app-supported validation is inconsistent",
+      );
+    }
+    return withTransaction(this.#connection, () => {
+      const existingOperation = this.#readLifecycleOperation(operationId);
+      if (existingOperation) {
+        return this.#reconcileUpgradeOperation(existingOperation, {
+          operationId,
+          validationId,
+          mode,
+          expectedContentHash: pack.revision.contentHash,
+        });
+      }
+      switch (mode) {
+        case "side-by-side":
+          return this.#upgradeSideBySide({
+            operationId,
+            validationId,
+            pack,
+            sideBySideSuffix: input.sideBySideSuffix,
+          });
+        default:
+          return this.#upgradeKeepProgress({
+            operationId,
+            validationId,
+            pack,
+            canonicalJson: input.canonicalJson,
+            report: supportedValidation.report,
+            sourceBytesHash: input.sourceBytesHash,
+            ...(input.adaptationResolutions === undefined
+              ? {}
+              : { adaptationResolutions: input.adaptationResolutions }),
+          });
+      }
+    });
+  }
+
+  #upgradeKeepProgress(input: {
+    operationId: string;
+    validationId: string;
+    pack: CoursePackV1;
+    canonicalJson: string;
+    report: CoursePackValidationReport;
+    sourceBytesHash: string;
+    adaptationResolutions?: readonly {
+      conflictId: string;
+      resolution: "use-upstream" | "keep-personal";
+    }[];
+  }): CoursePackUpgradeResult {
+    const courseKey = input.pack.course.courseKey;
+    const course = this.#connection.sqlite
+      .prepare(
+        `SELECT id, primary_locale, active_revision_id FROM courses
+         WHERE id = ?`,
+      )
+      .get(courseKey) as
+      | {
+          id: string;
+          primary_locale: string;
+          active_revision_id: string | null;
+        }
+      | undefined;
+    if (!course) {
+      throw new CoursePackRepositoryError(
+        "not_found",
+        "No installed Course matches this upgrade; install it first",
+      );
+    }
+    if (course.primary_locale !== input.pack.course.primaryLocale) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Course Pack primary locale change requires an explicit migration",
+      );
+    }
+    const revisions = this.#connection.sqlite
+      .prepare(
+        `SELECT id, revision_number FROM course_revisions
+         WHERE course_id = ? ORDER BY revision_number DESC`,
+      )
+      .all(courseKey) as Array<{ id: string; revision_number: number }>;
+    const latest = revisions[0];
+    if (
+      !latest ||
+      input.pack.revision.revisionNumber <= latest.revision_number
+    ) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Course Pack revision is not newer than the installed Course",
+      );
+    }
+    const collision = this.#connection.sqlite
+      .prepare(`SELECT id FROM course_revisions WHERE id = ?`)
+      .get(input.pack.revision.revisionKey);
+    if (collision) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Course Pack revision identity already exists",
+      );
+    }
+    if (
+      input.pack.revision.parentRevisionKey === null ||
+      !revisions.some((row) => row.id === input.pack.revision.parentRevisionKey)
+    ) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Course Pack parent revision is unavailable",
+      );
+    }
+    const branchId = adaptationBranchIdForRevision(
+      courseKey,
+      input.pack.revision.revisionKey,
+    );
+    const occupiedBranch = this.#connection.sqlite
+      .prepare(
+        `SELECT base_revision_id FROM adaptation_branches
+         WHERE course_id = ? AND id = ?`,
+      )
+      .get(courseKey, branchId) as { base_revision_id: string } | undefined;
+    const expectedBase =
+      input.pack.revision.branchKind === "upstream"
+        ? input.pack.revision.revisionKey
+        : input.pack.revision.parentRevisionKey;
+    if (occupiedBranch && occupiedBranch.base_revision_id !== expectedBase) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Personal adaptation branch identity is already occupied",
+      );
+    }
+    const activeSession = this.#connection.sqlite
+      .prepare(
+        `SELECT session.id
+         FROM learning_sessions session
+         JOIN session_course_contexts context ON context.session_id = session.id
+         WHERE context.course_id = ? AND session.status = 'active'
+         LIMIT 1`,
+      )
+      .get(courseKey);
+    if (activeSession) {
+      throw new CoursePackRepositoryError(
+        "active_session",
+        "Course has an active session on the old revision; finish or abandon it before safe-update",
+      );
+    }
+    const now = this.#now();
+    this.#insertUpgradedRevision(
+      input.pack,
+      input.canonicalJson,
+      input.report,
+      input.sourceBytesHash,
+      now,
+    );
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE learner_course_states
+         SET active_revision_id = ?, updated_at = MAX(created_at, ?)
+         WHERE course_id = ?`,
+      )
+      .run(input.pack.revision.revisionKey, now, courseKey);
+    const { replayed, superseded, revalidation } = this.#replayUpgradeFacts(
+      input.operationId,
+      courseKey,
+      course.active_revision_id,
+      input.pack,
+      now,
+    );
+    const result: CoursePackUpgradeResult = {
+      courseId: courseKey,
+      revisionId: input.pack.revision.revisionKey,
+      contentHash: input.pack.revision.contentHash,
+      mode: "safe-update",
+      installed: true,
+      idempotent: false,
+      replayedFactCount: replayed,
+      supersededEvidenceCount: superseded,
+      carriedCount: replayed,
+      revalidationCount: revalidation,
+      sideBySideCourseKey: null,
+    };
+    this.#insertUpgradeLifecycleEvent({
+      operationId: input.operationId,
+      validationId: input.validationId,
+      manifestRevisionId: input.pack.revision.revisionKey,
+      result,
+      sourceBytesHash: input.sourceBytesHash,
+      occurredAt: now,
+    });
+    return result;
+  }
+
+  #upgradeSideBySide(input: {
+    operationId: string;
+    validationId: string;
+    pack: CoursePackV1;
+    sideBySideSuffix?: string | undefined;
+  }): CoursePackUpgradeResult {
+    const suffix =
+      input.sideBySideSuffix ?? `r${input.pack.revision.revisionNumber}`;
+    if (!/^[a-z0-9][a-z0-9._-]{0,59}$/u.test(suffix)) {
+      throw new ClientError(400, "Side-by-side key suffix is malformed");
+    }
+    const courseKey = `${input.pack.course.courseKey}-${suffix}`.slice(0, 200);
+    const revisionKey = `${courseKey}/v1`.slice(0, 200);
+    const collision = this.#connection.sqlite
+      .prepare(
+        `SELECT id FROM courses WHERE id = ?
+         UNION ALL SELECT id FROM course_revisions WHERE id = ?`,
+      )
+      .get(courseKey, revisionKey);
+    if (collision) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Side-by-side Course identity is already occupied",
+      );
+    }
+    const rebased = finalizeCoursePack(
+      CoursePackV1Schema.parse({
+        ...input.pack,
+        course: { ...input.pack.course, courseKey },
+        revision: {
+          revisionKey,
+          revisionNumber: 1,
+          parentRevisionKey: null,
+          branchKind: "upstream",
+          basedOnContentHash: null,
+          contentHash: `sha256:${"0".repeat(64)}`,
+        },
+      }),
+    );
+    const canonical = canonicalJson(rebased);
+    const revalidation = validateCoursePackBytes(
+      UTF8_ENCODER.encode(canonical),
+    );
+    if (!revalidation.valid) {
+      throw new ClientError(
+        400,
+        "Side-by-side Course Pack did not pass validation",
+      );
+    }
+    const installed = this.install({
+      operationId: `${input.operationId}:side-by-side`,
+      validationId: input.validationId,
+      action: "install",
+      sourceBytesHash: coursePackSourceBytesHash(
+        UTF8_ENCODER.encode(revalidation.canonicalJson),
+      ),
+      pack: revalidation.pack,
+      canonicalJson: revalidation.canonicalJson,
+      report: revalidation.report,
+    });
+    const result: CoursePackUpgradeResult = {
+      courseId: installed.courseId,
+      revisionId: installed.revisionId,
+      contentHash: installed.contentHash,
+      mode: "side-by-side",
+      installed: installed.installed,
+      idempotent: false,
+      replayedFactCount: 0,
+      supersededEvidenceCount: 0,
+      carriedCount: 0,
+      revalidationCount: 0,
+      sideBySideCourseKey: courseKey,
+    };
+    this.#insertUpgradeLifecycleEvent({
+      operationId: input.operationId,
+      validationId: input.validationId,
+      manifestRevisionId: installed.revisionId,
+      result,
+      sourceBytesHash: installed.contentHash,
+      occurredAt: this.#now(),
+    });
+    return result;
+  }
+
+  #insertUpgradedRevision(
+    pack: CoursePackV1,
+    canonicalJsonText: string,
+    report: CoursePackValidationReport,
+    sourceBytesHash: string,
+    now: number,
+  ): void {
+    this.#insertCompatibilityGraph(pack, now);
+    this.#applyPackTargetMetadata(pack);
+    this.#insertKnowledge(pack, now);
+    this.#connection.sqlite
+      .prepare(
+        `INSERT INTO course_pack_manifests
+         (revision_id, format_version, canonical_json, content_hash,
+          source_bytes_hash, validation_report_json, validator_version,
+          imported_at)
+         VALUES (?, 1, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        pack.revision.revisionKey,
+        canonicalJsonText,
+        pack.revision.contentHash,
+        sourceBytesHash,
+        boundedReportJson(report),
+        report.validatorVersion,
+        now,
+      );
+    this.#insertPackMetadata(pack);
+    if (pack.revision.branchKind === "personal") {
+      this.#prepareInstalledPersonalBranch(pack, now);
+    }
+    this.#assertCompatibilityProjection(pack, pack.revision.revisionKey);
+    this.#publishManifestRevision(pack, now);
+    this.#activateInstalledRevisionBranch(pack, now);
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE courses SET active_revision_id = ?, title = ?,
+               description = ?, primary_locale = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        pack.revision.revisionKey,
+        pack.course.title,
+        pack.course.description,
+        pack.course.primaryLocale,
+        now,
+        pack.course.courseKey,
+      );
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE curricula SET active_version_id = ?, title = ?,
+               description = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(
+        pack.revision.revisionKey,
+        pack.course.title,
+        pack.course.description,
+        now,
+        pack.course.courseKey,
+      );
+  }
+
+  #archiveCourseRevisions(courseId: string, now: number): void {
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE course_revisions
+         SET status = 'archived', archived_at = ?, updated_at = ?
+         WHERE course_id = ? AND status != 'archived'`,
+      )
+      .run(now, now, courseId);
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE curriculum_versions
+         SET status = 'archived', archived_at = ?, updated_at = ?
+         WHERE curriculum_id = ? AND status != 'archived'`,
+      )
+      .run(now, now, courseId);
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE curricula SET active_version_id = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(now, courseId);
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE courses SET active_revision_id = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(now, courseId);
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE adaptation_branches SET status = 'archived', updated_at = ?
+         WHERE course_id = ? AND status = 'active'`,
+      )
+      .run(now, courseId);
+    this.#connection.sqlite
+      .prepare(
+        `UPDATE learner_state
+         SET current_learning_session_id = NULL, updated_at = ?
+         WHERE current_learning_session_id IN (
+           SELECT context.session_id
+           FROM session_course_contexts context
+           JOIN learning_sessions session ON session.id = context.session_id
+           WHERE context.course_id = ? AND session.status != 'active'
+         )`,
+      )
+      .run(now, courseId);
+  }
+
+  #insertUpgradeLifecycleEvent(input: {
+    operationId: string;
+    validationId: string;
+    manifestRevisionId: string;
+    result: CoursePackUpgradeResult;
+    sourceBytesHash: string;
+    occurredAt: number;
+  }): void {
+    this.#connection.sqlite
+      .prepare(
+        `INSERT INTO course_pack_lifecycle_events
+         (id, revision_id, operation_id, action, occurred_at, details_json)
+         VALUES (?, ?, ?, 'install', ?, ?)`,
+      )
+      .run(
+        this.#id(),
+        input.manifestRevisionId,
+        input.operationId,
+        input.occurredAt,
+        canonicalJson({
+          kind: "upgrade",
+          mode: input.result.mode,
+          validationId: input.validationId,
+          contentHash: input.result.contentHash,
+          manifestRevisionId: input.manifestRevisionId,
+          resultRevisionId: input.result.revisionId,
+          courseId: input.result.courseId,
+          sourceBytesHash: input.sourceBytesHash,
+          replayedFactCount: input.result.replayedFactCount,
+          supersededEvidenceCount: input.result.supersededEvidenceCount,
+          sideBySideCourseKey: input.result.sideBySideCourseKey,
+        }),
+      );
+  }
+
+  #reconcileUpgradeOperation(
+    operation: {
+      revision_id: string;
+      action: CoursePackLifecycleAction;
+      details_json: string;
+    },
+    input: {
+      operationId: string;
+      validationId: string;
+      mode: CoursePackUpgradeMode;
+      expectedContentHash: string;
+    },
+  ): CoursePackUpgradeResult {
+    const details = upgradeLifecycleDetails(operation.details_json);
+    if (
+      operation.action !== "install" ||
+      details === null ||
+      details.mode !== input.mode ||
+      details.validationId !== input.validationId ||
+      details.contentHash !== input.expectedContentHash ||
+      details.manifestRevisionId !== operation.revision_id
+    ) {
+      throw new CoursePackRepositoryError(
+        "conflict",
+        "Course Pack operation ID is already bound to a different validation, action, or payload",
+      );
+    }
+    return {
+      courseId: details.courseId,
+      revisionId: details.resultRevisionId,
+      contentHash: details.contentHash,
+      mode: details.mode,
+      installed: false,
+      idempotent: true,
+      replayedFactCount: details.replayedFactCount,
+      supersededEvidenceCount: details.supersededEvidenceCount,
+      carriedCount: details.replayedFactCount,
+      revalidationCount: 0,
+      sideBySideCourseKey: details.sideBySideCourseKey,
+    };
+  }
+
+  /**
+   * Replays kernel facts for surviving activity IDs into deterministic
+   * per-lesson upgrade sessions (completed, never active) on the new
+   * revision. Old facts are never mutated: removed/changed completion
+   * evidence stays read-only and is counted as superseded. Mastery is
+   * deterministically recomputed per scope to prove the replay is sound;
+   * projections themselves rebuild on read.
+   */
+  #replayUpgradeFacts(
+    operationId: string,
+    courseId: string,
+    previousRevisionId: string | null,
+    pack: CoursePackV1,
+    now: number,
+  ): { replayed: number; superseded: number; revalidation: number } {
+    if (previousRevisionId === null) {
+      return { replayed: 0, superseded: 0, revalidation: 0 };
+    }
+    const nextRevisionId = pack.revision.revisionKey;
+    const nextBranchId = adaptationBranchIdForRevision(
+      courseId,
+      nextRevisionId,
+    );
+    const previousLessons = new Map(
+      (
+        this.#connection.sqlite
+          .prepare(
+            `SELECT id, stable_id FROM course_lessons
+             WHERE course_id = ? AND revision_id = ?`,
+          )
+          .all(courseId, previousRevisionId) as Array<{
+          id: string;
+          stable_id: string;
+        }>
+      ).map((row) => [row.id, row.stable_id] as const),
+    );
+    const nextLessons = new Map(
+      (
+        this.#connection.sqlite
+          .prepare(
+            `SELECT id, stable_id FROM course_lessons
+             WHERE course_id = ? AND revision_id = ?`,
+          )
+          .all(courseId, nextRevisionId) as Array<{
+          id: string;
+          stable_id: string;
+        }>
+      ).map((row) => [row.stable_id, row.id] as const),
+    );
+    const previousActivities = new Map(
+      (
+        this.#connection.sqlite
+          .prepare(
+            `SELECT id, lesson_id, stable_id, activity_type, order_index,
+                    required, capability_ids_json, knowledge_node_ids_json,
+                    completion_criteria_json, payload_json, protected_material_json
+             FROM course_activities
+             WHERE course_id = ? AND revision_id = ?`,
+          )
+          .all(courseId, previousRevisionId) as unknown as UpgradeActivityRow[]
+      ).map((row) => [row.id, row] as const),
+    );
+    const nextActivities = new Map(
+      (
+        this.#connection.sqlite
+          .prepare(
+            `SELECT id, lesson_id, stable_id, activity_type, order_index,
+                    required, capability_ids_json, knowledge_node_ids_json,
+                    completion_criteria_json, payload_json, protected_material_json
+             FROM course_activities
+             WHERE course_id = ? AND revision_id = ?`,
+          )
+          .all(courseId, nextRevisionId) as unknown as UpgradeActivityRow[]
+      ).map((row) => [row.stable_id, row] as const),
+    );
+    const previousDependencies = this.#readActivityDependencies(
+      courseId,
+      previousRevisionId,
+    );
+    const nextDependencies = this.#readActivityDependencies(
+      courseId,
+      nextRevisionId,
+    );
+    const previousFacts = this.#connection.sqlite
+      .prepare(
+        `SELECT id, operation_id, lesson_id, activity_id, canonical_json,
+                fact_hash, occurred_at
+         FROM learning_kernel_facts
+         WHERE course_id = ? AND revision_id = ?
+         ORDER BY occurred_at, id
+         LIMIT ?`,
+      )
+      .all(
+        courseId,
+        previousRevisionId,
+        COURSE_TRANSFER_JSON_LIMITS_V1.maxFacts + 1,
+      ) as Array<{
+      id: string;
+      operation_id: string;
+      lesson_id: string;
+      activity_id: string;
+      canonical_json: string;
+      fact_hash: string;
+      occurred_at: number;
+    }>;
+    if (previousFacts.length > COURSE_TRANSFER_JSON_LIMITS_V1.maxFacts) {
+      throw new ClientError(400, "Course upgrade history exceeds replay limit");
+    }
+    let superseded = 0;
+    let revalidation = 0;
+    const survivors: Array<{
+      previousId: string;
+      nextId: string;
+      nextOperationId: string;
+      lessonStable: string;
+      nextLessonId: string;
+      nextActivityId: string;
+      sourceFactHash: string;
+      sourceContractHash: string;
+      fact: LearningKernelFact;
+      occurredAt: number;
+    }> = [];
+    const deferredCorrections: Array<{
+      row: (typeof previousFacts)[number];
+      fact: LearningKernelFact;
+    }> = [];
+    const compatibleActivities = new Map<string, boolean>();
+    const checkingActivities = new Set<string>();
+    const isCompatibleActivity = (previousActivityId: string): boolean => {
+      const cached = compatibleActivities.get(previousActivityId);
+      if (cached !== undefined) return cached;
+      if (checkingActivities.has(previousActivityId)) return false;
+      checkingActivities.add(previousActivityId);
+      const previousActivity = previousActivities.get(previousActivityId);
+      const nextActivity =
+        previousActivity === undefined
+          ? undefined
+          : nextActivities.get(previousActivity.stable_id);
+      const previousLessonStable =
+        previousActivity === undefined
+          ? undefined
+          : previousLessons.get(previousActivity.lesson_id);
+      const nextLessonStable =
+        nextActivity === undefined
+          ? undefined
+          : [...nextLessons.entries()].find(
+              ([, lessonId]) => lessonId === nextActivity.lesson_id,
+            )?.[0];
+      const previousPrerequisites =
+        previousDependencies.get(previousActivityId) ?? new Set<string>();
+      const nextPrerequisites =
+        nextActivity === undefined
+          ? new Set<string>()
+          : (nextDependencies.get(nextActivity.id) ?? new Set<string>());
+      const previousPrerequisiteStableIds = [...previousPrerequisites].flatMap(
+        (id) => {
+          const prerequisite = previousActivities.get(id);
+          return prerequisite === undefined ? [] : [prerequisite.stable_id];
+        },
+      );
+      const nextPrerequisiteStableIds = [...nextPrerequisites].flatMap((id) => {
+        const prerequisite = [...nextActivities.values()].find(
+          (candidate) => candidate.id === id,
+        );
+        return prerequisite === undefined ? [] : [prerequisite.stable_id];
+      });
+      const compatible =
+        previousActivity !== undefined &&
+        nextActivity !== undefined &&
+        previousLessonStable !== undefined &&
+        previousLessonStable === nextLessonStable &&
+        upgradeActivityContract(previousActivity) ===
+          upgradeActivityContract(nextActivity) &&
+        equalStringSets(
+          previousPrerequisiteStableIds,
+          nextPrerequisiteStableIds,
+        ) &&
+        [...previousPrerequisites].every((id) => isCompatibleActivity(id));
+      checkingActivities.delete(previousActivityId);
+      compatibleActivities.set(previousActivityId, compatible);
+      return compatible;
+    };
+    const mapSurvivor = (row: (typeof previousFacts)[number]): void => {
+      let fact: LearningKernelFact;
+      try {
+        fact = JSON.parse(row.canonical_json) as LearningKernelFact;
+      } catch {
+        superseded += 1;
+        revalidation += 1;
+        return;
+      }
+      if (
+        learningKernelSha256(fact) !== row.fact_hash ||
+        fact.provenance.kind === "migration" ||
+        isMigrationProvenance(fact.provenance)
+      ) {
+        superseded += 1;
+        revalidation += 1;
+        return;
+      }
+      const previousActivity = previousActivities.get(row.activity_id);
+      const lessonStable = previousLessons.get(row.lesson_id);
+      const nextLessonId =
+        lessonStable === undefined ? undefined : nextLessons.get(lessonStable);
+      const nextActivity =
+        previousActivity === undefined
+          ? undefined
+          : nextActivities.get(previousActivity.stable_id);
+      if (
+        previousActivity === undefined ||
+        lessonStable === undefined ||
+        nextLessonId === undefined ||
+        nextActivity === undefined ||
+        nextActivity.lesson_id !== nextLessonId ||
+        !isCompatibleActivity(row.activity_id)
+      ) {
+        superseded += 1;
+        revalidation += 1;
+        return;
+      }
+      if (fact.body.type === "correction") {
+        deferredCorrections.push({ row, fact });
+        return;
+      }
+      survivors.push({
+        previousId: row.id,
+        nextId: upgradeReplayId(operationId, row.id),
+        nextOperationId: upgradeReplayId(operationId, row.operation_id),
+        lessonStable,
+        nextLessonId,
+        nextActivityId: nextActivity.id,
+        sourceFactHash: row.fact_hash,
+        sourceContractHash: upgradeActivityContract(previousActivity),
+        fact,
+        occurredAt: row.occurred_at,
+      });
+    };
+    for (const row of previousFacts) mapSurvivor(row);
+    const survivorIds = new Map(
+      survivors.map((entry) => [entry.previousId, entry.nextId] as const),
+    );
+    for (const { row, fact } of deferredCorrections) {
+      const correction = fact.body.type === "correction" ? fact.body : null;
+      const mappedSupersedes =
+        correction === null
+          ? undefined
+          : survivorIds.get(correction.supersedesFactId);
+      if (
+        correction === null ||
+        mappedSupersedes === undefined ||
+        learningKernelSha256(fact) !== row.fact_hash ||
+        fact.provenance.kind === "migration" ||
+        isMigrationProvenance(fact.provenance)
+      ) {
+        superseded += 1;
+        revalidation += 1;
+        continue;
+      }
+      const previousActivity = previousActivities.get(row.activity_id);
+      const lessonStable = previousLessons.get(row.lesson_id);
+      const nextLessonId =
+        lessonStable === undefined ? undefined : nextLessons.get(lessonStable);
+      const nextActivity =
+        previousActivity === undefined
+          ? undefined
+          : nextActivities.get(previousActivity.stable_id);
+      if (
+        previousActivity === undefined ||
+        lessonStable === undefined ||
+        nextLessonId === undefined ||
+        nextActivity === undefined ||
+        nextActivity.lesson_id !== nextLessonId ||
+        !isCompatibleActivity(row.activity_id)
+      ) {
+        superseded += 1;
+        revalidation += 1;
+        continue;
+      }
+      survivors.push({
+        previousId: row.id,
+        nextId: upgradeReplayId(operationId, row.id),
+        nextOperationId: upgradeReplayId(operationId, row.operation_id),
+        lessonStable,
+        nextLessonId,
+        nextActivityId: nextActivity.id,
+        sourceFactHash: row.fact_hash,
+        sourceContractHash: upgradeActivityContract(previousActivity),
+        fact: {
+          ...fact,
+          body: {
+            ...correction,
+            replacement: {
+              ...correction.replacement,
+              activityId: nextActivity.id,
+            },
+            supersedesFactId: mappedSupersedes,
+          },
+        },
+        occurredAt: row.occurred_at,
+      });
+      survivorIds.set(row.id, upgradeReplayId(operationId, row.id));
+    }
+    if (survivors.length === 0) {
+      return { replayed: 0, superseded, revalidation };
+    }
+    ensureKernelSessionStubDay(this.#connection.sqlite, now);
+    const byLesson = new Map<string, typeof survivors>();
+    for (const entry of survivors) {
+      const group = byLesson.get(entry.nextLessonId) ?? [];
+      group.push(entry);
+      byLesson.set(entry.nextLessonId, group);
+    }
+    let replayed = 0;
+    for (const [nextLessonId, group] of byLesson) {
+      const lessonStable = group[0]!.lessonStable;
+      const sessionSeed = `${courseId} ${nextRevisionId} ${lessonStable} ${operationId}`;
+      const sessionId = `upgrade-${createHash("sha256").update(sessionSeed, "utf8").digest("hex").slice(0, 32)}`;
+      const day = this.#connection.sqlite
+        .prepare(
+          `SELECT id FROM curriculum_days_v2
+           WHERE version_id = ? AND stable_id = ?`,
+        )
+        .get(nextRevisionId, lessonStable) as { id: string } | undefined;
+      if (!day) {
+        throw new ClientError(400, "Upgraded lesson projection is incomplete");
+      }
+      this.#connection.sqlite
+        .prepare(
+          `INSERT OR IGNORE INTO learning_sessions
+           (id, day_id, status, current_step, idempotency_key, started_at,
+            completed_at, updated_at, curriculum_day_v2_id)
+           VALUES (?, ?, 'completed', 'upgrade-replay', ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          sessionId,
+          "transfer-session-day",
+          `upgrade:${operationId}:${lessonStable}`.slice(0, 500),
+          now,
+          now,
+          now,
+          day.id,
+        );
+      const snapshotJson = canonicalJson({
+        kind: "course-upgrade-replay",
+        courseId,
+        fromRevisionId: previousRevisionId,
+        toRevisionId: nextRevisionId,
+        lessonStable,
+        operationId,
+      });
+      const snapshotId = `upgrade-snapshot-${createHash("sha256").update(`snapshot ${sessionSeed}`, "utf8").digest("hex").slice(0, 24)}`;
+      const contentHash = `sha256:${createHash("sha256").update(snapshotJson, "utf8").digest("hex")}`;
+      this.#connection.sqlite
+        .prepare(
+          `INSERT OR IGNORE INTO session_snapshots
+           (id, session_id, schema_version, curriculum_id,
+            curriculum_version_id, curriculum_day_id, content_hash,
+            snapshot_json, created_at)
+           VALUES (?, ?, 2, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          snapshotId,
+          sessionId,
+          courseId,
+          nextRevisionId,
+          day.id,
+          contentHash,
+          snapshotJson,
+          now,
+        );
+      this.#connection.sqlite
+        .prepare(
+          `INSERT OR IGNORE INTO session_course_contexts
+           (session_id, course_id, revision_id, lesson_id, session_snapshot_id,
+            snapshot_hash, created_at, adaptation_branch_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          sessionId,
+          courseId,
+          nextRevisionId,
+          nextLessonId,
+          snapshotId,
+          contentHash,
+          now,
+          nextBranchId,
+        );
+      const scope = {
+        courseId,
+        revisionId: nextRevisionId,
+        branchId: nextBranchId,
+        sessionId,
+      };
+      const facts: LearningKernelFact[] = [];
+      for (const entry of group) {
+        const nextFact: LearningKernelFact = {
+          ...entry.fact,
+          schemaVersion: 2,
+          id: entry.nextId,
+          operationId: entry.nextOperationId,
+          courseId,
+          revisionId: nextRevisionId,
+          branchId: nextBranchId,
+          sessionId,
+          provenance: {
+            kind: "migration",
+            sourceId: entry.previousId,
+            sourceHash: entry.sourceFactHash,
+            sourceRevisionId: previousRevisionId,
+            sourceFactId: entry.previousId,
+            sourceFactHash: entry.sourceFactHash,
+            sourceContractHash: entry.sourceContractHash,
+            targetContractHash: entry.sourceContractHash,
+            migratorVersion: "upgrade-migrator-1",
+            originalProvenance: entry.fact
+              .provenance as LearningKernelNonMigrationProvenance,
+          },
+          body: rewriteUpgradeFactBody(entry.fact.body, entry.nextActivityId),
+        };
+        const canonical = canonicalLearningKernelJson(nextFact);
+        facts.push(nextFact);
+        replayed += insertRestoredKernelFact(
+          this.#connection.sqlite,
+          {
+            id: nextFact.id,
+            schemaVersion: nextFact.schemaVersion,
+            operationId: nextFact.operationId,
+            courseId,
+            revisionId: nextRevisionId,
+            branchId: nextBranchId,
+            sessionId,
+            lessonId: nextLessonId,
+            activityId: entry.nextActivityId,
+            bodyType: nextFact.body.type,
+            provenanceKind: nextFact.provenance.kind,
+            supersedesFactId:
+              nextFact.body.type === "correction"
+                ? nextFact.body.supersedesFactId
+                : null,
+            occurredAt: entry.occurredAt,
+            acceptedAt: Math.max(now, entry.occurredAt),
+            canonicalJson: canonical,
+            factHash: learningKernelSha256(nextFact),
+          },
+          false,
+        );
+      }
+      projectLearningKernel({
+        scope,
+        activities: readRevisionActivities(
+          this.#connection.sqlite,
+          courseId,
+          nextRevisionId,
+          nextLessonId,
+        ),
+        facts: [...facts].sort((left, right) =>
+          left.occurredAt < right.occurredAt ? -1 : 1,
+        ),
+        observedAt: new Date(now).toISOString(),
+      });
+    }
+    return { replayed, superseded, revalidation };
+  }
+
+  #readActivityDependencies(
+    courseId: string,
+    revisionId: string,
+  ): Map<string, Set<string>> {
+    const dependencies = new Map<string, Set<string>>();
+    const rows = this.#connection.sqlite
+      .prepare(
+        `SELECT activity_id, prerequisite_activity_id
+         FROM course_activity_prerequisites
+         WHERE course_id = ? AND revision_id = ?`,
+      )
+      .all(courseId, revisionId) as Array<{
+      activity_id: string;
+      prerequisite_activity_id: string;
+    }>;
+    for (const row of rows) {
+      const set = dependencies.get(row.activity_id) ?? new Set<string>();
+      set.add(row.prerequisite_activity_id);
+      dependencies.set(row.activity_id, set);
+    }
+    return dependencies;
   }
 
   #assertInstallIdentity(pack: CoursePackV1): void {
@@ -2063,4 +3203,88 @@ function lifecycleInstallDetails(value: string): {
         validationId: details.validationId,
       }
     : null;
+}
+
+function upgradeLifecycleDetails(value: string): {
+  mode: CoursePackUpgradeMode;
+  validationId: string;
+  contentHash: string;
+  manifestRevisionId: string;
+  resultRevisionId: string;
+  courseId: string;
+  replayedFactCount: number;
+  supersededEvidenceCount: number;
+  sideBySideCourseKey: string | null;
+} | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const details = parsed as Record<string, unknown>;
+  const mode = details.mode;
+  if (mode !== "safe-update" && mode !== "side-by-side") {
+    return null;
+  }
+  if (
+    typeof details.validationId !== "string" ||
+    !CourseOperationIdSchema.safeParse(details.validationId).success ||
+    typeof details.contentHash !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/u.test(details.contentHash) ||
+    typeof details.manifestRevisionId !== "string" ||
+    details.manifestRevisionId.length === 0 ||
+    typeof details.resultRevisionId !== "string" ||
+    details.resultRevisionId.length === 0 ||
+    typeof details.courseId !== "string" ||
+    details.courseId.length === 0 ||
+    typeof details.replayedFactCount !== "number" ||
+    !Number.isInteger(details.replayedFactCount) ||
+    details.replayedFactCount < 0 ||
+    typeof details.supersededEvidenceCount !== "number" ||
+    !Number.isInteger(details.supersededEvidenceCount) ||
+    details.supersededEvidenceCount < 0 ||
+    (details.sideBySideCourseKey !== null &&
+      typeof details.sideBySideCourseKey !== "string")
+  ) {
+    return null;
+  }
+  return {
+    mode,
+    validationId: details.validationId,
+    contentHash: details.contentHash,
+    manifestRevisionId: details.manifestRevisionId,
+    resultRevisionId: details.resultRevisionId,
+    courseId: details.courseId,
+    replayedFactCount: details.replayedFactCount,
+    supersededEvidenceCount: details.supersededEvidenceCount,
+    sideBySideCourseKey: details.sideBySideCourseKey,
+  };
+}
+
+function upgradeReplayId(operationId: string, previousId: string): string {
+  const suffix = createHash("sha256")
+    .update(`${operationId} ${previousId}`, "utf8")
+    .digest("hex")
+    .slice(0, 16);
+  const candidate = `replay-${suffix}-${previousId}`;
+  return candidate.length <= 500
+    ? candidate
+    : `replay-${createHash("sha256").update(candidate, "utf8").digest("hex")}`;
+}
+
+function rewriteUpgradeFactBody(
+  body: LearningKernelFactBody,
+  activityId: string,
+): LearningKernelFactBody {
+  if (body.type === "correction") {
+    return {
+      ...body,
+      replacement: { ...body.replacement, activityId },
+    };
+  }
+  return { ...body, activityId };
 }

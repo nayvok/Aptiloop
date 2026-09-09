@@ -10,7 +10,7 @@ services:
       # Wildcard binding is container-internal; host publication stays loopback-only.
       ORCHESTRATOR_BIND_MODE: container-loopback-published
       PORT: 8787
-      WEB_ORIGIN: http://127.0.0.1:3000
+      WEB_ORIGIN: http://127.0.0.1:10101
       DATABASE_URL: /data/dev-learning-harness.sqlite
       WORKSPACE_ROOT: /app/workspaces/exercises
       EXERCISE_ATTEMPTS_ROOT: /app/.data/exercise-attempts
@@ -50,12 +50,12 @@ services:
       ORCHESTRATOR_URL: http://orchestrator:8787
       ORCHESTRATOR_BIND_MODE: container-loopback-published
       HOSTNAME: 0.0.0.0
-      PORT: 3000
+      PORT: 10101
     depends_on:
       orchestrator:
         condition: service_healthy
     ports:
-      - 127.0.0.1:3000:3000
+      - 127.0.0.1:10101:10101
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -71,7 +71,7 @@ services:
         - CMD
         - node
         - -e
-        - fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+        - fetch('http://127.0.0.1:10101').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
       interval: 5s
       timeout: 3s
       retries: 20

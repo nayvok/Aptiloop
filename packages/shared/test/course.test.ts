@@ -454,6 +454,8 @@ describe("Course foundation contracts", () => {
         errors: 1,
         warnings: 0,
         diagnostics: [diagnostic],
+        returnedDiagnostics: 1,
+        diagnosticsTruncated: false,
         limits: {
           maxBytes: 1_048_576,
           maxDecodedCharacters: 900_000,

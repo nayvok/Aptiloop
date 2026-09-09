@@ -77,6 +77,24 @@ describe("AllowedProcessRunner", () => {
       terminationReason: "exit",
     });
   });
+  it("writes bounded input through the trusted process seam", async () => {
+    const runner = new AllowedProcessRunner({
+      stdin: {
+        executable: process.execPath,
+        args: [
+          "-e",
+          "process.stdin.setEncoding('utf8'); let value=''; process.stdin.on('data', chunk => value += chunk); process.stdin.on('end', () => process.stdout.write(value));",
+        ],
+      },
+    });
+    await expect(
+      runner.run("stdin", { cwd, input: "trusted patch\n" }),
+    ).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: "trusted patch\n",
+      terminationReason: "exit",
+    });
+  });
 
   it("terminates commands at the output cap", async () => {
     const runner = new AllowedProcessRunner({

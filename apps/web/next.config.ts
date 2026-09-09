@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import type { NextConfig } from "next";
-import { validateOrchestratorUrl } from "./orchestrator-url";
 
 export const APTILOOP_BUILD_COMMIT_ENV = "APTILOOP_BUILD_COMMIT";
 
@@ -32,8 +31,6 @@ const aptiloopBuildCommit = resolveAptiloopBuildCommit(process.env, () =>
   ),
 );
 
-const orchestrator = validateOrchestratorUrl(process.env);
-
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
   output: "standalone",
@@ -61,14 +58,6 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "same-origin" },
         ],
-      },
-    ];
-  },
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${orchestrator}/api/:path*`,
       },
     ];
   },

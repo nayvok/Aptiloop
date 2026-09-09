@@ -11,6 +11,7 @@ import {
   COURSE_PACK_FORMAT_VERSION,
   COURSE_PACK_VALIDATOR_VERSION,
 } from "./course-pack.js";
+import { COURSE_PACK_SKILL_CONTENT_VERSION } from "@aptiloop/shared";
 
 export interface CourseAuthoringKitPackageIdentity {
   readonly name: string;
@@ -24,12 +25,12 @@ export interface CoursePackV1JsonSchemaArtifact {
     readonly formatVersion: { readonly const: number };
   };
 }
-
 export interface CoursePackAuthoringMetadata {
   readonly draftFormat: typeof COURSE_PACK_AUTHORING_DRAFT_FORMAT;
   readonly formatVersion: typeof COURSE_PACK_FORMAT_VERSION;
   readonly formatMinorVersion: typeof COURSE_PACK_FORMAT_MINOR_VERSION;
   readonly validatorVersion: typeof COURSE_PACK_VALIDATOR_VERSION;
+  readonly skillContentVersion: typeof COURSE_PACK_SKILL_CONTENT_VERSION;
 }
 
 export type CoursePackV1AuthoringTemplateArtifact = Readonly<
@@ -70,4 +71,5 @@ export const coursePackAuthoringMetadata = {
   formatVersion: COURSE_PACK_FORMAT_VERSION,
   formatMinorVersion: COURSE_PACK_FORMAT_MINOR_VERSION,
   validatorVersion: COURSE_PACK_VALIDATOR_VERSION,
+  skillContentVersion: COURSE_PACK_SKILL_CONTENT_VERSION,
 } as const satisfies CoursePackAuthoringMetadata;

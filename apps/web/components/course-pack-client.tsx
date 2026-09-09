@@ -29,11 +29,19 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { z } from "zod";
+import { COURSE_PACK_SKILL_CONTENT_VERSION } from "@aptiloop/shared";
 import {
   CoursePackStagedValidationResponseSchema as validationResponseSchema,
+  type CoursePackStagedValidationReportDto,
   type CoursePackStagedValidationResponse as ValidationResponse,
-  type CoursePackValidationDiagnostic,
 } from "@aptiloop/shared";
+import {
+  type LearningCourse,
+  type LearningCourseRevision,
+} from "@/lib/learning-courses";
+import { type MessageKey, useI18n } from "@/lib/i18n";
+import { learningCourseCollectionSchema } from "@/lib/learning-courses";
+import { cn } from "@/lib/utils";
 
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, SafeQueryError } from "@/components/query-state";
@@ -90,18 +98,21 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import {
+  commitTransferValidation,
+  detectFileFormat,
+  TransferPanel,
+  TransferPreviewPanel,
+  validateTransferBytes,
+  type DetectedFileFormat,
+  type TransferStagedInvalid,
+  type TransferStagedValid,
+} from "@/components/course-transfer-client";
+import {
   presentCoursePackDiagnostic,
   presentFailure,
   safeDiagnosticId,
   SafeUiError,
 } from "@/lib/failure-presentation";
-import { type MessageKey, useI18n } from "@/lib/i18n";
-import {
-  type LearningCourse,
-  type LearningCourseRevision,
-  learningCourseCollectionSchema,
-} from "@/lib/learning-courses";
-import { cn } from "@/lib/utils";
 
 const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const libraryItemSchema = z
@@ -393,11 +404,27 @@ function CoursePackClient({
   const [validation, setValidation] = useState<ValidationResponse | null>(null);
   const [validationFailed, setValidationFailed] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [detectedFormat, setDetectedFormat] =
+    useState<DetectedFileFormat>(null);
+  const [transferValidation, setTransferValidation] =
+    useState<TransferStagedValid | null>(null);
+  const [transferReport, setTransferReport] =
+    useState<TransferStagedInvalid["report"]>(undefined);
+  const [transferFailed, setTransferFailed] = useState(false);
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [transferPending, setTransferPending] = useState(false);
   const [expiredValidationId, setExpiredValidationId] = useState<string | null>(
     null,
   );
   const [commitConfirmation, setCommitConfirmation] =
     useState<InstallAction | null>(null);
+  const [transferCommitted, setTransferCommitted] = useState<string | null>(
+    null,
+  );
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferPreselect, setTransferPreselect] = useState<string | null>(
+    null,
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileDescriptionId = useId();
   const fileErrorId = useId();
@@ -850,6 +877,78 @@ function CoursePackClient({
     validate.mutate({ selected, generation });
   };
 
+  const startTransferValidation = (selected: File) => {
+    const generation = validationGenerationRef.current + 1;
+    setTransferFailed(false);
+    setTransferError(null);
+    setTransferReport(undefined);
+    setTransferValidation(null);
+    setTransferCommitted(null);
+    setTransferPending(true);
+    void validateTransferBytes(selected)
+      .then((result) => {
+        if (generation !== validationGenerationRef.current) return;
+        if (!result.valid) {
+          setTransferFailed(true);
+          setTransferError(result.message);
+          setTransferReport(result.report);
+          return;
+        }
+        setTransferValidation(result);
+      })
+      .catch((error: unknown) => {
+        if (generation !== validationGenerationRef.current) return;
+        setTransferFailed(true);
+        setTransferError(
+          error instanceof Error && error.message === "transfer-unavailable"
+            ? t("courses.transfer.unavailable")
+            : error instanceof Error
+              ? error.message
+              : t("courses.transfer.validationFailed"),
+        );
+      })
+      .finally(() => {
+        if (generation === validationGenerationRef.current) {
+          setTransferPending(false);
+        }
+      });
+  };
+
+  const commitTransfer = () => {
+    if (!transferValidation || transferPending) return;
+    setTransferPending(true);
+    setTransferError(null);
+    void commitTransferValidation({
+      validationId: transferValidation.validationId,
+      expectedEnvelopeHash: transferValidation.envelopeHash,
+    })
+      .then((result) => {
+        setTransferCommitted(
+          `Installed ${result.installedPacks} packs, replayed ${result.replayedFacts} facts, restored ${result.restoredSessions} sessions.`,
+        );
+        setTransferValidation(null);
+        setFile(null);
+        currentFileRef.current = null;
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["course-packs"] }),
+          queryClient.invalidateQueries({ queryKey: ["learning-courses"] }),
+          queryClient.invalidateQueries({ queryKey: ["learning-path"] }),
+        ]);
+      })
+      .catch((error: unknown) => {
+        setTransferError(
+          error instanceof Error && error.message === "transfer-unavailable"
+            ? t("courses.transfer.unavailable")
+            : error instanceof Error
+              ? error.message
+              : t("courses.transfer.validationFailed"),
+        );
+      })
+      .finally(() => {
+        setTransferPending(false);
+      });
+  };
+
   const requestCommitConfirmation = (action: InstallAction) => {
     if (!activeValidation?.valid) return;
     if (hasValidationExpired(activeValidation)) {
@@ -1058,7 +1157,9 @@ function CoursePackClient({
                   type="button"
                   variant="outline"
                   className="w-full sm:w-fit"
-                  disabled={validate.isPending || commit.isPending}
+                  disabled={
+                    validate.isPending || commit.isPending || transferPending
+                  }
                   aria-invalid={validationFailed}
                   aria-describedby={
                     validationFailed
@@ -1077,7 +1178,9 @@ function CoursePackClient({
                   accept="application/json,.json"
                   aria-hidden="true"
                   tabIndex={-1}
-                  disabled={validate.isPending || commit.isPending}
+                  disabled={
+                    validate.isPending || commit.isPending || transferPending
+                  }
                   hidden
                   onChange={(event) => {
                     const selected = event.currentTarget.files?.[0] ?? null;
@@ -1087,10 +1190,22 @@ function CoursePackClient({
                     setValidation(null);
                     setValidationFailed(false);
                     setValidationError(null);
+                    setDetectedFormat(null);
+                    setTransferValidation(null);
+                    setTransferFailed(false);
+                    setTransferError(null);
+                    setTransferCommitted(null);
                     setExpiredValidationId(null);
                     setCommitConfirmation(null);
                     if (!validate.isPending) validate.reset();
                     commit.reset();
+                    if (selected) {
+                      void detectFileFormat(selected).then((format) => {
+                        if (currentFileRef.current === selected) {
+                          setDetectedFormat(format);
+                        }
+                      });
+                    }
                   }}
                 />
                 {file ? (
@@ -1107,6 +1222,30 @@ function CoursePackClient({
                       {file.name}
                     </span>
                   </div>
+                ) : null}
+                {file && detectedFormat ? (
+                  <p className="text-sm text-muted-foreground">
+                    {t(
+                      detectedFormat === "transfer"
+                        ? "courses.transfer.detected"
+                        : detectedFormat === "pack"
+                          ? "courses.transfer.detectedPack"
+                          : "courses.transfer.unknownFormat",
+                    )}
+                  </p>
+                ) : null}
+                {transferFailed && transferError ? (
+                  <FieldError id={fileErrorId}>
+                    <p>{transferError}</p>
+                  </FieldError>
+                ) : null}
+                {transferReport ? (
+                  <DiagnosticList report={transferReport} />
+                ) : null}
+                {transferCommitted ? (
+                  <p className="text-sm text-muted-foreground" role="status">
+                    {transferCommitted}
+                  </p>
                 ) : null}
                 <FieldDescription id={fileDescriptionId}>
                   {t("courses.import.fileDescription")}
@@ -1138,12 +1277,28 @@ function CoursePackClient({
                 <Button
                   type="button"
                   className="w-full sm:w-fit"
-                  disabled={!file || validate.isPending || commit.isPending}
+                  disabled={
+                    !file ||
+                    validate.isPending ||
+                    commit.isPending ||
+                    transferPending
+                  }
                   onClick={() => {
-                    if (file) startValidation(file);
+                    if (!file) return;
+                    void (async () => {
+                      const format =
+                        detectedFormat ?? (await detectFileFormat(file));
+                      if (currentFileRef.current !== file) return;
+                      setDetectedFormat(format);
+                      if (format === "transfer") {
+                        startTransferValidation(file);
+                      } else {
+                        startValidation(file);
+                      }
+                    })();
                   }}
                 >
-                  {validate.isPending ? (
+                  {validate.isPending || transferPending ? (
                     <Spinner data-icon="inline-start" />
                   ) : null}
                   {t("courses.import.validate")}
@@ -1160,19 +1315,33 @@ function CoursePackClient({
           </div>
 
           <div className="min-w-0 bg-background p-5 sm:p-6 xl:p-8">
-            <CoursePackPreviewPanel
-              validation={validation}
-              pendingAction={
-                commit.isPending ? (commit.variables?.action ?? null) : null
-              }
-              expired={validationExpired}
-              expiredRecovery="revalidate"
-              revalidating={validate.isPending}
-              onRevalidate={() => {
-                if (file) startValidation(file);
-              }}
-              onCommit={requestCommitConfirmation}
-            />
+            {detectedFormat === "transfer" || transferValidation ? (
+              transferValidation ? (
+                <TransferPreviewPanel
+                  preview={transferValidation.preview}
+                  onCommit={commitTransfer}
+                  committing={transferPending}
+                />
+              ) : (
+                <p className="max-w-[60ch] text-sm leading-6 text-muted-foreground">
+                  {t("courses.transfer.detected")}
+                </p>
+              )
+            ) : (
+              <CoursePackPreviewPanel
+                validation={validation}
+                pendingAction={
+                  commit.isPending ? (commit.variables?.action ?? null) : null
+                }
+                expired={validationExpired}
+                expiredRecovery="revalidate"
+                revalidating={validate.isPending}
+                onRevalidate={() => {
+                  if (file) startValidation(file);
+                }}
+                onCommit={requestCommitConfirmation}
+              />
+            )}
           </div>
         </section>
 
@@ -1206,6 +1375,18 @@ function CoursePackClient({
                 <FileArrowUpIcon data-icon="inline-start" aria-hidden />
                 {t("courses.import.title")}
               </Link>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1 sm:flex-none"
+              onClick={() => {
+                setTransferPreselect(null);
+                setTransferOpen((open) => !open);
+              }}
+            >
+              <DownloadSimpleIcon data-icon="inline-start" aria-hidden />
+              {t("courses.action.transfer")}
             </Button>
           </>
         }
@@ -1314,6 +1495,18 @@ function CoursePackClient({
           </div>
         ) : null}
       </section>
+
+      {transferOpen ? (
+        <TransferPanel
+          courses={courseItems.map((item) => ({
+            courseKey: item.course.stableId,
+            title: item.course.title,
+            revisionNumber: item.revision.revisionNumber,
+          }))}
+          initialKey={transferPreselect}
+          onClose={() => setTransferOpen(false)}
+        />
+      ) : null}
 
       <section aria-labelledby="course-library-title" className="min-w-0">
         <h2 id="course-library-title" className="sr-only">
@@ -1524,6 +1717,10 @@ function CoursePackClient({
                             });
                           }}
                           onDelete={() => deleteCourse.mutate(course)}
+                          onTransfer={() => {
+                            setTransferPreselect(course.stableId);
+                            setTransferOpen(true);
+                          }}
                           {...(packItem ? { packItem } : {})}
                         />
                       ),
@@ -1682,7 +1879,7 @@ function CoursePackPreviewPanel({
             })}
           </AlertDescription>
         </Alert>
-        <DiagnosticList diagnostics={validation.report.diagnostics} />
+        <DiagnosticList report={validation.report} />
       </div>
     );
   }
@@ -1714,6 +1911,22 @@ function CoursePackPreviewPanel({
           <AlertTitle>{t("courses.preview.finalizedDraft.title")}</AlertTitle>
           <AlertDescription>
             {t("courses.preview.finalizedDraft.description")}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {preview.provenance.skillContentVersion &&
+      preview.provenance.skillContentVersion !==
+        COURSE_PACK_SKILL_CONTENT_VERSION ? (
+        <Alert variant="default">
+          <WarningCircleIcon aria-hidden />
+          <AlertTitle>
+            {t("courses.preview.skillVersionMismatch.title")}
+          </AlertTitle>
+          <AlertDescription>
+            {t("courses.preview.skillVersionMismatch.description", {
+              receivedVersion: preview.provenance.skillContentVersion,
+              expectedVersion: COURSE_PACK_SKILL_CONTENT_VERSION,
+            })}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -1788,7 +2001,7 @@ function CoursePackPreviewPanel({
           </div>
 
           {validation.report.diagnostics.length > 0 ? (
-            <DiagnosticList diagnostics={validation.report.diagnostics} />
+            <DiagnosticList report={validation.report} />
           ) : null}
         </div>
       </details>
@@ -2037,54 +2250,140 @@ function RequirementList({
 }
 
 function DiagnosticList({
-  diagnostics,
+  report,
 }: {
-  diagnostics: readonly CoursePackValidationDiagnostic[];
+  report: CoursePackStagedValidationReportDto;
 }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const serializedReport = JSON.stringify(report, null, 2);
+  const totalDiagnostics = report.errors + report.warnings;
+
+  const copyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(serializedReport);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      toast.error(t("courses.validation.report.copyError"));
+    }
+  };
+
+  const downloadReport = () => {
+    const url = URL.createObjectURL(
+      new Blob([serializedReport], { type: "application/json" }),
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "aptiloop-course-pack-validation-report.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast.success(t("courses.validation.report.downloaded"));
+  };
+
   return (
-    <ul className="flex max-h-64 min-w-0 flex-col gap-2 overflow-y-auto pr-1">
-      {diagnostics.map((diagnostic, index) => {
-        const presentation = presentCoursePackDiagnostic(diagnostic, t);
-        return (
-          <li
-            key={`${diagnostic.code}:${diagnostic.path}:${index}`}
-            className="min-w-0 rounded-lg border border-border bg-surface-soft p-3 text-sm"
-          >
-            {presentation.code ||
-            presentation.path ||
-            presentation.ruleId ||
-            presentation.context ? (
-              <div className="flex flex-wrap items-center gap-2">
-                {presentation.code ? (
-                  <Badge
-                    variant={
-                      diagnostic.severity === "error" ? "error" : "warning"
-                    }
-                  >
-                    {presentation.code}
-                  </Badge>
-                ) : null}
-                {presentation.path ? (
-                  <code className="break-all font-mono text-xs text-muted-foreground">
-                    {presentation.path}
-                  </code>
-                ) : null}
-                {presentation.ruleId ? (
-                  <code className="break-all font-mono text-xs text-muted-foreground">
-                    {presentation.ruleId}
-                  </code>
-                ) : null}
-                {presentation.context ? (
-                  <Badge variant="outline">{presentation.context}</Badge>
-                ) : null}
-              </div>
-            ) : null}
-            <p className="mt-2 break-words leading-5">{presentation.message}</p>
-          </li>
-        );
+    <section
+      className="flex min-w-0 flex-col gap-3"
+      aria-label={t("courses.validation.report.summary", {
+        errors: report.errors.toLocaleString(locale),
+        warnings: report.warnings.toLocaleString(locale),
+        returned: report.returnedDiagnostics.toLocaleString(locale),
+        total: totalDiagnostics.toLocaleString(locale),
       })}
-    </ul>
+    >
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <p className="min-w-0 text-xs leading-5 text-muted-foreground">
+          {t("courses.validation.report.summary", {
+            errors: report.errors.toLocaleString(locale),
+            warnings: report.warnings.toLocaleString(locale),
+            returned: report.returnedDiagnostics.toLocaleString(locale),
+            total: totalDiagnostics.toLocaleString(locale),
+          })}
+        </p>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={copyReport}
+          >
+            {copied
+              ? t("courses.validation.report.copied")
+              : t("courses.validation.report.copy")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={downloadReport}
+          >
+            <DownloadSimpleIcon data-icon="inline-start" />
+            {t("courses.validation.report.download")}
+          </Button>
+        </div>
+      </div>
+      {report.diagnosticsTruncated ? (
+        <Alert>
+          <InfoIcon aria-hidden />
+          <AlertDescription>
+            {t("courses.validation.report.truncated")}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <ul className="flex max-h-64 min-w-0 flex-col gap-2 overflow-y-auto pr-1">
+        {report.diagnostics.map((diagnostic, index) => {
+          const presentation = presentCoursePackDiagnostic(diagnostic, t);
+          return (
+            <li
+              key={`${diagnostic.code}:${diagnostic.path}:${index}`}
+              className="min-w-0 rounded-lg border border-border bg-surface-soft p-3 text-sm"
+            >
+              {presentation.code ||
+              presentation.path ||
+              presentation.entityId ||
+              presentation.ruleId ||
+              presentation.context ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {presentation.code ? (
+                    <Badge
+                      variant={
+                        diagnostic.severity === "error" ? "error" : "warning"
+                      }
+                    >
+                      {presentation.code}
+                    </Badge>
+                  ) : null}
+                  {presentation.path ? (
+                    <code className="break-all font-mono text-xs text-muted-foreground">
+                      {presentation.path}
+                    </code>
+                  ) : null}
+                  {presentation.entityId ? (
+                    <code className="break-all font-mono text-xs text-muted-foreground">
+                      {presentation.entityId}
+                    </code>
+                  ) : null}
+                  {presentation.ruleId ? (
+                    <code className="break-all font-mono text-xs text-muted-foreground">
+                      {presentation.ruleId}
+                    </code>
+                  ) : null}
+                  {presentation.context ? (
+                    <Badge variant="outline">{presentation.context}</Badge>
+                  ) : null}
+                </div>
+              ) : null}
+              <p className="mt-2 break-words leading-5">
+                {presentation.message}
+              </p>
+              <p className="mt-1 break-words text-xs leading-5 text-muted-foreground">
+                {presentation.remediation}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -2099,6 +2398,7 @@ function CourseLibraryRow({
   onSelect,
   onExport,
   onDelete,
+  onTransfer,
 }: {
   course: LearningCourse;
   revision: LearningCourseRevision;
@@ -2110,6 +2410,7 @@ function CourseLibraryRow({
   onSelect: () => void;
   onExport: (item: CoursePackLibraryItem) => void;
   onDelete: () => void;
+  onTransfer: () => void;
 }) {
   const { formatDate, locale, t } = useI18n();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -2305,6 +2606,10 @@ function CourseLibraryRow({
                       {t("courses.action.export")}
                     </DropdownMenuItem>
                   ) : null}
+                  <DropdownMenuItem onSelect={onTransfer}>
+                    <PackageIcon aria-hidden />
+                    {t("courses.action.transfer")}
+                  </DropdownMenuItem>
                 </DropdownMenuGroup>
                 {studioAvailable || (selectable && !current) || exportable ? (
                   <DropdownMenuSeparator />

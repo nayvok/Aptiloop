@@ -254,11 +254,3 @@ function parseM2MigrationArguments(
   }
   return { approvedBackupPath, expectedBackupSha256 };
 }
-
-const invokedPath = process.argv[1];
-if (
-  invokedPath !== undefined &&
-  path.resolve(invokedPath) === path.resolve(fileURLToPath(import.meta.url))
-) {
-  runM1MigrationCli();
-}

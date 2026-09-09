@@ -1,4 +1,5 @@
 import { z } from "zod";
+export const COURSE_PACK_SKILL_CONTENT_VERSION = "1.3.0" as const;
 
 import {
   QuestionKindSchema,
@@ -136,6 +137,25 @@ export const CoursePackValidationReportSchema = z
 export type CoursePackValidationReportDto = z.infer<
   typeof CoursePackValidationReportSchema
 >;
+export const CoursePackStagedValidationReportSchema =
+  CoursePackValidationReportSchema.extend({
+    returnedDiagnostics: z.number().int().nonnegative(),
+    diagnosticsTruncated: z.boolean(),
+  }).strict();
+export type CoursePackStagedValidationReportDto = z.infer<
+  typeof CoursePackStagedValidationReportSchema
+>;
+export const CoursePackUpgradePreviewInfoSchema = z
+  .object({
+    currentRevisionId: StableCourseIdSchema,
+    currentRevisionNumber: z.number().int().positive(),
+    incomingRevisionNumber: z.number().int().positive(),
+    sideBySideKeyPreview: StableCourseIdSchema,
+  })
+  .strict();
+export type CoursePackUpgradePreviewInfo = z.infer<
+  typeof CoursePackUpgradePreviewInfoSchema
+>;
 
 export const CoursePackPreviewSchema = z
   .object({
@@ -173,8 +193,15 @@ export const CoursePackPreviewSchema = z
         attribution: TextSchema.nullable(),
         createdAt: IsoDateTimeSchema,
         notes: TextSchema.nullable(),
+        skillContentVersion: z
+          .string()
+          .trim()
+          .regex(/^\d+\.\d+\.\d+$/u)
+          .max(32)
+          .optional(),
       })
       .strict(),
+    upgrade: CoursePackUpgradePreviewInfoSchema.nullable().optional(),
   })
   .strict();
 export type CoursePackPreviewDto = z.infer<typeof CoursePackPreviewSchema>;
@@ -190,7 +217,7 @@ const CoursePackStagedValidationBaseSchema = z.object({
   expiresAt: IsoDateTimeSchema,
   sourceKind: CoursePackPreparedSourceKindSchema,
   finalized: z.boolean(),
-  report: CoursePackValidationReportSchema,
+  report: CoursePackStagedValidationReportSchema,
 });
 export const CoursePackStagedValidationResponseSchema = z
   .discriminatedUnion("valid", [

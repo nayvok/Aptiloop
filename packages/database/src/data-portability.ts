@@ -63,7 +63,7 @@ const portableIncludes = [
 const portableExcludes = [
   "provider-credentials",
   "environment-files",
-  "exercise-workspaces-and-attempt-files",
+  "absolute-workspace-locations-runtime-artifacts-and-ignored-secret-files",
   "absolute-local-paths",
   "provider-session-identifiers",
   "pending-provider-disclosures",
@@ -1770,4 +1770,84 @@ function assertSourceUnchanged(
   ) {
     throw new Error("Portable data source changed during restore");
   }
+}
+
+/**
+ * Workstream A (Step 1), `scope:course-transfer`: prohibited-content scan for
+ * the course-transfer envelope. It reuses the portable-profile-v1 policy
+ * helpers above (`containsAbsoluteDevicePath`, `isAbsoluteDevicePath`,
+ * `isPathBearingJsonKey`) instead of introducing a second sanitizer.
+ * Executable content stays covered by Course Pack validation
+ * (`scanUntrustedValues`) plus strict envelope schemas (unknown fields fail
+ * closed) plus kernel-fact hash verification on import.
+ */
+export const courseTransferSanitizationScope = "course-transfer" as const;
+export const courseTransferSanitizationPolicy = portableSanitizationPolicy;
+
+export interface CourseTransferProhibitedSignal {
+  readonly path: string;
+  readonly kind: "absolute-path" | "credential-like";
+  readonly detail: string;
+}
+
+const courseTransferCredentialKeyPattern =
+  /(?:^|[._:-])(?:api[_-]?key|authorization|bearer|credential|password|secret|token)(?:[._:-]|$)|^(?:gh[opusr]_|sk-|xox[baprs]-)/iu;
+
+export function findCourseTransferProhibitedSignals(
+  root: unknown,
+  maxSignals = 25,
+): CourseTransferProhibitedSignal[] {
+  const signals: CourseTransferProhibitedSignal[] = [];
+  const visit = (
+    value: unknown,
+    pointer: string,
+    pathContext: boolean,
+  ): void => {
+    if (signals.length >= maxSignals) return;
+    if (typeof value === "string") {
+      if (isAbsoluteDevicePath(value, pathContext)) {
+        signals.push({
+          path: pointer === "" ? "/" : pointer,
+          kind: "absolute-path",
+          detail: `Absolute, UNC, or device path is excluded from course transfer (${courseTransferSanitizationPolicy})`,
+        });
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => {
+        visit(entry, `${pointer}/${index}`, pathContext);
+      });
+      return;
+    }
+    if (isPlainObject(value)) {
+      for (const [key, entry] of Object.entries(value)) {
+        if (courseTransferCredentialKeyPattern.test(key)) {
+          signals.push({
+            path:
+              pointer === ""
+                ? `/${escapeCourseTransferPointer(key)}`
+                : `${pointer}/${escapeCourseTransferPointer(key)}`,
+            kind: "credential-like",
+            detail: `Credential-like field is excluded from course transfer (${courseTransferSanitizationPolicy})`,
+          });
+          if (signals.length >= maxSignals) return;
+        }
+        visit(
+          entry,
+          pointer === ""
+            ? `/${escapeCourseTransferPointer(key)}`
+            : `${pointer}/${escapeCourseTransferPointer(key)}`,
+          pathContext || isPathBearingJsonKey(key),
+        );
+        if (signals.length >= maxSignals) return;
+      }
+    }
+  };
+  visit(root, "", false);
+  return signals;
+}
+
+function escapeCourseTransferPointer(value: string): string {
+  return value.replaceAll("~", "~0").replaceAll("/", "~1");
 }

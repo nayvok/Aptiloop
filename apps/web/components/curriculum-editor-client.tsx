@@ -13,6 +13,7 @@ import {
 } from "@phosphor-icons/react";
 import {
   AiDisclosureSchema,
+  CourseDesignerLearningDesignSchema,
   CourseDesignerPendingDisclosureResponseSchema,
   CourseLocaleSchema,
   CourseDesignerSourceSchema,
@@ -1579,7 +1580,6 @@ function displayedAuthoringDescription(value: string | null): string | null {
   if (!value) return null;
   return parseAuthoringBriefDescription(value)?.topicGoal ?? value;
 }
-
 const designerDraftSchema = z
   .object({
     goal: z.string().max(50_000),
@@ -1590,6 +1590,12 @@ const designerDraftSchema = z
     activityPreferences: z.string().max(50_000),
     runtimeRequirements: z.string().max(50_000),
     diagnosticAnswers: z.record(z.string(), z.string().max(50_000)),
+    learningDesignTarget: z.string().max(50_000),
+    learningDesignEvidence: z.string().max(50_000),
+    learningDesignPractice: z.string().max(50_000),
+    learningDesignFeedback: z.string().max(50_000),
+    learningDesignInstructionReview: z.string().max(50_000),
+    learningDesignAssumptions: z.string().max(50_000),
     revisionRequest: z.string().max(50_000),
   })
   .strict();
@@ -1623,6 +1629,12 @@ function useDesignerDraft(versionId: string, initial: DesignerDraft) {
     initial.runtimeRequirements,
     initial.sources,
     initial.targetOutcome,
+    initial.learningDesignTarget,
+    initial.learningDesignEvidence,
+    initial.learningDesignPractice,
+    initial.learningDesignFeedback,
+    initial.learningDesignInstructionReview,
+    initial.learningDesignAssumptions,
     storageKey,
   ]);
 
@@ -1701,6 +1713,12 @@ function CourseDesignerPanel({
   } = useDesignerDraft(graph.version.id, {
     goal: creationBrief?.topicGoal ?? initialGoal ?? "",
     targetOutcome: creationBrief?.targetOutcome ?? "",
+    learningDesignTarget: "",
+    learningDesignEvidence: "",
+    learningDesignPractice: "",
+    learningDesignFeedback: "",
+    learningDesignInstructionReview: "",
+    learningDesignAssumptions: "",
     currentLevel: creationBrief?.currentLevel ?? "",
     constraints: initialConstraints ?? "",
     sources: "",
@@ -1771,6 +1789,7 @@ function CourseDesignerPanel({
       | "complete-discovery"
       | "answer-diagnostic"
       | "skip-diagnostic"
+      | "complete-learning-design"
       | "confirm-proposal"
       | "reject-proposal"
       | "request-revision",
@@ -2251,6 +2270,100 @@ function CourseDesignerPanel({
                   {t("authoring.designer.action.skipDiagnostic")}
                 </Button>
               </div>
+            </div>
+          ) : null}
+          {activeWorkflow.state === "LEARNING_DESIGN" ? (
+            <div className="mt-5 grid gap-3">
+              <h4 className="font-medium">
+                {t("authoring.designer.learningDesignTitle")}
+              </h4>
+              <label className={labelClass}>
+                {t("authoring.designer.learningDesign.targetCapability")}
+                <textarea
+                  className={`${fieldClass} min-h-20`}
+                  value={designerDraft.learningDesignTarget}
+                  onChange={(event) =>
+                    updateDesignerDraft({
+                      learningDesignTarget: event.target.value,
+                    })
+                  }
+                />
+              </label>
+              {(
+                [
+                  [
+                    "learningDesignEvidence",
+                    "authoring.designer.learningDesign.observableEvidence",
+                  ],
+                  [
+                    "learningDesignPractice",
+                    "authoring.designer.learningDesign.practice",
+                  ],
+                  [
+                    "learningDesignFeedback",
+                    "authoring.designer.learningDesign.feedback",
+                  ],
+                  [
+                    "learningDesignInstructionReview",
+                    "authoring.designer.learningDesign.instructionReview",
+                  ],
+                  [
+                    "learningDesignAssumptions",
+                    "authoring.designer.learningDesign.assumptions",
+                  ],
+                ] as const
+              ).map(([field, label]) => (
+                <label className={labelClass} key={field}>
+                  {t(label)}
+                  <textarea
+                    className={`${fieldClass} min-h-20`}
+                    value={designerDraft[field]}
+                    onChange={(event) =>
+                      updateDesignerDraft({ [field]: event.target.value })
+                    }
+                  />
+                </label>
+              ))}
+              <Button
+                type="button"
+                disabled={
+                  busy ||
+                  !designerDraft.learningDesignTarget.trim() ||
+                  designerLines(designerDraft.learningDesignEvidence).length ===
+                    0 ||
+                  designerLines(designerDraft.learningDesignPractice).length ===
+                    0 ||
+                  designerLines(designerDraft.learningDesignFeedback).length ===
+                    0 ||
+                  designerLines(designerDraft.learningDesignInstructionReview)
+                    .length === 0
+                }
+                onClick={() => {
+                  const learningDesign =
+                    CourseDesignerLearningDesignSchema.parse({
+                      targetCapability:
+                        designerDraft.learningDesignTarget.trim(),
+                      observableEvidence: designerLines(
+                        designerDraft.learningDesignEvidence,
+                      ),
+                      practice: designerLines(
+                        designerDraft.learningDesignPractice,
+                      ),
+                      feedback: designerLines(
+                        designerDraft.learningDesignFeedback,
+                      ),
+                      instructionReview: designerLines(
+                        designerDraft.learningDesignInstructionReview,
+                      ),
+                      assumptions: designerLines(
+                        designerDraft.learningDesignAssumptions,
+                      ),
+                    });
+                  void advance("complete-learning-design", { learningDesign });
+                }}
+              >
+                {t("authoring.designer.action.completeLearningDesign")}
+              </Button>
             </div>
           ) : null}
 

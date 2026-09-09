@@ -317,7 +317,7 @@ function mapUnit(row: UnitRow): CurriculumUnit {
   };
 }
 
-function loadVersionGraph(
+export function loadVersionGraph(
   connection: DatabaseConnection,
   versionId: string,
 ): CurriculumVersionGraph {
@@ -531,7 +531,267 @@ export function publicationContent(graph: CurriculumVersionGraph): unknown {
     })),
   };
 }
-
+/**
+ * Restores one authored graph as a draft while preserving every source ID.
+ * The caller owns the surrounding transaction and must publish the returned
+ * draft only after independently verifying its expected content hash.
+ */
+export function restoreDraftGraphWithIds(
+  connection: DatabaseConnection,
+  graph: CurriculumVersionGraph,
+): CurriculumVersion {
+  const version = graph.version;
+  if (
+    version.status !== "draft" &&
+    version.status !== "published" &&
+    version.status !== "archived"
+  ) {
+    throw new Error("Invalid authored graph version status");
+  }
+  if (
+    connection.sqlite
+      .prepare("SELECT 1 FROM curricula WHERE id = ?")
+      .get(version.curriculumId) === undefined
+  ) {
+    throw new Error(
+      `Unknown curriculum for authored graph: ${version.curriculumId}`,
+    );
+  }
+  if (
+    version.parentVersionId !== null &&
+    connection.sqlite
+      .prepare("SELECT 1 FROM curriculum_versions WHERE id = ?")
+      .get(version.parentVersionId) === undefined
+  ) {
+    throw new Error(
+      `Missing parent curriculum version: ${version.parentVersionId}`,
+    );
+  }
+  if (
+    connection.sqlite
+      .prepare("SELECT 1 FROM curriculum_versions WHERE id = ?")
+      .get(version.id) !== undefined
+  ) {
+    throw new Error(`Curriculum version ID already exists: ${version.id}`);
+  }
+  if (
+    connection.sqlite
+      .prepare(
+        "SELECT 1 FROM curriculum_versions WHERE curriculum_id = ? AND revision = ?",
+      )
+      .get(version.curriculumId, version.revision) !== undefined
+  ) {
+    throw new Error(
+      `Curriculum revision already exists: ${version.curriculumId}#${version.revision}`,
+    );
+  }
+  const weeks = graph.weeks;
+  const days = weeks.flatMap((week) => week.days);
+  const units = days.flatMap((day) => day.units);
+  const checkIds = (
+    table: "curriculum_weeks" | "curriculum_days_v2" | "curriculum_units",
+    ids: readonly string[],
+  ): void => {
+    const uniqueIds = new Set(ids);
+    if (uniqueIds.size !== ids.length) {
+      throw new Error(`Duplicate authored graph IDs in ${table}`);
+    }
+    const chunkSize = 400;
+    for (let offset = 0; offset < ids.length; offset += chunkSize) {
+      const chunk = ids.slice(offset, offset + chunkSize);
+      if (chunk.length === 0) continue;
+      const placeholders = chunk.map(() => "?").join(", ");
+      const existing = connection.sqlite
+        .prepare(`SELECT id FROM ${table} WHERE id IN (${placeholders})`)
+        .all(...chunk) as Array<{ id: string }>;
+      if (existing.length > 0) {
+        throw new Error(
+          `Authored graph ID already exists in ${table}: ${existing[0]!.id}`,
+        );
+      }
+    }
+  };
+  checkIds(
+    "curriculum_weeks",
+    weeks.map((week) => week.id),
+  );
+  checkIds(
+    "curriculum_days_v2",
+    days.map((day) => day.id),
+  );
+  checkIds(
+    "curriculum_units",
+    units.map((unit) => unit.id),
+  );
+  const weekIds = new Set(weeks.map((week) => week.id));
+  const dayIds = new Set(days.map((day) => day.id));
+  const dayParentById = new Map(
+    weeks.flatMap((week) => week.days.map((day) => [day.id, week.id] as const)),
+  );
+  const unitParentById = new Map(
+    days.flatMap((day) => day.units.map((unit) => [unit.id, day.id] as const)),
+  );
+  if (
+    weeks.some((week) => week.versionId !== version.id) ||
+    days.some(
+      (day) =>
+        day.versionId !== version.id ||
+        !weekIds.has(day.weekId) ||
+        dayParentById.get(day.id) !== day.weekId,
+    ) ||
+    units.some(
+      (unit) =>
+        unit.versionId !== version.id ||
+        !dayIds.has(unit.dayId) ||
+        unitParentById.get(unit.id) !== unit.dayId,
+    )
+  ) {
+    throw new Error("Authored graph ownership references are invalid");
+  }
+  for (const unit of units) {
+    if (!unitTypes.has(unit.type)) {
+      throw new ClientError(400, `Unknown unit type: ${unit.type}`);
+    }
+    if (unit.completionCriteria.length === 0) {
+      throw new ClientError(400, "Unit completion criteria cannot be empty");
+    }
+    if (unit.payload.type !== unit.type) {
+      throw new ClientError(400, "Unit payload type must match unit type");
+    }
+  }
+  resolveGraphPrerequisites(graph);
+  const rawJson = (value: unknown, raw: unknown, label: string): string => {
+    if (typeof raw !== "string") {
+      throw new Error(`Missing authored graph JSON: ${label}`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error(`Invalid authored graph JSON: ${label}`);
+    }
+    if (canonicalJson(parsed) !== canonicalJson(value)) {
+      throw new Error(
+        `Authored graph JSON does not match parsed value: ${label}`,
+      );
+    }
+    return raw;
+  };
+  connection.sqlite
+    .prepare(
+      `INSERT INTO curriculum_versions
+       (id, curriculum_id, revision, parent_version_id, status, title, description,
+        content_hash, created_at, published_at, archived_at, updated_at)
+       VALUES (?, ?, ?, ?, 'draft', ?, ?, NULL, ?, NULL, NULL, ?)`,
+    )
+    .run(
+      version.id,
+      version.curriculumId,
+      version.revision,
+      version.parentVersionId,
+      version.title,
+      version.description,
+      version.createdAt,
+      version.updatedAt,
+    );
+  const insertWeek = connection.sqlite.prepare(
+    `INSERT INTO curriculum_weeks
+     (id, version_id, stable_id, order_index, title, description, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const week of weeks) {
+    insertWeek.run(
+      week.id,
+      version.id,
+      week.stableId,
+      week.orderIndex,
+      week.title,
+      week.description,
+      week.createdAt,
+      week.updatedAt,
+    );
+  }
+  const insertDay = connection.sqlite.prepare(
+    `INSERT INTO curriculum_days_v2
+     (id, version_id, week_id, stable_id, order_index, title, description, goal,
+      estimated_minutes, prerequisites_json, expected_outcomes_json, depth_level,
+      out_of_scope_json, topics_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const day of days) {
+    insertDay.run(
+      day.id,
+      version.id,
+      day.weekId,
+      day.stableId,
+      day.orderIndex,
+      day.title,
+      day.description,
+      day.goal,
+      day.estimatedMinutes,
+      rawJson(day.prerequisites, day.prerequisitesJson, "day prerequisites"),
+      rawJson(day.expectedOutcomes, day.expectedOutcomesJson, "day outcomes"),
+      day.depthLevel,
+      rawJson(day.outOfScope, day.outOfScopeJson, "day out-of-scope"),
+      rawJson(day.topics, day.topicsJson, "day topics"),
+      day.createdAt,
+      day.updatedAt,
+    );
+  }
+  const insertUnit = connection.sqlite.prepare(
+    `INSERT INTO curriculum_units
+     (id, version_id, day_id, stable_id, type, order_index, title, description,
+      estimated_minutes, objectives_json, checklist_json, sources_json, questions_json,
+      misconceptions_json, reference_answer_json, completion_criteria_json,
+      unlock_rules_json, optional, depth_level, payload_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const unit of units) {
+    insertUnit.run(
+      unit.id,
+      version.id,
+      unit.dayId,
+      unit.stableId,
+      unit.type,
+      unit.orderIndex,
+      unit.title,
+      unit.description,
+      unit.estimatedMinutes,
+      rawJson(unit.objectives, unit.objectivesJson, "unit objectives"),
+      rawJson(unit.checklist, unit.checklistJson, "unit checklist"),
+      rawJson(unit.sources, unit.sourcesJson, "unit sources"),
+      rawJson(unit.questions, unit.questionsJson, "unit questions"),
+      rawJson(
+        unit.misconceptions,
+        unit.misconceptionsJson,
+        "unit misconceptions",
+      ),
+      unit.referenceAnswer === null
+        ? null
+        : rawJson(
+            unit.referenceAnswer,
+            unit.referenceAnswerJson,
+            "unit reference answer",
+          ),
+      rawJson(
+        unit.completionCriteria,
+        unit.completionCriteriaJson,
+        "unit completion criteria",
+      ),
+      rawJson(unit.unlockRules, unit.unlockRulesJson, "unit unlock rules"),
+      unit.optional ? 1 : 0,
+      unit.depthLevel,
+      rawJson(unit.payload, unit.payloadJson, "unit payload"),
+      unit.createdAt,
+      unit.updatedAt,
+    );
+  }
+  return mapVersion(
+    connection.sqlite
+      .prepare("SELECT * FROM curriculum_versions WHERE id = ?")
+      .get(version.id) as VersionRow,
+  );
+}
 function hasCourseProjectionSchema(connection: DatabaseConnection): boolean {
   return (
     connection.sqlite

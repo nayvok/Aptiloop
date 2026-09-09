@@ -98,7 +98,9 @@ export function createCourseAuthoringInstruction(
 
 This run is conversational. Ask the user all material questions before writing the Course Proposal. Consolidate questions, explain why each unresolved fact matters, and do not repeat facts already answered by the Initial Brief. Do not treat silence, a prior brief, or acceptance of individual answers as approval.
 
-After Discovery (and an optional Diagnostic), present one concise Course Proposal covering scope, outcomes, lesson/prerequisite shape, Activity mix, pacing, sources, provenance/terms, accessibility, and declared assumptions. End with an explicit choice: **Approve this Course Proposal for compilation, or request revisions.**
+After Discovery and Diagnostic, complete a Learning Design with target capability, observable evidence, practice, feedback, and instruction/review before presenting a Course Proposal. Include attempt-before-answer, transfer practice, mastery evidence, and separate interview-readiness and engineering-capability trade-offs.
+
+Then present one concise Course Proposal covering scope, outcomes, lesson/prerequisite shape, Activity mix, pacing, sources, provenance/terms, accessibility, and declared assumptions. End with an explicit choice: **Approve this Course Proposal for compilation, or request revisions.**
 
 Do not emit JSON, a JSON fragment, or a filled scaffold until the user explicitly approves that exact Course Proposal. If the proposal changes materially after approval, present the changed proposal and obtain approval again.`
       : `### Non-interactive automation mode (explicit opt-in)
@@ -112,6 +114,7 @@ interaction_mode: ${interactionMode}
 repository: ${REPOSITORY}
 repository_revision: ${options.repositoryRevision}
 authoring_kit: ${courseAuthoringKitPackageIdentity.name}@${courseAuthoringKitPackageIdentity.version}
+skillContentVersion: ${coursePackAuthoringMetadata.skillContentVersion}
 validator_version: ${coursePackAuthoringMetadata.validatorVersion}
 ---
 
@@ -125,6 +128,7 @@ This file is self-contained and version-matched to one Aptiloop build. Aptiloop 
 - Repository revision: **${options.repositoryRevision}**
 - Authoring Kit: **${courseAuthoringKitPackageIdentity.name}@${courseAuthoringKitPackageIdentity.version}**
 - Final format: **${coursePackV1JsonSchema.properties.format.const}**, major **${coursePackAuthoringMetadata.formatVersion}**, current minor **${coursePackAuthoringMetadata.formatMinorVersion}**
+- Skill content version: **${coursePackAuthoringMetadata.skillContentVersion}**
 - Authoring-draft format: **${coursePackAuthoringDraftV1JsonSchema.properties.format.const}**, major **${coursePackAuthoringMetadata.formatVersion}**, minor **${coursePackAuthoringMetadata.formatMinorVersion}**
 - Deterministic validator: **${coursePackAuthoringMetadata.validatorVersion}**
 - Shared lifecycle: **${COURSE_AUTHORING_LIFECYCLE_STAGES.join(" -> ")}**
@@ -141,19 +145,16 @@ The embedded registry is exact for this build. Empty capability, environment, or
 
 ${modeContract}
 
-## Layer 3 — Authoring lifecycle
-
-Follow these stages in order. A later stage never retroactively authorizes an earlier gate.
-
 1. **Initial Brief.** Read the bounded brief below. Separate stated facts from assumptions and conflicts.
 2. **Discovery.** In interactive mode, ask material questions about audience, observable outcome, prerequisite knowledge, scope exclusions, pacing, accessibility, source use, author/provenance, ownership, and content terms before proposing a Course. Do not ask optional trivia that cannot change the design.
-3. **Optional Diagnostic.** Use a short diagnostic only when the learner level or prerequisite claims are materially uncertain and the user agrees. Never request credentials, learner history, private workspaces, or unrelated personal data.
-4. **Course Proposal.** Propose the finite lesson DAG and learner journey before generating JSON. Name assumptions and blockers, but do not include protected answers.
-5. **User Review.** In interactive mode, wait for explicit approval of the exact proposal. Revision requests return to Proposal; no approval means no JSON.
-6. **Compilation.** Emit exactly one UTF-8 JSON document conforming to the embedded hashless authoring-draft schema and scaffold. Do not wrap the approved result in Markdown or add commentary.
-7. **Aptiloop Validation/Repair.** Save the exact draft and select it locally at **/courses/import**. The deterministic **prepareCoursePackBytes** boundary derives requirements, canonicalizes, computes the final content hash, finalizes, and applies the same semantic/security validation as import. Before Preview, its staged result must report sourceKind "authoring-draft" and finalized true. The raw selected-draft byte hash remains source provenance; repositories receive only finalized canonical Course Pack bytes and JSON. Model judgment is never validation authority.
-8. **Learner-safe Preview.** After zero validation errors, show the learner-visible Course shape, provenance, source privacy counts, and tool-derived requirements without protected evaluation material. Validation does not certify instructional quality, source truth, ownership, or runtime readiness.
-9. **Install/Open as Draft.** Only the user, inside Aptiloop, may explicitly choose **Install immutable revision** or **Open as local Draft**. Generating, validating, or previewing never installs, opens, activates, or publishes a Course.
+3. **Diagnostic.** Use a short diagnostic only when the learner level or prerequisite claims are materially uncertain and the user agrees. Never request credentials, learner history, private workspaces, or unrelated personal data. If the user declines despite a known level, record that choice as an explicit Proposal assumption; never skip silently.
+4. **Learning Design.** Before the Course Proposal, map target capability -> observable evidence -> practice -> feedback -> instruction/review. Default to attempt-before-answer, include changed-condition transfer practice, and state at least one mastery evidence type for each skill/procedure node. If runtime requirements are unavailable, degrade explicitly to recall, teacher dialogue, code-reading, interview, or checkpoint and do not author an exercise.
+5. **Course Proposal.** Propose the finite lesson DAG and learner journey before generating JSON. Keep interview readiness and independent engineering capability separate and show time trade-offs. Resolve each placeholder as a Discovery question, explicit unresolved fact, or approved assumption; do not invent values.
+6. **User Review.** In interactive mode, wait for explicit approval of the exact proposal. Revision requests return to Proposal; no approval means no JSON.
+7. **Compilation.** Emit exactly one UTF-8 JSON document conforming to the embedded hashless authoring-draft schema and scaffold. Do not wrap the approved result in Markdown or add commentary.
+8. **Aptiloop Validation/Repair.** Save the exact draft and select it locally at **/courses/import**. The deterministic **prepareCoursePackBytes** boundary derives requirements, canonicalizes, computes the final content hash, finalizes, and applies the same semantic/security validation as import. Before Preview, its staged result must report sourceKind "authoring-draft" and finalized true. The raw selected-draft byte hash remains source provenance; repositories receive only finalized canonical Course Pack bytes and JSON. Model judgment is never validation authority.
+9. **Learner-safe Preview.** After zero validation errors, show the learner-visible Course shape, provenance, source privacy counts, and tool-derived requirements without protected evaluation material. Validation does not certify instructional quality, source truth, ownership, or runtime readiness.
+10. **Install/Open as Draft.** Only the user, inside Aptiloop, may explicitly choose **Install immutable revision** or **Open as local Draft**. Generating, validating, or previewing never installs, opens, activates, or publishes a Course.
 
 ## Initial Brief
 
@@ -162,6 +163,19 @@ ${jsonBlock(brief)}
 ## Layer 4 — Compilation rules
 
 ### Draft boundary
+
+### Learning Design requirements
+
+- Learning Design is mandatory between Diagnostic and Course Proposal: target capability -> observable evidence -> practice -> feedback -> instruction/review. A proposal without this chain is invalid.
+- Attempt-before-answer is the default: the learner recalls, solves, or designs first; only then provide explanation/reference, an altered variant, and spaced review. Recognition or reading alone is not evidence.
+- For software courses, include decision practice for decomposition, state ownership, public/private/shared boundaries, abstraction timing, trade-offs, naive-solution refactoring, changed requirements, debugging/performance investigation, and production-code alternatives. Use the cycle naive -> problem -> observe -> change -> new trade-off.
+- Diagnostic is mandatory when level or prerequisites are uncertain. A refusal with a known level is an explicit Proposal assumption, never a silent skip.
+- Every placeholder or unknown becomes a Discovery question, explicit unresolved fact, or approved Proposal assumption. Never silently invent a value.
+- With empty environmentIds or checkIds, state 'runtime practice unavailable' and degrade to recall, teacher-dialogue, code-reading, interview, or checkpoint. Never author an exercise in that case.
+- Keep interview readiness and independent engineering capability as separate objectives and show their time trade-off in the Proposal.
+- After a pattern, add a transfer-check with changed conditions and explain why the first solution no longer fits (for example map/filter -> Map/Set -> streaming/async).
+- For every skill/procedure node, state what the learner can do without hints and include at least one of: reproduce-from-memory, novel-variant, causal-explain, diagnose-broken, design-under-constraints, defend-tradeoffs.
+- Validation, schema, protected-material, provenance, stable-ID, approval, and publish gates remain authoritative and unchanged.
 
 - Output format "aptiloop.course-pack-authoring-draft", formatVersion 1, and formatMinorVersion 1.
 - Omit the root requirements field completely. Omit revision.contentHash completely. Never compute, guess, copy a placeholder for, or emit requirements or revision.contentHash; those values are owned exclusively by the deterministic Aptiloop preparation tool.

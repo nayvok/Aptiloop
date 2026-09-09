@@ -86,7 +86,8 @@ export interface M1TrustedPathValidation {
   readonly identity: M1FileIdentity | null;
 }
 
-export type M1DatabasePathAuthority = "active" | "container" | "e2e";
+export type M1DatabasePathAuthority =
+  "active" | "container" | "installed" | "e2e";
 
 export interface M1DatabaseTargetValidation extends M1TrustedPathValidation {
   readonly databaseAuthority: M1DatabasePathAuthority;
@@ -94,8 +95,9 @@ export interface M1DatabaseTargetValidation extends M1TrustedPathValidation {
 
 export interface M1DatabaseTargetOptions {
   projectRoot: string;
-  mode?: "active" | "disposable";
+  mode?: "active" | "disposable" | "installed";
   allowContainerPath?: boolean;
+  installedDataDir?: string;
   mustExist?: boolean;
 }
 
@@ -268,7 +270,6 @@ export function ensureM1TrustedDirectory(input: {
     label: input.label,
   });
 }
-
 export function assertM1WritableDatabaseTarget(
   databasePath: string,
   options: M1DatabaseTargetOptions,
@@ -283,6 +284,36 @@ export function assertM1WritableDatabaseTarget(
 
   const projectRoot = path.resolve(options.projectRoot);
   const candidate = path.resolve(databasePath);
+  if (options.mode === "installed") {
+    const dataDir = options.installedDataDir
+      ? path.resolve(options.installedDataDir)
+      : null;
+    const expected = dataDir
+      ? path.join(dataDir, "dev-learning-harness.sqlite")
+      : null;
+    if (!dataDir || !expected || !samePath(candidate, expected))
+      throw new M1PathSafetyError(
+        "LEXICAL_MISMATCH",
+        "Installed runtime database does not match its app-owned data directory.",
+      );
+    const dataRoot = path.dirname(dataDir);
+    ensureM1TrustedDirectory({
+      trustedRoot: dataRoot,
+      directoryPath: dataDir,
+      label: "Installed runtime data directory",
+    });
+    return {
+      ...assertOrReserveDatabaseFamily({
+        trustedRoot: dataRoot,
+        expectedPath: expected,
+        candidatePath: candidate,
+        mustExist: options.mustExist === true,
+        label: "Installed runtime database",
+      }),
+      databaseAuthority: "installed",
+    };
+  }
+
   const activeDatabase = path.resolve(projectRoot, activeDatabaseRelativePath);
   if (samePath(candidate, activeDatabase)) {
     ensureM1TrustedDirectory({

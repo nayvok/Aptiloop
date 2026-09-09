@@ -6,6 +6,7 @@ import {
   ActivityPayloadSchema,
   ActivityProtectedMaterialSchema,
   CourseLocaleSchema,
+  COURSE_PACK_SKILL_CONTENT_VERSION as SHARED_COURSE_PACK_SKILL_CONTENT_VERSION,
   KnowledgeCapsuleCitationSchema,
   KnowledgeCapsuleClaimSchema,
   KnowledgeCapsuleConflictSchema,
@@ -76,6 +77,12 @@ export const CoursePackProvenanceSchema = z
     attribution: nullableText,
     createdAt: instant,
     notes: nullableText,
+    skillContentVersion: z
+      .string()
+      .trim()
+      .regex(/^\d+\.\d+\.\d+$/u)
+      .max(32)
+      .optional(),
   })
   .strict();
 
@@ -449,7 +456,7 @@ export interface CoursePackDiagnostic {
 }
 
 export interface CoursePackValidationReport {
-  readonly validatorVersion: typeof COURSE_PACK_VALIDATOR_VERSION;
+  readonly validatorVersion: string;
   readonly valid: boolean;
   readonly errors: number;
   readonly warnings: number;
@@ -2221,7 +2228,6 @@ function invalidResult(
     preview: null,
   };
 }
-
 function createReport(
   diagnostics: readonly CoursePackDiagnostic[],
 ): CoursePackValidationReport {

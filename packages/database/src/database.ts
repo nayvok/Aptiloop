@@ -481,6 +481,8 @@ const learnerCourseStateTriggerGuardMigrationId =
 const providerConnectionRetirementMigrationId =
   "0019_provider_connection_retirement";
 const adaptationBranchLifecycleMigrationId = "0020_adaptation_branch_lifecycle";
+const learningKernelFactSchemaMigrationId =
+  "0021_learning_kernel_fact_schema_v2";
 const legacyCompatibleMigrationIds = [
   "0000_initial",
   "0001_versioned_curriculum",
@@ -628,6 +630,15 @@ export const adaptationBranchLifecycleMigrationContract: CurrentDatabaseMigratio
     schemaSha256:
       "a8b8ae44b994e8afe93b8436832d64c1c68103bae2731d4afd1ea385ff041021",
   };
+export const learningKernelFactSchemaMigrationContract: CurrentDatabaseMigrationContract =
+  {
+    migrationIds: [
+      ...adaptationBranchLifecycleMigrationContract.migrationIds,
+      learningKernelFactSchemaMigrationId,
+    ],
+    schemaSha256:
+      "d91a5b9c8107950d70b819e16a2cedebab821bdd4922be36b7cda19a6e8c28d8",
+  };
 const approvedM2SourceMigrationContracts = [
   legacyCompatibleMigrationContract,
   courseFoundationsBaseMigrationContract,
@@ -644,6 +655,7 @@ const approvedM2SourceMigrationContracts = [
   learnerCourseStateMigrationContract,
   learnerCourseStateTriggerGuardMigrationContract,
   providerConnectionRetirementMigrationContract,
+  adaptationBranchLifecycleMigrationContract,
 ] as const;
 const approvedM2StageContracts: Readonly<
   Record<string, CurrentDatabaseMigrationContract>
@@ -670,6 +682,8 @@ const approvedM2StageContracts: Readonly<
     providerConnectionRetirementMigrationContract,
   [adaptationBranchLifecycleMigrationId]:
     adaptationBranchLifecycleMigrationContract,
+  [learningKernelFactSchemaMigrationId]:
+    learningKernelFactSchemaMigrationContract,
 };
 
 const courseFoundationsBackfillMarker = "-- dlh-course-foundations-backfill";
@@ -762,7 +776,8 @@ function applyMigrationDefinitions(
     if (alreadyApplied) continue;
 
     const rebuildsReferencedTable =
-      definition.id === courseFoundationsCorrectionMigrationId;
+      definition.id === courseFoundationsCorrectionMigrationId ||
+      definition.id === learningKernelFactSchemaMigrationId;
     const transformVersion =
       definition.id === courseFoundationsCorrectionMigrationId
         ? "m2-v2"
@@ -880,8 +895,15 @@ export function applyApprovedM2Migrations(
       definition.id === courseFoundationsQuarantineImmutabilityMigrationId,
   );
   const sourceLength = capability.sourceContract.migrationIds.length;
+  const targetStageDefinition = [...definitions]
+    .reverse()
+    .find(
+      (definition) => approvedM2StageContracts[definition.id] !== undefined,
+    );
   const targetStageContract =
-    approvedM2StageContracts[definitions.at(-1)?.id ?? ""];
+    targetStageDefinition === undefined
+      ? undefined
+      : approvedM2StageContracts[targetStageDefinition.id];
   if (
     foundationsIndex <= 0 ||
     finalM2Index < foundationsIndex ||
@@ -910,17 +932,14 @@ export function applyApprovedM2Migrations(
   );
   const targetContractMatches =
     capability.targetContract.schemaSha256 ===
-      targetStageContract.schemaSha256 &&
-    capability.targetContract.schemaSha256 ===
       exactTargetContract.schemaSha256 &&
-    capability.targetContract.migrationIds.length ===
-      targetStageContract.migrationIds.length &&
     capability.targetContract.migrationIds.length ===
       exactTargetContract.migrationIds.length &&
     capability.targetContract.migrationIds.every(
-      (id, index) =>
-        id === targetStageContract.migrationIds[index] &&
-        id === exactTargetContract.migrationIds[index],
+      (id, index) => id === exactTargetContract.migrationIds[index],
+    ) &&
+    targetStageContract.migrationIds.every(
+      (id, index) => id === exactTargetContract.migrationIds[index],
     );
   if (
     pendingDefinitions.length === 0 ||
@@ -986,13 +1005,12 @@ export function applyApprovedM2Migrations(
     );
   }
 
-  const stageContracts = pendingDefinitions.map((definition) => {
-    const contract = approvedM2StageContracts[definition.id];
-    if (contract === undefined) {
-      throw new Error(
-        `Migration ${definition.id} has no approved exact M2 stage contract`,
+  const stageContracts = pendingDefinitions.map((definition, index) => {
+    const contract =
+      approvedM2StageContracts[definition.id] ??
+      buildCurrentMigrationContract(
+        definitions.slice(0, sourceLength + index + 1),
       );
-    }
     return contract;
   });
   connection.sqlite.exec("PRAGMA foreign_keys = OFF");

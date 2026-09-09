@@ -11,6 +11,8 @@ COPY packages/database/package.json packages/database/package.json
 COPY packages/exercise-core/package.json packages/exercise-core/package.json
 COPY packages/learning-core/package.json packages/learning-core/package.json
 COPY packages/opencode-provider/package.json packages/opencode-provider/package.json
+COPY packages/os-service/package.json packages/os-service/package.json
+COPY packages/cli/package.json packages/cli/package.json
 COPY packages/prompt-library/package.json packages/prompt-library/package.json
 COPY packages/shared/package.json packages/shared/package.json
 RUN npm ci --no-audit --no-fund
@@ -29,7 +31,7 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
-ENV PORT=3000
+ENV PORT=10101
 WORKDIR /app
 RUN groupadd --system aptiloop && \
     useradd --system --gid aptiloop --home-dir /app aptiloop
@@ -47,5 +49,5 @@ COPY --from=builder /app/node_modules/@img/sharp-linux-x64/LICENSE ./third-party
 COPY --from=builder /app/node_modules/@img/sharp-libvips-linux-x64/README.md ./third-party-licenses/sharp-libvips-linux-x64-README.md
 RUN cp /usr/share/common-licenses/LGPL-3 ./third-party-licenses/LGPL-3
 USER aptiloop
-EXPOSE 3000
+EXPOSE 10101
 CMD ["node", "apps/web/server.js"]

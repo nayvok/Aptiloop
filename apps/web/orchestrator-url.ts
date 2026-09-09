@@ -5,6 +5,30 @@ const loopbackHostnames: Readonly<Record<string, true>> = {
   localhost: true,
 };
 
+export function validateLoopbackHttpOrigin(
+  value: string,
+  label: "ORCHESTRATOR_URL" | "WEB_ORIGIN",
+): string {
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "http:" ||
+      !loopbackHostnames[url.hostname] ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.pathname !== "/" ||
+      url.search !== "" ||
+      url.hash !== "" ||
+      url.origin !== value
+    ) {
+      throw new Error(`invalid ${label}`);
+    }
+    return url.origin;
+  } catch {
+    throw new Error(`${label} must be an HTTP loopback origin`);
+  }
+}
+
 export function validateOrchestratorUrl(
   environment: Readonly<Record<string, string | undefined>>,
 ): string {
@@ -27,22 +51,5 @@ export function validateOrchestratorUrl(
     return value;
   }
 
-  try {
-    const url = new URL(value);
-    if (
-      url.protocol !== "http:" ||
-      !loopbackHostnames[url.hostname] ||
-      url.username !== "" ||
-      url.password !== "" ||
-      url.pathname !== "/" ||
-      url.search !== "" ||
-      url.hash !== "" ||
-      url.origin !== value
-    ) {
-      throw new Error("invalid direct orchestrator URL");
-    }
-    return value;
-  } catch {
-    throw new Error("ORCHESTRATOR_URL must be an HTTP loopback origin");
-  }
+  return validateLoopbackHttpOrigin(value, "ORCHESTRATOR_URL");
 }

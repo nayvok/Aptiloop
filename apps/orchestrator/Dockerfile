@@ -11,6 +11,8 @@ COPY packages/database/package.json packages/database/package.json
 COPY packages/exercise-core/package.json packages/exercise-core/package.json
 COPY packages/learning-core/package.json packages/learning-core/package.json
 COPY packages/opencode-provider/package.json packages/opencode-provider/package.json
+COPY packages/os-service/package.json packages/os-service/package.json
+COPY packages/cli/package.json packages/cli/package.json
 COPY packages/prompt-library/package.json packages/prompt-library/package.json
 COPY packages/shared/package.json packages/shared/package.json
 
@@ -40,6 +42,8 @@ FROM node:24.15.0-bookworm-slim@sha256:4e6b70dd6cbfc88c8157ba19aa3d9f9cce6ba4703
 LABEL org.opencontainers.image.source="https://github.com/nayvok/Aptiloop"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 ENV NODE_ENV=production
+ARG APTILOOP_APP_VERSION=0.0.0-dev
+ENV APTILOOP_APP_VERSION=${APTILOOP_APP_VERSION}
 ENV HOST=0.0.0.0
 ENV PORT=8787
 ENV ORCHESTRATOR_BIND_MODE=container-loopback-published

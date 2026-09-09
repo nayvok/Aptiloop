@@ -1,6 +1,7 @@
 export * from "./agent.js";
 export * from "./curriculum.js";
 export * from "./course.js";
+export * from "./course-transfer.js";
 export * from "./dto.js";
 export * from "./errors.js";
 export * from "./json.js";

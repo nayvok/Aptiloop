@@ -15,6 +15,7 @@ import {
 import { getLatestPrompt } from "@aptiloop/prompt-library";
 import {
   ClientError,
+  CourseDesignerLearningDesignSchema,
   CourseDesignerPendingDisclosureSchema,
   CourseDesignerRequestSchema,
   CourseDesignerPendingDisclosureResponseSchema,
@@ -22,6 +23,7 @@ import {
   CourseDraftProposalDiffSchema,
   CourseDraftProposalSchema,
   type CourseDesignerDiagnostic,
+  type CourseDesignerLearningDesign,
   type CourseDesignerRequest,
   type CourseDesignerWorkflow,
   type CourseDesignerWorkflowState,
@@ -80,7 +82,6 @@ interface AttributionRow {
   validation_json: string;
   created_at: number;
 }
-
 interface WorkflowRow {
   id: string;
   version_id: string;
@@ -88,6 +89,7 @@ interface WorkflowRow {
   recovery_state: Exclude<CourseDesignerWorkflowState, "FAILED"> | null;
   request_json: string;
   diagnostic_json: string;
+  learning_design_json: string;
   revision_requests_json: string;
   active_proposal_id: string | null;
   authoring_operation_id: string;
@@ -306,7 +308,6 @@ function proposalDto(connection: DatabaseConnection, row: ProposalRow) {
       : null,
   };
 }
-
 function workflowDto(row: WorkflowRow): CourseDesignerWorkflow {
   return CourseDesignerWorkflowSchema.parse({
     id: row.id,
@@ -315,6 +316,7 @@ function workflowDto(row: WorkflowRow): CourseDesignerWorkflow {
     recoveryState: row.recovery_state,
     request: parseJson(row.request_json),
     diagnostic: parseJson(row.diagnostic_json),
+    learningDesign: parseJson(row.learning_design_json),
     revisionRequests: parseJson(row.revision_requests_json),
     activeProposalId: row.active_proposal_id,
     authoringOperationId: row.authoring_operation_id,
@@ -721,6 +723,12 @@ const advanceSchema = z.discriminatedUnion("action", [
     .extend({ action: z.literal("skip-diagnostic") })
     .strict(),
   workflowOperationSchema
+    .extend({
+      action: z.literal("complete-learning-design"),
+      learningDesign: CourseDesignerLearningDesignSchema,
+    })
+    .strict(),
+  workflowOperationSchema
     .extend({ action: z.literal("confirm-proposal") })
     .strict(),
   workflowOperationSchema
@@ -871,6 +879,7 @@ function transitionWithinTransaction(
     payload?: unknown;
     recoveryState?: Exclude<CourseDesignerWorkflowState, "FAILED"> | null;
     diagnostic?: CourseDesignerDiagnostic;
+    learningDesign?: CourseDesignerLearningDesign | null;
     revisionRequests?: readonly string[];
     activeProposalId?: string | null;
     failureCode?: string | null;
@@ -882,8 +891,9 @@ function transitionWithinTransaction(
     .prepare(
       `UPDATE course_designer_workflows
        SET state = ?, recovery_state = ?, diagnostic_json = ?,
-           revision_requests_json = ?, active_proposal_id = ?, failure_code = ?,
-           failure_message = ?, updated_at = ?
+           learning_design_json = ?, revision_requests_json = ?,
+           active_proposal_id = ?, failure_code = ?, failure_message = ?,
+           updated_at = ?
        WHERE id = ? AND state = ?`,
     )
     .run(
@@ -896,6 +906,11 @@ function transitionWithinTransaction(
       JSON.stringify(
         input.diagnostic ??
           (parseJson(row.diagnostic_json) as CourseDesignerDiagnostic),
+      ),
+      JSON.stringify(
+        input.learningDesign === undefined
+          ? parseJson(row.learning_design_json)
+          : input.learningDesign,
       ),
       JSON.stringify(
         input.revisionRequests ??
@@ -993,6 +1008,7 @@ function designerPayload(
     task: "Propose a finite typed change set for this Course Draft.",
     request: workflow.request,
     diagnostic: workflow.diagnostic,
+    learningDesign: workflow.learningDesign,
     revisionRequests: workflow.revisionRequests,
     constraints: {
       apply: false,
@@ -1608,10 +1624,10 @@ export function registerCourseDesignerRoutes(
             .prepare(
               `INSERT INTO course_designer_workflows
                (id, version_id, state, recovery_state, request_json,
-                diagnostic_json, revision_requests_json, active_proposal_id,
-                authoring_operation_id, failure_code, failure_message,
-                created_at, updated_at)
-               VALUES (?, ?, 'DRAFT_REQUEST', NULL, ?, ?, '[]', NULL, ?, NULL, NULL, ?, ?)`,
+                diagnostic_json, learning_design_json, revision_requests_json,
+                active_proposal_id, authoring_operation_id, failure_code,
+                failure_message, created_at, updated_at)
+               VALUES (?, ?, 'DRAFT_REQUEST', NULL, ?, ?, 'null', '[]', NULL, ?, NULL, NULL, ?, ?)`,
             )
             .run(
               id,
@@ -1697,7 +1713,7 @@ export function registerCourseDesignerRoutes(
           row = transitionWorkflow(state.connection, row, "DIAGNOSTIC", {
             operationId: input.operationId,
             eventType: "diagnostic-answered",
-            toState: "CURRICULUM_PROPOSAL",
+            toState: "LEARNING_DESIGN",
             diagnostic: {
               ...diagnostic,
               answers: input.answers,
@@ -1711,8 +1727,23 @@ export function registerCourseDesignerRoutes(
           row = transitionWorkflow(state.connection, row, "DIAGNOSTIC", {
             operationId: input.operationId,
             eventType: "diagnostic-skipped",
-            toState: "CURRICULUM_PROPOSAL",
+            toState: "LEARNING_DESIGN",
             diagnostic: { ...diagnostic, answers: {}, skipped: true },
+          });
+        } else if (input.action === "complete-learning-design") {
+          row = transitionWorkflow(state.connection, row, "LEARNING_DESIGN", {
+            operationId: input.operationId,
+            eventType: "learning-design-completed",
+            toState: "CURRICULUM_PROPOSAL",
+            learningDesign: input.learningDesign,
+            payload: {
+              targetCapability: input.learningDesign.targetCapability,
+              evidenceCount: input.learningDesign.observableEvidence.length,
+              practiceCount: input.learningDesign.practice.length,
+              feedbackCount: input.learningDesign.feedback.length,
+              instructionReviewCount:
+                input.learningDesign.instructionReview.length,
+            },
           });
         } else if (input.action === "confirm-proposal") {
           if (!row.active_proposal_id) {
@@ -1913,6 +1944,13 @@ export function registerCourseDesignerRoutes(
             409,
             "invalid_workflow_transition",
             `Generation requires CURRICULUM_PROPOSAL; workflow is ${row.state}`,
+          );
+        }
+        if (parseJson(row.learning_design_json) === null) {
+          throw new CourseDesignerError(
+            409,
+            "invalid_workflow_transition",
+            "Generation requires completed Learning Design",
           );
         }
         if (existingProposal) {

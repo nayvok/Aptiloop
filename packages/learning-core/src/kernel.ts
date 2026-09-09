@@ -1,4 +1,10 @@
 import {
+  canonicalLearningKernelJson,
+  learningKernelSha256,
+  LearningKernelConflictError,
+  LearningKernelValidationError,
+} from "./canonical-hash.js";
+import {
   applyMasteryEvidence,
   createEmptyMasteryProfile,
   MASTERY_DIMENSIONS,
@@ -16,11 +22,20 @@ import {
 import type { HintLevel } from "./hints.js";
 import { ReviewPrefixProjection } from "./review-prefix.js";
 
+export {
+  canonicalLearningKernelJson,
+  learningKernelSha256,
+  LearningKernelConflictError,
+  LearningKernelValidationError,
+} from "./canonical-hash.js";
 export const LEARNING_KERNEL_FACT_SCHEMA_VERSION = 1 as const;
+export const LEARNING_KERNEL_FACT_SCHEMA_VERSION_V2 = 2 as const;
+export const LEARNING_KERNEL_MIGRATOR_VERSION = "upgrade-migrator-1" as const;
 export const LEARNING_KERNEL_MODEL_VERSION = "baseline-1" as const;
 export const LEARNING_KERNEL_SCHEDULER_VERSION = "baseline-1" as const;
-
 const DAY_MILLISECONDS = 86_400_000;
+const canonicalJson = canonicalLearningKernelJson;
+const sha256Canonical = learningKernelSha256;
 const MASTERY_REVIEW_INTERVAL_MILLISECONDS = 3 * DAY_MILLISECONDS;
 /** `baseline-1` schedules the next explicit Review cycle three days later. */
 const REVIEW_SUCCESSOR_INTERVAL_MILLISECONDS = 3 * DAY_MILLISECONDS;
@@ -44,6 +59,11 @@ export type FactProvenanceKind =
   | "reviewer"
   | "migration";
 
+export type NonMigrationProvenanceKind = Exclude<
+  FactProvenanceKind,
+  "migration"
+>;
+
 export interface LearningKernelFactProvenance {
   readonly kind: FactProvenanceKind;
   readonly sourceId: string;
@@ -55,6 +75,66 @@ export interface LearningKernelFactProvenance {
   readonly checkFactId?: string;
 }
 
+export interface LearningKernelNonMigrationProvenance {
+  readonly kind: NonMigrationProvenanceKind;
+  readonly sourceId: string;
+  readonly sourceHash: string;
+  readonly evaluatorVersion?: string;
+  readonly checkId?: string;
+  readonly checkVersion?: string;
+  readonly workspaceHash?: string;
+  readonly checkFactId?: string;
+}
+
+export interface LearningKernelMigrationProvenance {
+  readonly kind: "migration";
+  readonly sourceId: string;
+  readonly sourceHash: string;
+  readonly sourceRevisionId: string;
+  readonly sourceFactId: string;
+  readonly sourceFactHash: string;
+  readonly sourceContractHash: string;
+  readonly targetContractHash: string;
+  readonly migratorVersion: typeof LEARNING_KERNEL_MIGRATOR_VERSION;
+  readonly originalProvenance: LearningKernelNonMigrationProvenance;
+}
+
+export type LearningKernelProvenance =
+  LearningKernelFactProvenance | LearningKernelMigrationProvenance;
+
+export const SUPPORTED_KERNEL_FACT_SCHEMA_VERSIONS = [
+  LEARNING_KERNEL_FACT_SCHEMA_VERSION,
+  LEARNING_KERNEL_FACT_SCHEMA_VERSION_V2,
+] as const;
+export type SupportedKernelFactSchemaVersion =
+  (typeof SUPPORTED_KERNEL_FACT_SCHEMA_VERSIONS)[number];
+// Existing producers default to v1; upgrade migration explicitly uses v2.
+export const CURRENT_KERNEL_FACT_SCHEMA_VERSION =
+  LEARNING_KERNEL_FACT_SCHEMA_VERSION;
+export function isSupportedKernelFactSchemaVersion(
+  value: unknown,
+): value is SupportedKernelFactSchemaVersion {
+  return (
+    value === LEARNING_KERNEL_FACT_SCHEMA_VERSION ||
+    value === LEARNING_KERNEL_FACT_SCHEMA_VERSION_V2
+  );
+}
+export function isMigrationProvenance(
+  provenance: LearningKernelProvenance,
+): provenance is LearningKernelMigrationProvenance {
+  const candidate = provenance as unknown as Record<string, unknown>;
+  return (
+    candidate["kind"] === "migration" &&
+    typeof candidate["sourceRevisionId"] === "string" &&
+    typeof candidate["sourceFactId"] === "string" &&
+    typeof candidate["sourceFactHash"] === "string" &&
+    typeof candidate["sourceContractHash"] === "string" &&
+    typeof candidate["targetContractHash"] === "string" &&
+    typeof candidate["migratorVersion"] === "string" &&
+    typeof candidate["originalProvenance"] === "object" &&
+    candidate["originalProvenance"] !== null
+  );
+}
 export type LearningKernelEvidenceOutcome = EvidenceOutcome | "unverified";
 
 export interface LearningKernelEvidenceBody {
@@ -118,11 +198,11 @@ export type LearningKernelFactBody =
   | LearningKernelReviewBody;
 
 export interface LearningKernelFact extends LearningKernelScope {
-  readonly schemaVersion: typeof LEARNING_KERNEL_FACT_SCHEMA_VERSION;
+  readonly schemaVersion: SupportedKernelFactSchemaVersion;
   readonly id: string;
   readonly operationId: string;
   readonly occurredAt: string;
-  readonly provenance: LearningKernelFactProvenance;
+  readonly provenance: LearningKernelProvenance;
   readonly body: LearningKernelFactBody;
 }
 
@@ -130,7 +210,7 @@ export interface LearningKernelCommand {
   readonly operationId: string;
   readonly factId: string;
   readonly observedAt: string;
-  readonly provenance: LearningKernelFactProvenance;
+  readonly provenance: LearningKernelProvenance;
   readonly body: LearningKernelFactBody;
 }
 
@@ -233,20 +313,6 @@ export interface LearningKernelReductionResult {
   readonly acceptedFact: LearningKernelFact | null;
   readonly facts: readonly LearningKernelFact[];
   readonly projection: LearningKernelProjection;
-}
-
-export class LearningKernelValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "LearningKernelValidationError";
-  }
-}
-
-export class LearningKernelConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "LearningKernelConflictError";
-  }
 }
 
 export function reduceLearningKernel(
@@ -439,7 +505,10 @@ function validateFacts(
       ],
       `fact ${String(fact.id)}`,
     );
-    if (fact.schemaVersion !== LEARNING_KERNEL_FACT_SCHEMA_VERSION) {
+    if (
+      fact.schemaVersion !== LEARNING_KERNEL_FACT_SCHEMA_VERSION &&
+      fact.schemaVersion !== LEARNING_KERNEL_FACT_SCHEMA_VERSION_V2
+    ) {
       throw new LearningKernelValidationError(
         `Unsupported Learning Kernel fact schema: ${String(fact.schemaVersion)}`,
       );
@@ -461,7 +530,7 @@ function validateFacts(
         `Duplicate fact operation ID: ${fact.operationId}`,
       );
     }
-    assertProvenance(fact.provenance);
+    assertProvenance(fact.provenance, fact.schemaVersion);
     validateFactBody(fact, activityById, factById);
     factById.set(fact.id, fact);
     operationIds.add(fact.operationId);
@@ -641,7 +710,7 @@ function validateFactBody(
 
 function validateEvidenceBody(
   body: LearningKernelEvidenceBody,
-  provenance: LearningKernelFactProvenance,
+  provenance: LearningKernelProvenance,
   activityById: ReadonlyMap<string, LearningKernelActivity>,
   priorFactById: ReadonlyMap<string, LearningKernelFact>,
 ): void {
@@ -739,9 +808,20 @@ function validateEvidenceBody(
 
 function assertEvidenceAuthority(
   body: LearningKernelEvidenceBody,
-  provenance: LearningKernelFactProvenance,
+  provenance: LearningKernelProvenance,
   priorFactById: ReadonlyMap<string, LearningKernelFact>,
 ): void {
+  if (isMigrationProvenance(provenance)) {
+    // Self-contained checks only; cross-scope existence (source fact canonical
+    // hash, source revision/contract vs DB) is enforced by the repository
+    // upgrade path before it emits/carries correct evidence.
+    if (provenance.sourceContractHash !== provenance.targetContractHash) {
+      throw new LearningKernelValidationError(
+        "Migration contract hashes must match for carried evidence",
+      );
+    }
+    return;
+  }
   switch (provenance.kind) {
     case "learner_submission":
       if (body.outcome !== "unverified") {
@@ -781,7 +861,8 @@ function assertEvidenceAuthority(
       if (
         !checkFact ||
         checkFact.provenance.kind !== "trusted_check" ||
-        checkFact.provenance.workspaceHash !== provenance.workspaceHash
+        (checkFact.provenance as LearningKernelFactProvenance).workspaceHash !==
+          provenance.workspaceHash
       ) {
         throw new LearningKernelValidationError(
           "Reviewer evidence must bind to an earlier trusted check with the same workspace hash",
@@ -790,6 +871,8 @@ function assertEvidenceAuthority(
       return;
     }
     case "migration":
+      // Legacy v1 generic migration/backfill facts remain accepted as v1 but
+      // can never carry correct evidence.
       if (body.outcome === "correct") {
         throw new LearningKernelValidationError(
           "Migrated evidence cannot be silently upgraded to correct",
@@ -905,7 +988,30 @@ function haveSameIdentifiers(
   return left.every((id) => rightIds.has(id));
 }
 
-function assertProvenance(provenance: LearningKernelFactProvenance): void {
+function assertProvenance(
+  provenance: LearningKernelProvenance,
+  schemaVersion: SupportedKernelFactSchemaVersion,
+): void {
+  if (isMigrationProvenance(provenance)) {
+    if (schemaVersion !== LEARNING_KERNEL_FACT_SCHEMA_VERSION_V2) {
+      throw new LearningKernelValidationError(
+        "Migration lineage provenance requires fact schema v2",
+      );
+    }
+    assertMigrationProvenance(provenance);
+    return;
+  }
+  if (schemaVersion !== LEARNING_KERNEL_FACT_SCHEMA_VERSION) {
+    throw new LearningKernelValidationError(
+      "Fact schema v2 requires migration lineage provenance",
+    );
+  }
+  assertLegacyProvenance(provenance);
+}
+
+function assertLegacyProvenance(
+  provenance: LearningKernelFactProvenance,
+): void {
   assertExactKeys(
     provenance,
     [
@@ -953,6 +1059,69 @@ function assertProvenance(provenance: LearningKernelFactProvenance): void {
     assertIdentifier(provenance.checkFactId, "provenance.checkFactId");
     assertHash(provenance.workspaceHash, "provenance.workspaceHash");
   }
+}
+
+function assertNonMigrationProvenance(
+  provenance: LearningKernelNonMigrationProvenance,
+): void {
+  assertLegacyProvenance(provenance);
+  if ((provenance.kind as string) === "migration") {
+    throw new LearningKernelValidationError(
+      "Migration original provenance cannot itself be a migration",
+    );
+  }
+}
+
+function assertMigrationProvenance(
+  provenance: LearningKernelMigrationProvenance,
+): void {
+  assertExactKeys(
+    provenance,
+    [
+      "kind",
+      "sourceId",
+      "sourceHash",
+      "sourceRevisionId",
+      "sourceFactId",
+      "sourceFactHash",
+      "sourceContractHash",
+      "targetContractHash",
+      "migratorVersion",
+      "originalProvenance",
+    ],
+    "migration provenance",
+  );
+  if (provenance.kind !== "migration") {
+    throw new LearningKernelValidationError(
+      `Unknown fact provenance: ${String(provenance.kind)}`,
+    );
+  }
+  assertIdentifier(provenance.sourceId, "provenance.sourceId");
+  assertHash(provenance.sourceHash, "provenance.sourceHash");
+  assertIdentifier(provenance.sourceRevisionId, "provenance.sourceRevisionId");
+  assertIdentifier(provenance.sourceFactId, "provenance.sourceFactId");
+  assertHash(provenance.sourceFactHash, "provenance.sourceFactHash");
+  assertHash(provenance.sourceContractHash, "provenance.sourceContractHash");
+  assertHash(provenance.targetContractHash, "provenance.targetContractHash");
+  if (provenance.sourceContractHash !== provenance.targetContractHash) {
+    throw new LearningKernelValidationError(
+      "Migration contract hashes must match for carried evidence",
+    );
+  }
+  if (provenance.migratorVersion !== LEARNING_KERNEL_MIGRATOR_VERSION) {
+    throw new LearningKernelValidationError(
+      `Unknown migrator version: ${String(provenance.migratorVersion)}`,
+    );
+  }
+  if (
+    typeof provenance.originalProvenance !== "object" ||
+    provenance.originalProvenance === null
+  ) {
+    throw new LearningKernelValidationError(
+      "Migration original provenance must be an object",
+    );
+  }
+  assertNonMigrationProvenance(provenance.originalProvenance);
 }
 
 interface EffectiveEvidenceFact {
@@ -1799,133 +1968,3 @@ function compareStrings(left: string, right: string): number {
 function round(value: number): number {
   return Math.round((value + Number.EPSILON) * 1_000) / 1_000;
 }
-
-export function canonicalLearningKernelJson(value: unknown): string {
-  return canonicalJson(value);
-}
-
-export function learningKernelSha256(value: unknown): string {
-  return sha256Canonical(value);
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "string" || typeof value === "boolean") {
-    return JSON.stringify(value);
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw new LearningKernelValidationError(
-        "Canonical JSON rejects non-finite numbers",
-      );
-    }
-    return JSON.stringify(Object.is(value, -0) ? 0 : value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (typeof value === "object") {
-    const object = value as Record<string, unknown>;
-    const entries = Object.keys(object)
-      .filter((key) => object[key] !== undefined)
-      .sort(compareStrings)
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`);
-    return `{${entries.join(",")}}`;
-  }
-  throw new LearningKernelValidationError(
-    `Canonical JSON rejects ${typeof value}`,
-  );
-}
-
-function sha256Canonical(value: unknown): string {
-  const bytes = new TextEncoder().encode(canonicalJson(value));
-  const bitLength = bytes.length * 8;
-  const paddedLength = ((bytes.length + 9 + 63) >>> 6) << 6;
-  const message = new Uint8Array(paddedLength);
-  message.set(bytes);
-  message[bytes.length] = 0x80;
-  const view = new DataView(message.buffer);
-  view.setUint32(
-    paddedLength - 8,
-    Math.floor(bitLength / 0x1_0000_0000),
-    false,
-  );
-  view.setUint32(paddedLength - 4, bitLength >>> 0, false);
-
-  let h0 = 0x6a09e667;
-  let h1 = 0xbb67ae85;
-  let h2 = 0x3c6ef372;
-  let h3 = 0xa54ff53a;
-  let h4 = 0x510e527f;
-  let h5 = 0x9b05688c;
-  let h6 = 0x1f83d9ab;
-  let h7 = 0x5be0cd19;
-  const words = new Uint32Array(64);
-
-  for (let offset = 0; offset < message.length; offset += 64) {
-    for (let index = 0; index < 16; index += 1) {
-      words[index] = view.getUint32(offset + index * 4, false);
-    }
-    for (let index = 16; index < 64; index += 1) {
-      const w15 = words[index - 15]!;
-      const w2 = words[index - 2]!;
-      const s0 = rotateRight(w15, 7) ^ rotateRight(w15, 18) ^ (w15 >>> 3);
-      const s1 = rotateRight(w2, 17) ^ rotateRight(w2, 19) ^ (w2 >>> 10);
-      words[index] = (words[index - 16]! + s0 + words[index - 7]! + s1) >>> 0;
-    }
-    let a = h0;
-    let b = h1;
-    let c = h2;
-    let d = h3;
-    let e = h4;
-    let f = h5;
-    let g = h6;
-    let h = h7;
-    for (let index = 0; index < 64; index += 1) {
-      const s1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
-      const choice = (e & f) ^ (~e & g);
-      const temp1 =
-        (h + s1 + choice + SHA256_CONSTANTS[index]! + words[index]!) >>> 0;
-      const s0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
-      const majority = (a & b) ^ (a & c) ^ (b & c);
-      const temp2 = (s0 + majority) >>> 0;
-      h = g;
-      g = f;
-      f = e;
-      e = (d + temp1) >>> 0;
-      d = c;
-      c = b;
-      b = a;
-      a = (temp1 + temp2) >>> 0;
-    }
-    h0 = (h0 + a) >>> 0;
-    h1 = (h1 + b) >>> 0;
-    h2 = (h2 + c) >>> 0;
-    h3 = (h3 + d) >>> 0;
-    h4 = (h4 + e) >>> 0;
-    h5 = (h5 + f) >>> 0;
-    h6 = (h6 + g) >>> 0;
-    h7 = (h7 + h) >>> 0;
-  }
-  return `sha256:${[h0, h1, h2, h3, h4, h5, h6, h7]
-    .map((word) => word.toString(16).padStart(8, "0"))
-    .join("")}`;
-}
-
-function rotateRight(value: number, bits: number): number {
-  return (value >>> bits) | (value << (32 - bits));
-}
-
-const SHA256_CONSTANTS = new Uint32Array([
-  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
-  0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-  0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
-  0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
-  0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-  0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-  0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
-  0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-  0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-]);

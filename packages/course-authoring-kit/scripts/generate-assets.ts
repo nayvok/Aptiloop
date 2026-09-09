@@ -10,6 +10,7 @@ import {
   CoursePackAuthoringDraftV1Schema,
   CoursePackV1Schema,
 } from "../src/course-pack.js";
+import { COURSE_PACK_SKILL_CONTENT_VERSION } from "@aptiloop/shared";
 
 const packageRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const schemaDirectory = path.join(packageRoot, "schema");
@@ -48,6 +49,7 @@ const authoringTemplate = CoursePackV1Schema.parse({
       createdAt: "1970-01-01T00:00:00.000Z",
       notes:
         "Replace every placeholder and resolve ownership and content terms before validation.",
+      skillContentVersion: COURSE_PACK_SKILL_CONTENT_VERSION,
     },
   },
   revision: {

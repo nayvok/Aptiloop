@@ -19,6 +19,7 @@
     "@aptiloop/exercise-core": "0.1.0",
     "@aptiloop/learning-core": "0.1.0",
     "@aptiloop/opencode-provider": "0.1.0",
+    "@aptiloop/os-service": "0.1.0",
     "@aptiloop/prompt-library": "0.1.0",
     "@aptiloop/shared": "0.1.0",
     "@hono/node-server": "^2.0.12",

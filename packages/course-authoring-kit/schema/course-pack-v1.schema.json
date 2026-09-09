@@ -245,6 +245,11 @@
                   "type": "null"
                 }
               ]
+            },
+            "skillContentVersion": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^\\d+\\.\\d+\\.\\d+$"
             }
           },
           "required": [

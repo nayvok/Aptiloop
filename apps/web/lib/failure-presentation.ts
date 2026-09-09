@@ -128,8 +128,42 @@ const coursePackDiagnosticGroups = {
 export type FailurePresentation = {
   message: string;
   diagnostic?: string;
+  remediation?: string;
 };
 
+const SECRET_VALUE_PATTERN =
+  /\b(?:sk-|gh[opusr]_|xox[baprs]-)[A-Za-z0-9_-]{12,}\b/giu;
+const SECRET_ASSIGNMENT_PATTERN =
+  /(\b(?:api[_-]?key|authorization|bearer|credential|password|secret|token)\b\s*[:=]\s*)(["']?)[^\s"',;]+/giu;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/gu;
+
+function safeDiagnosticText(
+  value: unknown,
+  maxLength: number,
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const sanitized = value
+    .replace(CONTROL_CHARACTER_PATTERN, "�")
+    .replace(SECRET_VALUE_PATTERN, "[REDACTED]")
+    .replace(SECRET_ASSIGNMENT_PATTERN, "$1$2[REDACTED]");
+  return sanitized.slice(0, maxLength);
+}
+
+function safeDiagnosticEntityId(value: unknown): string | undefined {
+  const sanitized = safeDiagnosticText(value, 200);
+  return sanitized !== undefined &&
+    diagnosticIdPattern.test(sanitized) &&
+    !secretLikePattern.test(sanitized)
+    ? sanitized
+    : undefined;
+}
+
+function safeDiagnosticPath(value: unknown): string | undefined {
+  const sanitized = safeDiagnosticText(value, 1_000);
+  return sanitized !== undefined && safeJsonPointerPattern.test(sanitized)
+    ? sanitized
+    : undefined;
+}
 export class SafeUiError extends Error {
   constructor(message: string) {
     super(message);
@@ -138,52 +172,51 @@ export class SafeUiError extends Error {
 }
 
 export function safeDiagnosticId(value: unknown): string | undefined {
-  return typeof value === "string" &&
-    diagnosticIdPattern.test(value) &&
-    !secretLikePattern.test(value)
-    ? value
-    : undefined;
+  return safeDiagnosticEntityId(value);
 }
 
 export type CoursePackDiagnosticPresentation = {
   code?: string;
   path?: string;
+  entityId?: string;
   ruleId?: string;
   context?: string;
   message: string;
+  remediation?: string;
 };
 
 export function presentCoursePackDiagnostic(
   diagnostic: {
     code: string;
     path: string;
+    entityId?: string | null;
     ruleId?: string | null;
     context?: string | null;
+    message?: string;
   },
   t: Translate,
 ): CoursePackDiagnosticPresentation {
   const group = Object.entries(coursePackDiagnosticGroups).find(([, codes]) =>
     codes.has(diagnostic.code),
   )?.[0] as keyof typeof coursePackDiagnosticGroups | undefined;
-  const ruleId = safeDiagnosticId(diagnostic.ruleId);
-  const context = safeDiagnosticId(diagnostic.context);
-  const metadata = {
+  const code = safeDiagnosticEntityId(diagnostic.code);
+  const path = safeDiagnosticPath(diagnostic.path);
+  const entityId = safeDiagnosticEntityId(diagnostic.entityId);
+  const ruleId = safeDiagnosticEntityId(diagnostic.ruleId);
+  const context = safeDiagnosticText(diagnostic.context, 200);
+  const remediation = group
+    ? t(`courses.validation.diagnostic.${group}` as MessageKey)
+    : t("courses.validation.diagnostic.generic");
+  return {
+    ...(code === undefined ? {} : { code }),
+    ...(path === undefined ? {} : { path }),
+    ...(entityId === undefined ? {} : { entityId }),
     ...(ruleId === undefined ? {} : { ruleId }),
     ...(context === undefined ? {} : { context }),
-  };
-  if (!group) {
-    return {
-      ...metadata,
-      message: t("courses.validation.diagnostic.generic"),
-    };
-  }
-  return {
-    ...metadata,
-    code: diagnostic.code,
-    ...(safeJsonPointerPattern.test(diagnostic.path)
-      ? { path: diagnostic.path }
-      : {}),
-    message: t(`courses.validation.diagnostic.${group}` as MessageKey),
+    message:
+      safeDiagnosticText(diagnostic.message, 2_000) ??
+      t("courses.validation.diagnostic.generic"),
+    remediation,
   };
 }
 

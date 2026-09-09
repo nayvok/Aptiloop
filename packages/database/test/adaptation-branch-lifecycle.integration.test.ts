@@ -382,7 +382,7 @@ describe("adaptation branch lifecycle", () => {
         reopened.sqlite
           .prepare("SELECT id FROM __dlh_migrations ORDER BY id DESC LIMIT 1")
           .get(),
-      ).toEqual({ id: "0020_adaptation_branch_lifecycle" });
+      ).toEqual({ id: "0021_learning_kernel_fact_schema_v2" });
       expect(reopened.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual(
         [],
       );

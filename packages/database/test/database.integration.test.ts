@@ -68,6 +68,7 @@ describe("SQLite database", () => {
       "0018_learner_course_state_trigger_guard",
       "0019_provider_connection_retirement",
       "0020_adaptation_branch_lifecycle",
+      "0021_learning_kernel_fact_schema_v2",
     ]);
     expect(() =>
       connection.sqlite

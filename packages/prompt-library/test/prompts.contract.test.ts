@@ -20,8 +20,9 @@ describe("versioned prompt contracts", () => {
       expect(PromptDefinitionSchema.safeParse(prompt).success).toBe(true);
       expect(getLatestWorkflowPrompt(prompt.id)).toBe(prompt);
       if (prompt.id === prompt.role) {
-        expect(listPromptVersions(prompt.role)).toEqual(["v1.2.0"]);
-        expect(getPrompt(prompt.role, "v1.2.0")).toBe(prompt);
+        const version = prompt.role === "course-designer" ? "v1.3.0" : "v1.2.0";
+        expect(listPromptVersions(prompt.role)).toEqual([version]);
+        expect(getPrompt(prompt.role, version)).toBe(prompt);
         expect(getLatestPrompt(prompt.role)).toBe(prompt);
       }
     }

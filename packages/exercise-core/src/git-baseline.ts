@@ -246,6 +246,233 @@ export async function getExerciseDiff(
     truncated,
   });
 }
+export interface ExerciseLearnerCommit {
+  readonly sourceCommit: string;
+  readonly parentCommit: string;
+  readonly authorName: string;
+  readonly authorEmail: string;
+  readonly authoredAt: string;
+  readonly subject: string;
+  readonly patch: string;
+  readonly patchHash: string;
+}
+
+export interface GetExerciseCommitHistoryOptions extends ExerciseGitOperationOptions {
+  readonly expectedBaselineCommit: string;
+  readonly maxCommits?: number;
+  readonly maxPatchBytes?: number;
+}
+
+/**
+ * Reads a bounded, linear learner commit series through the same Git process
+ * authority as baseline diffs. Merge history is intentionally unsupported:
+ * callers pause rather than inventing ancestry.
+ */
+export async function getExerciseLearnerCommitHistory(
+  exerciseRoot: string,
+  options: GetExerciseCommitHistoryOptions,
+): Promise<readonly ExerciseLearnerCommit[]> {
+  const gitOptions = normalizeGitOperationOptions(options);
+  const maxCommits = options.maxCommits ?? 32;
+  const maxPatchBytes = options.maxPatchBytes ?? DEFAULT_DIFF_CAP;
+  if (!Number.isSafeInteger(maxCommits) || maxCommits < 0) {
+    throw new TypeError("maxCommits must be a nonnegative integer.");
+  }
+  if (!Number.isSafeInteger(maxPatchBytes) || maxPatchBytes <= 0) {
+    throw new TypeError("maxPatchBytes must be a positive integer.");
+  }
+  const root = await requireExerciseDirectory(exerciseRoot);
+  await assertRepositoryRoot(root, gitOptions);
+  const marker = await readBaselineMarker(root);
+  if (marker.commit !== options.expectedBaselineCommit) {
+    throw new ExerciseGitError(
+      "Exercise marker does not match the server-owned baseline.",
+    );
+  }
+  await verifyCommit(root, marker.commit, gitOptions);
+  const history = await runGit(
+    root,
+    ["rev-list", "--reverse", "--parents", `${marker.commit}..HEAD`, "--", "."],
+    { ...gitOptions, outputCap: Math.max(64 * 1024, maxCommits * 128) },
+  );
+  const commits = history.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.split(/\s+/u));
+  if (commits.length > maxCommits) {
+    throw new ExerciseGitError(
+      "Learner commit history exceeds the transfer limit.",
+    );
+  }
+  const result: ExerciseLearnerCommit[] = [];
+  let expectedParent = marker.commit;
+  for (const fields of commits) {
+    if (fields.length !== 2) {
+      throw new ExerciseGitError(
+        "Learner commit history contains a merge or unsupported ancestry.",
+      );
+    }
+    const [sourceCommit, parentCommit] = fields;
+    if (
+      sourceCommit === undefined ||
+      parentCommit === undefined ||
+      parentCommit !== expectedParent ||
+      !/^[0-9a-f]{40}$/u.test(sourceCommit) ||
+      !/^[0-9a-f]{40}$/u.test(parentCommit)
+    ) {
+      throw new ExerciseGitError(
+        "Learner commit history does not form a linear chain from the baseline.",
+      );
+    }
+    const metadata = await runGit(
+      root,
+      [
+        "show",
+        "-s",
+        "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%s",
+        sourceCommit,
+      ],
+      { ...gitOptions, outputCap: 64 * 1024 },
+    );
+    const [hash, parent, authorName, authorEmail, authoredAt, ...subjectParts] =
+      metadata.stdout.trimEnd().split("\0");
+    if (
+      hash !== sourceCommit ||
+      parent !== parentCommit ||
+      authorName === undefined ||
+      authorEmail === undefined ||
+      authoredAt === undefined
+    ) {
+      throw new ExerciseGitError("Learner commit metadata is malformed.");
+    }
+    const subject = subjectParts.join("\0");
+    if (
+      authorName.length === 0 ||
+      authorName.length > 500 ||
+      authorEmail.length === 0 ||
+      authorEmail.length > 500 ||
+      subject.length > 500
+    ) {
+      throw new ExerciseGitError(
+        "Learner commit metadata exceeds the transfer limit.",
+      );
+    }
+    const patch = (
+      await runGit(
+        root,
+        [
+          "diff",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--binary",
+          "--src-prefix=a/",
+          "--dst-prefix=b/",
+          parentCommit,
+          sourceCommit,
+          "--",
+          ".",
+        ],
+        { ...gitOptions, outputCap: maxPatchBytes + 1 },
+      )
+    ).stdout;
+    if (Buffer.byteLength(patch, "utf8") > maxPatchBytes) {
+      throw new ExerciseGitError(
+        "Learner commit patch exceeds the transfer limit.",
+      );
+    }
+    result.push({
+      sourceCommit,
+      parentCommit,
+      authorName,
+      authorEmail,
+      authoredAt,
+      subject,
+      patch,
+      patchHash: `sha256:${createHash("sha256").update(patch).digest("hex")}`,
+    });
+    expectedParent = sourceCommit;
+  }
+  return result;
+}
+export async function getExerciseUncommittedDiff(
+  exerciseRoot: string,
+  options: {
+    readonly expectedBaselineCommit: string;
+    readonly signal?: AbortSignal;
+    readonly maxOutputBytes?: number;
+  },
+): Promise<{ readonly patch: string; readonly truncated: boolean }> {
+  const gitOptions = normalizeGitOperationOptions(options);
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_DIFF_CAP;
+  const root = await requireExerciseDirectory(exerciseRoot);
+  await assertRepositoryRoot(root, gitOptions);
+  const marker = await readBaselineMarker(root);
+  if (marker.commit !== options.expectedBaselineCommit) {
+    throw new ExerciseGitError(
+      "Exercise marker does not match the server-owned baseline.",
+    );
+  }
+  const head = (
+    await runGit(root, ["rev-parse", "--verify", "HEAD"], gitOptions)
+  ).stdout.trim();
+  if (!/^[0-9a-f]{40}$/u.test(head)) {
+    throw new ExerciseGitError("Git returned an invalid current commit.");
+  }
+  const result = await runGit(
+    root,
+    [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--binary",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      head,
+      "--",
+      ".",
+    ],
+    { ...gitOptions, outputCap: maxOutputBytes + 1 },
+  );
+  return {
+    patch: result.stdout,
+    truncated: Buffer.byteLength(result.stdout, "utf8") > maxOutputBytes,
+  };
+}
+export async function listIgnoredExerciseFiles(
+  exerciseRoot: string,
+  options: {
+    readonly expectedBaselineCommit: string;
+    readonly signal?: AbortSignal;
+  },
+): Promise<readonly string[]> {
+  const gitOptions = normalizeGitOperationOptions(options);
+  const root = await requireExerciseDirectory(exerciseRoot);
+  await assertRepositoryRoot(root, gitOptions);
+  const marker = await readBaselineMarker(root);
+  if (marker.commit !== options.expectedBaselineCommit) {
+    throw new ExerciseGitError(
+      "Exercise marker does not match the server-owned baseline.",
+    );
+  }
+  const result = await runGit(
+    root,
+    [
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "-z",
+      "--",
+      ".",
+    ],
+    { ...gitOptions, outputCap: 1_000_000 },
+  );
+  return result.stdout
+    .split("\0")
+    .filter((entry) => entry.length > 0)
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
 
 async function renderUntrackedPatch(
   root: string,
@@ -255,12 +482,14 @@ async function renderUntrackedPatch(
 ): Promise<{ patch: string; truncated: boolean }> {
   if (availableBytes <= 0) return { patch: "", truncated: true };
   const itemStat = await stat(absolutePath);
-  const displayPath = quoteGitPath(relativePath.replaceAll(path.sep, "/"));
+  const normalizedPath = relativePath.replaceAll(path.sep, "/");
+  const sourcePath = quoteGitPath(`a/${normalizedPath}`);
+  const targetPath = quoteGitPath(`b/${normalizedPath}`);
   const mode =
     process.platform === "win32" || (itemStat.mode & constants.S_IXUSR) === 0
       ? "100644"
       : "100755";
-  const header = `diff --git a/${displayPath} b/${displayPath}\nnew file mode ${mode}\n--- /dev/null\n+++ b/${displayPath}\n`;
+  const header = `diff --git ${sourcePath} ${targetPath}\nnew file mode ${mode}\n--- /dev/null\n+++ ${targetPath}\n`;
   if (Buffer.byteLength(header) >= availableBytes) {
     return { patch: truncateUtf8(header, availableBytes), truncated: true };
   }
@@ -274,7 +503,7 @@ async function renderUntrackedPatch(
     const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, 0);
     const bytes = buffer.subarray(0, bytesRead);
     if (bytes.includes(0)) {
-      const binaryLine = `Binary files /dev/null and b/${displayPath} differ\n`;
+      const binaryLine = `Binary files /dev/null and ${targetPath} differ\n`;
       const combined = header + binaryLine;
       return {
         patch: truncateUtf8(combined, availableBytes),

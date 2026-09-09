@@ -64,6 +64,8 @@ import {
 } from "./course-designer.js";
 import { registerCurriculumEditorRoutes } from "./curriculum-editor.js";
 import { registerCoursePackRoutes } from "./course-packs.js";
+import { registerCourseTransferRoutes } from "./course-transfer.js";
+import { registerSystemRoutes } from "./system.js";
 import { registerPersonalAdaptationRoutes } from "./personal-adaptations.js";
 import { registerInterviewV2Routes } from "./interview-v2.js";
 import {
@@ -116,7 +118,7 @@ import {
 
 const sourceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const defaultOpenCodeEndpoint = "http://127.0.0.1:4096";
-const defaultWebOrigin = "http://127.0.0.1:3000";
+const defaultWebOrigin = "http://127.0.0.1:10101";
 const safeAgentFailureMessage =
   "The agent response was rejected by safety policy.";
 const safeAgentCancellationMessage = "The agent turn was cancelled.";
@@ -142,7 +144,7 @@ const stepLabels = [
 export interface AppOptions {
   projectRoot?: string;
   databasePath?: string;
-  databaseMode?: "active" | "disposable";
+  databaseMode?: "active" | "disposable" | "installed";
   /** @internal Deterministic database-open adversarial seam. */
   databaseTestHooks?: M1WritableDatabaseOpenOptions["testHooks"];
   connection?: DatabaseConnection;
@@ -387,8 +389,14 @@ export function createApp(options: AppOptions = {}) {
     options.databaseMode === undefined
       ? resolveLauncherOwnedE2EDatabase(databasePath, projectRoot)
       : null;
+  const installedRuntime = Boolean(process.env.APTILOOP_RELEASE_ROOT?.trim());
   const databaseMode =
-    options.databaseMode ?? (launcherOwnedE2E ? "disposable" : "active");
+    options.databaseMode ??
+    (launcherOwnedE2E
+      ? "disposable"
+      : installedRuntime
+        ? "installed"
+        : "active");
   const developmentMode = options.developmentMode === true;
   if (
     options.developmentDatabaseInitializer &&
@@ -409,11 +417,34 @@ export function createApp(options: AppOptions = {}) {
       if (!current) {
         throw new Error("E2E database ownership changed during startup");
       }
-      return current;
+    }
+    if (databaseMode === "installed") {
+      const configuredDataDir = process.env.APTILOOP_DATA_DIR?.trim();
+      const expectedDatabase = configuredDataDir
+        ? path.join(
+            path.resolve(configuredDataDir),
+            "dev-learning-harness.sqlite",
+          )
+        : null;
+      if (
+        !configuredDataDir ||
+        !expectedDatabase ||
+        path.resolve(databasePath) !== expectedDatabase
+      )
+        throw new Error(
+          "Installed runtime database must match APTILOOP_DATA_DIR.",
+        );
     }
     return assertM1WritableDatabaseTarget(databasePath, {
       projectRoot,
       mode: databaseMode,
+      ...(databaseMode === "installed"
+        ? {
+            installedDataDir: path.resolve(
+              process.env.APTILOOP_DATA_DIR!.trim(),
+            ),
+          }
+        : {}),
       allowContainerPath:
         startupConfig.bindMode === "container-loopback-published",
     });
@@ -634,8 +665,11 @@ export function createApp(options: AppOptions = {}) {
     const release = releaseAdmission;
     let responseOwnsAdmission = false;
     try {
-      await options.httpAdmissionTestHooks?.afterAcquire?.();
-      if (isMutation && context.req.path !== "/api/course-packs/validate") {
+      if (
+        isMutation &&
+        context.req.path !== "/api/course-packs/validate" &&
+        context.req.path !== "/api/course-transfer/validate"
+      ) {
         try {
           const body = await readBoundedRequestBody(
             context.req.raw,
@@ -726,9 +760,56 @@ export function createApp(options: AppOptions = {}) {
     ),
   );
 
-  registerVersionedLearningRoutes(app, state);
-  registerCoursePackRoutes(app, createCoursePackRepository(connection));
-  registerCurriculumEditorRoutes(app, state);
+  const coursePacks = createCoursePackRepository(connection);
+  registerCoursePackRoutes(app, coursePacks);
+  registerCourseTransferRoutes(app, {
+    connection,
+    coursePacks,
+    exerciseAttemptsRoot: state.exerciseAttemptsRoot,
+    materializeAttemptWorkspace: async ({ attemptId, exerciseId }) => {
+      const exercise = connection.sqlite
+        .prepare(
+          "SELECT workspace_path AS workspacePath FROM exercises WHERE id = ?",
+        )
+        .get(exerciseId) as { workspacePath: string } | undefined;
+      if (!exercise)
+        throw new ClientError(404, "Unknown exercise for transfer attempt");
+      const templateRoot = await resolveExerciseWorkspace(
+        state,
+        exercise.workspacePath,
+      );
+      await mkdir(state.exerciseAttemptsRoot, { recursive: true });
+      const isolated = await createExerciseAttemptWorkspace({
+        attemptsRoot: state.exerciseAttemptsRoot,
+        attemptId,
+        templateRoot,
+      });
+      try {
+        const baseline = await ensureExerciseBaseline(isolated.workspacePath);
+        return {
+          workspacePath: isolated.workspacePath,
+          baselinePath: isolated.workspacePath,
+          baselineCommit: baseline.commit,
+          workspaceHandleId: randomUUID(),
+          cleanup: () =>
+            rm(isolated.workspacePath, { recursive: true, force: true }),
+        };
+      } catch (error) {
+        await rm(isolated.workspacePath, { recursive: true, force: true });
+        throw error;
+      }
+    },
+  });
+  registerSystemRoutes(app, {
+    projectRoot,
+    webOrigin: allowedWebOrigin,
+    orchestratorPort: startupConfig.port,
+    databasePath,
+    installedRelease: Boolean(process.env.APTILOOP_RELEASE_ROOT?.trim()),
+    ...(process.env.ORCHESTRATOR_BIND_MODE === undefined
+      ? {}
+      : { bindMode: process.env.ORCHESTRATOR_BIND_MODE }),
+  });
   registerPersonalAdaptationRoutes(app, state);
   registerCourseDesignerRoutes(app, state);
   registerInterviewV2Routes(app, state);

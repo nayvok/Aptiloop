@@ -40,8 +40,17 @@ export function validateM1WritableDatabasePath(
   input: Pick<DatabasePathInput, "projectRoot"> = {},
 ): M1DatabaseTargetValidation {
   const projectRoot = resolve(input.projectRoot ?? repositoryRoot);
+  const installed = process.env.APTILOOP_RELEASE_ROOT?.trim();
   const validation = assertM1WritableDatabaseTarget(databasePath, {
     projectRoot,
+    ...(installed
+      ? {
+          mode: "installed" as const,
+          installedDataDir:
+            process.env.APTILOOP_DATA_DIR?.trim() ??
+            resolve(databasePath, ".."),
+        }
+      : {}),
   });
   if (!validation) {
     throw new Error("Writable CLI database identity could not be established");

@@ -472,7 +472,7 @@ describe("Course foundation backfill graph admission", () => {
       const migrations = connection.sqlite
         .prepare("SELECT id FROM __dlh_migrations ORDER BY id")
         .all() as Array<{ id: string }>;
-      expect(migrations.at(-1)?.id).toBe("0020_adaptation_branch_lifecycle");
+      expect(migrations.at(-1)?.id).toBe("0021_learning_kernel_fact_schema_v2");
 
       expect(
         connection.sqlite

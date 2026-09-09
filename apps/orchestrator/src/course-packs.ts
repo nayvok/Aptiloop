@@ -20,6 +20,7 @@ import {
 import {
   ClientError,
   CoursePackStagedValidationResponseSchema,
+  type CoursePackStagedValidationReportDto,
   type CoursePackStagedValidationResponse,
 } from "@aptiloop/shared";
 import type { Hono } from "hono";
@@ -35,6 +36,14 @@ const MAX_STAGED_VALIDATIONS = 32;
 const MAX_STAGED_DIAGNOSTICS = 100;
 const MAX_STAGED_REPORT_BYTES = 64 * 1_024;
 const STAGING_REMOVAL_ATTEMPTS = 3;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/gu;
+const STRUCTURAL_IDENTIFIER_PATTERN = /[^A-Za-z0-9._:/@+-]/gu;
+const SECRET_PATH_SEGMENT_PATTERN =
+  /^(?:\.env(?:\..*)?|.*\.(?:pem|key|pfx|p12|kdbx)|credentials?|secrets?)$/iu;
+const SECRET_VALUE_PATTERN =
+  /\b(?:sk-|gh[opusr]_|xox[baprs]-)[A-Za-z0-9_-]{12,}\b/giu;
+const SECRET_ASSIGNMENT_PATTERN =
+  /(\b(?:api[_-]?key|authorization|bearer|credential|password|secret|token)\b\s*[:=]\s*)(["']?)[^\s"',;]+/giu;
 const validationIdSchema = z.string().uuid();
 const commitSchema = z
   .object({
@@ -52,7 +61,7 @@ const deleteCourseSchema = z
   .strict();
 
 interface StagedCoursePackBase {
-  readonly report: CoursePackValidationReport;
+  readonly report: CoursePackStagedValidationReportDto;
   readonly expiresAt: number;
   expiryTimer: ReturnType<typeof setTimeout> | null;
   readonly sourceKind: CoursePackSourceKind;
@@ -515,29 +524,102 @@ function touchValidation(
   staged.set(validationId, entry);
 }
 
-function boundedStagedReport(
+function sanitizeDiagnosticText(value: string): string {
+  return value
+    .replace(CONTROL_CHARACTER_PATTERN, "�")
+    .replace(SECRET_VALUE_PATTERN, "[REDACTED]")
+    .replace(SECRET_ASSIGNMENT_PATTERN, "$1$2[REDACTED]");
+}
+
+function sanitizeDiagnosticIdentifier(
+  value: string,
+  maxLength: number,
+): string {
+  const sanitized = sanitizeDiagnosticText(value).replace(
+    STRUCTURAL_IDENTIFIER_PATTERN,
+    "_",
+  );
+  return sanitized.slice(0, maxLength);
+}
+
+function sanitizeDiagnosticPath(value: string): string {
+  const sanitized = sanitizeDiagnosticText(value).replaceAll("\\", "/");
+  if (/^(?:[A-Za-z]:|\/\/)/u.test(sanitized)) return "[REDACTED_PATH]";
+  return sanitized
+    .split("/")
+    .map((segment) =>
+      segment === ".."
+        ? "[PARENT]"
+        : SECRET_PATH_SEGMENT_PATTERN.test(segment)
+          ? "[REDACTED]"
+          : segment,
+    )
+    .join("/")
+    .slice(0, 1_000);
+}
+
+function sanitizeDiagnosticContext(
+  context: CoursePackValidationReport["diagnostics"][number]["context"],
+): CoursePackValidationReport["diagnostics"][number]["context"] {
+  return context === null ||
+    context === "json-value" ||
+    context === "learner-markdown" ||
+    context === "educational-code" ||
+    context === "field-name"
+    ? context
+    : null;
+}
+
+export function boundedStagedReport(
   report: CoursePackValidationReport,
   maxDiagnostics: number,
   maxBytes: number,
-): CoursePackValidationReport {
+): CoursePackStagedValidationReportDto {
+  const diagnosticLimit = Math.min(
+    MAX_STAGED_DIAGNOSTICS,
+    Math.max(0, Math.floor(maxDiagnostics)),
+  );
   const diagnostics = report.diagnostics
-    .slice(0, Math.min(MAX_STAGED_DIAGNOSTICS, Math.max(0, maxDiagnostics)))
+    .slice(0, diagnosticLimit)
     .map((diagnostic) => ({
-      code: diagnostic.code.slice(0, 100),
+      code: sanitizeDiagnosticIdentifier(diagnostic.code, 100),
       severity: diagnostic.severity,
-      path: diagnostic.path.slice(0, 1_000),
-      entityId: diagnostic.entityId?.slice(0, 200) ?? null,
-      message: diagnostic.message.slice(0, 2_000),
-      ruleId: diagnostic.ruleId?.slice(0, 100) ?? null,
-      context: diagnostic.context,
+      path: sanitizeDiagnosticPath(diagnostic.path),
+      entityId:
+        diagnostic.entityId === null
+          ? null
+          : SECRET_PATH_SEGMENT_PATTERN.test(diagnostic.entityId)
+            ? "[REDACTED]"
+            : sanitizeDiagnosticIdentifier(diagnostic.entityId, 200),
+      message: sanitizeDiagnosticText(diagnostic.message).slice(0, 2_000),
+      ruleId:
+        diagnostic.ruleId === null
+          ? null
+          : sanitizeDiagnosticIdentifier(diagnostic.ruleId, 100),
+      context: sanitizeDiagnosticContext(diagnostic.context),
     }));
-  const bounded: CoursePackValidationReport = { ...report, diagnostics };
-  const byteLimit = Math.max(4_096, maxBytes);
+  let bounded: CoursePackStagedValidationReportDto = {
+    validatorVersion: report.validatorVersion,
+    valid: report.valid,
+    errors: report.errors,
+    warnings: report.warnings,
+    diagnostics,
+    limits: report.limits,
+    returnedDiagnostics: diagnostics.length,
+    diagnosticsTruncated: diagnostics.length < report.diagnostics.length,
+  };
+  const byteLimit = Math.max(4_096, Math.floor(maxBytes));
   while (
     bounded.diagnostics.length > 0 &&
     Buffer.byteLength(JSON.stringify(bounded), "utf8") > byteLimit
   ) {
     diagnostics.pop();
+    bounded = {
+      ...bounded,
+      diagnostics,
+      returnedDiagnostics: diagnostics.length,
+      diagnosticsTruncated: true,
+    };
   }
   if (Buffer.byteLength(JSON.stringify(bounded), "utf8") > byteLimit) {
     throw new ClientError(

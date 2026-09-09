@@ -1720,6 +1720,10 @@ export const learningKernelFacts = sqliteTable(
       table.occurredAt,
       table.id,
     ),
+    check(
+      "learning_kernel_facts_schema_version_check",
+      sql`${table.schemaVersion} in (1, 2)`,
+    ),
   ],
 );
 

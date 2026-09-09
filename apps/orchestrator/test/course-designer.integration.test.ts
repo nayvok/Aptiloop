@@ -16,6 +16,7 @@ import type {
   ProviderStatus,
   StreamAgentMessageInput,
 } from "@aptiloop/shared";
+import { CourseDesignerWorkflowSchema } from "@aptiloop/shared";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -267,29 +268,130 @@ async function startWorkflow(app: Hono, base: string): Promise<string> {
     request: workflowRequest,
   });
   expect(created.status).toBe(200);
-  const workflowId = (
-    (await created.json()) as { workflow: { id: string; state: string } }
-  ).workflow.id;
-  for (const [operationId, action, state] of [
-    ["workflow:submit", "submit-request", "DISCOVERY"],
-    ["workflow:discover", "complete-discovery", "DIAGNOSTIC"],
-    ["workflow:skip", "skip-diagnostic", "CURRICULUM_PROPOSAL"],
+  const createdBody = await created.json();
+  if (
+    !createdBody ||
+    typeof createdBody !== "object" ||
+    !("workflow" in createdBody)
+  ) {
+    throw new Error("Course Designer create response is missing workflow");
+  }
+  const workflowId = CourseDesignerWorkflowSchema.parse(
+    createdBody.workflow,
+  ).id;
+  for (const [operationId, action, state, extra] of [
+    ["workflow:submit", "submit-request", "DISCOVERY", {}],
+    ["workflow:discover", "complete-discovery", "DIAGNOSTIC", {}],
+    ["workflow:skip", "skip-diagnostic", "LEARNING_DESIGN", {}],
+    [
+      "workflow:learning-design",
+      "complete-learning-design",
+      "CURRICULUM_PROPOSAL",
+      {
+        learningDesign: {
+          targetCapability: "Explain and apply the requested concept",
+          observableEvidence: ["Explain a novel example"],
+          practice: ["Solve a bounded problem"],
+          feedback: ["Compare reasoning against criteria"],
+          instructionReview: ["Review the explanation and retry"],
+          assumptions: [],
+        },
+      },
+    ],
   ] as const) {
     const response = await post(
       app,
       `${base}/workflows/${encodeURIComponent(workflowId)}/advance`,
-      { operationId, action },
+      { operationId, action, ...extra },
     );
     expect(response.status).toBe(200);
-    expect(
-      ((await response.json()) as { workflow: { state: string } }).workflow
-        .state,
-    ).toBe(state);
+    const body = await response.json();
+    if (!body || typeof body !== "object" || !("workflow" in body)) {
+      throw new Error("Course Designer advance response is missing workflow");
+    }
+    expect(CourseDesignerWorkflowSchema.parse(body.workflow).state).toBe(state);
   }
+  const reloaded = await get(
+    app,
+    `${base}/workflows/${encodeURIComponent(workflowId)}`,
+  );
+  expect(reloaded.status).toBe(200);
+  const reloadedBody = await reloaded.json();
+  if (
+    !reloadedBody ||
+    typeof reloadedBody !== "object" ||
+    !("workflow" in reloadedBody)
+  ) {
+    throw new Error("Course Designer reload response is missing workflow");
+  }
+  const persistedWorkflow = CourseDesignerWorkflowSchema.parse(
+    reloadedBody.workflow,
+  );
+  expect(persistedWorkflow.state).toBe("CURRICULUM_PROPOSAL");
+  expect(persistedWorkflow.learningDesign).toEqual({
+    targetCapability: "Explain and apply the requested concept",
+    observableEvidence: ["Explain a novel example"],
+    practice: ["Solve a bounded problem"],
+    feedback: ["Compare reasoning against criteria"],
+    instructionReview: ["Review the explanation and retry"],
+    assumptions: [],
+  });
   return workflowId;
 }
 
 describe("Course Designer", () => {
+  it("rejects proposal generation before Learning Design is complete", async () => {
+    const runtime = await createRuntime();
+    const base = `/api/curriculum-editor/versions/${runtime.version.id}/designer`;
+    const created = await post(runtime.app, `${base}/workflows`, {
+      operationId: "workflow:early-proposal:create",
+      request: workflowRequest,
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json();
+    if (
+      !createdBody ||
+      typeof createdBody !== "object" ||
+      !("workflow" in createdBody)
+    ) {
+      throw new Error("Course Designer early create response is invalid");
+    }
+    const workflowId = CourseDesignerWorkflowSchema.parse(
+      createdBody.workflow,
+    ).id;
+
+    for (const [operationId, action] of [
+      ["workflow:early-proposal:submit", "submit-request"],
+      ["workflow:early-proposal:discover", "complete-discovery"],
+      ["workflow:early-proposal:skip", "skip-diagnostic"],
+    ] as const) {
+      const response = await post(
+        runtime.app,
+        `${base}/workflows/${encodeURIComponent(workflowId)}/advance`,
+        { operationId, action },
+      );
+      expect(response.status).toBe(200);
+    }
+
+    const response = await post(
+      runtime.app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/generate`,
+      { operationId: "proposal:early" },
+    );
+    const errorBody = await response.json();
+    if (
+      !errorBody ||
+      typeof errorBody !== "object" ||
+      !("error" in errorBody) ||
+      typeof errorBody.error !== "string"
+    ) {
+      throw new Error("Course Designer transition error response is invalid");
+    }
+    expect(errorBody.error).toContain(
+      "Generation requires CURRICULUM_PROPOSAL",
+    );
+  });
+
   it("cancels generation aborted during provider session creation without persisting a proposal", async () => {
     const runtime = await createRuntime();
     let releaseCreate!: () => void;
@@ -752,7 +854,7 @@ describe("Course Designer", () => {
       attribution: {
         providerType: "mock",
         modelId: "mock-designer",
-        promptTemplateVersion: "v1.2.0",
+        promptTemplateVersion: "v1.3.0",
         provenance: { sourceIds: ["source:1"] },
         validation: { valid: true },
       },
@@ -843,6 +945,7 @@ describe("Course Designer", () => {
         "request-submitted",
         "discovery-completed",
         "diagnostic-skipped",
+        "learning-design-completed",
         "proposal-generated",
         "proposal-confirmed",
         "proposal-compiled",

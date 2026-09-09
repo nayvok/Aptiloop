@@ -774,6 +774,7 @@ export const COURSE_AUTHORING_LIFECYCLE_STAGES = [
   "INITIAL_BRIEF",
   "DISCOVERY",
   "DIAGNOSTIC",
+  "LEARNING_DESIGN",
   "COURSE_PROPOSAL",
   "USER_REVIEW",
   "COMPILATION",
@@ -792,6 +793,7 @@ export const CourseDesignerWorkflowStateSchema = z.enum([
   "DRAFT_REQUEST",
   "DISCOVERY",
   "DIAGNOSTIC",
+  "LEARNING_DESIGN",
   "CURRICULUM_PROPOSAL",
   "USER_REVIEW",
   "COMPILATION",
@@ -807,6 +809,7 @@ export const COURSE_DESIGNER_LIFECYCLE_STAGES_BY_STATE = {
   DRAFT_REQUEST: ["INITIAL_BRIEF"],
   DISCOVERY: ["DISCOVERY"],
   DIAGNOSTIC: ["DIAGNOSTIC"],
+  LEARNING_DESIGN: ["LEARNING_DESIGN"],
   CURRICULUM_PROPOSAL: ["COURSE_PROPOSAL"],
   USER_REVIEW: ["USER_REVIEW"],
   COMPILATION: ["COMPILATION"],
@@ -816,6 +819,20 @@ export const COURSE_DESIGNER_LIFECYCLE_STAGES_BY_STATE = {
 } as const satisfies Record<
   CourseDesignerWorkflowState,
   readonly CourseAuthoringLifecycleStage[]
+>;
+
+export const CourseDesignerLearningDesignSchema = z
+  .object({
+    targetCapability: TextSchema,
+    observableEvidence: z.array(TextSchema).min(1).max(100),
+    practice: z.array(TextSchema).min(1).max(100),
+    feedback: z.array(TextSchema).min(1).max(100),
+    instructionReview: z.array(TextSchema).min(1).max(100),
+    assumptions: z.array(TextSchema).max(100).default([]),
+  })
+  .strict();
+export type CourseDesignerLearningDesign = z.infer<
+  typeof CourseDesignerLearningDesignSchema
 >;
 
 export const CourseDesignerSourceSchema = z
@@ -867,6 +884,7 @@ export const CourseDesignerWorkflowSchema = z
     ]).nullable(),
     request: CourseDesignerRequestSchema,
     diagnostic: CourseDesignerDiagnosticSchema,
+    learningDesign: CourseDesignerLearningDesignSchema.nullable().default(null),
     revisionRequests: z.array(TextSchema).max(50),
     activeProposalId: IdSchema.nullable(),
     authoringOperationId: IdSchema,
@@ -907,7 +925,6 @@ export const CourseDesignerPendingDisclosureSchema = z
 export type CourseDesignerPendingDisclosure = z.infer<
   typeof CourseDesignerPendingDisclosureSchema
 >;
-
 export const CourseDesignerPendingDisclosureResponseSchema = z
   .object({
     pendingDisclosure: CourseDesignerPendingDisclosureSchema.nullable(),

@@ -123,6 +123,18 @@ describe("portable Course authoring instruction", () => {
     expect(contents).toContain("preserve the last failed draft");
     expect(contents).toContain("/courses/import");
   });
+  it("pins the downloaded skill content version and Learning Design lifecycle", () => {
+    const contents = instruction();
+
+    expect(contents).toContain("skillContentVersion: 1.3.0");
+    expect(contents).toContain("- Skill content version: **1.3.0**");
+    expect(contents).toContain(
+      "4. **Learning Design.** Before the Course Proposal",
+    );
+    expect(contents.indexOf("**Learning Design.**")).toBeLessThan(
+      contents.indexOf("**Course Proposal.**"),
+    );
+  });
 
   it("uses only the allowlisted references pinned to the injected repository revision", () => {
     const contents = instruction();

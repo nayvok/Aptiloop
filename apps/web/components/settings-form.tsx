@@ -50,6 +50,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SettingsRuntimePanel } from "@/components/settings-runtime";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type ThemePreference = "system" | "light" | "dark";
@@ -1381,7 +1382,21 @@ export function SettingsForm() {
         </section>
       </TabsContent>
 
-      <TabsContent value="advanced">
+      <TabsContent value="advanced" className="flex min-w-0 flex-col gap-10">
+        <section
+          aria-labelledby="settings-runtime-title"
+          className={sectionClass}
+        >
+          <div className="min-w-0">
+            <h2 id="settings-runtime-title" className={sectionHeadingClass}>
+              {t("settings.runtime.title")}
+            </h2>
+            <p className={sectionDescriptionClass}>
+              {t("settings.runtime.description")}
+            </p>
+          </div>
+          <SettingsRuntimePanel />
+        </section>
         <section
           aria-labelledby="settings-local-title"
           className={sectionClass}

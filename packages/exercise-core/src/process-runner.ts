@@ -17,6 +17,8 @@ export interface AllowedProcessDefinition {
 export interface RunAllowedProcessOptions {
   readonly cwd: string;
   readonly signal?: AbortSignal;
+  /** Optional bounded stdin for commands such as `git apply`. */
+  readonly input?: string | Uint8Array;
 }
 
 export type ProcessTerminationReason =
@@ -244,8 +246,13 @@ export class AllowedProcessRunner {
           detached: this.#platform !== "win32",
           shell: false,
           windowsHide: true,
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: [
+            options.input === undefined ? "ignore" : "pipe",
+            "pipe",
+            "pipe",
+          ],
         });
+        if (options.input !== undefined) child.stdin?.end(options.input);
       } catch (error) {
         terminationReason = "spawn_error";
         stderr = Buffer.from(

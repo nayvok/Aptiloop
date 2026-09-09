@@ -1,4 +1,6 @@
+export * from "./activity-contract.js";
 export * from "./activity-graph.js";
+export * from "./canonical-hash.js";
 export * from "./daily-steps.js";
 export * from "./day-summary.js";
 export * from "./flashcard-export.js";

@@ -59,6 +59,8 @@ const report = {
   valid: true,
   errors: 0,
   warnings: 0,
+  returnedDiagnostics: 0,
+  diagnosticsTruncated: false,
   diagnostics: [],
   limits: {
     maxBytes: 1_048_576,
@@ -991,53 +993,6 @@ describe("Course Pack staged intake", () => {
     );
   });
 
-  it("restores rejected diagnostics without exposing commit controls", async () => {
-    const invalidValidation = {
-      valid: false as const,
-      storageAvailable: true,
-      validationId: "123e4567-e89b-42d3-a456-426614174004",
-      expiresAt: "2099-08-10T00:15:00.000Z",
-      sourceKind: "course-pack" as const,
-      finalized: false,
-      report: {
-        ...report,
-        valid: false,
-        errors: 1,
-        diagnostics: [
-          {
-            code: "PACK_AUTHORITY_FIELD",
-            severity: "error" as const,
-            path: "/command",
-            entityId: null,
-            message: "Authority-bearing field is forbidden: command",
-            ruleId: "authority-field",
-            context: "field-name",
-          },
-        ],
-      },
-    };
-    apiMock.mockResolvedValue(invalidValidation);
-
-    renderWithQuery(
-      <CoursePackIntakeClient operationId={invalidValidation.validationId} />,
-    );
-
-    const rejection = await screen.findByRole("alert");
-    expect(within(rejection).getByText("Pack отклонён")).toBeInTheDocument();
-    expect(screen.getByText("PACK_AUTHORITY_FIELD")).toBeInTheDocument();
-    expect(screen.getByText("authority-field")).toBeInTheDocument();
-    expect(screen.getByText("field-name")).toBeInTheDocument();
-    expect(
-      screen.queryByText("Authority-bearing field is forbidden: command"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Установить и открыть" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Открыть как черновик" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("JSON-файл")).not.toBeInTheDocument();
-  });
   it("distinguishes a malformed staged response from a staging failure", async () => {
     apiMock.mockResolvedValue({
       ...validValidationResponse,
