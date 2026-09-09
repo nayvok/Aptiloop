@@ -1,0 +1,30 @@
+{
+  "name": "@aptiloop/os-service",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./service": {
+      "types": "./src/service.ts",
+      "import": "./src/service.ts"
+    },
+    "./shortcuts": {
+      "types": "./src/shortcuts.ts",
+      "import": "./src/shortcuts.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "lint": "eslint src test --max-warnings=0",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1"
+  }
+}

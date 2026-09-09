@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 
+const DEFAULT_WEB_PORT = 10101;
+const DEFAULT_ORCHESTRATOR_PORT = 8787;
 const PRODUCTION_ENVIRONMENT_ALLOWLIST = [
   "APPDATA",
   "COMSPEC",
@@ -39,10 +41,24 @@ export function createProductionServicePlans(
   sourceEnvironment = process.env,
   platform = process.platform,
 ) {
+  const webPort = resolveServicePort(
+    sourceEnvironment,
+    "APTILOOP_PORT",
+    DEFAULT_WEB_PORT,
+  );
+  const orchestratorPort = resolveServicePort(
+    sourceEnvironment,
+    "APTILOOP_ORCHESTRATOR_PORT",
+    DEFAULT_ORCHESTRATOR_PORT,
+  );
+  const releaseRoot = sourceEnvironment.APTILOOP_RELEASE_ROOT?.trim();
+  const dataDir = resolveRuntimeDataDir(projectRoot, sourceEnvironment);
   const environment = createProductionEnvironment(
     projectRoot,
+    dataDir,
     sourceEnvironment,
     platform,
+    { webPort, orchestratorPort },
   );
   const orchestratorEnvironment =
     platform === "win32"
@@ -61,52 +77,79 @@ export function createProductionServicePlans(
     windowsHide: true,
     detached: platform !== "win32",
   };
-
+  const orchestratorRoot = releaseRoot
+    ? path.resolve(releaseRoot)
+    : projectRoot;
+  const webRoot = releaseRoot
+    ? path.join(
+        orchestratorRoot,
+        "apps",
+        "web",
+        ".next",
+        "standalone",
+        "apps",
+        "web",
+      )
+    : path.join(projectRoot, "apps", "web");
+  const orchestratorEntry = path.join(
+    orchestratorRoot,
+    "apps",
+    "orchestrator",
+    "dist",
+    "server.js",
+  );
+  const webEntry = releaseRoot
+    ? path.join(webRoot, "server.js")
+    : path.join(projectRoot, "node_modules", "next", "dist", "bin", "next");
   return [
     {
       name: "orchestrator",
-      entry: path.join(
-        projectRoot,
-        "apps",
-        "orchestrator",
-        "dist",
-        "server.js",
-      ),
+      entry: orchestratorEntry,
       args: [],
       options: {
         ...common,
-        cwd: projectRoot,
+        cwd: orchestratorRoot,
         env: {
           ...orchestratorEnvironment,
           HOST: "127.0.0.1",
           HOSTNAME: "127.0.0.1",
-          PORT: "8787",
+          PORT: String(orchestratorPort),
         },
       },
     },
     {
       name: "web",
-      entry: path.join(
-        projectRoot,
-        "node_modules",
-        "next",
-        "dist",
-        "bin",
-        "next",
-      ),
-      args: ["start", "--hostname", "127.0.0.1"],
+      entry: webEntry,
+      args: releaseRoot ? [] : ["start", "--hostname", "127.0.0.1"],
       options: {
         ...common,
-        cwd: path.join(projectRoot, "apps", "web"),
+        cwd: webRoot,
         env: {
           ...environment,
           HOST: "127.0.0.1",
           HOSTNAME: "127.0.0.1",
-          PORT: "3000",
+          PORT: String(webPort),
         },
       },
     },
   ];
+}
+
+function resolveRuntimeDataDir(projectRoot, sourceEnvironment) {
+  const configured = sourceEnvironment.APTILOOP_DATA_DIR?.trim();
+  if (configured === undefined || configured === "") {
+    if (sourceEnvironment.APTILOOP_RELEASE_ROOT?.trim())
+      throw new Error(
+        "APTILOOP_DATA_DIR is required for an installed runtime.",
+      );
+    return path.join(projectRoot, ".data");
+  }
+  if (
+    configured.includes("\0") ||
+    [...configured].some((char) => char.charCodeAt(0) < 0x20)
+  )
+    throw new Error("APTILOOP_DATA_DIR contains unsafe control characters.");
+  return path.resolve(configured);
 }
 
 export function createProductionBuildPlan(
@@ -114,6 +157,7 @@ export function createProductionBuildPlan(
   sourceEnvironment = process.env,
   platform = process.platform,
 ) {
+  const dataDir = resolveRuntimeDataDir(projectRoot, sourceEnvironment);
   return {
     entry: path.join(projectRoot, "node_modules", "turbo", "bin", "turbo"),
     args: ["run", "build"],
@@ -121,6 +165,7 @@ export function createProductionBuildPlan(
       cwd: projectRoot,
       env: createProductionEnvironment(
         projectRoot,
+        dataDir,
         sourceEnvironment,
         platform,
       ),
@@ -131,32 +176,55 @@ export function createProductionBuildPlan(
   };
 }
 
-function createProductionEnvironment(projectRoot, sourceEnvironment, platform) {
+function createProductionEnvironment(
+  projectRoot,
+  dataDir,
+  sourceEnvironment,
+  platform,
+  ports = {},
+) {
+  const webPort = ports.webPort ?? DEFAULT_WEB_PORT;
+  const orchestratorPort = ports.orchestratorPort ?? DEFAULT_ORCHESTRATOR_PORT;
+  const releaseRoot = sourceEnvironment.APTILOOP_RELEASE_ROOT?.trim();
+  const immutableRoot = releaseRoot ? path.resolve(releaseRoot) : projectRoot;
   return {
     ...copyAllowedProductionEnvironment(sourceEnvironment, platform),
     NODE_ENV: "production",
     ORCHESTRATOR_BIND_MODE: "direct",
-    ORCHESTRATOR_URL: "http://127.0.0.1:8787",
-    WEB_ORIGIN: "http://127.0.0.1:3000",
-    DATABASE_PATH: path.join(
-      projectRoot,
-      ".data",
-      "dev-learning-harness.sqlite",
-    ),
-    DATABASE_URL: path.join(
-      projectRoot,
-      ".data",
-      "dev-learning-harness.sqlite",
-    ),
-    WORKSPACE_ROOT: path.join(projectRoot, "workspaces", "exercises"),
-    EXERCISE_ATTEMPTS_ROOT: path.join(
-      projectRoot,
-      ".data",
-      "exercise-attempts",
-    ),
+    ORCHESTRATOR_URL: `http://127.0.0.1:${orchestratorPort}`,
+    WEB_ORIGIN: `http://127.0.0.1:${webPort}`,
+    DATABASE_PATH: path.join(dataDir, "dev-learning-harness.sqlite"),
+    DATABASE_URL: path.join(dataDir, "dev-learning-harness.sqlite"),
+    APPROVED_BACKUPS_ROOT: path.join(dataDir, "approved-backups"),
+    EXERCISE_ATTEMPTS_ROOT: path.join(dataDir, "exercise-attempts"),
+    RUNTIME_STATE_DIR: path.join(dataDir, "runtime-state"),
+    UPDATES_DIR: path.join(dataDir, "runtime-state", "updates"),
+    LOG_DIR: path.join(dataDir, "runtime-state", "logs"),
+    WORKSPACE_ROOT: path.join(immutableRoot, "workspaces", "exercises"),
+    APTILOOP_DATA_DIR: dataDir,
+    ...(releaseRoot ? { APTILOOP_RELEASE_ROOT: immutableRoot } : {}),
     ZED_EXECUTABLE: "zed",
     NEXT_DIST_DIR: ".next",
   };
+}
+
+export function resolveServicePort(
+  sourceEnvironment,
+  variableName,
+  defaultPort,
+) {
+  const raw = sourceEnvironment?.[variableName];
+  if (raw === undefined || raw === null || String(raw).trim() === "")
+    return defaultPort;
+  const port = Number(String(raw).trim());
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${variableName} must be an integer TCP port 1-65535`);
+  }
+  return port;
+}
+
+export function defaultServicePorts() {
+  return { web: DEFAULT_WEB_PORT, orchestrator: DEFAULT_ORCHESTRATOR_PORT };
 }
 
 function copyAllowedProductionEnvironment(sourceEnvironment, platform) {
@@ -306,6 +374,14 @@ export function launchProcessGroup(
     setExitCode(exitCode);
   };
 
+  const waitForExit = async (timeoutMs = 2_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (exitedChildren.size < children.length && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return exitedChildren.size === children.length;
+  };
+
   for (const plan of plans) {
     const child = spawnProcess(
       nodeExecutable,
@@ -331,7 +407,7 @@ export function launchProcessGroup(
     });
   }
 
-  return { children, stop };
+  return { children, stop, waitForExit };
 }
 
 function safelyKillServiceProcess(child, logger) {

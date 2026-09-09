@@ -1,0 +1,38 @@
+{
+  "name": "aptiloop",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Local-first Aptiloop launcher: init, start, service, courses, and updates. Thin CLI wrapper; domain logic stays in the orchestrator.",
+  "bin": {
+    "aptiloop": "./dist/bootstrap.cjs"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nayvok/Aptiloop.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "lint": "eslint src test --max-warnings=0",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "node ./dist/postinstall.cjs"
+  },
+  "devDependencies": {
+    "@aptiloop/os-service": "0.1.0",
+    "@aptiloop/update-core": "0.1.0",
+    "tsup": "^8.5.1"
+  }
+}

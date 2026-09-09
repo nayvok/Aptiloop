@@ -56,7 +56,7 @@ test("builds fixed production plans from hostile ambient configuration", () => {
     assert.equal(plan.options.env.NODE_ENV, "production");
     assert.equal(plan.options.env.HOST, "127.0.0.1");
     assert.equal(plan.options.env.HOSTNAME, "127.0.0.1");
-    assert.equal(plan.options.env.WEB_ORIGIN, "http://127.0.0.1:3000");
+    assert.equal(plan.options.env.WEB_ORIGIN, "http://127.0.0.1:10101");
     assert.equal(plan.options.env.ORCHESTRATOR_URL, "http://127.0.0.1:8787");
     assert.equal(plan.options.env.ORCHESTRATOR_BIND_MODE, "direct");
     assert.equal(
@@ -97,8 +97,57 @@ test("builds fixed production plans from hostile ambient configuration", () => {
   assert.equal(plans[0].options.env.PORT, "8787");
   assert.equal(plans[0].options.cwd, projectRoot);
   assert.deepEqual(plans[1].args, ["start", "--hostname", "127.0.0.1"]);
-  assert.equal(plans[1].options.env.PORT, "3000");
+  assert.equal(plans[1].options.env.PORT, "10101");
   assert.equal(plans[1].options.cwd, path.join(projectRoot, "apps", "web"));
+});
+
+test("uses immutable installed assets and validated data rendezvous", () => {
+  const releaseRoot = path.resolve("C:/aptiloop-runtime/releases/0.3.0");
+  const dataDir = path.resolve("C:/Users/test/AppData/Local/Aptiloop");
+  const plans = createProductionServicePlans(
+    releaseRoot,
+    {
+      APTILOOP_RELEASE_ROOT: releaseRoot,
+      APTILOOP_DATA_DIR: dataDir,
+      APTILOOP_PORT: "10102",
+      APTILOOP_ORCHESTRATOR_PORT: "8788",
+    },
+    "win32",
+  );
+  assert.equal(
+    plans[0].entry,
+    path.join(releaseRoot, "apps", "orchestrator", "dist", "server.js"),
+  );
+  assert.equal(
+    plans[1].entry,
+    path.join(
+      releaseRoot,
+      "apps",
+      "web",
+      ".next",
+      "standalone",
+      "apps",
+      "web",
+      "server.js",
+    ),
+  );
+  assert.equal(
+    plans[1].options.cwd,
+    path.join(releaseRoot, "apps", "web", ".next", "standalone", "apps", "web"),
+  );
+  assert.equal(
+    plans[0].options.env.DATABASE_PATH,
+    path.join(dataDir, "dev-learning-harness.sqlite"),
+  );
+  assert.equal(
+    plans[0].options.env.EXERCISE_ATTEMPTS_ROOT,
+    path.join(dataDir, "exercise-attempts"),
+  );
+  assert.equal(
+    plans[0].options.env.WORKSPACE_ROOT,
+    path.join(releaseRoot, "workspaces", "exercises"),
+  );
+  assert.deepEqual(plans[1].args, []);
 });
 
 test("preserves case-sensitive Unix runtime variables without widening the allowlist", () => {
