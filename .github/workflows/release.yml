@@ -1,0 +1,294 @@
+name: Draft runtime release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Draft tag to build (no release is published)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: draft-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NPM_VERSION: "11.12.1"
+
+jobs:
+  validate:
+    name: Validate release gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - name: Check out immutable release tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Use repository npm version
+        shell: bash
+        run: npm install --global npm@$NPM_VERSION
+      - name: Install without lifecycle scripts
+        shell: bash
+        env:
+          NPM_CONFIG_IGNORE_SCRIPTS: true
+        run: npm ci --ignore-scripts
+      - name: Validate tag, package version, and repository gates
+        id: release
+        shell: bash
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+          PUSH_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="$DISPATCH_TAG"
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "dispatch tag must match vX.Y.Z" >&2; exit 1; }
+            git show-ref --verify --quiet "refs/tags/$tag" || { echo "requested tag is not present" >&2; exit 1; }
+          else
+            tag="$PUSH_TAG"
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "push ref must be a vX.Y.Z tag" >&2; exit 1; }
+          fi
+          version="${tag#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          [[ "$package_version" == "$version" ]] || { echo "tag $version disagrees with package.json $package_version" >&2; exit 1; }
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm run test:fast
+          npm run test:e2e
+          npm run build
+          npm run check:production-content
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "commit=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+  npm-package:
+    name: Package CLI and SBOMs
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out immutable release tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: refs/tags/${{ needs.validate.outputs.tag }}
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Use repository npm version
+        shell: bash
+        run: npm install --global npm@$NPM_VERSION
+      - name: Install without lifecycle scripts
+        shell: bash
+        env:
+          NPM_CONFIG_IGNORE_SCRIPTS: true
+        run: npm ci --ignore-scripts
+      - name: Build production artifacts
+        shell: bash
+        run: npm run build
+      - name: Create one npm tarball and real SBOMs
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          rm -rf release-artifacts/npm
+          mkdir -p release-artifacts/npm
+          npm pack ./packages/cli --pack-destination release-artifacts/npm
+          npm run sbom -- --output release-artifacts/npm/SBOM.cdx.json
+          npm run sbom:spdx -- --output release-artifacts/npm/SBOM.spdx.json
+          cp NOTICE release-artifacts/npm/NOTICE
+          cp THIRD_PARTY_NOTICES.md release-artifacts/npm/THIRD_PARTY_NOTICES.md
+          test "$(find release-artifacts/npm -maxdepth 1 -name 'aptiloop-*.tgz' -type f | wc -l)" -eq 1
+          test -s release-artifacts/npm/SBOM.cdx.json
+          test -s release-artifacts/npm/SBOM.spdx.json
+          test -s release-artifacts/npm/NOTICE
+          test -s release-artifacts/npm/THIRD_PARTY_NOTICES.md
+      - name: Upload npm package handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aptiloop-npm-${{ needs.validate.outputs.commit }}
+          path: release-artifacts/npm
+          if-no-files-found: error
+          retention-days: 14
+
+  bundle:
+    name: Bundle ${{ matrix.target }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-14
+          - target: win32-x64
+            runner: windows-latest
+    steps:
+      - name: Check out immutable release tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: refs/tags/${{ needs.validate.outputs.tag }}
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Use repository npm version
+        shell: bash
+        run: npm install --global npm@$NPM_VERSION
+      - name: Install without lifecycle scripts
+        shell: bash
+        env:
+          NPM_CONFIG_IGNORE_SCRIPTS: true
+        run: npm ci --ignore-scripts
+      - name: Verify native runner matches runtime target
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            linux-x64) expected_platform=linux; expected_arch=x64 ;;
+            linux-arm64) expected_platform=linux; expected_arch=arm64 ;;
+            darwin-x64) expected_platform=darwin; expected_arch=x64 ;;
+            darwin-arm64) expected_platform=darwin; expected_arch=arm64 ;;
+            win32-x64) expected_platform=win32; expected_arch=x64 ;;
+            *) echo "unsupported runtime target: $TARGET" >&2; exit 1 ;;
+          esac
+          actual_platform="$(node -p 'process.platform')"
+          actual_arch="$(node -p 'process.arch')"
+          [[ "$actual_platform" == "$expected_platform" ]] || {
+            echo "runner platform $actual_platform does not match target $expected_platform" >&2
+            exit 1
+          }
+          [[ "$actual_arch" == "$expected_arch" ]] || {
+            echo "runner architecture $actual_arch does not match target $expected_arch" >&2
+            exit 1
+          }
+      - name: Build production artifacts
+        shell: bash
+        run: npm run build
+      - name: Build runtime bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "release-artifacts/${{ matrix.target }}"
+          mkdir -p "release-artifacts/${{ matrix.target }}"
+          npm run release:bundle -- --version "${{ needs.validate.outputs.version }}" --platform "${{ matrix.target }}" --out "release-artifacts/${{ matrix.target }}"
+          test "$(find "release-artifacts/${{ matrix.target }}" -maxdepth 1 -name 'aptiloop-runtime-*' -type f | wc -l)" -eq 1
+      - name: Upload runtime asset handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aptiloop-runtime-${{ matrix.target }}-${{ needs.validate.outputs.commit }}
+          path: release-artifacts/${{ matrix.target }}/aptiloop-runtime-*
+          if-no-files-found: error
+          retention-days: 14
+
+  draft-summary:
+    name: Draft release handoff
+    needs: [validate, npm-package, bundle]
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    timeout-minutes: 15
+    steps:
+      - name: Stop if a required build failed
+        if: ${{ needs.validate.result != 'success' || needs.npm-package.result != 'success' || needs.bundle.result != 'success' }}
+        shell: bash
+        run: |
+          echo "A required release gate failed; no release was published." >&2
+          exit 1
+      - name: Download one npm package and all five runtime assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: aptiloop-runtime-*-${{ needs.validate.outputs.commit }}
+          path: release-handoff/runtimes
+          merge-multiple: true
+      - name: Download npm package and SBOM handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: aptiloop-npm-${{ needs.validate.outputs.commit }}
+          path: release-handoff/npm
+      - name: Generate one coherent digest handoff
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mapfile -t runtime_assets < <(find release-handoff/runtimes -maxdepth 1 -type f -name 'aptiloop-runtime-*' -print | sort)
+          mapfile -t npm_assets < <(find release-handoff/npm -maxdepth 1 -type f -name 'aptiloop-*.tgz' -print | sort)
+          [[ "${#runtime_assets[@]}" -eq 5 ]] || { echo "Expected five runtime assets, got ${#runtime_assets[@]}" >&2; exit 1; }
+          [[ "${#npm_assets[@]}" -eq 1 ]] || { echo "Expected one npm tarball, got ${#npm_assets[@]}" >&2; exit 1; }
+          : > release-handoff/SHA256SUMS
+          : > release-handoff/DIGEST
+          for asset in "${runtime_assets[@]}" "${npm_assets[@]}"; do
+            name="$(basename "$asset")"
+            sha256sum "$asset" | sed "s#  .*#  $name#" >> release-handoff/SHA256SUMS
+            sha256sum "$asset" | awk -v name="$name" '{print "sha256:" $1 "  " name}' >> release-handoff/DIGEST
+          done
+          cp release-handoff/npm/SBOM.cdx.json release-handoff/SBOM.cdx.json
+          cp release-handoff/npm/SBOM.spdx.json release-handoff/SBOM.spdx.json
+          cp release-handoff/npm/NOTICE release-handoff/NOTICE
+          cp release-handoff/npm/THIRD_PARTY_NOTICES.md release-handoff/THIRD_PARTY_NOTICES.md
+          test "$(wc -l < release-handoff/SHA256SUMS)" -eq 6
+          test "$(wc -l < release-handoff/DIGEST)" -eq 6
+          test -s release-handoff/SBOM.cdx.json
+          test -s release-handoff/SBOM.spdx.json
+          test -s release-handoff/NOTICE
+          test -s release-handoff/THIRD_PARTY_NOTICES.md
+      - name: Upload draft-only release handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aptiloop-release-handoff-${{ needs.validate.outputs.tag }}-${{ needs.validate.outputs.commit }}
+          path: |
+            release-handoff/runtimes/aptiloop-runtime-*
+            release-handoff/npm/aptiloop-*.tgz
+            release-handoff/SHA256SUMS
+            release-handoff/DIGEST
+            release-handoff/SBOM.cdx.json
+            release-handoff/SBOM.spdx.json
+            release-handoff/NOTICE
+            release-handoff/THIRD_PARTY_NOTICES.md
+          if-no-files-found: error
+          retention-days: 14
+      - name: Report draft-only policy
+        shell: bash
+        run: |
+          echo "Runtime assets, one npm tarball, combined SHA256SUMS/DIGEST, SBOMs, and notices are available as workflow artifacts."
+          echo "Create or publish a GitHub Release manually after review; this workflow never publishes automatically."

@@ -302,6 +302,65 @@ const enUS = {
   "settings.localDevelopment": "Local development",
   "settings.models": "{count} models",
   "settings.developerDiagnostics": "Developer diagnostics",
+  "settings.runtime.title": "Runtime & updates",
+  "settings.runtime.description":
+    "Local ports, data location, autostart, shortcuts, and updates. Ports are read-only here; change them with CLI flags or environment before start.",
+  "settings.runtime.webOrigin": "Web UI origin",
+  "settings.runtime.orchestratorPort": "Orchestrator port",
+  "settings.runtime.dataDir": "Data directory",
+  "settings.runtime.profile": "Deployment profile",
+  "settings.runtime.channel": "Update channel",
+  "settings.runtime.appVersion": "App version",
+  "settings.runtime.validator": "Pack validator",
+  "settings.runtime.migrationHead": "Migration ledger head",
+  "settings.runtime.cliHint":
+    "CLI: aptiloop status, aptiloop start --port N --orch-port M. Environment: APTILOOP_PORT, APTILOOP_ORCHESTRATOR_PORT, APTILOOP_DATA_DIR.",
+  "settings.runtime.autostart": "Autostart at login",
+  "settings.runtime.autostartOn": "Enable autostart",
+  "settings.runtime.autostartOff": "Disable autostart",
+  "settings.runtime.shortcuts": "Desktop shortcuts",
+  "settings.runtime.shortcutsHint":
+    "Shortcuts open the web UI (target: aptiloop open).",
+  "settings.runtime.shortcutsInstall": "Install shortcuts",
+  "settings.runtime.shortcutsRemove": "Remove shortcuts",
+  "settings.runtime.update": "Application updates",
+  "settings.runtime.checkUpdates": "Check for updates",
+  "settings.runtime.checking": "Checking…",
+  "settings.runtime.applying": "Applying update…",
+  "settings.runtime.applyUpdate": "Apply update",
+  "settings.runtime.upToDate": "Aptiloop {version} is up to date.",
+  "settings.runtime.updateAvailable":
+    "Update available: {current} → {version}.",
+  "settings.runtime.updateApplyHint":
+    "The update downloads a verified runtime, creates an approved backup, migrates a candidate copy, checks health, then switches atomically.",
+  "settings.runtime.releaseMetadata": "Release {tag}, published {publishedAt}.",
+  "settings.runtime.unknown": "unknown",
+  "settings.runtime.migrationWarning":
+    "Applying may migrate local data and restart Aptiloop. An approved backup is created first; do not close the process while it runs.",
+  "settings.runtime.updatePhase": "Update phase: {phase}.",
+  "settings.runtime.phase.queued": "queued",
+  "settings.runtime.phase.backup": "backup",
+  "settings.runtime.phase.candidate": "candidate",
+  "settings.runtime.phase.migration": "migration",
+  "settings.runtime.phase.health": "health check",
+  "settings.runtime.phase.pointer": "switching runtime",
+  "settings.runtime.phase.restart": "restarting",
+  "settings.runtime.phase.rollback": "rolling back",
+  "settings.runtime.updateSucceeded": "Aptiloop updated to {version}.",
+  "settings.runtime.updateFailed":
+    "Update failed and rollback was attempted: {message}",
+  "settings.runtime.updateFailedGeneric":
+    "The update failed and no safe operation detail was available.",
+  "settings.runtime.updateTimeout":
+    "The update did not finish within the allowed time. Nothing else was applied.",
+  "settings.runtime.updateNetworkError":
+    "The update status could not be verified. Nothing else was applied.",
+  "settings.runtime.notChecked":
+    "Update status is not-checked: GitHub Releases is unreachable. Reconnect and retry; nothing was changed.",
+  "settings.runtime.tray":
+    "System tray is not in this release (later). The autostart service above keeps Aptiloop running with the terminal closed.",
+  "settings.runtime.refresh": "Refresh",
+  "settings.runtime.actionError": "Runtime action failed. Try again.",
   "settings.saved": "Interface language saved in this browser",
   "settings.saveError": "Could not save settings",
   "settings.localOnly":
@@ -358,6 +417,17 @@ const enUS = {
     "Correct or remove the unavailable Course requirement.",
   "courses.validation.diagnostic.generic":
     "This Course Pack field did not pass validation.",
+  "courses.validation.report.summary":
+    "{errors} errors · {warnings} warnings · showing {returned} of {total} diagnostics",
+  "courses.validation.report.truncated":
+    "The server returned a bounded subset. The complete available report is shown below; additional diagnostics were not returned.",
+  "courses.validation.report.copy": "Copy report",
+  "courses.validation.report.copied": "Report copied",
+  "courses.validation.report.download": "Download report",
+  "courses.validation.report.downloaded": "Report downloaded",
+  "courses.validation.report.copyError": "Could not copy the report.",
+  "courses.validation.report.invalid":
+    "The validation report could not be displayed safely.",
   "failure.operation.studioLoad": "Curriculum Studio could not be loaded.",
   "failure.operation.studioAction":
     "The Studio action did not complete. Try again.",
@@ -899,6 +969,10 @@ const enUS = {
   "courses.preview.finalizedDraft.title": "Authoring draft finalized locally",
   "courses.preview.finalizedDraft.description":
     "Aptiloop derived runtime requirements, canonicalized the document, and computed its immutable content hash before validation. Review this finalized Preview before committing it.",
+  "courses.preview.skillVersionMismatch.title":
+    "Authoring skill version mismatch",
+  "courses.preview.skillVersionMismatch.description":
+    "This Pack was authored with skill content version {receivedVersion}; the current Aptiloop skill is {expectedVersion}. Re-download the current skill and regenerate before committing.",
   "courses.validation.expired.badge": "Validation expired",
   "courses.validation.expired.title": "Validation expired",
   "courses.validation.expired.description":
@@ -951,6 +1025,43 @@ const enUS = {
   "courses.action.previewRevision": "Preview revision",
   "courses.action.makeCurrent": "Make current",
   "courses.action.export": "Export",
+  "courses.action.transfer": "Transfer with progress",
+  "courses.transfer.title": "Transfer courses with progress",
+  "courses.transfer.description":
+    "Download a transfer envelope (up to 64 MiB, 32 courses) with canonical packs and replayable learner history. Credentials, paths, and provider state are never included.",
+  "courses.transfer.selectCourses": "Courses to transfer",
+  "courses.transfer.includeHistory":
+    "Include learner history (facts, sessions, review projections)",
+  "courses.transfer.scopeNote": "Scope note (named destination and scope)",
+  "courses.transfer.scopeNotePlaceholder": "e.g. Move to the new laptop",
+  "courses.transfer.composition": "{courses} courses · {revisions} revisions",
+  "courses.transfer.download": "Download transfer file",
+  "courses.transfer.downloading": "Preparing…",
+  "courses.transfer.unavailable":
+    "Transfer is unavailable on this build (course-transfer routes not present). Share a pack instead, or update Aptiloop.",
+  "courses.transfer.validationFailed":
+    "The transfer file could not be validated. Nothing was imported.",
+  "courses.transfer.preview.courses": "Courses in this transfer",
+  "courses.transfer.preview.facts": "Learner facts: {count}",
+  "courses.transfer.preview.sessions": "Sessions: {count}",
+  "courses.transfer.preview.skippedSessions":
+    "Skipped oversized sessions: {count}",
+  "courses.transfer.preview.excluded": "Never transferred",
+  "courses.transfer.preview.conflicts": "Conflicts",
+  "courses.transfer.preview.noConflicts":
+    "No conflicts with the local library.",
+  "courses.transfer.preview.alreadyInstalled":
+    "Already installed — nothing to do.",
+  "courses.transfer.preview.newRevision":
+    "New revision available — open the upgrade dialog to choose how to install it.",
+  "courses.transfer.preview.unknownCourse": "New course — installs cleanly.",
+  "courses.transfer.preview.openUpgrade": "Open upgrade choices",
+  "courses.transfer.detected":
+    "Detected a transfer envelope (format aptiloop.course-transfer-v1).",
+  "courses.transfer.detectedPack":
+    "Detected a share pack (format aptiloop.course-pack).",
+  "courses.transfer.unknownFormat":
+    "Unknown file format: not a share pack or transfer envelope. Nothing was imported.",
   "courses.action.remove": "Delete Course",
   "courses.action.more": "More actions for {title}",
   "courses.delete.title": "Permanently delete this Course?",
@@ -1460,6 +1571,17 @@ const enUS = {
   "authoring.error.versionsUnavailable": "The revision list is unavailable.",
   "authoring.designer.apply": "Apply proposal",
   "authoring.designer.action.answerDiagnostic": "Continue with answers",
+  "authoring.designer.action.completeLearningDesign":
+    "Continue to Course proposal",
+  "authoring.designer.learningDesignTitle": "Learning Design",
+  "authoring.designer.learningDesign.targetCapability": "Target capability",
+  "authoring.designer.learningDesign.observableEvidence":
+    "Observable evidence (one per line)",
+  "authoring.designer.learningDesign.practice": "Practice (one per line)",
+  "authoring.designer.learningDesign.feedback": "Feedback (one per line)",
+  "authoring.designer.learningDesign.instructionReview":
+    "Instruction and review (one per line)",
+  "authoring.designer.learningDesign.assumptions": "Assumptions (one per line)",
   "authoring.designer.action.completeDiscovery": "Complete discovery",
   "authoring.designer.action.confirm": "Confirm for compilation",
   "authoring.designer.action.requestRevision": "Request revision",
@@ -1532,6 +1654,7 @@ const enUS = {
   "authoring.designer.state.COMPILATION": "Compilation",
   "authoring.designer.state.CURRICULUM_PROPOSAL": "Course proposal",
   "authoring.designer.state.DIAGNOSTIC": "Diagnostic",
+  "authoring.designer.state.LEARNING_DESIGN": "Learning Design",
   "authoring.designer.state.DISCOVERY": "Discovery",
   "authoring.designer.state.DRAFT_REQUEST": "Initial brief",
   "authoring.designer.state.FAILED": "Failed",
@@ -1953,6 +2076,66 @@ const ruRU: Record<MessageKey, string> = {
   "settings.localDevelopment": "Локальная разработка",
   "settings.models": "Моделей: {count}",
   "settings.developerDiagnostics": "Диагностика разработчика",
+  "settings.runtime.title": "Запуск и обновления",
+  "settings.runtime.description":
+    "Локальные порты, каталог данных, автозапуск, ярлыки и обновления. Порты здесь только для чтения; меняйте их флагами CLI или окружением перед запуском.",
+  "settings.runtime.webOrigin": "Адрес веб-интерфейса",
+  "settings.runtime.orchestratorPort": "Порт оркестратора",
+  "settings.runtime.dataDir": "Каталог данных",
+  "settings.runtime.profile": "Профиль развёртывания",
+  "settings.runtime.channel": "Канал обновлений",
+  "settings.runtime.appVersion": "Версия приложения",
+  "settings.runtime.validator": "Валидатор паков",
+  "settings.runtime.migrationHead": "Голова журнала миграций",
+  "settings.runtime.cliHint":
+    "CLI: aptiloop status, aptiloop start --port N --orch-port M. Окружение: APTILOOP_PORT, APTILOOP_ORCHESTRATOR_PORT, APTILOOP_DATA_DIR.",
+  "settings.runtime.autostart": "Автозапуск при входе",
+  "settings.runtime.autostartOn": "Включить автозапуск",
+  "settings.runtime.autostartOff": "Выключить автозапуск",
+  "settings.runtime.shortcuts": "Ярлыки рабочего стола",
+  "settings.runtime.releaseMetadata": "Релиз {tag}, опубликован {publishedAt}.",
+  "settings.runtime.unknown": "неизвестно",
+  "settings.runtime.migrationWarning":
+    "Применение может мигрировать локальные данные и перезапустить Aptiloop. Сначала создаётся одобренный бэкап; не закрывайте процесс во время выполнения.",
+  "settings.runtime.updatePhase": "Фаза обновления: {phase}.",
+  "settings.runtime.phase.queued": "в очереди",
+  "settings.runtime.phase.backup": "резервная копия",
+  "settings.runtime.phase.candidate": "кандидат",
+  "settings.runtime.phase.migration": "миграция",
+  "settings.runtime.phase.health": "проверка готовности",
+  "settings.runtime.phase.pointer": "переключение runtime",
+  "settings.runtime.phase.restart": "перезапуск",
+  "settings.runtime.phase.rollback": "откат",
+  "settings.runtime.shortcutsHint":
+    "Ярлыки открывают веб-интерфейс (цель: aptiloop open).",
+  "settings.runtime.shortcutsInstall": "Установить ярлыки",
+  "settings.runtime.shortcutsRemove": "Удалить ярлыки",
+  "settings.runtime.update": "Обновления приложения",
+  "settings.runtime.checkUpdates": "Проверить обновления",
+  "settings.runtime.checking": "Проверяю…",
+  "settings.runtime.applying": "Применяю обновление…",
+  "settings.runtime.applyUpdate": "Применить обновление",
+  "settings.runtime.upToDate": "Aptiloop {version} актуален.",
+  "settings.runtime.updateAvailable":
+    "Доступно обновление: {current} → {version}.",
+  "settings.runtime.updateApplyHint":
+    "Обновление скачивает проверенный runtime, создаёт одобренный бэкап, мигрирует копию, проверяет готовность и атомарно переключает указатель.",
+  "settings.runtime.updateSucceeded": "Aptiloop обновлён до версии {version}.",
+  "settings.runtime.updateFailed":
+    "Обновление не удалось, выполнен откат (если доступен): {message}",
+  "settings.runtime.updateFailedGeneric":
+    "Обновление не удалось; безопасных сведений об операции нет.",
+  "settings.runtime.updateTimeout":
+    "Обновление не завершилось за допустимое время. Другие изменения не применялись.",
+  "settings.runtime.updateNetworkError":
+    "Статус обновления не удалось проверить. Другие изменения не применялись.",
+  "settings.runtime.notChecked":
+    "Статус обновлений не проверен: GitHub Releases недоступен. Восстановите подключение и повторите; ничего не изменено.",
+  "settings.runtime.tray":
+    "Системного трея в этом релизе нет (позже). Служба автозапуска выше позволяет Aptiloop работать с закрытым терминалом.",
+  "settings.runtime.refresh": "Обновить",
+  "settings.runtime.actionError":
+    "Не удалось выполнить действие. Повторите попытку.",
   "settings.saved": "Язык интерфейса сохранён в этом браузере",
   "settings.saveError": "Не удалось сохранить настройки",
   "settings.localOnly":
@@ -2009,6 +2192,17 @@ const ruRU: Record<MessageKey, string> = {
     "Исправьте или удалите недоступное требование курса.",
   "courses.validation.diagnostic.generic":
     "Это поле Course Pack не прошло проверку.",
+  "courses.validation.report.summary":
+    "{errors} ошибок · {warnings} предупреждений · показано {returned} из {total} диагностик",
+  "courses.validation.report.truncated":
+    "Сервер вернул ограниченную выборку. Ниже показан полный доступный отчёт; дополнительные диагностики не были возвращены.",
+  "courses.validation.report.copy": "Копировать отчёт",
+  "courses.validation.report.copied": "Отчёт скопирован",
+  "courses.validation.report.download": "Скачать отчёт",
+  "courses.validation.report.downloaded": "Отчёт скачан",
+  "courses.validation.report.copyError": "Не удалось скопировать отчёт.",
+  "courses.validation.report.invalid":
+    "Отчёт проверки нельзя безопасно отобразить.",
   "failure.operation.studioLoad": "Не удалось загрузить Curriculum Studio.",
   "failure.operation.studioAction":
     "Действие Studio не завершилось. Повторите попытку.",
@@ -2549,11 +2743,15 @@ const ruRU: Record<MessageKey, string> = {
   "courses.preview.rejected": "Pack отклонён",
   "courses.preview.errors": "Ошибок: {count}",
   "courses.preview.validated": "Проверенный предпросмотр",
-  "courses.preview.ready": "Готов к установке",
+  "courses.preview.ready": "Готово к установке",
   "courses.preview.finalizedDraft.title":
     "Авторский черновик финализирован локально",
   "courses.preview.finalizedDraft.description":
     "Aptiloop вывел runtime-требования, канонизировал документ и вычислил неизменяемый хеш содержимого до проверки. Проверьте этот финализированный предпросмотр перед сохранением.",
+  "courses.preview.skillVersionMismatch.title":
+    "Версия авторского навыка не совпадает",
+  "courses.preview.skillVersionMismatch.description":
+    "Этот Pack создан с версией содержимого навыка {receivedVersion}; текущая версия навыка Aptiloop — {expectedVersion}. Скачайте текущий навык заново и повторите авторинг перед сохранением.",
   "courses.validation.expired.badge": "Проверка истекла",
   "courses.validation.expired.title": "Срок проверки истёк",
   "courses.validation.expired.description":
@@ -2606,6 +2804,43 @@ const ruRU: Record<MessageKey, string> = {
   "courses.action.previewRevision": "Предпросмотр ревизии",
   "courses.action.makeCurrent": "Сделать текущей",
   "courses.action.export": "Экспорт",
+  "courses.action.transfer": "Перенести с прогрессом",
+  "courses.transfer.title": "Перенос курсов с прогрессом",
+  "courses.transfer.description":
+    "Скачайте конверт переноса (до 64 MiB, 32 курса) с каноническими паками и воспроизводимой историей обучения. Учётные данные, пути и состояние провайдера никогда не включаются.",
+  "courses.transfer.selectCourses": "Курсы для переноса",
+  "courses.transfer.includeHistory":
+    "Включить историю обучения (факты, сессии, проекции review)",
+  "courses.transfer.scopeNote": "Примечание к scope (назначение и состав)",
+  "courses.transfer.scopeNotePlaceholder": "например, переезд на новый ноутбук",
+  "courses.transfer.composition": "Курсов: {courses} · ревизий: {revisions}",
+  "courses.transfer.download": "Скачать файл переноса",
+  "courses.transfer.downloading": "Готовлю…",
+  "courses.transfer.unavailable":
+    "Перенос недоступен в этой сборке (маршруты course-transfer отсутствуют). Поделитесь паком или обновите Aptiloop.",
+  "courses.transfer.validationFailed":
+    "Не удалось проверить файл переноса. Ничего не импортировано.",
+  "courses.transfer.preview.courses": "Курсы в этом переносе",
+  "courses.transfer.preview.facts": "Фактов обучения: {count}",
+  "courses.transfer.preview.sessions": "Сессий: {count}",
+  "courses.transfer.preview.skippedSessions":
+    "Пропущено больших сессий: {count}",
+  "courses.transfer.preview.excluded": "Никогда не переносится",
+  "courses.transfer.preview.conflicts": "Конфликты",
+  "courses.transfer.preview.noConflicts":
+    "Конфликтов с локальной библиотекой нет.",
+  "courses.transfer.preview.alreadyInstalled":
+    "Уже установлено — делать нечего.",
+  "courses.transfer.preview.newRevision":
+    "Доступна новая ревизия — откройте диалог обновления, чтобы выбрать способ установки.",
+  "courses.transfer.preview.unknownCourse": "Новый курс — установится чисто.",
+  "courses.transfer.preview.openUpgrade": "Открыть варианты обновления",
+  "courses.transfer.detected":
+    "Обнаружен конверт переноса (формат aptiloop.course-transfer-v1).",
+  "courses.transfer.detectedPack":
+    "Обнаружен share-пак (формат aptiloop.course-pack).",
+  "courses.transfer.unknownFormat":
+    "Неизвестный формат файла: не share-пак и не конверт переноса. Ничего не импортировано.",
   "courses.action.remove": "Удалить курс",
   "courses.action.more": "Другие действия для курса «{title}»",
   "courses.delete.title": "Удалить курс без возможности восстановления?",
@@ -3102,6 +3337,19 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.error.graphUnavailable":
     "Граф ревизии недоступен или содержит небезопасные поля.",
   "authoring.error.invalidJson": "{label}: требуется корректный JSON.",
+  "authoring.designer.action.completeLearningDesign":
+    "Перейти к предложению курса",
+  "authoring.designer.learningDesignTitle": "Проектирование обучения",
+  "authoring.designer.learningDesign.targetCapability": "Целевая способность",
+  "authoring.designer.learningDesign.observableEvidence":
+    "Наблюдаемое свидетельство (по одному в строке)",
+  "authoring.designer.learningDesign.practice": "Практика (по одному в строке)",
+  "authoring.designer.learningDesign.feedback":
+    "Обратная связь (по одному в строке)",
+  "authoring.designer.learningDesign.instructionReview":
+    "Инструкция и повторение (по одному в строке)",
+  "authoring.designer.learningDesign.assumptions":
+    "Допущения (по одному в строке)",
   "authoring.error.invalidStructure":
     "{label}: структура не соответствует контракту.",
   "authoring.error.payloadTypeMismatch":
@@ -3187,6 +3435,7 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.designer.state.COMPILATION": "Компиляция",
   "authoring.designer.state.CURRICULUM_PROPOSAL": "Предложение курса",
   "authoring.designer.state.DIAGNOSTIC": "Диагностика",
+  "authoring.designer.state.LEARNING_DESIGN": "Проектирование обучения",
   "authoring.designer.state.DISCOVERY": "Уточнение",
   "authoring.designer.state.DRAFT_REQUEST": "Начальный бриф",
   "authoring.designer.state.FAILED": "Ошибка",
