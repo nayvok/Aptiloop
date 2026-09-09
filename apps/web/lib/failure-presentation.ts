@@ -135,6 +135,7 @@ const SECRET_VALUE_PATTERN =
   /\b(?:sk-|gh[opusr]_|xox[baprs]-)[A-Za-z0-9_-]{12,}\b/giu;
 const SECRET_ASSIGNMENT_PATTERN =
   /(\b(?:api[_-]?key|authorization|bearer|credential|password|secret|token)\b\s*[:=]\s*)(["']?)[^\s"',;]+/giu;
+// eslint-disable-next-line no-control-regex -- the pattern's purpose is to strip control characters
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/gu;
 
 function safeDiagnosticText(

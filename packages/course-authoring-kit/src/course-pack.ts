@@ -6,7 +6,6 @@ import {
   ActivityPayloadSchema,
   ActivityProtectedMaterialSchema,
   CourseLocaleSchema,
-  COURSE_PACK_SKILL_CONTENT_VERSION as SHARED_COURSE_PACK_SKILL_CONTENT_VERSION,
   KnowledgeCapsuleCitationSchema,
   KnowledgeCapsuleClaimSchema,
   KnowledgeCapsuleConflictSchema,

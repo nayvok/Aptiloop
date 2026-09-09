@@ -23,7 +23,6 @@ import {
   ClientError,
   CourseOperationIdSchema,
   CoursePackUpgradeModeSchema,
-  CourseTransferEnvelopeSchema,
   COURSE_TRANSFER_JSON_LIMITS_V1,
   type CoursePackUpgradeMode,
 } from "@aptiloop/shared";
@@ -1161,53 +1160,6 @@ export class CoursePackRepository {
         now,
         pack.course.courseKey,
       );
-  }
-
-  #archiveCourseRevisions(courseId: string, now: number): void {
-    this.#connection.sqlite
-      .prepare(
-        `UPDATE course_revisions
-         SET status = 'archived', archived_at = ?, updated_at = ?
-         WHERE course_id = ? AND status != 'archived'`,
-      )
-      .run(now, now, courseId);
-    this.#connection.sqlite
-      .prepare(
-        `UPDATE curriculum_versions
-         SET status = 'archived', archived_at = ?, updated_at = ?
-         WHERE curriculum_id = ? AND status != 'archived'`,
-      )
-      .run(now, now, courseId);
-    this.#connection.sqlite
-      .prepare(
-        `UPDATE curricula SET active_version_id = NULL, updated_at = ?
-         WHERE id = ?`,
-      )
-      .run(now, courseId);
-    this.#connection.sqlite
-      .prepare(
-        `UPDATE courses SET active_revision_id = NULL, updated_at = ?
-         WHERE id = ?`,
-      )
-      .run(now, courseId);
-    this.#connection.sqlite
-      .prepare(
-        `UPDATE adaptation_branches SET status = 'archived', updated_at = ?
-         WHERE course_id = ? AND status = 'active'`,
-      )
-      .run(now, courseId);
-    this.#connection.sqlite
-      .prepare(
-        `UPDATE learner_state
-         SET current_learning_session_id = NULL, updated_at = ?
-         WHERE current_learning_session_id IN (
-           SELECT context.session_id
-           FROM session_course_contexts context
-           JOIN learning_sessions session ON session.id = context.session_id
-           WHERE context.course_id = ? AND session.status != 'active'
-         )`,
-      )
-      .run(now, courseId);
   }
 
   #insertUpgradeLifecycleEvent(input: {
