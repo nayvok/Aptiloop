@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
 
 import {
   buildCourseTransferExport,

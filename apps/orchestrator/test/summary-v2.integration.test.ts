@@ -32,6 +32,7 @@ function createRuntime(databasePath?: string) {
     databasePath: resolvedDatabasePath,
     databaseMode: "disposable",
     developmentDatabaseInitializer: seedDevelopmentDatabase,
+    webOrigin: "http://127.0.0.1:3000",
   });
   const result = Object.assign(runtime, { databasePath: resolvedDatabasePath });
   runtimes.push(result);

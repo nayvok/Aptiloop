@@ -51,6 +51,7 @@ function runtime(databasePath?: string, attemptsRoot?: string) {
     databaseMode: "disposable",
     developmentDatabaseInitializer: seedDevelopmentDatabase,
     exerciseAttemptsRoot: resolvedAttemptsRoot,
+    webOrigin: "http://127.0.0.1:3000",
   });
   runtimes.push(created);
   return {

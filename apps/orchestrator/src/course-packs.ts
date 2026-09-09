@@ -36,6 +36,7 @@ const MAX_STAGED_VALIDATIONS = 32;
 const MAX_STAGED_DIAGNOSTICS = 100;
 const MAX_STAGED_REPORT_BYTES = 64 * 1_024;
 const STAGING_REMOVAL_ATTEMPTS = 3;
+// eslint-disable-next-line no-control-regex -- diagnostic sanitization must strip control characters.
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/gu;
 const STRUCTURAL_IDENTIFIER_PATTERN = /[^A-Za-z0-9._:/@+-]/gu;
 const SECRET_PATH_SEGMENT_PATTERN =

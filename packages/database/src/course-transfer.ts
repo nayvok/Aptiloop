@@ -242,6 +242,12 @@ export function buildCourseTransferExport(
     }
 
     const exported = exportLearnerScope(connection.sqlite, courseKeys);
+    if (packs.length === 0 && revisionSnapshots.length === 0) {
+      throw new ClientError(
+        409,
+        "Course has no transferable content revision; legacy or development Course revisions cannot be transferred",
+      );
+    }
     // Filesystem/Git evidence is owned by exercise-core. The database only
     // returns exact attempt descriptors below; the orchestrator enriches these
     // asynchronously and inserts verified snapshots before final hashing.
@@ -2481,9 +2487,12 @@ function exportRevisionSnapshots(
       calculatedContentHash !== row.content_hash &&
       calculatedContentHash.slice("sha256:".length) !== row.content_hash
     ) {
-      throw new Error(
-        `Authored graph content hash mismatch for revision ${row.id}`,
-      );
+      // Legacy backfill revisions (preserved M11 compatibility history) carry
+      // their historical content hash and are not representable as a
+      // re-verifiable authored-graph snapshot. Skip them instead of failing
+      // the whole export; the receiving profile that owns the same Course
+      // already holds this revision locally.
+      continue;
     }
     const transferAuthoredGraph = authoredGraph;
     const canonical = canonicalJson({

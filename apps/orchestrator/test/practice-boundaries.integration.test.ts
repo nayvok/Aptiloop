@@ -219,6 +219,7 @@ function runtime(
     databaseMode: "disposable",
     developmentDatabaseInitializer: seedDevelopmentDatabase,
     exerciseAttemptsRoot: attemptsRoot,
+    webOrigin: "http://127.0.0.1:3000",
     developmentMode: true,
     developmentProviderFixture: testDevelopmentProviderFixture,
     providers: { mock: new MockAgentProvider(), ...providers },

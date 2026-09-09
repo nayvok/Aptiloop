@@ -91,6 +91,7 @@ function createRuntime(databasePath?: string) {
     databasePath: databasePath ?? path.join(root, "test.sqlite"),
     databaseMode: "disposable",
     developmentDatabaseInitializer: seedDevelopmentDatabase,
+    webOrigin: "http://127.0.0.1:3000",
   });
   runtimes.push(created);
   return {

@@ -489,6 +489,7 @@ function runtime(options: AppOptions = {}) {
     databasePath: path.join(root, "test.sqlite"),
     databaseMode: "disposable",
     developmentDatabaseInitializer: seedDevelopmentDatabase,
+    webOrigin: "http://127.0.0.1:3000",
     ...options,
     developmentMode,
     ...(developmentMode

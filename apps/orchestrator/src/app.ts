@@ -761,6 +761,8 @@ export function createApp(options: AppOptions = {}) {
   );
 
   const coursePacks = createCoursePackRepository(connection);
+  registerVersionedLearningRoutes(app, state);
+  registerCurriculumEditorRoutes(app, state);
   registerCoursePackRoutes(app, coursePacks);
   registerCourseTransferRoutes(app, {
     connection,
