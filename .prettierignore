@@ -5,6 +5,7 @@ dist
 node_modules
 playwright-report
 test-results
+.omp
 pnpm-lock.yaml
 *.sqlite*
 packages/course-authoring-kit/schema/course-pack-v1.schema.json

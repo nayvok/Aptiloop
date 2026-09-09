@@ -18,6 +18,7 @@ test-results/
 provider-credentials.json
 /data/
 .superpowers/
+.omp/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
