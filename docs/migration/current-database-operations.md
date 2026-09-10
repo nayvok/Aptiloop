@@ -11,7 +11,7 @@ This is the only current runbook for a valuable Aptiloop process-mode database. 
 - New approved backups must be new `.sqlite` files directly under `.data/approved-backups/`.
 - Alternate database families, old backups, copied candidates, symlinks, and “newest file” selection are not authorized sources.
 - Stop the web app, orchestrator, and every writable database command before the maintenance window.
-- A valuable predecessor database may advance only through `--authorize-current` with the exact approved backup path and its whole-file SHA-256.
+- A valuable predecessor database may advance only through `--authorize-current` with the exact approved backup path and its whole-file SHA-256. Admitted predecessors span `0000`–`0005` through `0000`–`0020`; a current-contract database is `0000`–`0021`.
 - A bare `npm run db:migrate` is suitable only for a fresh/disposable database or an exact current database. It is not authorization to upgrade valuable predecessor data.
 
 ## 1. Inventory without mutation
@@ -30,7 +30,7 @@ Stop if the active source is missing or unstable, SQLite integrity is not `ok`, 
 Run the database migration and recovery tests before touching the active file:
 
 ```powershell
-npm test --workspace=@aptiloop/database -- --run test/m2-migration-safety.test.ts test/m2-acceptance-hardening.test.ts test/course-foundation.integration.test.ts test/course-foundation-backfill.integration.test.ts test/approved-backup.test.ts
+npm test --workspace=@aptiloop/database -- --run test/m2-migration-safety.test.ts test/m2-acceptance-hardening.test.ts test/course-foundation.integration.test.ts test/course-foundation-backfill.integration.test.ts test/approved-backup.test.ts test/pre-fact-schema-migration.integration.test.ts
 ```
 
 A disposable rehearsal does not authorize the active source.
