@@ -34,7 +34,7 @@ const FORWARDED_REQUEST_HEADERS: Readonly<Record<string, true>> = {
   "if-none-match": true,
   origin: true,
   "user-agent": true,
-  "x-dlh-client": true,
+  "x-aptiloop-client": true,
 };
 const FORWARDED_RESPONSE_HEADERS: Readonly<Record<string, true>> = {
   "cache-control": true,
@@ -68,13 +68,13 @@ function requestHeaders(request: Request): Headers {
   const headers = new Headers();
   for (const [name, value] of request.headers) {
     if (
-      name !== "x-dlh-client" &&
+      name !== "x-aptiloop-client" &&
       FORWARDED_REQUEST_HEADERS[name] &&
       !HOP_BY_HOP_HEADERS[name]
     )
       headers.set(name, value);
   }
-  headers.set("x-dlh-client", "web");
+  headers.set("x-aptiloop-client", "web");
   return headers;
 }
 

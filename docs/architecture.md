@@ -86,7 +86,7 @@ Reviewer policy:
 
 ## HTTP и process boundary
 
-Browser mutations несут entity/operation IDs и JSON data, но не executable/args/cwd. Orchestrator проверяет точный Origin, `Content-Type: application/json` и `X-DLH-Client: web`; внешние тела и provider outputs валидируются Zod.
+Browser mutations несут entity/operation IDs и JSON data, но не executable/args/cwd. Orchestrator проверяет точный Origin, `Content-Type: application/json` и `X-Aptiloop-Client: web`; внешние тела и provider outputs валидируются Zod.
 
 Paths разрешаются относительно allowlisted root, canonicalized через `realpath` и reparse/symlink checks. Дочерние процессы используют `shell: false`, фиксированные args, timeout, output cap и cleanup. Allowlist не является sandbox: упражнения должны быть доверенными.
 

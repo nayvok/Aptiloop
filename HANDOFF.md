@@ -2,7 +2,7 @@
 
 ## Entry point
 
-Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tree as user work: do not reset, discard, or delete data. Select one slice only. Task10, **update documentation and remove scaffolding**, is closed in the current working tree. The next slice is task11, **run full gates and runtime smoke**. Do not touch historical plans or audits.
+Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tree as user work: do not reset, discard, or delete data. Select one slice only. Task11, **run full gates and runtime smoke**, is closed in the current working tree. All 11 original checklist items are complete; any further slices are new work. Do not touch historical plans or audits.
 
 ## Original 11-task phased checklist
 
@@ -27,11 +27,21 @@ Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tr
 ### Release Readiness
 
 - [x] Update documentation and remove scaffolding
-- [ ] Run full gates and runtime smoke
+- [x] Run full gates and runtime smoke
 
 All remaining unchecked items are **PAUSED** for the next session; this is not an external blocker.
 
-## Current slice record: task10 — Update documentation and remove scaffolding
+## Current slice record: task11 — Run full gates and runtime smoke
+
+**Implemented baseline (2026-09-10).**
+
+- **E2E green — fixed the last E2E 403-blocker and default-Web-Origin gaps.** The browser proxy (`apps/web/app/api/[...path]/route.ts`) now applies the Aptiloop-owned client marker `X-Aptiloop-Client: web` instead of the legacy `X-DLH-Client: web`, symmetrically with the orchestator boundary (`apps/orchestrator/src/app.ts`); a forged browser marker is overwritten, never forwarded (`apps/web/test/proxy-route.test.ts` asserts the overwrite and stays green). `scripts/test-e2e.mjs` passes `WEB_ORIGIN` into orchestrator/web service environments, and `apps/orchestrator/src/app.ts` returns the launcher-owned E2E database target directly (avoiding the installed/active revalidation path in disposable E2E runs). A fresh `npm run test:e2e` result: **8 passed (2.1m)** — the full seeded daily-flow/accessibility matrix, `E2E_EXIT=0`.
+- **Runtime smoke (local `.verify` harnesses) all exit 0.** Update lock smoke **5/5**, update failure smoke **bad-digest / migration / health** (post-switch rollback restores previous runtime/database and approved backup, pointer verified semantically), and active success smoke **`0.1.0 → 0.1.1` on a running runtime** with candidate SHA-256 proof, approved backup, and web+orchestrator health ports confirmed. The failure harness now compares the runtime pointer semantically (JSON) instead of by bytes, which the product legitimately rewrites while preserving version/releaseDir identity.
+- **Full repo gates.** `npm run format:check` green; `npm run lint` exit 0; `npm run typecheck` 15/15; `npm run build` green; `npm run check:production-content` green. Docs updated for the client-marker rename (`docs/architecture.md`, `docs/security.md`, `docs/audits/2026-08-08-m1-safety-boundary-inventory.md`).
+- **Known pre-existing limitation.** `apps/orchestrator/test/http-boundary.integration.test.ts` reports 3/52 timeouts (`holds request capacity until cancelled work exits` and `drains admitted mutation work before closing the database` plus one capacity gate test). Recorded identically on a clean base (git stash, 49 passed / 3 failed) — not introduced by this slice; the surrounding 49 boundary tests pass. No E2E is affected.
+- Artifacts: `.verify/task11-*` logs retained as runtime-smoke evidence; disposable `.verify` smoke harnesses (`update-failure-smoke.mjs`, `run-failure-smoke-task11.cmd` semantic comparison) remain reusable tooling.
+
+## Previous slice record: task10 — Update documentation and remove scaffolding
 
 **Implemented baseline (2026-09-10).**
 

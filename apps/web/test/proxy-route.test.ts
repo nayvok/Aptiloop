@@ -10,9 +10,15 @@ describe("API proxy configured origin", () => {
   });
 
   it("accepts configured browser origin for internal Next URL and rejects aliases", async () => {
-    const requests: string[] = [];
+    const requests: { target: string; clientMarker: string | null }[] = [];
     const fixture = http.createServer((request, response) => {
-      requests.push(`${request.method} ${request.url}`);
+      const marker = request.headers["x-aptiloop-client"];
+      requests.push({
+        target: `${request.method} ${request.url}`,
+        clientMarker: Array.isArray(marker)
+          ? (marker[0] ?? null)
+          : (marker ?? null),
+      });
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => chunks.push(chunk));
       request.on("end", () => {
@@ -42,6 +48,8 @@ describe("API proxy configured origin", () => {
           headers: {
             Origin: "http://127.0.0.1:43123",
             "content-type": "text/plain",
+            // A forged browser marker must be overwritten by the proxy.
+            "x-aptiloop-client": "forged",
           },
           body: "proxy-payload",
         }),
@@ -71,7 +79,12 @@ describe("API proxy configured origin", () => {
       );
       expect(alias.status).toBe(403);
       expect(crossOrigin.status).toBe(403);
-      expect(requests).toEqual(["POST /api/proof/upload?proof=1"]);
+      expect(requests).toEqual([
+        {
+          target: "POST /api/proof/upload?proof=1",
+          clientMarker: "web",
+        },
+      ]);
     } finally {
       await new Promise<void>((resolve, reject) =>
         fixture.close((error) => (error ? reject(error) : resolve())),

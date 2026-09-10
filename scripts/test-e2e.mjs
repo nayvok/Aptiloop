@@ -85,6 +85,7 @@ async function runSuite() {
     OPENCODE_ENDPOINT: defaultOpenCodeEndpoint,
     ORCHESTRATOR_BIND_MODE: "direct",
     ORCHESTRATOR_URL: orchestratorOrigin,
+    WEB_ORIGIN: webOrigin,
   });
 
   const runsRootGuard = await ensureCanonicalDirectoryPath(runsRoot);
@@ -383,6 +384,7 @@ async function runService(serviceName) {
       NODE_ENV: "development",
       ORCHESTRATOR_URL: orchestratorOrigin,
       ORCHESTRATOR_BIND_MODE: "direct",
+      WEB_ORIGIN: webOrigin,
     });
   }
   const childEnvironment = createE2EEnvironment(

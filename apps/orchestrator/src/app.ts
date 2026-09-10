@@ -419,6 +419,7 @@ export function createApp(options: AppOptions = {}) {
       if (!current) {
         throw new Error("E2E database ownership changed during startup");
       }
+      return current;
     }
     if (databaseMode === "installed") {
       const configuredDataDir = process.env.APTILOOP_DATA_DIR?.trim();
