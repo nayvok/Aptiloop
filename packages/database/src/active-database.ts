@@ -11,8 +11,10 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
-  assertExactDatabaseMigrationContract,
+  adaptationBranchLifecycleMigrationContract,
   adaptiveStudioMigrationContract,
+  assertExactDatabaseMigrationContract,
+  authorizedSourceHealthCoherent,
   courseDesignerWorkflowMigrationContract,
   courseFoundationsBaseMigrationContract,
   courseFoundationsMigrationContract,
@@ -605,6 +607,30 @@ export function assertM1DatabaseMigrationAdmission(
 
   if (
     allowLegacyCompatibility &&
+    matchesMigrationIds(
+      candidate.health.migrations.ids,
+      adaptationBranchLifecycleMigrationContract,
+    ) &&
+    candidate.health.schemaSha256 ===
+      adaptationBranchLifecycleMigrationContract.schemaSha256 &&
+    hasHealthyLearnerCourseState(candidate.health) &&
+    hasCurrentDatabaseHealth(candidate.health, false)
+  ) {
+    const migrationCapability: DatabaseMigrationAdmissionCapability = {
+      kind: "legacy-compatible-noop",
+      contract: adaptationBranchLifecycleMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+    };
+    return {
+      kind: "legacy-compatible",
+      contract: adaptationBranchLifecycleMigrationContract,
+      logicalSha256: candidate.health.logicalSha256,
+      migrationCapability,
+    };
+  }
+
+  if (
+    allowLegacyCompatibility &&
     candidate.health.legacyCompatibility.coherent &&
     matchesMigrationIds(
       candidate.health.migrations.ids,
@@ -1176,7 +1202,10 @@ function assertOpenedDatabaseMatchesAdmission(
     if (
       admission.kind === "current"
         ? !hasCurrentDatabaseHealth(health, false)
-        : !health.legacyCompatibility.coherent
+        : !authorizedSourceHealthCoherent(
+            admission.contract.migrationIds,
+            sqlite,
+          )
     ) {
       throw new Error("Opened database health invariants changed");
     }

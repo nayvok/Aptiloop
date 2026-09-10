@@ -24,6 +24,7 @@ import {
   databaseLogicalSha256,
   databaseSchemaSha256,
   inspectLegacyCompatibilityHealth,
+  inspectOpenedDatabaseHealth,
 } from "./private-data-inventory.js";
 
 function createDrizzleDatabase(sqlite: DatabaseSync) {
@@ -877,6 +878,34 @@ function recordM2MigrationRun(
     );
 }
 
+/**
+ * Source-health gate for an explicitly authorized forward migration.
+ *
+ * From migration 0017 onward `learner_course_states` is the authoritative
+ * learner-pointer store (the M11 cutover freezes the legacy `learner_state`
+ * bridge, including clearing its pointer), so coherence for those ledgers is
+ * judged by the healthy learner-course-state contract instead of the frozen
+ * legacy bridge. Older ledgers keep the legacy bridge coherence requirement.
+ */
+export function authorizedSourceHealthCoherent(
+  sourceMigrationIds: readonly string[],
+  sqlite: DatabaseSync,
+): boolean {
+  if (sourceMigrationIds.includes("0017_learner_course_state")) {
+    const state = inspectOpenedDatabaseHealth(sqlite).learnerCourseState;
+    return (
+      state.tablePresent &&
+      state.schemaCompatible &&
+      state.selectedRows <= 1 &&
+      (state.rows === 0 || state.selectedRows === 1) &&
+      state.invalidRevisionRows === 0 &&
+      state.invalidSessionRows === 0 &&
+      state.untrackedActiveSessionRows === 0
+    );
+  }
+  return inspectLegacyCompatibilityHealth(sqlite).coherent;
+}
+
 export function applyApprovedM2Migrations(
   connection: DatabaseConnection,
   capability: ApprovedM2MigrationCapability,
@@ -957,7 +986,10 @@ export function applyApprovedM2Migrations(
   if (
     databaseLogicalSha256(connection.sqlite) !==
       capability.sourceLogicalSha256 ||
-    !inspectLegacyCompatibilityHealth(connection.sqlite).coherent ||
+    !authorizedSourceHealthCoherent(
+      capability.sourceContract.migrationIds,
+      connection.sqlite,
+    ) ||
     !/^[a-f0-9]{64}$/u.test(capability.approvedBackupLogicalSha256) ||
     !/^[a-f0-9]{64}$/u.test(capability.approvedBackupSha256) ||
     !/^[a-f0-9]{64}$/u.test(capability.approvedBackupPathHash)
@@ -1165,7 +1197,10 @@ export function migrateDatabase(
     assertExactDatabaseMigrationContract(connection.sqlite, admission.contract);
     if (
       databaseLogicalSha256(connection.sqlite) !== admission.logicalSha256 ||
-      !inspectLegacyCompatibilityHealth(connection.sqlite).coherent
+      !authorizedSourceHealthCoherent(
+        admission.contract.migrationIds,
+        connection.sqlite,
+      )
     ) {
       throw new Error(
         "Database no longer matches its admitted legacy-compatible snapshot",

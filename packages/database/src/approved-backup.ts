@@ -41,6 +41,7 @@ import {
   type OwnedDatabaseArtifact,
 } from "./backup.js";
 import {
+  adaptationBranchLifecycleMigrationContract,
   adaptiveStudioMigrationContract,
   courseDesignerWorkflowMigrationContract,
   executionFabricMigrationContract,
@@ -563,6 +564,7 @@ export function verifyApprovedM2MigrationBackup(
       learnerCourseStateMigrationContract,
       learnerCourseStateTriggerGuardMigrationContract,
       providerConnectionRetirementMigrationContract,
+      adaptationBranchLifecycleMigrationContract,
     ].some((contract) => sameMigrationContract(sourceContract, contract));
   const correctionPending =
     sourceAdmission.kind === "legacy-compatible" &&
@@ -620,7 +622,7 @@ export function verifyApprovedM2MigrationBackup(
     sourceContract,
   );
   const allowedBackupContracts = postM2UpgradePending
-    ? [sourceContract]
+    ? [sourceContract, adaptationBranchLifecycleMigrationContract]
     : correctionPending
       ? [preCorrectionContract]
       : hardeningPending
@@ -644,6 +646,7 @@ export function verifyApprovedM2MigrationBackup(
                 learnerCourseStateMigrationContract,
                 learnerCourseStateTriggerGuardMigrationContract,
                 providerConnectionRetirementMigrationContract,
+                adaptationBranchLifecycleMigrationContract,
               ]
             : [preMigrationContract];
   const inspectedBackup = inspectApprovedCandidateForContracts(
@@ -1164,6 +1167,23 @@ function verifyWholeFileRecoveryCopy(input: {
       true,
       input.contract,
     );
+    const restoredMigrationIds =
+      restoredCandidate.health.migrations.ids.join(",");
+    const allowedRestoredContracts = input.contract.migrationIds.includes(
+      "0020_adaptation_branch_lifecycle",
+    )
+      ? [input.contract, adaptationBranchLifecycleMigrationContract]
+      : [input.contract];
+    const restoredContractEntry = allowedRestoredContracts.find(
+      (candidate) =>
+        candidate.schemaSha256 === restoredCandidate.health.schemaSha256 &&
+        candidate.migrationIds.join(",") === restoredMigrationIds,
+    );
+    if (!restoredContractEntry) {
+      throw new Error(
+        "Whole-file recovery verification copy does not match an approved contract",
+      );
+    }
     assertSnapshotMatchesCandidate(
       restoredSnapshot,
       restoredCandidate,

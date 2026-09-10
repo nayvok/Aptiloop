@@ -168,6 +168,51 @@ async function createExact0018ActiveDatabase(projectRoot: string): Promise<{
   };
 }
 
+async function createExact0020ActiveDatabase(projectRoot: string): Promise<{
+  backup: string;
+  backupSha256: string;
+}> {
+  const migrationDirectory = path.join(projectRoot, "migrations-through-0020");
+  mkdirSync(migrationDirectory);
+  const sourceMigrations = path.join(
+    projectRoot,
+    "packages",
+    "database",
+    "migrations",
+  );
+  for (const filename of readdirSync(sourceMigrations)) {
+    if (!/^(?:000\d|001\d|0020)_.*\.sql$/u.test(filename)) continue;
+    copyFileSync(
+      path.join(sourceMigrations, filename),
+      path.join(migrationDirectory, filename),
+    );
+  }
+  const source = path.join(projectRoot, ".data", "dev-learning-harness.sqlite");
+  const connection = openDatabase(source);
+  try {
+    migrateDatabase(connection, migrationDirectory);
+  } finally {
+    connection.close();
+  }
+  const backup = path.join(
+    projectRoot,
+    ".data",
+    "approved-backups",
+    "approved-pre-fact-schema.sqlite",
+  );
+  await createApprovedM1Backup({
+    projectRoot,
+    sourcePath: source,
+    destinationPath: backup,
+  });
+  return {
+    backup,
+    backupSha256: createHash("sha256")
+      .update(readFileSync(backup))
+      .digest("hex"),
+  };
+}
+
 const providerSettingsSchema = z.object({
   ai: z.object({
     connections: z.array(
@@ -243,6 +288,40 @@ describe("orchestrator vertical flow", () => {
         )
         .get(),
     ).toEqual({ present: 1 });
+  });
+
+  it("rejects exact 0020 with the authorized-migration instruction and starts after the approved migration", async () => {
+    const projectRoot = activeProjectRoot();
+    const fixture = await createExact0020ActiveDatabase(projectRoot);
+
+    expect(() => createApp({ projectRoot })).toThrow(
+      "0020_adaptation_branch_lifecycle",
+    );
+    expect(() => createApp({ projectRoot })).toThrow(
+      "0021_learning_kernel_fact_schema_v2",
+    );
+    expect(() => createApp({ projectRoot })).toThrow(
+      "npm run db:migrate -- --authorize-current --approved-backup <path> --backup-sha256 <sha256>",
+    );
+
+    runM1MigrationCli({
+      argv: [
+        "--authorize-current",
+        "--approved-backup",
+        fixture.backup,
+        "--backup-sha256",
+        fixture.backupSha256,
+      ],
+      projectRoot,
+      writeStatus: () => undefined,
+    });
+
+    const created = createApp({ projectRoot });
+    runtimes.push(created);
+    const lastId = created.state.connection.sqlite
+      .prepare("SELECT id FROM __dlh_migrations ORDER BY id DESC LIMIT 1")
+      .get() as { id?: unknown };
+    expect(lastId?.id).toBe("0021_learning_kernel_fact_schema_v2");
   });
 
   it("starts a fresh active production database without fixtures or provider defaults", async () => {

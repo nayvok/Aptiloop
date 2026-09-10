@@ -17,6 +17,7 @@ import {
   createLearningRepository,
   CourseTransferInvalidError,
   learnerCourseStateTriggerGuardMigrationContract,
+  adaptationBranchLifecycleMigrationContract,
   migrateDatabase,
   openDatabase,
   openM1WritableDatabase,
@@ -128,6 +129,8 @@ const activeAgentTurnConflictMessage =
   "An agent turn is already active for this session, role, provider, and model.";
 const exact0018StartupMigrationMessage =
   "Database is exactly at migration 0018_learner_course_state_trigger_guard and cannot start until migration 0019_provider_connection_retirement is explicitly authorized. Keep the application stopped, use an approved backup, then run `npm run db:migrate -- --authorize-current --approved-backup <path> --backup-sha256 <sha256>` from the repository root.";
+const exact0020StartupMigrationMessage =
+  "Database is exactly at migration 0020_adaptation_branch_lifecycle and cannot start until migration 0021_learning_kernel_fact_schema_v2 is explicitly authorized. Keep the application stopped, use an approved backup, then run `npm run db:migrate -- --authorize-current --approved-backup <path> --backup-sha256 <sha256>` from the repository root.";
 const mutationMethods: Readonly<Record<string, true>> = {
   DELETE: true,
   PATCH: true,
@@ -487,6 +490,20 @@ export function createApp(options: AppOptions = {}) {
       ) {
         writableConnection.close();
         throw new Error(exact0018StartupMigrationMessage);
+      }
+      if (
+        writableConnection.migrationAdmission.contract.schemaSha256 ===
+          adaptationBranchLifecycleMigrationContract.schemaSha256 &&
+        writableConnection.migrationAdmission.contract.migrationIds.length ===
+          adaptationBranchLifecycleMigrationContract.migrationIds.length &&
+        writableConnection.migrationAdmission.contract.migrationIds.every(
+          (id, index) =>
+            id ===
+            adaptationBranchLifecycleMigrationContract.migrationIds[index],
+        )
+      ) {
+        writableConnection.close();
+        throw new Error(exact0020StartupMigrationMessage);
       }
     }
   } else {
