@@ -58,9 +58,12 @@ Open <http://127.0.0.1:10101>. The documented launcher builds and starts the loc
 - Bind sessions to an exact Course, revision, lesson, and source snapshot; support one active session per Course and independent sessions across Courses.
 - Record typed evidence and preserve provenance through deterministic Learning Kernel facts and projections.
 - Run due Review Items as typed free-response activities, retaining participation without asserting correctness or mastery when no verified evaluator exists.
+- Share one Course as a canonical declarative Course Pack, import Packs with precise code/path/entity diagnostics and a copy-for-AI repair payload, and move named Courses with learner progress to another computer; active exercise attempts restore as isolated workspaces with real Git learner commits carrying the source author identity.
+- Upgrade an installed Course to a newer upstream revision through an explicit safe-update or side-by-side dialog; safe-update preserves immutable history, replays only facts whose stable contracts survive, and refuses while an old-revision session is active.
+- Author through the guided order Initial Brief → Discovery → Diagnostic → Learning Design → Course Proposal → User Review, with the Learning Design stage enforcing target capability, observable evidence, practice, feedback, and explicit mastery evidence before proposal generation.
 - Export a sanitized local profile and restore it offline into a fresh profile without overwriting or merging an active profile.
 
-Manual authoring is complete without AI. Applying a proposal changes only a Draft; validation, learner Preview, Change review, and explicit Publish are separate operations. Repository exercise fixtures are development evidence, not bundled production Courses.
+Manual authoring is complete without AI. Applying a proposal changes only a Draft; validation, learner Preview, Change review, and explicit Publish are separate operations. Repository exercise fixtures are development evidence, not bundled production Courses. Course-level payloads (Pack share and transfer with progress) are separate explicit actions with a named scope; see [ADR 0012](docs/adr/0012-course-transfer-scope-and-version-contract.md) and [User journeys](docs/product/user-journeys.md).
 
 ### Implemented baseline: installed GitHub Releases updater
 
@@ -171,7 +174,10 @@ prefix. The shebang-correct Windows `.bin/aptiloop.cmd` shim returned version
 `0.1.0` and help containing `Usage: aptiloop <command> [options]` from an
 unrelated working directory. The shim then started with spaced runtime and data
 paths; local loopback health, `/api/version`, HTML, and `/icon.svg` returned
-successfully, and `aptiloop stop` terminated the owned process tree. The `.verify/bootstrap-proof-shebang/aptiloop-0.1.0.tgz` artifact is intermediate fixture evidence, not a final release proof; repack the current tree for durable evidence. This remains a local smoke only, not publication to npm or GitHub.
+successfully, and `aptiloop stop` terminated the owned process tree. The intermediate
+bootstrap fixture artifact was removed with the release-readiness scaffolding; dated
+smoke evidence is recorded in `HANDOFF.md`, and a final release proof must repack the
+current tree. This remains a local smoke only, not publication to npm or GitHub.
 
 - [Product contract](PRODUCT.md)
 - [Architecture](ARCHITECTURE.md)

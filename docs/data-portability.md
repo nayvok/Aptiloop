@@ -4,6 +4,17 @@
 
 Aptiloop can move learning data from one computer to another through one versioned `.aptiloop-data` bundle. The workflow never overwrites or merges an existing active database.
 
+## Course-level payloads are separate narrower paths
+
+**Implemented baseline**
+
+The profile bundle in this document is the only whole-profile transfer path. Two separate, narrower Course-level payloads exist and must not be confused with it:
+
+- **Course Pack share** — one canonical, declarative `aptiloop.course-pack` JSON document that shares Course content without learner history; see [Course Pack](architecture/course-pack.md).
+- **Course transfer with progress** — a versioned envelope that moves explicitly named Courses together with their learner progress to another computer. Importing progress for an already installed Course may be learner-scope-only, and an active exercise attempt restores into an isolated workspace with real Git learner commits carrying the source author identity; see [ADR 0012](adr/0012-course-transfer-scope-and-version-contract.md) and [User journeys](product/user-journeys.md).
+
+Both Course-level paths are explicit user actions with a named scope. Neither carries credentials, provider sessions, environment files, or absolute device paths. Pack imports fail closed with precise code/path/entity diagnostics, and an unknown activity, evidence, check, or environment type is never partially installed or silently skipped.
+
 ## What the bundle contains
 
 The bundle contains a sanitized SQLite snapshot that is rebuilt into a separate compact database and then integrity-checked. The exported payload has no SQLite freelist pages or WAL/SHM/journal sidecars. It includes:

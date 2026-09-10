@@ -2,7 +2,7 @@
 
 ## Entry point
 
-Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tree as user work: do not reset, discard, or delete data. Select one slice only. Task9, **add the Learning Design authoring stage**, is closed in the current working tree. The next slice is task10, **update documentation and remove scaffolding**. Do not touch historical plans or audits.
+Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tree as user work: do not reset, discard, or delete data. Select one slice only. Task10, **update documentation and remove scaffolding**, is closed in the current working tree. The next slice is task11, **run full gates and runtime smoke**. Do not touch historical plans or audits.
 
 ## Original 11-task phased checklist
 
@@ -26,12 +26,22 @@ Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tr
 
 ### Release Readiness
 
-- [ ] Update documentation and remove scaffolding
+- [x] Update documentation and remove scaffolding
 - [ ] Run full gates and runtime smoke
 
 All remaining unchecked items are **PAUSED** for the next session; this is not an external blocker.
 
-## Current slice record: task9 — Add Learning Design authoring stage
+## Current slice record: task10 — Update documentation and remove scaffolding
+
+**Implemented baseline (2026-09-10).**
+
+- The uncommitted task8/task9 working tree was first committed intact as `a6dacb5` (thematic task9 commit) before this slice changed anything; no working-tree or `.data` content was reset, discarded, or deleted.
+- Documentation brought current with the task1–task9 implemented baselines: `README.md` Capabilities now cover Course Pack share with precise import diagnostics and copy-for-AI repair, course transfer with learner progress and Git learner-commit attempt restore, safe-update/side-by-side revision upgrades, and the Learning Design authoring stage; the npm bootstrap smoke paragraph no longer points at the removed intermediate `.verify` fixture and defers durable proof to a repack of the current tree. `ROADMAP.md` records the usability release slices as one **Implemented baseline** ledger row and moved **Latest implementation evidence** to 2026-09-10. `docs/data-portability.md` gained an explicit section separating the whole-profile bundle from the narrower Course Pack share and course-transfer-with-progress payloads. `docs/architecture/course-pack.md`, `docs/product/course-authoring.md`, `docs/product/user-journeys.md`, `docs/adr/` (0011, 0012), and the docs index were already current from tasks 6–9 and were not rewritten.
+- Scaffolding removed (local, git-ignored, disposable): the one-shot `.verify` proof roots (`active-final-artifacts*`, `bootstrap-proof*`, `bootstrap-served-final`, `data-011-proof`, `data active 01011`, `installed runtime *`, `npm-*-proof`, `runtime-*`, `task4-disposable-data`, `update-*build*`, `updater-*`), all one-shot `.log`/`.port` files, and one-shot helpers (`probe-orchestrator.mjs`, `probe-worker-exit.mjs`, `sentinel-writer.mjs`, `create-baseline.mts`, `commit-task67-msg.txt`), plus the regenerable untracked `packages/course-authoring-kit/dist` build output.
+- Preserved deliberately: `.verify/e2e-failures/**` (the recorded E2E blocker artifact), the task4 Settings smoke screenshots, and the reusable smoke harnesses (`update-active-smoke.mjs`, `update-failure-smoke.mjs`, `update-fetch-hook.mjs`, `update-lock-smoke.mjs`, `mock-release-server.mjs`, `run-active-smoke.cmd`, `run-failure-smoke.cmd`) that task11 can rerun. `.data` user data, the local `.omp` harness, tracked `docs/superpowers/**` historical documents, tracked `workspaces/exercises/**` trusted exercise templates, and historical plans/audits were not touched.
+- This slice is documentation and local-scaffolding cleanup only; no application behavior, schema, or provider boundary changed.
+
+## Previous slice record: task9 — Add Learning Design authoring stage
 
 **Implemented baseline (2026-09-10).**
 
