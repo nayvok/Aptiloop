@@ -294,7 +294,9 @@ async function startWorkflow(app: Hono, base: string): Promise<string> {
           practice: ["Solve a bounded problem"],
           feedback: ["Compare reasoning against criteria"],
           instructionReview: ["Review the explanation and retry"],
-          assumptions: [],
+          assumptions: [
+            "Diagnostic was skipped; assume the learner can explain the core concept before practice begins.",
+          ],
         },
       },
     ],
@@ -334,7 +336,9 @@ async function startWorkflow(app: Hono, base: string): Promise<string> {
     practice: ["Solve a bounded problem"],
     feedback: ["Compare reasoning against criteria"],
     instructionReview: ["Review the explanation and retry"],
-    assumptions: [],
+    assumptions: [
+      "Diagnostic was skipped; assume the learner can explain the core concept before practice begins.",
+    ],
   });
   return workflowId;
 }
@@ -390,6 +394,160 @@ describe("Course Designer", () => {
     expect(errorBody.error).toContain(
       "Generation requires CURRICULUM_PROPOSAL",
     );
+  });
+  it("rejects completing Learning Design from DRAFT_REQUEST without mutation", async () => {
+    const runtime = await createRuntime();
+    const base = `/api/curriculum-editor/versions/${runtime.version.id}/designer`;
+    const created = await post(runtime.app, `${base}/workflows`, {
+      operationId: "workflow:early-learning-design:create",
+      request: workflowRequest,
+    });
+    expect(created.status).toBe(200);
+    const createdBody: unknown = await created.json();
+    if (
+      !createdBody ||
+      typeof createdBody !== "object" ||
+      !("workflow" in createdBody)
+    ) {
+      throw new Error(
+        "Course Designer early Learning Design response is invalid",
+      );
+    }
+    const workflowId = CourseDesignerWorkflowSchema.parse(
+      createdBody.workflow,
+    ).id;
+    const rejected = await post(
+      runtime.app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/advance`,
+      {
+        operationId: "workflow:early-learning-design:complete",
+        action: "complete-learning-design",
+        learningDesign: {
+          targetCapability: "Explain and apply the requested concept",
+          observableEvidence: ["Explain a novel example"],
+          practice: ["Solve a bounded problem"],
+          feedback: ["Compare reasoning against criteria"],
+          instructionReview: ["Review the explanation and retry"],
+          assumptions: ["The learner can explain the core concept."],
+        },
+      },
+    );
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toEqual({
+      code: "invalid_workflow_transition",
+      error: "Action requires LEARNING_DESIGN; workflow is DRAFT_REQUEST",
+    });
+
+    const reloaded = await get(
+      runtime.app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}`,
+    );
+    expect(reloaded.status).toBe(200);
+    const reloadedBody: unknown = await reloaded.json();
+    if (
+      !reloadedBody ||
+      typeof reloadedBody !== "object" ||
+      !("workflow" in reloadedBody)
+    ) {
+      throw new Error(
+        "Course Designer early Learning Design reload response is invalid",
+      );
+    }
+    const persistedWorkflow = CourseDesignerWorkflowSchema.parse(
+      reloadedBody.workflow,
+    );
+    expect(persistedWorkflow.state).toBe("DRAFT_REQUEST");
+    expect(persistedWorkflow.learningDesign).toBeNull();
+    expect(
+      runtime.connection.sqlite
+        .prepare(
+          "SELECT count(*) AS count FROM course_designer_events WHERE workflow_id = ?",
+        )
+        .get(workflowId),
+    ).toEqual({ count: 1 });
+  });
+
+  it("requires an explicit assumption when completing Learning Design after skipping Diagnostic", async () => {
+    const runtime = await createRuntime();
+    const base = `/api/curriculum-editor/versions/${runtime.version.id}/designer`;
+    const created = await post(runtime.app, `${base}/workflows`, {
+      operationId: "workflow:skip-assumption:create",
+      request: workflowRequest,
+    });
+    const createdBody: unknown = await created.json();
+    if (
+      !createdBody ||
+      typeof createdBody !== "object" ||
+      !("workflow" in createdBody)
+    ) {
+      throw new Error("Course Designer create response is missing workflow");
+    }
+    const workflowId = CourseDesignerWorkflowSchema.parse(
+      createdBody.workflow,
+    ).id;
+    for (const [operationId, action] of [
+      ["workflow:skip-assumption:submit", "submit-request"],
+      ["workflow:skip-assumption:discover", "complete-discovery"],
+      ["workflow:skip-assumption:skip", "skip-diagnostic"],
+    ] as const) {
+      const response = await post(
+        runtime.app,
+        `${base}/workflows/${encodeURIComponent(workflowId)}/advance`,
+        { operationId, action },
+      );
+      expect(response.status).toBe(200);
+    }
+    const learningDesign = {
+      targetCapability: "Explain and apply the requested concept",
+      observableEvidence: ["Explain a novel example"],
+      practice: ["Solve a bounded problem"],
+      feedback: ["Compare reasoning against criteria"],
+      instructionReview: ["Review the explanation and retry"],
+      assumptions: [],
+    };
+    const rejected = await post(
+      runtime.app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/advance`,
+      {
+        operationId: "workflow:skip-assumption:missing",
+        action: "complete-learning-design",
+        learningDesign,
+      },
+    );
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toEqual({
+      code: "diagnostic_skip_assumption_required",
+      error:
+        "Learning Design must record an explicit assumption when Diagnostic is skipped",
+    });
+    const accepted = await post(
+      runtime.app,
+      `${base}/workflows/${encodeURIComponent(workflowId)}/advance`,
+      {
+        operationId: "workflow:skip-assumption:accepted",
+        action: "complete-learning-design",
+        learningDesign: {
+          ...learningDesign,
+          assumptions: [
+            "Diagnostic was skipped; assume the learner can explain the core concept before practice begins.",
+          ],
+        },
+      },
+    );
+    expect(accepted.status).toBe(200);
+    const acceptedBody: unknown = await accepted.json();
+    if (
+      !acceptedBody ||
+      typeof acceptedBody !== "object" ||
+      !("workflow" in acceptedBody)
+    ) {
+      throw new Error(
+        "Course Designer acceptance response is missing workflow",
+      );
+    }
+    expect(
+      CourseDesignerWorkflowSchema.parse(acceptedBody.workflow).state,
+    ).toBe("CURRICULUM_PROPOSAL");
   });
 
   it("cancels generation aborted during provider session creation without persisting a proposal", async () => {
@@ -854,7 +1012,7 @@ describe("Course Designer", () => {
       attribution: {
         providerType: "mock",
         modelId: "mock-designer",
-        promptTemplateVersion: "v1.3.0",
+        promptTemplateVersion: "v1.4.0",
         provenance: { sourceIds: ["source:1"] },
         validation: { valid: true },
       },

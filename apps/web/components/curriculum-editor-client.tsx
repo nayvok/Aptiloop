@@ -1905,6 +1905,10 @@ function CourseDesignerPanel({
     ? proposalRows.find(({ id }) => id === activeWorkflow.activeProposalId)
     : undefined;
   const disclosedSources = activeWorkflow?.request.sources ?? [];
+  const diagnosticSkipped = activeWorkflow?.diagnostic.skipped ?? false;
+  const learningDesignAssumptions = designerLines(
+    designerDraft.learningDesignAssumptions,
+  );
   return (
     <section
       className={panelClass}
@@ -2277,10 +2281,45 @@ function CourseDesignerPanel({
               <h4 className="font-medium">
                 {t("authoring.designer.learningDesignTitle")}
               </h4>
+              <div
+                className="rounded-lg border border-border/70 bg-surface-soft/35 p-4 text-sm leading-6 text-muted-foreground"
+                role="note"
+                aria-labelledby="learning-design-guidance-title"
+              >
+                <p
+                  id="learning-design-guidance-title"
+                  className="font-medium text-foreground"
+                >
+                  {t("authoring.designer.learningDesign.guidanceTitle")}
+                </p>
+                <ul className="mt-2 grid gap-1">
+                  <li>
+                    {t("authoring.designer.learningDesign.guidanceSequence")}
+                  </li>
+                  <li>
+                    {t("authoring.designer.learningDesign.guidancePractice")}
+                  </li>
+                  <li>
+                    {t("authoring.designer.learningDesign.guidanceTransfer")}
+                  </li>
+                  <li>
+                    {t("authoring.designer.learningDesign.guidanceObjectives")}
+                  </li>
+                  <li>
+                    {t("authoring.designer.learningDesign.guidanceRuntime")}
+                  </li>
+                  <li>
+                    {t(
+                      "authoring.designer.learningDesign.guidancePlaceholders",
+                    )}
+                  </li>
+                </ul>
+              </div>
               <label className={labelClass}>
                 {t("authoring.designer.learningDesign.targetCapability")}
                 <textarea
                   className={`${fieldClass} min-h-20`}
+                  required
                   value={designerDraft.learningDesignTarget}
                   onChange={(event) =>
                     updateDesignerDraft({
@@ -2317,11 +2356,20 @@ function CourseDesignerPanel({
                   {t(label)}
                   <textarea
                     className={`${fieldClass} min-h-20`}
+                    required={
+                      field !== "learningDesignAssumptions" || diagnosticSkipped
+                    }
                     value={designerDraft[field]}
                     onChange={(event) =>
                       updateDesignerDraft({ [field]: event.target.value })
                     }
                   />
+                  {field === "learningDesignAssumptions" &&
+                  diagnosticSkipped ? (
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {t("authoring.designer.learningDesign.skipAssumption")}
+                    </span>
+                  ) : null}
                 </label>
               ))}
               <Button
@@ -2336,7 +2384,8 @@ function CourseDesignerPanel({
                   designerLines(designerDraft.learningDesignFeedback).length ===
                     0 ||
                   designerLines(designerDraft.learningDesignInstructionReview)
-                    .length === 0
+                    .length === 0 ||
+                  (diagnosticSkipped && learningDesignAssumptions.length === 0)
                 }
                 onClick={() => {
                   const learningDesign =
@@ -2355,9 +2404,7 @@ function CourseDesignerPanel({
                       instructionReview: designerLines(
                         designerDraft.learningDesignInstructionReview,
                       ),
-                      assumptions: designerLines(
-                        designerDraft.learningDesignAssumptions,
-                      ),
+                      assumptions: learningDesignAssumptions,
                     });
                   void advance("complete-learning-design", { learningDesign });
                 }}

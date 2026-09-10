@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  finalizeCoursePack,
   prepareCoursePackBytes,
   validateCoursePackBytes,
+  type CoursePackV1,
 } from "@aptiloop/course-authoring-kit";
 import {
   createDevelopmentCoursePackFixture,
@@ -89,9 +91,39 @@ function jsonRequest(body: unknown): RequestInit {
   };
 }
 
+function createUpgradeFixture() {
+  const current = createDevelopmentCoursePackFixture();
+  const incoming = finalizeCoursePack({
+    ...current,
+    revision: {
+      ...current.revision,
+      revisionKey: "development-kernel-basics/v2",
+      revisionNumber: 2,
+      parentRevisionKey: current.revision.revisionKey,
+      basedOnContentHash: null,
+      contentHash: `sha256:${"0".repeat(64)}`,
+    },
+  });
+  return { current, incoming };
+}
+
+async function stageValidPack(app: Hono, pack: CoursePackV1) {
+  const response = await app.request(
+    "/api/course-packs/validate",
+    jsonRequest(pack),
+  );
+  expect(response.status).toBe(200);
+  const staged = CoursePackStagedValidationResponseSchema.parse(
+    await response.json(),
+  );
+  if (!staged.valid) throw new Error(JSON.stringify(staged.report));
+  return staged;
+}
+
 describe("Course Pack HTTP lifecycle", () => {
   it("validates, commits, exports, and permanently removes a Course from the library", async () => {
     const { app, connection, stagingRoot } = await fixture();
+
     const pack = createDevelopmentCoursePackFixture();
     const validationResponse = await app.request(
       "/api/course-packs/validate",
@@ -501,6 +533,259 @@ describe("Course Pack HTTP lifecycle", () => {
         )
       ).status,
     ).toBe(404);
+  });
+
+  it("returns a detailed staged upgrade preview and keeps GET side-effect free", async () => {
+    const { app, stagingRoot, connection } = await fixture();
+    const { current, incoming } = createUpgradeFixture();
+    const currentValidation = await stageValidPack(app, current);
+    const install = await app.request(
+      `/api/course-packs/validations/${currentValidation.validationId}/commit`,
+      jsonRequest({
+        operationId: "upgrade-preview-install-current",
+        action: "install",
+        expectedContentHash: currentValidation.preview.contentHash,
+      }),
+    );
+    expect(install.status).toBe(201);
+
+    const staged = await stageValidPack(app, incoming);
+    expect(staged.preview.upgrade).toMatchObject({
+      currentRevisionId: current.revision.revisionKey,
+      currentRevisionNumber: 1,
+      incomingRevisionNumber: 2,
+      sideBySideKeyPreview: "development-kernel-basics-r2",
+      carried: [expect.objectContaining({ activityId: "study-replay" })],
+      requiresRevalidation: [
+        expect.objectContaining({ activityId: "recall-replay" }),
+      ],
+      removed: [],
+      adaptationConflicts: [],
+    });
+    const stagedDirectories = await readdir(stagingRoot);
+    const restored = await app.request(
+      `/api/course-packs/validations/${staged.validationId}`,
+    );
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toEqual(staged);
+    expect(await readdir(stagingRoot)).toEqual(stagedDirectories);
+    expect(
+      connection.sqlite
+        .prepare("SELECT count(*) AS count FROM course_pack_lifecycle_events")
+        .get(),
+    ).toEqual({ count: 1 });
+  });
+
+  it("commits a safe-update upgrade, invalidates the stage, and returns navigation", async () => {
+    const { app, stagingRoot } = await fixture();
+    const { current, incoming } = createUpgradeFixture();
+    const currentValidation = await stageValidPack(app, current);
+    expect(
+      (
+        await app.request(
+          `/api/course-packs/validations/${currentValidation.validationId}/commit`,
+          jsonRequest({
+            operationId: "safe-update-install-current",
+            action: "install",
+            expectedContentHash: currentValidation.preview.contentHash,
+          }),
+        )
+      ).status,
+    ).toBe(201);
+    const staged = await stageValidPack(app, incoming);
+    const operation = {
+      operationId: "safe-update-upgrade",
+      mode: "safe-update" as const,
+      expectedContentHash: staged.preview.contentHash,
+      adaptationResolutions: [],
+    };
+    const upgraded = await app.request(
+      `/api/course-packs/validations/${staged.validationId}/upgrade`,
+      jsonRequest(operation),
+    );
+    expect(upgraded.status).toBe(201);
+    expect(await upgraded.json()).toMatchObject({
+      result: {
+        courseId: current.course.courseKey,
+        revisionId: incoming.revision.revisionKey,
+        mode: "safe-update",
+        installed: true,
+        idempotent: false,
+        sideBySideCourseKey: null,
+      },
+      openPath: `/courses/${current.course.courseKey}/revisions/${encodeURIComponent(incoming.revision.revisionKey)}`,
+    });
+    expect(
+      (
+        await app.request(
+          `/api/course-packs/validations/${staged.validationId}`,
+        )
+      ).status,
+    ).toBe(404);
+    expect(await readdir(stagingRoot)).toEqual([]);
+  });
+
+  it("commits a side-by-side upgrade with a distinct Course navigation target", async () => {
+    const { app, stagingRoot } = await fixture();
+    const { current, incoming } = createUpgradeFixture();
+    const currentValidation = await stageValidPack(app, current);
+    expect(
+      (
+        await app.request(
+          `/api/course-packs/validations/${currentValidation.validationId}/commit`,
+          jsonRequest({
+            operationId: "side-by-side-install-current",
+            action: "install",
+            expectedContentHash: currentValidation.preview.contentHash,
+          }),
+        )
+      ).status,
+    ).toBe(201);
+    const staged = await stageValidPack(app, incoming);
+    const sideBySideKey = "development-kernel-basics-r2";
+    const upgraded = await app.request(
+      `/api/course-packs/validations/${staged.validationId}/upgrade`,
+      jsonRequest({
+        operationId: "side-by-side-upgrade",
+        mode: "side-by-side",
+        expectedContentHash: staged.preview.contentHash,
+        adaptationResolutions: [],
+      }),
+    );
+    expect(upgraded.status).toBe(201);
+    expect(await upgraded.json()).toMatchObject({
+      result: {
+        courseId: sideBySideKey,
+        revisionId: `${sideBySideKey}/v1`,
+        mode: "side-by-side",
+        installed: true,
+        idempotent: false,
+        sideBySideCourseKey: sideBySideKey,
+      },
+      openPath: `/courses/${sideBySideKey}/revisions/${encodeURIComponent(`${sideBySideKey}/v1`)}`,
+    });
+    expect(await readdir(stagingRoot)).toEqual([]);
+  });
+
+  it("returns active-session conflict and safely consumes the staged upgrade", async () => {
+    const { app, stagingRoot } = await fixture();
+    const { current, incoming } = createUpgradeFixture();
+    const currentValidation = await stageValidPack(app, current);
+    expect(
+      (
+        await app.request(
+          `/api/course-packs/validations/${currentValidation.validationId}/commit`,
+          jsonRequest({
+            operationId: "active-session-install-current",
+            action: "install",
+            expectedContentHash: currentValidation.preview.contentHash,
+          }),
+        )
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await app.request(
+          `/api/learning/courses/${encodeURIComponent(current.course.courseKey)}/select`,
+          jsonRequest({
+            revisionId: current.revision.revisionKey,
+            operationId: "active-session-select-current",
+          }),
+        )
+      ).status,
+    ).toBe(200);
+    const roadmap = (await (
+      await app.request(
+        `/api/learning/courses/${encodeURIComponent(current.course.courseKey)}/revisions/${encodeURIComponent(current.revision.revisionKey)}/path`,
+      )
+    ).json()) as {
+      curriculum: { weeks: Array<{ days: Array<{ id: string }> }> };
+    };
+    const started = await app.request(
+      "/api/learning/sessions/v2",
+      jsonRequest({
+        dayId: roadmap.curriculum.weeks[0]!.days[0]!.id,
+        operationId: "active-session-start-current",
+      }),
+    );
+    expect(started.status).toBe(201);
+
+    const staged = await stageValidPack(app, incoming);
+    const blocked = await app.request(
+      `/api/course-packs/validations/${staged.validationId}/upgrade`,
+      jsonRequest({
+        operationId: "active-session-upgrade",
+        mode: "safe-update",
+        expectedContentHash: staged.preview.contentHash,
+        adaptationResolutions: [],
+      }),
+    );
+    expect(blocked.status).toBe(409);
+    expect(await blocked.json()).toEqual({
+      error:
+        "Course has an active session on the old revision; finish or abandon it before safe-update",
+      code: "active_session",
+    });
+    expect(await readdir(stagingRoot)).toEqual([]);
+    expect(
+      (
+        await app.request(
+          `/api/course-packs/validations/${staged.validationId}`,
+        )
+      ).status,
+    ).toBe(404);
+  });
+
+  it("replays an upgrade idempotently and rejects operation mismatches", async () => {
+    const { app } = await fixture();
+    const { current, incoming } = createUpgradeFixture();
+    const currentValidation = await stageValidPack(app, current);
+    expect(
+      (
+        await app.request(
+          `/api/course-packs/validations/${currentValidation.validationId}/commit`,
+          jsonRequest({
+            operationId: "upgrade-replay-install-current",
+            action: "install",
+            expectedContentHash: currentValidation.preview.contentHash,
+          }),
+        )
+      ).status,
+    ).toBe(201);
+    const staged = await stageValidPack(app, incoming);
+    const operation = {
+      operationId: "upgrade-replay-operation",
+      mode: "safe-update" as const,
+      expectedContentHash: staged.preview.contentHash,
+      adaptationResolutions: [],
+    };
+    const first = await app.request(
+      `/api/course-packs/validations/${staged.validationId}/upgrade`,
+      jsonRequest(operation),
+    );
+    expect(first.status).toBe(201);
+    const replay = await app.request(
+      `/api/course-packs/validations/${staged.validationId}/upgrade`,
+      jsonRequest(operation),
+    );
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      result: {
+        mode: "safe-update",
+        revisionId: incoming.revision.revisionKey,
+        installed: false,
+        idempotent: true,
+      },
+    });
+    const mismatch = await app.request(
+      `/api/course-packs/validations/${staged.validationId}/upgrade`,
+      jsonRequest({
+        ...operation,
+        mode: "side-by-side",
+      }),
+    );
+    expect(mismatch.status).toBe(409);
+    expect(await mismatch.json()).toMatchObject({ code: "conflict" });
   });
 
   it("finalizes a sequential draft and unlocks its next lesson through real progress", async () => {

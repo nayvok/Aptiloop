@@ -79,7 +79,7 @@ describe("Course Pack authoring assets", () => {
       draftFormat: "aptiloop.course-pack-authoring-draft",
       formatVersion: 1,
       formatMinorVersion: 1,
-      skillContentVersion: "1.3.0",
+      skillContentVersion: "1.4.0",
       validatorVersion: "m3-v3",
     });
   });

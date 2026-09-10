@@ -169,6 +169,7 @@ function safeDiagnosticText(
 }
 
 function safeDiagnosticEntityId(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 200) return undefined;
   const sanitized = safeDiagnosticText(value, 200);
   return sanitized !== undefined &&
     diagnosticIdPattern.test(sanitized) &&

@@ -255,7 +255,7 @@ describe("honest UI state primitives", () => {
     }
   });
 
-  it("keeps classified Course Pack validation guidance without trusting its message", () => {
+  it("keeps safe Course Pack detail separate from localized remediation", () => {
     const t = (key: string) =>
       key === "courses.validation.diagnostic.unsafe"
         ? "Remove the unsafe value from this field."
@@ -264,6 +264,7 @@ describe("honest UI state primitives", () => {
       {
         code: "PACK_AUTHORITY_FIELD",
         path: "/command",
+        message: "Authority-bearing field is forbidden",
       },
       t,
     );
@@ -271,7 +272,8 @@ describe("honest UI state primitives", () => {
     expect(presentation).toEqual({
       code: "PACK_AUTHORITY_FIELD",
       path: "/command",
-      message: "Remove the unsafe value from this field.",
+      message: "Authority-bearing field is forbidden",
+      remediation: "Remove the unsafe value from this field.",
     });
   });
 

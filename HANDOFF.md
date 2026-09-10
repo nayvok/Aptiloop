@@ -2,7 +2,7 @@
 
 ## Entry point
 
-Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tree as user work: do not reset, discard, or delete data. Select one slice only. The current slice is **task7: expose precise safe import diagnostics** ([ADR 0012](docs/adr/0012-course-transfer-scope-and-version-contract.md) decision 3). Task6 (course transfer and attempt restore) was closed in the previous session — see the Task6 record below. Do not touch historical plans or audits.
+Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tree as user work: do not reset, discard, or delete data. Select one slice only. Task9, **add the Learning Design authoring stage**, is closed in the current working tree. The next slice is task10, **update documentation and remove scaffolding**. Do not touch historical plans or audits.
 
 ## Original 11-task phased checklist
 
@@ -21,8 +21,8 @@ Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tr
 
 ### Learning Evolution
 
-- [ ] Harden course revision upgrade semantics
-- [ ] Add Learning Design authoring stage
+- [x] Harden course revision upgrade semantics
+- [x] Add Learning Design authoring stage
 
 ### Release Readiness
 
@@ -31,29 +31,36 @@ Read `AGENTS.md`, `README.md`, `PRODUCT.md`, and this file. Treat the working tr
 
 All remaining unchecked items are **PAUSED** for the next session; this is not an external blocker.
 
-## Current slice brief: task7 — Expose precise safe import diagnostics
+## Current slice record: task9 — Add Learning Design authoring stage
 
-Owner decision 3 in [ADR 0012](docs/adr/0012-course-transfer-scope-and-version-contract.md): a transfer whose Course references activity/evidence/check/environment types the app does not support must fail closed with precise code/path/entity diagnostics — no partial install, no silent skip.
+**Implemented baseline (2026-09-10).**
 
-**Implemented in this session (2026-09-09):**
+- The shared and guided authoring order is `Initial Brief → Discovery → Diagnostic → Learning Design → Course Proposal → User Review`. Proposal generation rejects an incomplete Learning Design, and an out-of-order completion request retains the established `409 invalid_workflow_transition` contract without mutation.
+- The external authoring instruction and the constrained `course-designer` prompt now require target capability → observable evidence → practice → feedback → instruction/review; attempt-before-answer; software decision practice; changed-condition transfer; explicit mastery evidence; separate interview/engineering objectives and time trade-offs; honest placeholders; and runtime-unavailable degradation without invented exercises.
+- A skipped Diagnostic requires a persisted explicit assumption before the guided workflow can advance. Both completion and generation enforce the condition server-side; the localized UI explains it and keeps the completion action disabled until the assumption and all required Learning Design fields are present.
+- `COURSE_PACK_SKILL_CONTENT_VERSION` and the Course Designer prompt are `1.4.0`. Generated authoring templates carry the version, and import Preview shows a non-blocking `en-US`/`ru-RU` mismatch warning while keeping explicit install/open-as-draft actions available.
+- Identity/authority, finite typed tools, deterministic validation, protected-material separation, provenance, stable-ID meaning, approval/Apply/Publish gates, and the three-repair-round budget remain unchanged.
+- Focused evidence after formatting: orchestrator Course Designer 13/13, web Course authoring instruction 11/11, guided Studio component 20/20, Course Pack component 32/32, prompt-library 8/8, and Authoring Kit asset 1/1 passed. A reviewer-found early-transition TypeError path was corrected and retained as a regression test. Affected-workspace TypeScript checks and LSP diagnostics passed without errors.
+- Repository gates: `format:check`, lint 15/15, typecheck 15/15, build 15/15, and `check:production-content` passed. `test:fast` passed every suite except the unchanged `apps/orchestrator/test/http-boundary.integration.test.ts` baseline: one concurrent-entry assertion and two 30-second shutdown/capacity timeouts (orchestrator 348/351). E2E was not rerun in this capability slice; the existing writable-database launcher blocker remains recorded below.
+- Rendered Browser proof used the production Next build at 1280×900 with a disposable in-tab Course Designer fixture. The Learning Design guidance and six labeled fields rendered without a framework overlay or console/page errors; completion was disabled before required input and enabled only after all fields plus the explicit skipped-Diagnostic assumption were entered. No Course or learner data was mutated.
 
-- `validateCourseTransferBytes` (`packages/database/src/course-transfer.ts`) now fails closed with precise schema-contract diagnostics before Zod parsing: `TRANSFER_FORMAT_UNKNOWN` (`/format`), `TRANSFER_FORMAT_OLDER` (`/formatVersion`, "re-export from a current version"), `TRANSFER_FORMAT_NEWER` (`/formatVersion`, "update the app") — ADR decision 2 made explicit in transfer validation (unknown-top-level-shape already returned `TRANSFER_SHAPE_INVALID`).
-- Transfer pack validation no longer flattens root causes: an invalid pack now surfaces the exact pack diagnostics (`PACK_*`, child `path` under `/packs/<revisionKey>`, `entityId` = pack revision key or child entity) capped at `MAX_TRANSFER_DIAGNOSTICS`; `TRANSFER_PACK_INVALID` is kept only for identity-mismatch cases with no pack diagnostics.
-- Route tests added in `apps/orchestrator/test/course-transfer.integration.test.ts` (new `course transfer precise import diagnostics` describe): unknown format, older version, newer version, and nested pack diagnostics — 7/7 green in that file (3 task6 + 4 task7).
+**Task9 is closed.** Task10 is the next slice; release-readiness cleanup and full release evidence were not started here.
 
-**Closed in this session (2026-09-09) — precise unknown-type coverage:**
+## Previous slice record: task8 — Harden course revision upgrade semantics
 
-- `packages/learning-core/src/kernel.ts` now exports `collectLearningKernelFactShapeIssues(fact)`: a pure, per-fact structural contract check for kernel facts received as untrusted data. It mirrors the internal `validateFacts` exact-key/enum/provenance/authority rules but collects issues (classified `unknown-type` vs `invalid-shape` with JSON-pointer paths) instead of throwing, and never consults activities, other facts, storage, or ambient state. Cross-fact links and activity-scope rules still run in `validateFacts` before any projection is recomputed. Covered by `packages/learning-core/test/fact-shape.test.ts` (6 tests).
-- `validateCourseTransferBytes` now runs a new learnerScope-fact stage: facts whose canonical JSON does not verify hash/scope fail closed (`TRANSFER_FACT_UNVERIFIED`), and each fact's shape is checked before any write (`TRANSFER_FACT_UNKNOWN_TYPE` for unknown body/evidence/provenance types, `TRANSFER_FACT_SHAPE_INVALID` for structural violations), with `entityId` = fact id and the in-fact JSON-pointer path. `replayTransferFacts` repeats the shape check inside the commit transaction so commit cannot persist an unknown kernel type even if validation was bypassed.
-- Unknown check/environment IDs in Course Pack requirements were confirmed already fail closed: `validateRequirements` emits `PACK_REQUIREMENT_UNAVAILABLE` (`/requirements/{name}/{index}`, `entityId` = the unknown ID) against `CORE_M3_COURSE_PACK_REGISTRY`/app registry, and transfer surfaces those child diagnostics under `/packs/<revisionKey>`. The route test `names the exact unknown trusted check requirement in pack diagnostics` proves it (`missing-check` → `PACK_REQUIREMENT_UNAVAILABLE` at `.../requirements/checkIds/0`, `entityId: "missing-check"`).
-- UI: `apps/web/lib/failure-presentation.ts` gained a `transfer` diagnostic group (all `TRANSFER_*` codes) so transfer rejections render the localized `courses.validation.diagnostic.transfer` remediation ("rejected before anything was imported; fix in the source app and re-export"); `en-US` and `ru-RU` catalogs in `apps/web/lib/i18n.tsx` both carry the new key.
-- Route tests: `apps/orchestrator/test/course-transfer.integration.test.ts` is now 9/9 green (`course transfer precise import diagnostics` describe: 4 previous + unknown-check pack diagnostics + unknown/ malformed kernel fact types).
+**Implemented baseline (2026-09-10).**
 
-**Remaining for task7 (next session):**
+- Course Pack validation detects an upgrade only for the same `courseKey`, a strictly greater revision number, and a resolvable parent revision in that Course. The staged response carries a bounded detailed preview: current/incoming revision, collision-checked side-by-side key, carried activities, activities requiring revalidation, removed activities, and personal-adaptation conflicts.
+- The owner-approved choices are exactly `safe-update` and `side-by-side`; the older replace-with-backup proposal is not implemented. The UI defaults to safe-update, exposes both choices in an accessible localized dialog, and uses a dedicated staged upgrade POST.
+- Safe-update rejects while any Course session remains active. Otherwise it transactionally publishes and activates the incoming upstream revision, leaves old revisions/sessions/facts immutable, replays only facts whose stable activity and prerequisite contracts survive, and records migration provenance bound to the original fact and contract hashes.
+- Personal adaptation conflicts require an exact normalized resolution set. The incoming upstream revision remains the sole learner-active branch for new sessions; resolved personal divergence is retained as a separate archived rebased lineage/head rather than silently discarded or made active.
+- Side-by-side derives and collision-checks a distinct Course identity, installs it as a new Course, and carries no learner history.
+- Upgrade operations are idempotent only for the exact validation, mode, content hash, suffix, and normalized adaptation resolutions. A consumed staged operation can return its prior result; changed payloads fail closed.
+- Focused evidence after formatting: database Course Pack suite 14/14, orchestrator Course Pack route suite 19/19, web Course Pack component suite 31/31, UI state primitives 16/16, and changed-workspace TypeScript checks passed.
+- Repository gates: `format:check` passed; `lint` 15/15 passed; `typecheck` 15/15 passed; `build` 15/15 passed; `check:production-content` passed after the build completed. `test:fast` passed every suite except the known `apps/orchestrator/test/http-boundary.integration.test.ts` red baseline (3 failures: concurrent-entry assertion plus two 30-second shutdown/capacity timeouts; orchestrator total 346/349). `test:e2e` did not start the app: `createApp` rejected the missing writable database identity at `apps/orchestrator/src/app.ts:493`; current artifact `.verify/e2e-failures/20260910012302002-25764-cbaadf62`.
+- Rendered Browser proof used the production Next build at 1280×900 with a disposable in-tab staged-validation fixture: the dialog showed exactly `Safe update` and `Side-by-side`, safe-update was selected by default, active-old-session guidance was visible in its accessible name, adaptation resolution was keyboard accessible, and Space selected side-by-side. No real Course or learner data was mutated.
 
-- None blocking this slice; the remaining unchecked checklist items are PAUSED (upgrade semantics, Learning Design, documentation/scaffolding cleanup, full gates with E2E).
-
-**Gates (2026-09-09):** `format:check` ✔, `lint` 15/15 ✔, `typecheck` 15/15 ✔, `build -- --force` 15/15 ✔, learning-core fact-shape 6/6 ✔, transfer route suites 9/9 ✔, database fast 134 ✔, exercise-core 65/65 ✔. `test:fast` full run: all suites green except the pre-existing `apps/orchestrator/test/http-boundary.integration.test.ts` (3/3 timeouts/close, proven pre-existing earlier on a stashed clean tree) — unrelated to task7. E2E remains blocked on the known orchestrator identity/infrastructure issue from 07.09 (same as recorded in the task6 record).
+**Task8 was closed before task9 began.** Its behavior-specific suites, build, and rendered interaction proof were green; the repository-wide `test:fast`/E2E limitations below remain pre-existing infrastructure baselines.
 
 ## Verified evidence
 
@@ -70,7 +77,7 @@ Owner decision 3 in [ADR 0012](docs/adr/0012-course-transfer-scope-and-version-c
 
 ## Incomplete / explicitly unverified
 
-- E2E is not green: launcher failed with exact error `Writable database identity is required before opening` at `apps/orchestrator/src/app.ts:474`; artifact `.verify/e2e-failures/20260907052333145-21600-c680a209`. A current diagnostic lint violation remains at `failure-presentation.ts138` (`no-control-regex`). Do not imply integrated full gates.
+- Integrated gates are not fully green. `test:fast` still has the known three failures in `apps/orchestrator/test/http-boundary.integration.test.ts` (concurrent-entry assertion and two 30-second timeouts). `test:e2e` currently fails before route registration with exact error `Writable database identity is required before opening` at `apps/orchestrator/src/app.ts:493`; artifact `.verify/e2e-failures/20260910012302002-25764-cbaadf62`. The prior `failure-presentation.ts` lint violation is fixed; current format, lint, typecheck, build, and production-content gates pass.
 - Post-switch failure and rollback C: **VERIFIED** this slice (see Task4 evidence). Latest freeze: no background jobs, live smokes, or `update-worker` processes remain. Windows cleanup occasionally returns `EBUSY` on disposable smoke roots (`rmdir` after late `taskkill`), which does not affect evidence; roots are removed manually.
 - Public GitHub tagged-release operation is unverified. macOS/Linux runtime updates are unverified. Do not make public release/provider claims.
 - Collision-safe install port selection: design recorded as ADR 0011 and the CLI contract is an implemented baseline (port suite 14/14, Windows); macOS/Linux host service/autostart verification and any future start-path additions remain open.
@@ -87,13 +94,13 @@ Owner decision 3 in [ADR 0012](docs/adr/0012-course-transfer-scope-and-version-c
 
 The shared attempt `environmentId`/`baselineTreeHash` fields proposal was reverted. `baselineTreeHash` is intended to use `source_snapshot_hash` and the restored local baseline commit; migration0022 is not approved.
 
-## Next slice: complete course transfer and attempt restore
+## Task9 scope source (closed)
 
-**Approved Core Alpha target**
+**Implemented baseline**
 
-The next slice is the first unchecked Course Portability item, from current source. Scope sources: `APTILOOP_USABILITY_RELEASE_PLAN.md` (transfer contracts and UI/CLI steps) and the owner decisions that `transfer-with-progress` always records history and that restore of active sessions/attempts uses real ordered Git commits. Recorded starting point: transfer authoredGraph/raw JSON hash preservation and the mixed manual/Pack plus active-facts snapshot direct-repository smoke passed, but real route attempt materialization and Git restore source identities remain incomplete. Do not start import diagnostics, upgrade semantics, Learning Design, or release-readiness items in the same slice.
+Task9 followed `APTILOOP_USABILITY_RELEASE_PLAN.md` step 8 and the owner-approved sequence `Brief → Discovery → Diagnostic → Learning Design → Proposal`. It updated the external authoring instruction, in-app guided Designer, and prompt-library Course Designer contract without weakening identity/authority, typed tools, validation, protected material, provenance, stable IDs, approval gates, or the three-attempt repair budget.
 
-### Slice progress (2026-09-09 session)
+### Task6 slice progress (2026-09-09 session)
 
 **Implemented baseline**
 

@@ -1284,6 +1284,7 @@ export const CoursePackUpgradeResultSchema = z
     supersededEvidenceCount: z.number().int().nonnegative(),
     carriedCount: z.number().int().nonnegative().default(0),
     revalidationCount: z.number().int().nonnegative().default(0),
+    sideBySideCourseKey: StableIdSchema.nullable(),
   })
   .strict();
 export type CoursePackUpgradeResult = z.infer<

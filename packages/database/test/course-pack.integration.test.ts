@@ -1063,6 +1063,266 @@ describe("CoursePackRepository", () => {
       rmSync(projectRoot, { recursive: true, force: true });
     }
   });
+  it.each(["use-upstream", "keep-personal"] as const)(
+    "rebases a personal learner branch with %s and binds exact resolutions",
+    (resolution) => {
+      const database = connection();
+      let eventId = 0;
+      const repository = new CoursePackRepository(database, {
+        now: () => Date.UTC(2026, 7, 10),
+        id: () => `upgrade-rebase-event-${++eventId}`,
+      });
+      const basePack = createDevelopmentCoursePackFixture();
+      const base = validated(basePack);
+      repository.install({
+        operationId: "upgrade-rebase-install-base",
+        validationId: "88888888-8888-4888-8888-888888888881",
+        action: "install",
+        sourceBytesHash: coursePackSourceBytesHash(base.sourceBytes),
+        pack: base.validation.pack,
+        canonicalJson: base.validation.canonicalJson,
+        report: base.validation.report,
+      });
+
+      const personalDraft = structuredClone(basePack);
+      personalDraft.revision.revisionKey = "development-kernel-basics/personal";
+      personalDraft.revision.revisionNumber = 2;
+      personalDraft.revision.parentRevisionKey = basePack.revision.revisionKey;
+      personalDraft.revision.branchKind = "personal";
+      personalDraft.revision.basedOnContentHash =
+        base.validation.pack.revision.contentHash;
+      const personalActivity = personalDraft.lessons[0]!.activities[0]!;
+      personalActivity.payload = {
+        type: "study",
+        body: "Personal learner explanation.",
+      };
+      const personal = finalizedAndValidated(personalDraft);
+      repository.install({
+        operationId: "upgrade-rebase-install-personal",
+        validationId: "88888888-8888-4888-8888-888888888882",
+        action: "install",
+        sourceBytesHash: coursePackSourceBytesHash(personal.sourceBytes),
+        pack: personal.validation.pack,
+        canonicalJson: personal.validation.canonicalJson,
+        report: personal.validation.report,
+      });
+
+      const incomingDraft = structuredClone(basePack);
+      incomingDraft.revision.revisionKey = "development-kernel-basics/v2";
+      incomingDraft.revision.revisionNumber = 3;
+      incomingDraft.revision.parentRevisionKey = basePack.revision.revisionKey;
+      const incomingActivity = incomingDraft.lessons[0]!.activities[0]!;
+      incomingActivity.payload = {
+        type: "study",
+        body: "Upstream revision explanation.",
+      };
+      const incoming = finalizedAndValidated(incomingDraft);
+      const preview = repository.previewUpgrade(
+        basePack.course.courseKey,
+        incoming.validation.pack,
+      );
+      expect(preview?.adaptationConflicts).toEqual([
+        expect.objectContaining({
+          conflictId: "adaptation-study-replay",
+          activityId: "study-replay",
+        }),
+      ]);
+      const conflictId = preview!.adaptationConflicts[0]!.conflictId;
+      const upgradeInput = {
+        operationId: "upgrade-rebase-commit",
+        validationId: "88888888-8888-4888-8888-888888888883",
+        pack: incoming.validation.pack,
+        canonicalJson: incoming.validation.canonicalJson,
+        report: incoming.validation.report,
+        sourceBytesHash: coursePackSourceBytesHash(incoming.sourceBytes),
+        mode: "safe-update" as const,
+      };
+      const beforeReject = database.sqlite
+        .prepare(
+          `SELECT
+             (SELECT count(*) FROM course_revisions) AS revisions,
+             (SELECT count(*) FROM adaptation_branches) AS branches,
+             (SELECT count(*) FROM course_pack_lifecycle_events) AS events`,
+        )
+        .get();
+      expect(() =>
+        repository.upgradeCourseToRevision({
+          ...upgradeInput,
+          operationId: "upgrade-rebase-missing",
+          adaptationResolutions: [],
+        }),
+      ).toThrow(/exactly match/u);
+      expect(() =>
+        repository.upgradeCourseToRevision({
+          ...upgradeInput,
+          operationId: "upgrade-rebase-extra",
+          adaptationResolutions: [
+            { conflictId, resolution: "use-upstream" },
+            { conflictId: "adaptation-extra", resolution: "keep-personal" },
+          ],
+        }),
+      ).toThrow(/exactly match/u);
+      expect(() =>
+        repository.upgradeCourseToRevision({
+          ...upgradeInput,
+          operationId: "upgrade-rebase-duplicate",
+          adaptationResolutions: [
+            { conflictId, resolution: "use-upstream" },
+            { conflictId, resolution: "use-upstream" },
+          ],
+        }),
+      ).toThrow(/duplicate/u);
+      expect(() =>
+        repository.upgradeCourseToRevision({
+          ...upgradeInput,
+          operationId: "upgrade-rebase-wrong",
+          adaptationResolutions: [
+            {
+              conflictId,
+              resolution: "unsupported" as never,
+            },
+          ],
+        }),
+      ).toThrow(/unsupported/u);
+      expect(
+        database.sqlite
+          .prepare(
+            `SELECT
+               (SELECT count(*) FROM course_revisions) AS revisions,
+               (SELECT count(*) FROM adaptation_branches) AS branches,
+               (SELECT count(*) FROM course_pack_lifecycle_events) AS events`,
+          )
+          .get(),
+      ).toEqual(beforeReject);
+
+      const oldPersonal = database.sqlite
+        .prepare(
+          `SELECT manifest.canonical_json, activity.payload_json
+           FROM course_pack_manifests manifest
+           JOIN course_activities activity
+             ON activity.course_id = ? AND activity.revision_id = manifest.revision_id
+           WHERE manifest.revision_id = ? AND activity.stable_id = 'study-replay'`,
+        )
+        .get(
+          basePack.course.courseKey,
+          personal.validation.pack.revision.revisionKey,
+        );
+      const committed = repository.upgradeCourseToRevision({
+        ...upgradeInput,
+        adaptationResolutions: [{ conflictId, resolution }],
+      });
+      const replay = repository.upgradeCourseToRevision({
+        ...upgradeInput,
+        adaptationResolutions: [{ conflictId, resolution }],
+      });
+      expect(replay).toEqual({
+        ...committed,
+        installed: false,
+        idempotent: true,
+      });
+      expect(() =>
+        repository.upgradeCourseToRevision({
+          ...upgradeInput,
+          adaptationResolutions: [
+            {
+              conflictId,
+              resolution:
+                resolution === "use-upstream"
+                  ? "keep-personal"
+                  : "use-upstream",
+            },
+          ],
+        }),
+      ).toThrow(/bound to a different/u);
+      expect(
+        database.sqlite
+          .prepare(
+            `SELECT count(*) AS count FROM adaptation_branches
+             WHERE course_id = ? AND status = 'active'`,
+          )
+          .get(basePack.course.courseKey),
+      ).toEqual({ count: 1 });
+      const activeBranch = database.sqlite
+        .prepare(
+          `SELECT base_revision_id, head_revision_id
+           FROM adaptation_branches
+           WHERE course_id = ? AND status = 'active'`,
+        )
+        .get(basePack.course.courseKey) as {
+        base_revision_id: string;
+        head_revision_id: string;
+      };
+      expect(activeBranch.base_revision_id).toBe(
+        incoming.validation.pack.revision.revisionKey,
+      );
+      expect(activeBranch.head_revision_id).toBeNull();
+      const rebasedBranch = database.sqlite
+        .prepare(
+          `SELECT head_revision_id FROM adaptation_branches
+           WHERE course_id = ? AND base_revision_id = ? AND status = 'archived'`,
+        )
+        .get(
+          basePack.course.courseKey,
+          incoming.validation.pack.revision.revisionKey,
+        ) as { head_revision_id: string };
+      const rebasedActivity = database.sqlite
+        .prepare(
+          `SELECT payload_json FROM course_activities
+           WHERE revision_id = ? AND stable_id = 'study-replay'`,
+        )
+        .get(rebasedBranch.head_revision_id) as { payload_json: string };
+      expect(JSON.parse(rebasedActivity.payload_json)).toEqual({
+        type: "study",
+        body:
+          resolution === "use-upstream"
+            ? "Upstream revision explanation."
+            : "Personal learner explanation.",
+      });
+      expect(
+        database.sqlite
+          .prepare(
+            `SELECT canonical_json, payload_json
+             FROM course_pack_manifests manifest
+             JOIN course_activities activity
+               ON activity.course_id = ? AND activity.revision_id = manifest.revision_id
+             WHERE manifest.revision_id = ? AND activity.stable_id = 'study-replay'`,
+          )
+          .get(
+            basePack.course.courseKey,
+            personal.validation.pack.revision.revisionKey,
+          ),
+      ).toEqual(oldPersonal);
+      expect(
+        database.sqlite
+          .prepare(
+            `SELECT base_revision_id, head_revision_id, status
+             FROM adaptation_branches
+             WHERE course_id = ? AND base_revision_id = ?
+               AND head_revision_id = ?`,
+          )
+          .get(
+            basePack.course.courseKey,
+            basePack.revision.revisionKey,
+            personal.validation.pack.revision.revisionKey,
+          ),
+      ).toEqual({
+        base_revision_id: basePack.revision.revisionKey,
+        head_revision_id: personal.validation.pack.revision.revisionKey,
+        status: "archived",
+      });
+      expect(
+        database.sqlite
+          .prepare(
+            `SELECT status FROM course_revisions
+             WHERE id IN (?, ?) ORDER BY id`,
+          )
+          .all(
+            basePack.revision.revisionKey,
+            personal.validation.pack.revision.revisionKey,
+          ),
+      ).toEqual([{ status: "published" }, { status: "published" }]);
+    },
+  );
 });
 
 function finalizedAndValidated(pack: CoursePackV1) {

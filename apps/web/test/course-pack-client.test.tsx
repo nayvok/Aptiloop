@@ -107,6 +107,33 @@ const validValidationResponse = {
       createdAt: "2026-08-10T00:00:00.000Z",
       notes: null,
     },
+    upgrade: null,
+  },
+};
+
+const upgradePreview = {
+  currentRevisionId: "development-kernel-basics/v1",
+  currentRevisionNumber: 1,
+  incomingRevisionNumber: 2,
+  sideBySideKeyPreview: "development-kernel-basics-v2",
+  carried: [{ activityId: "study-replay", contractHash: contentHash }],
+  requiresRevalidation: [],
+  removed: ["old-activity"],
+  adaptationConflicts: [
+    {
+      conflictId: "conflict-study",
+      activityId: "study-replay",
+      reason: "The activity contract changed.",
+    },
+  ],
+};
+const validUpgradeValidationResponse = {
+  ...validValidationResponse,
+  preview: {
+    ...validValidationResponse.preview,
+    revisionKey: "development-kernel-basics/v2",
+    revisionNumber: 2,
+    upgrade: upgradePreview,
   },
 };
 
@@ -389,6 +416,48 @@ describe("Course Pack import", () => {
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
+  it("warns without blocking when the imported authoring skill is outdated", async () => {
+    const mismatchedSkillValidation = {
+      ...validValidationResponse,
+      preview: {
+        ...validValidationResponse.preview,
+        provenance: {
+          ...validValidationResponse.preview.provenance,
+          skillContentVersion: "1.3.0",
+        },
+      },
+    };
+    apiMock.mockImplementation(async (path: string) => {
+      if (
+        path ===
+        `/course-packs/validations/${mismatchedSkillValidation.validationId}`
+      ) {
+        return mismatchedSkillValidation;
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+
+    renderWithQuery(
+      <CoursePackIntakeClient
+        operationId={mismatchedSkillValidation.validationId}
+      />,
+    );
+
+    const mismatchAlert = await screen.findByRole("alert");
+    expect(mismatchAlert).toHaveTextContent(
+      "Версия авторского навыка не совпадает",
+    );
+    expect(mismatchAlert).toHaveTextContent(
+      "Этот Pack создан с версией содержимого навыка 1.3.0; текущая версия навыка Aptiloop — 1.4.0. Скачайте текущий навык заново и повторите авторинг перед сохранением.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Установить и открыть" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Открыть как черновик" }),
+    ).toBeEnabled();
+  });
+
   it("expires a restored Preview at expiresAt and requires file reselection", async () => {
     const expiringValidation = {
       ...validValidationResponse,
@@ -518,7 +587,7 @@ describe("Course Pack import", () => {
     ).toBe(false);
   });
 
-  it("requires Preview confirmation and opens the committed Course revision", async () => {
+  it("keeps ordinary install available when the upgrade preview is null", async () => {
     apiMock.mockImplementation(async (path: string) => {
       if (
         path ===
@@ -991,6 +1060,214 @@ describe("Course Pack staged intake", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
+  });
+
+  it("shows the two upgrade modes and commits the default safe update", async () => {
+    const upgradeResult = {
+      result: {
+        courseId: "development-kernel-basics",
+        revisionId: "development-kernel-basics/v2",
+        contentHash,
+        mode: "safe-update",
+        installed: true,
+        idempotent: false,
+        replayedFactCount: 1,
+        supersededEvidenceCount: 0,
+        carriedCount: 1,
+        revalidationCount: 0,
+        sideBySideCourseKey: null,
+      },
+      openPath:
+        "/courses/development-kernel-basics/revisions/development-kernel-basics%2Fv2",
+    };
+    apiMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (
+        path ===
+        "/course-packs/validations/123e4567-e89b-42d3-a456-426614174001"
+      ) {
+        return validUpgradeValidationResponse;
+      }
+      if (path.endsWith("/upgrade")) {
+        expect(init?.method).toBe("POST");
+        return upgradeResult;
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+
+    const rendered = renderWithQuery(
+      <CoursePackIntakeClient
+        operationId={validUpgradeValidationResponse.validationId}
+      />,
+    );
+    expect(
+      await screen.findByText("development-kernel-basics-v2"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("study-replay: The activity contract changed."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Установить и открыть" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Проверить обновление Course" }),
+    );
+    rendered.rerender(
+      <CoursePackIntakeClient
+        operationId={validUpgradeValidationResponse.validationId}
+      />,
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Применить эту ревизию Course?",
+    });
+    expect(
+      within(dialog).getByRole("radio", { name: /Безопасное обновление/u }),
+    ).toBeChecked();
+    expect(
+      within(dialog).getByRole("radio", { name: /Рядом/u }),
+    ).not.toBeChecked();
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Применить обновление Course",
+      }),
+    );
+    await waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith(
+        `/course-packs/validations/${validUpgradeValidationResponse.validationId}/upgrade`,
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    const request = apiMock.mock.calls.find(([path]) =>
+      String(path).endsWith("/upgrade"),
+    )?.[1] as RequestInit | undefined;
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      mode: "safe-update",
+      expectedContentHash: contentHash,
+      adaptationResolutions: [
+        { conflictId: "conflict-study", resolution: "keep-personal" },
+      ],
+    });
+    await waitFor(() =>
+      expect(pushMock).toHaveBeenLastCalledWith(
+        "/courses/development-kernel-basics/revisions/development-kernel-basics%2Fv2",
+      ),
+    );
+  });
+
+  it("submits side-by-side after changing the upgrade mode", async () => {
+    apiMock.mockImplementation(async (path: string) => {
+      if (
+        path ===
+        "/course-packs/validations/123e4567-e89b-42d3-a456-426614174001"
+      ) {
+        return validUpgradeValidationResponse;
+      }
+      if (path.endsWith("/upgrade")) {
+        return {
+          result: {
+            courseId: "development-kernel-basics-v2",
+            revisionId: "development-kernel-basics-v2",
+            contentHash,
+            installed: true,
+            idempotent: false,
+            replayedFactCount: 0,
+            supersededEvidenceCount: 0,
+            carriedCount: 0,
+            revalidationCount: 0,
+            sideBySideCourseKey: "development-kernel-basics-v2",
+          },
+          openPath:
+            "/courses/development-kernel-basics-v2/revisions/development-kernel-basics-v2",
+        };
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+
+    const rendered = renderWithQuery(
+      <CoursePackIntakeClient
+        operationId={validUpgradeValidationResponse.validationId}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Проверить обновление Course",
+      }),
+    );
+    rendered.rerender(
+      <CoursePackIntakeClient
+        operationId={validUpgradeValidationResponse.validationId}
+      />,
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Применить эту ревизию Course?",
+    });
+    fireEvent.click(within(dialog).getByRole("radio", { name: /Рядом/u }));
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Применить обновление Course",
+      }),
+    );
+    await waitFor(() => {
+      const request = apiMock.mock.calls.find(([path]) =>
+        String(path).endsWith("/upgrade"),
+      )?.[1] as RequestInit | undefined;
+      expect(JSON.parse(String(request?.body))).toMatchObject({
+        mode: "side-by-side",
+        expectedContentHash: contentHash,
+        adaptationResolutions: [],
+      });
+    });
+  });
+
+  it("keeps safe-update confirmation open with active-session remediation", async () => {
+    let attempts = 0;
+    apiMock.mockImplementation(async (path: string) => {
+      if (
+        path ===
+        "/course-packs/validations/123e4567-e89b-42d3-a456-426614174001"
+      ) {
+        return validUpgradeValidationResponse;
+      }
+      if (path.endsWith("/upgrade")) {
+        attempts += 1;
+        throw Object.assign(new Error("active"), {
+          status: 409,
+          code: "active_session",
+        });
+      }
+      throw new Error(`Unexpected API call: ${path}`);
+    });
+    const rendered = renderWithQuery(
+      <CoursePackIntakeClient
+        operationId={validUpgradeValidationResponse.validationId}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Проверить обновление Course",
+      }),
+    );
+    rendered.rerender(
+      <CoursePackIntakeClient
+        operationId={validUpgradeValidationResponse.validationId}
+      />,
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Применить эту ревизию Course?",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Применить обновление Course",
+      }),
+    );
+    expect(
+      await screen.findByText("Сначала завершите активную сессию"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Повторить локальное изменение" }),
+    );
+    await waitFor(() => expect(attempts).toBe(2));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   });
 
   it("distinguishes a malformed staged response from a staging failure", async () => {

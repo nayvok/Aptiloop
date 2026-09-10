@@ -1731,6 +1731,26 @@ export function registerCourseDesignerRoutes(
             diagnostic: { ...diagnostic, answers: {}, skipped: true },
           });
         } else if (input.action === "complete-learning-design") {
+          if (row.state !== "LEARNING_DESIGN") {
+            throw new CourseDesignerError(
+              409,
+              "invalid_workflow_transition",
+              `Action requires LEARNING_DESIGN; workflow is ${row.state}`,
+            );
+          }
+          const diagnostic = parseJson(
+            row.diagnostic_json,
+          ) as CourseDesignerDiagnostic;
+          if (
+            diagnostic.skipped &&
+            input.learningDesign.assumptions.length === 0
+          ) {
+            throw new CourseDesignerError(
+              409,
+              "diagnostic_skip_assumption_required",
+              "Learning Design must record an explicit assumption when Diagnostic is skipped",
+            );
+          }
           row = transitionWorkflow(state.connection, row, "LEARNING_DESIGN", {
             operationId: input.operationId,
             eventType: "learning-design-completed",
@@ -1946,11 +1966,24 @@ export function registerCourseDesignerRoutes(
             `Generation requires CURRICULUM_PROPOSAL; workflow is ${row.state}`,
           );
         }
-        if (parseJson(row.learning_design_json) === null) {
+        const learningDesignJson = parseJson(row.learning_design_json);
+        if (learningDesignJson === null) {
           throw new CourseDesignerError(
             409,
             "invalid_workflow_transition",
             "Generation requires completed Learning Design",
+          );
+        }
+        const learningDesign =
+          CourseDesignerLearningDesignSchema.parse(learningDesignJson);
+        const diagnostic = parseJson(
+          row.diagnostic_json,
+        ) as CourseDesignerDiagnostic;
+        if (diagnostic.skipped && learningDesign.assumptions.length === 0) {
+          throw new CourseDesignerError(
+            409,
+            "diagnostic_skip_assumption_required",
+            "Learning Design must record an explicit assumption when Diagnostic is skipped",
           );
         }
         if (existingProposal) {

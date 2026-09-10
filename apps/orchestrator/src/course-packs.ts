@@ -8,7 +8,6 @@ import {
   COURSE_PACK_JSON_LIMITS_V1,
   prepareCoursePackBytes,
   type CoursePackSourceKind,
-  type CoursePackPreview,
   type CoursePackValidationReport,
 } from "@aptiloop/course-authoring-kit";
 import {
@@ -19,7 +18,10 @@ import {
 } from "@aptiloop/database";
 import {
   ClientError,
+  CoursePackPreviewSchema,
   CoursePackStagedValidationResponseSchema,
+  CoursePackUpgradeRequestSchema,
+  type CoursePackPreviewDto,
   type CoursePackStagedValidationReportDto,
   type CoursePackStagedValidationResponse,
 } from "@aptiloop/shared";
@@ -76,8 +78,8 @@ interface StagedValidCoursePack extends StagedCoursePackBase {
   readonly sourceFilePath: string;
   readonly sourceBytesHash: string;
   readonly stagedBytesHash: string;
+  readonly preview: CoursePackPreviewDto;
   readonly contentHash: string;
-  readonly preview: CoursePackPreview;
 }
 
 interface StagedInvalidCoursePack extends StagedCoursePackBase {
@@ -209,7 +211,13 @@ export function registerCoursePackRoutes(
         sourceBytesHash,
         stagedBytesHash: coursePackSourceBytesHash(validation.preparedBytes),
         contentHash: validation.contentHash,
-        preview: validation.preview,
+        preview: CoursePackPreviewSchema.parse({
+          ...validation.preview,
+          upgrade: repository.previewUpgrade(
+            validation.pack.course.courseKey,
+            validation.pack,
+          ),
+        }),
         report,
         expiresAt,
         expiryTimer: null,
@@ -400,6 +408,139 @@ export function registerCoursePackRoutes(
           },
           result.installed ? 201 : 200,
         );
+      } finally {
+        await removeStaging(entry.directory);
+      }
+    },
+  );
+  app.post(
+    "/api/course-packs/validations/:validationId/upgrade",
+    async (context) => {
+      await cleanupExpired(staged, now());
+      if (!repository.hasStorage()) {
+        return context.json(
+          {
+            error:
+              "Course Pack storage is unavailable until the approved M3 migration is applied",
+          },
+          503,
+        );
+      }
+      const validationId = validationIdSchema.parse(
+        context.req.param("validationId"),
+      );
+      const body = CoursePackUpgradeRequestSchema.parse(
+        await context.req.json(),
+      );
+      try {
+        const reconciled = repository.reconcileUpgrade({
+          operationId: body.operationId,
+          validationId,
+          mode: body.mode,
+          expectedContentHash: body.expectedContentHash,
+          ...(body.sideBySideSuffix === undefined
+            ? {}
+            : { sideBySideSuffix: body.sideBySideSuffix }),
+          adaptationResolutions: body.adaptationResolutions,
+        });
+        if (reconciled) {
+          return context.json({
+            result: reconciled,
+            openPath: `/courses/${encodeURIComponent(reconciled.courseId)}/revisions/${encodeURIComponent(reconciled.revisionId)}`,
+          });
+        }
+      } catch (error) {
+        if (error instanceof CoursePackRepositoryError) {
+          return context.json(
+            { error: error.message, code: error.code },
+            error.code === "not_found" ? 404 : 409,
+          );
+        }
+        throw error;
+      }
+      const entry = staged.get(validationId);
+      if (!entry) {
+        return context.json(
+          { error: "Course Pack validation is missing or expired" },
+          404,
+        );
+      }
+      if (!entry.valid) {
+        return context.json(
+          { error: "Course Pack validation did not pass" },
+          409,
+        );
+      }
+      if (body.expectedContentHash !== entry.contentHash) {
+        return context.json(
+          { error: "Course Pack confirmation hash does not match Preview" },
+          409,
+        );
+      }
+      claimValidation(staged, validationId, entry);
+      try {
+        const sourceBytes = new Uint8Array(
+          await readFile(entry.sourceFilePath),
+        );
+        if (coursePackSourceBytesHash(sourceBytes) !== entry.sourceBytesHash) {
+          return context.json(
+            { error: "Staged Course Pack changed after validation" },
+            409,
+          );
+        }
+        const preparation = prepareCoursePackBytes(sourceBytes);
+        if (
+          !preparation.valid ||
+          preparation.contentHash !== entry.contentHash ||
+          preparation.sourceKind !== entry.sourceKind ||
+          preparation.finalized !== entry.finalized ||
+          coursePackSourceBytesHash(preparation.preparedBytes) !==
+            entry.stagedBytesHash
+        ) {
+          return context.json(
+            { error: "Staged Course Pack changed after validation" },
+            409,
+          );
+        }
+        const stagedBytes = new Uint8Array(
+          await readFile(entry.preparedFilePath),
+        );
+        if (coursePackSourceBytesHash(stagedBytes) !== entry.stagedBytesHash) {
+          return context.json(
+            { error: "Staged Course Pack changed after validation" },
+            409,
+          );
+        }
+        try {
+          const result = repository.upgradeCourseToRevision({
+            operationId: body.operationId,
+            validationId,
+            pack: preparation.pack,
+            canonicalJson: preparation.canonicalJson,
+            report: preparation.report,
+            sourceBytesHash: entry.sourceBytesHash,
+            mode: body.mode,
+            ...(body.sideBySideSuffix === undefined
+              ? {}
+              : { sideBySideSuffix: body.sideBySideSuffix }),
+            adaptationResolutions: body.adaptationResolutions,
+          });
+          return context.json(
+            {
+              result,
+              openPath: `/courses/${encodeURIComponent(result.courseId)}/revisions/${encodeURIComponent(result.revisionId)}`,
+            },
+            result.installed ? 201 : 200,
+          );
+        } catch (error) {
+          if (error instanceof CoursePackRepositoryError) {
+            return context.json(
+              { error: error.message, code: error.code },
+              error.code === "not_found" ? 404 : 409,
+            );
+          }
+          throw error;
+        }
       } finally {
         await removeStaging(entry.directory);
       }

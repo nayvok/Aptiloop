@@ -20,7 +20,7 @@ describe("versioned prompt contracts", () => {
       expect(PromptDefinitionSchema.safeParse(prompt).success).toBe(true);
       expect(getLatestWorkflowPrompt(prompt.id)).toBe(prompt);
       if (prompt.id === prompt.role) {
-        const version = prompt.role === "course-designer" ? "v1.3.0" : "v1.2.0";
+        const version = prompt.role === "course-designer" ? "v1.4.0" : "v1.2.0";
         expect(listPromptVersions(prompt.role)).toEqual([version]);
         expect(getPrompt(prompt.role, version)).toBe(prompt);
         expect(getLatestPrompt(prompt.role)).toBe(prompt);
@@ -121,6 +121,40 @@ describe("versioned prompt contracts", () => {
     );
     expect(getLatestPrompt("course-designer").systemPrompt).toContain(
       "Do not propose changes outside the exact author request",
+    );
+  });
+
+  it("requires persisted Learning Design and the complete Task9 pedagogy contract", () => {
+    const prompt = getLatestPrompt("course-designer");
+    const text = prompt.systemPrompt;
+
+    expect(prompt.version).toBe("v1.4.0");
+    expect(prompt.contextPolicy).toContain("the persisted Learning Design");
+    expect(text).toContain(
+      "target capability -> observable evidence -> practice -> feedback -> instruction/review",
+    );
+    expect(text).toContain("attempt-before-answer");
+    expect(text).toContain("software-engineering (SWE)");
+    expect(text).toContain(
+      "naive -> problem -> observe -> change -> new trade-off",
+    );
+    expect(text).toContain("explicit diagnostic-skip assumption");
+    expect(text).toContain(
+      "never invent specifics or silently fill unresolved facts",
+    );
+    expect(text).toContain("runtime registry is empty");
+    expect(text).toContain("do not author an exercise");
+    expect(text).toContain(
+      "interview readiness and independent engineering capability separate",
+    );
+    expect(text).toContain("time trade-offs explicit");
+    expect(text).toContain("transfer-check under changed conditions");
+    expect(text).toContain("explicit mastery evidence type");
+    expect(text).toContain(
+      "a proposal without it is explicitly invalid for compilation",
+    );
+    expect(text.indexOf("Discovery and Diagnostic")).toBeLessThan(
+      text.indexOf("Learning Design chain"),
     );
   });
 

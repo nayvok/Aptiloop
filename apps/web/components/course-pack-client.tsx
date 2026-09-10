@@ -34,7 +34,10 @@ import {
   CoursePackStagedValidationResponseSchema as validationResponseSchema,
   type CoursePackStagedValidationReportDto,
   type CoursePackStagedValidationResponse as ValidationResponse,
+  type CoursePackUpgradeMode,
+  type CoursePackUpgradePreview,
 } from "@aptiloop/shared";
+import { CoursePackUpgradeModeSchema } from "@aptiloop/shared";
 import {
   type LearningCourse,
   type LearningCourseRevision,
@@ -141,29 +144,83 @@ const selectCourseResponseSchema = z
     revisionId: z.string(),
   })
   .strict();
-const commitResponseSchema = z
-  .object({
-    result: z.object({
-      courseId: z.string(),
-      revisionId: z.string(),
-      contentHash: hashSchema,
-      action: z.enum(["install", "open-as-draft"]),
-      revisionStatus: z.enum(["draft", "published", "archived"]),
-      installed: z.boolean(),
-      idempotent: z.boolean(),
-    }),
-    openPath: z.string().nullable(),
-  })
-  .strict();
+const commitResponseSchema = z.union([
+  z
+    .object({
+      result: z
+        .object({
+          courseId: z.string(),
+          revisionId: z.string(),
+          contentHash: hashSchema,
+          action: z.enum(["install", "open-as-draft"]),
+          revisionStatus: z.enum(["draft", "published", "archived"]),
+          installed: z.boolean(),
+          idempotent: z.boolean(),
+        })
+        .strict(),
+      openPath: z.string().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      result: z
+        .object({
+          courseId: z.string(),
+          revisionId: z.string(),
+          contentHash: hashSchema,
+          mode: CoursePackUpgradeModeSchema,
+          sideBySideCourseKey: z.string().nullable(),
+          installed: z.boolean(),
+          idempotent: z.boolean(),
+          replayedFactCount: z.number().int().nonnegative(),
+          supersededEvidenceCount: z.number().int().nonnegative(),
+          carriedCount: z.number().int().nonnegative().default(0),
+          revalidationCount: z.number().int().nonnegative().default(0),
+        })
+        .strict(),
+      openPath: z.string().nullable(),
+    })
+    .strict(),
+]);
 
 type CoursePackLibraryItem = z.infer<typeof libraryItemSchema>;
 type InstallAction = "install" | "open-as-draft";
-type CommitRequest = {
-  operationId: string;
-  validationId: string;
-  action: InstallAction;
-  expectedContentHash: string;
+type UpgradeMode = CoursePackUpgradeMode;
+type UpgradePreview = CoursePackUpgradePreview;
+type UpgradeResolution = {
+  conflictId: string;
+  resolution: "use-upstream" | "keep-personal";
 };
+type CommitRequest =
+  | {
+      operationId: string;
+      validationId: string;
+      action: InstallAction;
+      expectedContentHash: string;
+    }
+  | {
+      operationId: string;
+      validationId: string;
+      mode: UpgradeMode;
+      expectedContentHash: string;
+      sideBySideSuffix?: string;
+      adaptationResolutions: UpgradeResolution[];
+    };
+type CommitConfirmation = InstallAction | "upgrade";
+
+function getUpgradePreview(
+  validation: Extract<ValidationResponse, { valid: true }>,
+): UpgradePreview | null {
+  const upgrade = validation.preview.upgrade as
+    UpgradePreview | null | undefined;
+  return upgrade ?? null;
+}
+
+function parseCommitConfirmation(
+  value: string | null,
+): CommitConfirmation | null {
+  return value === "upgrade" ? "upgrade" : parseInstallAction(value);
+}
 type ValidationRequest = {
   selected: File;
   generation: number;
@@ -279,6 +336,14 @@ function getSafeErrorDiagnostic(error: unknown): string | null {
 function hasValidationExpired(validation: ValidationResponse): boolean {
   return Date.parse(validation.expiresAt) <= Date.now();
 }
+function operationFingerprint(value: string): string {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
 
 function createCommitRequest(
   validation: Extract<ValidationResponse, { valid: true }>,
@@ -289,6 +354,27 @@ function createCommitRequest(
     validationId: validation.validationId,
     action,
     expectedContentHash: validation.preview.contentHash,
+  };
+}
+
+function createUpgradeCommitRequest(
+  validation: Extract<ValidationResponse, { valid: true }>,
+  mode: UpgradeMode,
+  adaptationResolutions: UpgradeResolution[],
+): CommitRequest {
+  const applicableResolutions =
+    mode === "safe-update" ? adaptationResolutions : [];
+  const sortedResolutions = applicableResolutions
+    .toSorted((left, right) => left.conflictId.localeCompare(right.conflictId))
+    .map(({ conflictId, resolution }) => `${conflictId}=${resolution}`)
+    .join(",");
+  const resolutionFingerprint = operationFingerprint(sortedResolutions);
+  return {
+    operationId: `course-pack:${validation.validationId}:upgrade:${mode}:${validation.preview.contentHash}:${resolutionFingerprint}`,
+    validationId: validation.validationId,
+    mode,
+    expectedContentHash: validation.preview.contentHash,
+    adaptationResolutions: applicableResolutions,
   };
 }
 
@@ -417,7 +503,11 @@ function CoursePackClient({
     null,
   );
   const [commitConfirmation, setCommitConfirmation] =
-    useState<InstallAction | null>(null);
+    useState<CommitConfirmation | null>(null);
+  const [upgradeMode, setUpgradeMode] = useState<UpgradeMode>("safe-update");
+  const [adaptationResolutions, setAdaptationResolutions] = useState<
+    UpgradeResolution[]
+  >([]);
   const [transferCommitted, setTransferCommitted] = useState<string | null>(
     null,
   );
@@ -515,7 +605,9 @@ function CoursePackClient({
       hasValidationExpired(activeValidation)
     : false;
   const urlCommitConfirmation =
-    view === "intake" ? parseInstallAction(searchParams.get("confirm")) : null;
+    view === "intake"
+      ? parseCommitConfirmation(searchParams.get("confirm"))
+      : null;
   const activeCommitConfirmation =
     view === "intake"
       ? activeValidation?.valid &&
@@ -581,16 +673,29 @@ function CoursePackClient({
       if (hasValidationExpired(activeValidation)) {
         throw new Error(t("courses.validation.expired.description"));
       }
+      const isUpgrade = "mode" in request;
       return commitResponseSchema.parse(
         await api(
-          `/course-packs/validations/${encodeURIComponent(activeValidation.validationId)}/commit`,
+          `/course-packs/validations/${encodeURIComponent(activeValidation.validationId)}${isUpgrade ? "/upgrade" : "/commit"}`,
           {
             method: "POST",
-            body: JSON.stringify({
-              operationId: request.operationId,
-              action: request.action,
-              expectedContentHash: request.expectedContentHash,
-            }),
+            body: JSON.stringify(
+              isUpgrade
+                ? {
+                    operationId: request.operationId,
+                    mode: request.mode,
+                    expectedContentHash: request.expectedContentHash,
+                    ...(request.sideBySideSuffix
+                      ? { sideBySideSuffix: request.sideBySideSuffix }
+                      : {}),
+                    adaptationResolutions: request.adaptationResolutions,
+                  }
+                : {
+                    operationId: request.operationId,
+                    action: request.action,
+                    expectedContentHash: request.expectedContentHash,
+                  },
+            ),
           },
         ),
       );
@@ -607,30 +712,50 @@ function CoursePackClient({
       setValidation(null);
       setExpiredValidationId(null);
       setCommitConfirmation(null);
+      setUpgradeMode("safe-update");
+      setAdaptationResolutions([]);
       commitRequestRef.current = null;
       queryClient.removeQueries({
         queryKey: ["course-pack-validation", request.validationId],
         exact: true,
       });
-      toast.success(
-        t(
-          result.result.idempotent
-            ? result.result.action === "install"
-              ? "courses.notice.alreadyInstalled"
-              : "courses.notice.draftAlreadySaved"
-            : result.result.action === "install"
-              ? "courses.notice.installed"
-              : "courses.notice.draftSaved",
-        ),
-      );
+      if ("mode" in result.result) {
+        toast.success(
+          t(
+            result.result.idempotent
+              ? "courses.upgrade.notice.alreadyApplied"
+              : "courses.upgrade.notice.applied",
+          ),
+        );
+      } else {
+        const action = result.result.action;
+        toast.success(
+          t(
+            result.result.idempotent
+              ? action === "install"
+                ? "courses.notice.alreadyInstalled"
+                : "courses.notice.draftAlreadySaved"
+              : action === "install"
+                ? "courses.notice.installed"
+                : "courses.notice.draftSaved",
+          ),
+        );
+      }
       const destination =
-        result.result.action === "open-as-draft"
+        "action" in result.result && result.result.action === "open-as-draft"
           ? `/courses/studio?version=${encodeURIComponent(result.result.revisionId)}`
           : (result.openPath ??
             `/courses/${encodeURIComponent(result.result.courseId)}/revisions/${encodeURIComponent(result.result.revisionId)}`);
       router.push(destination);
     },
     onError: (error: unknown, request) => {
+      if (
+        "mode" in request &&
+        request.mode === "safe-update" &&
+        getErrorCode(error) === "active_session"
+      ) {
+        return;
+      }
       if (!isTerminalCommitFailure(error)) return;
       commitRequestRef.current = null;
       toast.error(t("courses.commitFailed.title"));
@@ -970,6 +1095,35 @@ function CoursePackClient({
     setCommitConfirmation(action);
   };
 
+  const requestUpgradeConfirmation = () => {
+    const upgrade = activeValidation?.valid
+      ? getUpgradePreview(activeValidation)
+      : null;
+    if (!activeValidation?.valid || !upgrade) return;
+    if (hasValidationExpired(activeValidation)) {
+      setExpiredValidationId(activeValidation.validationId);
+      setCommitConfirmation(null);
+      return;
+    }
+    commit.reset();
+    setUpgradeMode("safe-update");
+    setAdaptationResolutions(
+      upgrade.adaptationConflicts.map((conflict) => ({
+        conflictId: conflict.conflictId,
+        resolution: "keep-personal",
+      })),
+    );
+    commitRequestRef.current = null;
+    if (view === "intake") {
+      router.push(
+        `/courses/intake/${encodeURIComponent(activeValidation.validationId)}?confirm=upgrade`,
+        { scroll: false },
+      );
+      return;
+    }
+    setCommitConfirmation("upgrade");
+  };
+
   const confirmCommit = () => {
     if (!activeCommitConfirmation || !activeValidation?.valid) return;
     if (hasValidationExpired(activeValidation)) {
@@ -977,9 +1131,31 @@ function CoursePackClient({
       setCommitConfirmation(null);
       return;
     }
+    if (activeCommitConfirmation === "upgrade") {
+      const existing = commitRequestRef.current;
+      const request =
+        existing &&
+        "mode" in existing &&
+        existing.validationId === activeValidation.validationId &&
+        existing.mode === upgradeMode &&
+        existing.expectedContentHash === activeValidation.preview.contentHash &&
+        JSON.stringify(existing.adaptationResolutions) ===
+          JSON.stringify(adaptationResolutions)
+          ? existing
+          : createUpgradeCommitRequest(
+              activeValidation,
+              upgradeMode,
+              adaptationResolutions,
+            );
+      commitRequestRef.current = request;
+      commit.mutate(request);
+      return;
+    }
     const existing = commitRequestRef.current;
     const request =
-      existing?.validationId === activeValidation.validationId &&
+      existing &&
+      "action" in existing &&
+      existing.validationId === activeValidation.validationId &&
       existing.action === activeCommitConfirmation &&
       existing.expectedContentHash === activeValidation.preview.contentHash
         ? existing
@@ -991,6 +1167,8 @@ function CoursePackClient({
   const cancelCommitConfirmation = () => {
     commit.reset();
     commitRequestRef.current = null;
+    setUpgradeMode("safe-update");
+    setAdaptationResolutions([]);
     if (view === "intake" && activeValidation) {
       router.replace(
         `/courses/intake/${encodeURIComponent(activeValidation.validationId)}`,
@@ -1087,18 +1265,27 @@ function CoursePackClient({
               <CoursePackPreviewPanel
                 validation={activeValidation}
                 pendingAction={
-                  commit.isPending ? (commit.variables?.action ?? null) : null
+                  commit.isPending &&
+                  commit.variables &&
+                  "action" in commit.variables
+                    ? commit.variables.action
+                    : null
                 }
                 expired={validationExpired}
                 expiredRecovery="reselect"
                 revalidating={false}
                 onRevalidate={() => router.push("/courses/import")}
                 onCommit={requestCommitConfirmation}
+                onUpgrade={requestUpgradeConfirmation}
               />
             </section>
             <CoursePackCommitDialog
               validation={activeValidation.valid ? activeValidation : null}
               action={activeCommitConfirmation}
+              upgradeMode={upgradeMode}
+              adaptationResolutions={adaptationResolutions}
+              onUpgradeModeChange={setUpgradeMode}
+              onAdaptationResolutionsChange={setAdaptationResolutions}
               onCancel={cancelCommitConfirmation}
               onConfirm={confirmCommit}
               pending={commit.isPending}
@@ -1331,7 +1518,11 @@ function CoursePackClient({
               <CoursePackPreviewPanel
                 validation={validation}
                 pendingAction={
-                  commit.isPending ? (commit.variables?.action ?? null) : null
+                  commit.isPending &&
+                  commit.variables &&
+                  "action" in commit.variables
+                    ? commit.variables.action
+                    : null
                 }
                 expired={validationExpired}
                 expiredRecovery="revalidate"
@@ -1340,6 +1531,7 @@ function CoursePackClient({
                   if (file) startValidation(file);
                 }}
                 onCommit={requestCommitConfirmation}
+                onUpgrade={requestUpgradeConfirmation}
               />
             )}
           </div>
@@ -1348,6 +1540,10 @@ function CoursePackClient({
         <CoursePackCommitDialog
           validation={activeValidation?.valid ? activeValidation : null}
           action={activeCommitConfirmation}
+          upgradeMode={upgradeMode}
+          adaptationResolutions={adaptationResolutions}
+          onUpgradeModeChange={setUpgradeMode}
+          onAdaptationResolutionsChange={setAdaptationResolutions}
           onCancel={cancelCommitConfirmation}
           onConfirm={confirmCommit}
           pending={commit.isPending}
@@ -1814,6 +2010,7 @@ function CoursePackPreviewPanel({
   revalidating,
   onRevalidate,
   onCommit,
+  onUpgrade,
 }: {
   validation: ValidationResponse | null;
   pendingAction: InstallAction | null;
@@ -1822,6 +2019,7 @@ function CoursePackPreviewPanel({
   revalidating: boolean;
   onRevalidate: () => void;
   onCommit: (action: InstallAction) => void;
+  onUpgrade: () => void;
 }) {
   const { locale, t } = useI18n();
 
@@ -1883,8 +2081,8 @@ function CoursePackPreviewPanel({
       </div>
     );
   }
-
   const preview = validation.preview;
+  const upgrade = getUpgradePreview(validation);
   return (
     <div className="flex min-h-64 min-w-0 flex-col gap-5 xl:min-h-[28rem]">
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
@@ -1956,6 +2154,69 @@ function CoursePackPreviewPanel({
           })}
         />
       </dl>
+      {(() => {
+        const upgrade = getUpgradePreview(validation);
+        if (!upgrade) return null;
+        return (
+          <Alert>
+            <InfoIcon aria-hidden />
+            <AlertTitle>{t("courses.upgrade.available.title")}</AlertTitle>
+            <AlertDescription>
+              {t("courses.upgrade.available.description")}
+            </AlertDescription>
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <PreviewMetric
+                label={t("courses.upgrade.metric.currentRevision")}
+                value={upgrade.currentRevisionNumber.toLocaleString(locale)}
+              />
+              <PreviewMetric
+                label={t("courses.upgrade.metric.incomingRevision")}
+                value={upgrade.incomingRevisionNumber.toLocaleString(locale)}
+              />
+              <PreviewMetric
+                label={t("courses.upgrade.metric.carried")}
+                value={upgrade.carried.length.toLocaleString(locale)}
+              />
+              <PreviewMetric
+                label={t("courses.upgrade.metric.revalidation")}
+                value={upgrade.requiresRevalidation.length.toLocaleString(
+                  locale,
+                )}
+              />
+              <PreviewMetric
+                label={t("courses.upgrade.metric.removed")}
+                value={upgrade.removed.length.toLocaleString(locale)}
+              />
+            </dl>
+            <div className="mt-4 flex min-w-0 flex-col gap-1 text-sm">
+              <span className="text-muted-foreground">
+                {t("courses.upgrade.sideBySideKey")}
+              </span>
+              <code className="break-all font-mono text-xs">
+                {upgrade.sideBySideKeyPreview}
+              </code>
+            </div>
+            {upgrade.adaptationConflicts.length > 0 ? (
+              <div className="mt-4 flex min-w-0 flex-col gap-2">
+                <p className="text-sm font-medium">
+                  {t("courses.upgrade.adaptationConflicts", {
+                    count:
+                      upgrade.adaptationConflicts.length.toLocaleString(locale),
+                  })}
+                </p>
+                <ul className="list-disc space-y-1 pl-5 text-sm">
+                  {upgrade.adaptationConflicts.map((conflict) => (
+                    <li key={conflict.conflictId}>
+                      {conflict.activityId ? `${conflict.activityId}: ` : ""}
+                      {conflict.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </Alert>
+        );
+      })()}
 
       <details className="group min-w-0 rounded-lg border border-border bg-surface-soft">
         <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
@@ -2008,29 +2269,41 @@ function CoursePackPreviewPanel({
 
       <Separator />
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-        <Button
-          className="w-full sm:w-auto"
-          disabled={pendingAction !== null || !validation.storageAvailable}
-          onClick={() => onCommit("install")}
-        >
-          {pendingAction === "install" ? (
-            <Spinner data-icon="inline-start" />
-          ) : null}
-          {t("courses.action.installAndOpen")}
-        </Button>
-        <Button
-          variant="outline"
-          className="w-full sm:w-auto"
-          disabled={pendingAction !== null || !validation.storageAvailable}
-          onClick={() => onCommit("open-as-draft")}
-        >
-          {pendingAction === "open-as-draft" ? (
-            <Spinner data-icon="inline-start" />
-          ) : null}
-          {t("courses.action.openAsDraft")}
-        </Button>
-      </div>
+      {upgrade ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <Button
+            className="w-full sm:w-auto"
+            disabled={pendingAction !== null || !validation.storageAvailable}
+            onClick={onUpgrade}
+          >
+            {t("courses.upgrade.action")}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <Button
+            className="w-full sm:w-auto"
+            disabled={pendingAction !== null || !validation.storageAvailable}
+            onClick={() => onCommit("install")}
+          >
+            {pendingAction === "install" ? (
+              <Spinner data-icon="inline-start" />
+            ) : null}
+            {t("courses.action.installAndOpen")}
+          </Button>
+          <Button
+            variant="outline"
+            className="w-full sm:w-auto"
+            disabled={pendingAction !== null || !validation.storageAvailable}
+            onClick={() => onCommit("open-as-draft")}
+          >
+            {pendingAction === "open-as-draft" ? (
+              <Spinner data-icon="inline-start" />
+            ) : null}
+            {t("courses.action.openAsDraft")}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -2038,24 +2311,48 @@ function CoursePackPreviewPanel({
 function CoursePackCommitDialog({
   validation,
   action,
+  upgradeMode,
+  adaptationResolutions,
+  onUpgradeModeChange,
+  onAdaptationResolutionsChange,
   onCancel,
   onConfirm,
   pending,
   error,
 }: {
   validation: Extract<ValidationResponse, { valid: true }> | null;
-  action: InstallAction | null;
+  action: CommitConfirmation | null;
+  upgradeMode: UpgradeMode;
+  adaptationResolutions: UpgradeResolution[];
+  onUpgradeModeChange: (mode: UpgradeMode) => void;
+  onAdaptationResolutionsChange: (resolutions: UpgradeResolution[]) => void;
   onCancel: () => void;
   onConfirm: () => void;
   pending: boolean;
   error: unknown;
 }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const errorDiagnostic = getSafeErrorDiagnostic(error);
 
   if (!validation || !action) return null;
 
   const install = action === "install";
+  const upgrade = action === "upgrade" ? getUpgradePreview(validation) : null;
+  const activeSessionBlocked =
+    upgradeMode === "safe-update" && getErrorCode(error) === "active_session";
+  const conflictResolution = (conflictId: string) =>
+    adaptationResolutions.find((item) => item.conflictId === conflictId)
+      ?.resolution ?? "keep-personal";
+  const setConflictResolution = (
+    conflictId: string,
+    resolution: UpgradeResolution["resolution"],
+  ) => {
+    const next = adaptationResolutions.filter(
+      (item) => item.conflictId !== conflictId,
+    );
+    onAdaptationResolutionsChange([...next, { conflictId, resolution }]);
+  };
+
   return (
     <AlertDialog
       open
@@ -2066,14 +2363,20 @@ function CoursePackCommitDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {t(
-              install
-                ? "courses.confirm.install.title"
-                : "courses.confirm.draft.title",
-            )}
+            {upgrade
+              ? t("courses.upgrade.confirm.title")
+              : t(
+                  install
+                    ? "courses.confirm.install.title"
+                    : "courses.confirm.draft.title",
+                )}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {t("courses.confirm.description")}
+            {t(
+              upgrade
+                ? "courses.upgrade.confirm.description"
+                : "courses.confirm.description",
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -2088,30 +2391,147 @@ function CoursePackCommitDialog({
             value={validation.preview.contentHash}
             code
           />
-          <ConfirmationDetail
-            label={t("courses.confirm.destination")}
-            value={t(
-              install
-                ? "courses.confirm.install.destination"
-                : "courses.confirm.draft.destination",
-            )}
-          />
-          <ConfirmationDetail
-            label={t("courses.confirm.consequence")}
-            value={t(
-              install
-                ? "courses.confirm.install.consequence"
-                : "courses.confirm.draft.consequence",
-            )}
-          />
+          {upgrade ? (
+            <>
+              <ConfirmationDetail
+                label={t("courses.upgrade.currentRevision")}
+                value={`${upgrade.currentRevisionNumber.toLocaleString(locale)} · ${upgrade.currentRevisionId}`}
+                code
+              />
+              <ConfirmationDetail
+                label={t("courses.upgrade.incomingRevision")}
+                value={upgrade.incomingRevisionNumber.toLocaleString(locale)}
+              />
+              <ConfirmationDetail
+                label={t("courses.upgrade.carried")}
+                value={upgrade.carried.length.toLocaleString(locale)}
+              />
+              <ConfirmationDetail
+                label={t("courses.upgrade.revalidation")}
+                value={upgrade.requiresRevalidation.length.toLocaleString(
+                  locale,
+                )}
+              />
+              <ConfirmationDetail
+                label={t("courses.upgrade.removed")}
+                value={upgrade.removed.length.toLocaleString(locale)}
+              />
+              <ConfirmationDetail
+                label={t("courses.upgrade.sideBySideKey")}
+                value={upgrade.sideBySideKeyPreview}
+                code
+              />
+            </>
+          ) : (
+            <>
+              <ConfirmationDetail
+                label={t("courses.confirm.destination")}
+                value={t(
+                  install
+                    ? "courses.confirm.install.destination"
+                    : "courses.confirm.draft.destination",
+                )}
+              />
+              <ConfirmationDetail
+                label={t("courses.confirm.consequence")}
+                value={t(
+                  install
+                    ? "courses.confirm.install.consequence"
+                    : "courses.confirm.draft.consequence",
+                )}
+              />
+            </>
+          )}
         </dl>
+
+        {upgrade ? (
+          <fieldset className="grid gap-3 rounded-lg border border-border p-4">
+            <legend className="px-1 text-sm font-medium">
+              {t("courses.upgrade.mode.label")}
+            </legend>
+            <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-md p-2">
+              <input
+                type="radio"
+                name="course-pack-upgrade-mode"
+                value="safe-update"
+                checked={upgradeMode === "safe-update"}
+                onChange={() => onUpgradeModeChange("safe-update")}
+              />
+              <span>
+                <span className="block text-sm font-medium">
+                  {t("courses.upgrade.mode.safeUpdate")}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {t("courses.upgrade.mode.safeUpdateDescription")}
+                </span>
+              </span>
+            </label>
+            <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-md p-2">
+              <input
+                type="radio"
+                name="course-pack-upgrade-mode"
+                value="side-by-side"
+                checked={upgradeMode === "side-by-side"}
+                onChange={() => onUpgradeModeChange("side-by-side")}
+              />
+              <span>
+                <span className="block text-sm font-medium">
+                  {t("courses.upgrade.mode.sideBySide")}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {t("courses.upgrade.mode.sideBySideDescription")}
+                </span>
+              </span>
+            </label>
+          </fieldset>
+        ) : null}
+
+        {upgrade && upgrade.adaptationConflicts.length > 0 ? (
+          <fieldset className="grid gap-3 rounded-lg border border-border p-4">
+            <legend className="px-1 text-sm font-medium">
+              {t("courses.upgrade.adaptationResolution.label")}
+            </legend>
+            {upgrade.adaptationConflicts.map((conflict) => (
+              <label key={conflict.conflictId} className="grid gap-1 text-sm">
+                <span>{conflict.reason}</span>
+                <select
+                  aria-label={t("courses.upgrade.adaptationResolution.choice", {
+                    conflict: conflict.conflictId,
+                  })}
+                  value={conflictResolution(conflict.conflictId)}
+                  onChange={(event) =>
+                    setConflictResolution(
+                      conflict.conflictId,
+                      event.currentTarget
+                        .value as UpgradeResolution["resolution"],
+                    )
+                  }
+                  className="min-h-10 rounded-md border border-input bg-background px-3"
+                >
+                  <option value="keep-personal">
+                    {t("courses.upgrade.adaptationResolution.keepPersonal")}
+                  </option>
+                  <option value="use-upstream">
+                    {t("courses.upgrade.adaptationResolution.useUpstream")}
+                  </option>
+                </select>
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
 
         {error ? (
           <Alert variant="destructive">
             <WarningCircleIcon aria-hidden />
-            <AlertTitle>{t("courses.commitFailed.title")}</AlertTitle>
+            <AlertTitle>
+              {activeSessionBlocked
+                ? t("courses.upgrade.activeSession.title")
+                : t("courses.commitFailed.title")}
+            </AlertTitle>
             <AlertDescription>
-              {t("courses.commitFailed.description")}
+              {activeSessionBlocked
+                ? t("courses.upgrade.activeSession.description")
+                : t("courses.commitFailed.description")}
               {errorDiagnostic ? (
                 <details className="mt-2 text-muted-foreground">
                   <summary className="min-h-11 cursor-pointer py-3 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -2132,13 +2552,13 @@ function CoursePackCommitDialog({
           </AlertDialogCancel>
           <Button type="button" disabled={pending} onClick={onConfirm}>
             {pending ? <Spinner data-icon="inline-start" /> : null}
-            {t(
-              error
-                ? "courses.commitFailed.retry"
+            {error
+              ? t("courses.commitFailed.retry")
+              : upgrade
+                ? t("courses.upgrade.confirm.action")
                 : install
-                  ? "courses.confirm.install.action"
-                  : "courses.confirm.draft.action",
-            )}
+                  ? t("courses.confirm.install.action")
+                  : t("courses.confirm.draft.action")}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

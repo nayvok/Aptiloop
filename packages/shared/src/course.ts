@@ -1,5 +1,5 @@
 import { z } from "zod";
-export const COURSE_PACK_SKILL_CONTENT_VERSION = "1.3.0" as const;
+export const COURSE_PACK_SKILL_CONTENT_VERSION = "1.4.0" as const;
 
 import {
   QuestionKindSchema,
@@ -151,6 +151,38 @@ export const CoursePackUpgradePreviewInfoSchema = z
     currentRevisionNumber: z.number().int().positive(),
     incomingRevisionNumber: z.number().int().positive(),
     sideBySideKeyPreview: StableCourseIdSchema,
+    carried: z
+      .array(
+        z
+          .object({
+            activityId: StableCourseIdSchema,
+            contractHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+          })
+          .strict(),
+      )
+      .max(MAX_LIST_ITEMS),
+    requiresRevalidation: z
+      .array(
+        z
+          .object({
+            activityId: StableCourseIdSchema,
+            contractHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+          })
+          .strict(),
+      )
+      .max(MAX_LIST_ITEMS),
+    removed: z.array(StableCourseIdSchema).max(MAX_LIST_ITEMS),
+    adaptationConflicts: z
+      .array(
+        z
+          .object({
+            conflictId: StableCourseIdSchema,
+            activityId: StableCourseIdSchema.nullable(),
+            reason: ShortTextSchema,
+          })
+          .strict(),
+      )
+      .max(128),
   })
   .strict();
 export type CoursePackUpgradePreviewInfo = z.infer<
@@ -201,7 +233,7 @@ export const CoursePackPreviewSchema = z
           .optional(),
       })
       .strict(),
-    upgrade: CoursePackUpgradePreviewInfoSchema.nullable().optional(),
+    upgrade: CoursePackUpgradePreviewInfoSchema.nullable(),
   })
   .strict();
 export type CoursePackPreviewDto = z.infer<typeof CoursePackPreviewSchema>;

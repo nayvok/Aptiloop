@@ -1311,6 +1311,7 @@ describe("CurriculumEditorClient", () => {
         runtimeRequirements: [],
       },
       diagnostic: { questions: [], answers: {}, skipped: false },
+      learningDesign: null,
       revisionRequests: [],
       activeProposalId: null as string | null,
       authoringOperationId: "workflow:create",
@@ -1448,8 +1449,13 @@ describe("CurriculumEditorClient", () => {
             : input.action === "complete-discovery"
               ? "DIAGNOSTIC"
               : input.action === "skip-diagnostic"
-                ? "CURRICULUM_PROPOSAL"
-                : "COMPILATION";
+                ? "LEARNING_DESIGN"
+                : input.action === "complete-learning-design"
+                  ? "CURRICULUM_PROPOSAL"
+                  : "COMPILATION";
+        if (input.action === "skip-diagnostic") {
+          workflow.diagnostic.skipped = true;
+        }
         return { workflow: structuredClone(workflow) };
       }
       if (path.endsWith("/disclosures") && init?.method === "POST") {
@@ -1554,6 +1560,47 @@ describe("CurriculumEditorClient", () => {
     );
     fireEvent.click(
       await screen.findByRole("button", { name: "Пропустить диагностику" }),
+    );
+    expect(
+      await screen.findByText(/Соблюдайте порядок: целевая способность/u),
+    ).toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText("Целевая способность"), {
+      target: { value: "Объяснить и применить концепцию" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("Наблюдаемое свидетельство (по одному в строке)"),
+      { target: { value: "Объяснить новый пример" } },
+    );
+    fireEvent.change(screen.getByLabelText("Практика (по одному в строке)"), {
+      target: { value: "Решить ограниченную задачу" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("Обратная связь (по одному в строке)"),
+      { target: { value: "Сравнить рассуждение с критериями" } },
+    );
+    fireEvent.change(
+      screen.getByLabelText("Инструкция и повторение (по одному в строке)"),
+      { target: { value: "Повторить после разбора" } },
+    );
+    const completeLearningDesignButton = screen.getByRole("button", {
+      name: "Перейти к предложению курса",
+    });
+    expect(completeLearningDesignButton).toBeDisabled();
+    const assumptions = screen.getByRole("textbox", {
+      name: /^Допущения \(по одному в строке\)/u,
+    });
+    fireEvent.change(assumptions, {
+      target: {
+        value:
+          "Диагностика пропущена; считаем, что ученик знает базовые понятия.",
+      },
+    });
+    expect(assumptions).toHaveValue(
+      "Диагностика пропущена; считаем, что ученик знает базовые понятия.",
+    );
+    expect(completeLearningDesignButton).toBeEnabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Перейти к предложению курса" }),
     );
     const generateButton = await screen.findByRole("button", {
       name: "Сгенерировать предложение",

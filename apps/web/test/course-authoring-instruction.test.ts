@@ -99,6 +99,12 @@ describe("portable Course authoring instruction", () => {
     expect(contents).toContain(
       "does not authorize validation bypass, installation, Open as Draft, or publication",
     );
+    expect(contents).toContain(
+      "never silently invent placeholders, provenance, source facts, or approvals",
+    );
+    expect(contents).toContain(
+      "compilation is invalid unless a completed Learning Design follows Discovery and Diagnostic",
+    );
     expect(contents).not.toContain("Interactive mode (default)");
   });
 
@@ -123,16 +129,47 @@ describe("portable Course authoring instruction", () => {
     expect(contents).toContain("preserve the last failed draft");
     expect(contents).toContain("/courses/import");
   });
-  it("pins the downloaded skill content version and Learning Design lifecycle", () => {
+  it("pins the 1.4.0 skill content version and the ordered Learning Design lifecycle", () => {
     const contents = instruction();
 
-    expect(contents).toContain("skillContentVersion: 1.3.0");
-    expect(contents).toContain("- Skill content version: **1.3.0**");
+    expect(contents).toContain("skillContentVersion: 1.4.0");
+    expect(contents).toContain("- Skill content version: **1.4.0**");
     expect(contents).toContain(
       "4. **Learning Design.** Before the Course Proposal",
     );
+    expect(contents.indexOf("**Diagnostic.**")).toBeLessThan(
+      contents.indexOf("**Learning Design.**"),
+    );
     expect(contents.indexOf("**Learning Design.**")).toBeLessThan(
       contents.indexOf("**Course Proposal.**"),
+    );
+  });
+
+  it("contains every required Learning Design contract without weakening gates", () => {
+    const contents = instruction();
+
+    for (const requirement of [
+      "target capability -> observable evidence -> practice -> feedback -> instruction/review",
+      "attempt-before-answer",
+      "software-engineering (SWE)",
+      "naive -> problem -> observe -> change -> new trade-off",
+      "explicit diagnostic-skip Proposal assumption",
+      "Never silently invent a value",
+      'state "runtime practice unavailable"',
+      "Never author an exercise in that case",
+      "interview readiness and independent engineering capability as separate objectives",
+      "transfer-check under changed conditions",
+      "explicit mastery evidence type",
+      "A Course Proposal without a completed Learning Design is explicitly invalid for compilation",
+    ]) {
+      expect(contents).toContain(requirement);
+    }
+    expect(contents).toContain("at most **3 repair rounds**");
+    expect(contents).toContain(
+      "owned exclusively by the deterministic Aptiloop preparation tool",
+    );
+    expect(contents).toContain(
+      "Only the user, inside Aptiloop, may explicitly choose",
     );
   });
 

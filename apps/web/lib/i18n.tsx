@@ -994,6 +994,44 @@ const enUS = {
   "courses.preview.requirement.provenance": "Provenance",
   "courses.preview.noLicenseClaim": "No project license claim",
   "courses.preview.notRequired": "Not required",
+  "courses.upgrade.available.title": "Course update available",
+  "courses.upgrade.available.description":
+    "This Pack is a newer revision of the Course. Choose how to apply the update without changing immutable evidence.",
+  "courses.upgrade.action": "Review Course update",
+  "courses.upgrade.metric.currentRevision": "Current revision",
+  "courses.upgrade.metric.incomingRevision": "Incoming revision",
+  "courses.upgrade.metric.carried": "Activities carried",
+  "courses.upgrade.metric.revalidation": "Activities to revalidate",
+  "courses.upgrade.metric.removed": "Activities removed",
+  "courses.upgrade.sideBySideKey": "Side-by-side Course key",
+  "courses.upgrade.adaptationConflicts": "Adaptation conflicts: {count}",
+  "courses.upgrade.confirm.title": "Apply this Course revision?",
+  "courses.upgrade.confirm.description":
+    "Choose exactly how to apply this immutable revision. Existing evidence remains unchanged.",
+  "courses.upgrade.confirm.action": "Apply Course update",
+  "courses.upgrade.currentRevision": "Current revision",
+  "courses.upgrade.incomingRevision": "Incoming revision",
+  "courses.upgrade.carried": "Carried activities",
+  "courses.upgrade.revalidation": "Activities requiring revalidation",
+  "courses.upgrade.removed": "Removed activities",
+  "courses.upgrade.mode.label": "Update mode",
+  "courses.upgrade.mode.safeUpdate": "Safe update",
+  "courses.upgrade.mode.safeUpdateDescription":
+    "Update the existing Course. An active old-revision session must finish first.",
+  "courses.upgrade.mode.sideBySide": "Side-by-side",
+  "courses.upgrade.mode.sideBySideDescription":
+    "Create a separate Course revision without carrying learner history.",
+  "courses.upgrade.adaptationResolution.label": "Adaptation conflict handling",
+  "courses.upgrade.adaptationResolution.choice":
+    "Resolution for adaptation conflict {conflict}",
+  "courses.upgrade.adaptationResolution.keepPersonal":
+    "Keep personal adaptation",
+  "courses.upgrade.adaptationResolution.useUpstream": "Use upstream revision",
+  "courses.upgrade.activeSession.title": "Finish the active session first",
+  "courses.upgrade.activeSession.description":
+    "Safe update is blocked while a session uses the old revision. Finish or close that session, then retry this update. No evidence was changed.",
+  "courses.upgrade.notice.applied": "Course update applied",
+  "courses.upgrade.notice.alreadyApplied": "Course update was already applied",
   "courses.action.installAndOpen": "Install and open",
   "courses.action.openAsDraft": "Open as draft",
   "courses.confirm.description":
@@ -1592,6 +1630,21 @@ const enUS = {
   "authoring.designer.learningDesign.instructionReview":
     "Instruction and review (one per line)",
   "authoring.designer.learningDesign.assumptions": "Assumptions (one per line)",
+  "authoring.designer.learningDesign.guidanceTitle": "Learning Design guidance",
+  "authoring.designer.learningDesign.guidanceSequence":
+    "Work in order: target capability → observable evidence → practice → feedback → instruction/review.",
+  "authoring.designer.learningDesign.guidancePractice":
+    "Require an attempt before the answer, then explanation and a changed variant. For SWE decision practice, use decision classes and the naive → problem → observe → change → new trade-off loop.",
+  "authoring.designer.learningDesign.guidanceTransfer":
+    "Add a changed-condition transfer check and name explicit mastery-evidence types such as reproduce-from-memory, novel-variant, causal-explain, diagnose-broken, design-under-constraints, or defend-tradeoffs.",
+  "authoring.designer.learningDesign.guidanceObjectives":
+    "Keep interview readiness separate from independent engineering capability, and record the time trade-off between them.",
+  "authoring.designer.learningDesign.guidanceRuntime":
+    "If the runtime registry is empty, state runtime practice unavailable and degrade to recall, teacher dialogue, code reading, interview, or checkpoint; do not author an exercise requiring that runtime.",
+  "authoring.designer.learningDesign.guidancePlaceholders":
+    "Do not use silent placeholders: route [X] or unknowns to a Discovery question, explicit unresolved item, or approved assumption.",
+  "authoring.designer.learningDesign.skipAssumption":
+    "Diagnostic was skipped. Record at least one explicit assumption before continuing; the server will reject an empty assumption list.",
   "authoring.designer.action.completeDiscovery": "Complete discovery",
   "authoring.designer.action.confirm": "Confirm for compilation",
   "authoring.designer.action.requestRevision": "Request revision",
@@ -2746,6 +2799,47 @@ const ruRU: Record<MessageKey, string> = {
   "courses.progress.lastActivity": "Последняя активность: {date}",
   "courses.progress.label":
     "Выполнено {percent}%, уроков завершено: {completed} из {total}",
+  "courses.upgrade.available.title": "Доступно обновление Course",
+  "courses.upgrade.available.description":
+    "Этот Pack содержит более новую ревизию Course. Выберите способ обновления, не изменяя неизменяемые доказательства.",
+  "courses.upgrade.action": "Проверить обновление Course",
+  "courses.upgrade.metric.currentRevision": "Текущая ревизия",
+  "courses.upgrade.metric.incomingRevision": "Входящая ревизия",
+  "courses.upgrade.metric.carried": "Перенесённые активности",
+  "courses.upgrade.metric.revalidation": "Активности для повторной проверки",
+  "courses.upgrade.metric.removed": "Удалённые активности",
+  "courses.upgrade.sideBySideKey": "Ключ Course рядом",
+  "courses.upgrade.adaptationConflicts": "Конфликты адаптаций: {count}",
+  "courses.upgrade.confirm.title": "Применить эту ревизию Course?",
+  "courses.upgrade.confirm.description":
+    "Выберите один из способов применить неизменяемую ревизию. Существующие доказательства останутся неизменными.",
+  "courses.upgrade.confirm.action": "Применить обновление Course",
+  "courses.upgrade.currentRevision": "Текущая ревизия",
+  "courses.upgrade.incomingRevision": "Входящая ревизия",
+  "courses.upgrade.carried": "Перенесённые активности",
+  "courses.upgrade.revalidation": "Активности для повторной проверки",
+  "courses.upgrade.removed": "Удалённые активности",
+  "courses.upgrade.mode.label": "Режим обновления",
+  "courses.upgrade.mode.safeUpdate": "Безопасное обновление",
+  "courses.upgrade.mode.safeUpdateDescription":
+    "Обновить существующий Course. Сначала завершите активную сессию старой ревизии.",
+  "courses.upgrade.mode.sideBySide": "Рядом",
+  "courses.upgrade.mode.sideBySideDescription":
+    "Создать отдельный Course без переноса истории обучения.",
+  "courses.upgrade.adaptationResolution.label":
+    "Обработка конфликтов адаптаций",
+  "courses.upgrade.adaptationResolution.choice":
+    "Решение для конфликта адаптации {conflict}",
+  "courses.upgrade.adaptationResolution.keepPersonal":
+    "Сохранить личную адаптацию",
+  "courses.upgrade.adaptationResolution.useUpstream":
+    "Использовать входящую ревизию",
+  "courses.upgrade.activeSession.title": "Сначала завершите активную сессию",
+  "courses.upgrade.activeSession.description":
+    "Безопасное обновление заблокировано, пока сессия использует старую ревизию. Завершите или закройте сессию и повторите обновление. Доказательства не изменены.",
+  "courses.upgrade.notice.applied": "Обновление Course применено",
+  "courses.upgrade.notice.alreadyApplied":
+    "Обновление Course уже было применено",
   "courses.pagination.label": "Страницы курсов",
   "courses.pagination.previous": "Предыдущая страница",
   "courses.pagination.next": "Следующая страница",
@@ -3386,6 +3480,22 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.designer.action.confirm": "Подтвердить для компиляции",
   "authoring.designer.action.requestRevision": "Запросить доработку",
   "authoring.designer.action.retry": "Повторить с места сбоя",
+  "authoring.designer.learningDesign.guidanceTitle":
+    "Рекомендации по проектированию обучения",
+  "authoring.designer.learningDesign.guidanceSequence":
+    "Соблюдайте порядок: целевая способность → наблюдаемое свидетельство → практика → обратная связь → инструкция/повторение.",
+  "authoring.designer.learningDesign.guidancePractice":
+    "Сначала нужен ответ ученика, затем объяснение и изменённый вариант. Для практики инженерных решений используйте классы решений и цикл наивное решение → проблема → наблюдение → изменение → новый компромисс.",
+  "authoring.designer.learningDesign.guidanceTransfer":
+    "Добавьте проверку переноса при изменившихся условиях и назовите типы свидетельств мастерства: воспроизведение по памяти, новый вариант, причинное объяснение, диагностика поломки, проектирование при ограничениях или защита компромиссов.",
+  "authoring.designer.learningDesign.guidanceObjectives":
+    "Разделяйте готовность к собеседованию и независимую инженерную способность; зафиксируйте компромисс по времени между ними.",
+  "authoring.designer.learningDesign.guidanceRuntime":
+    "Если реестр среды выполнения пуст, укажите недоступность практики в среде и деградируйте до воспроизведения, диалога с преподавателем, чтения кода, интервью или контрольной точки; не создавайте упражнение для этой среды.",
+  "authoring.designer.learningDesign.guidancePlaceholders":
+    "Не оставляйте тихие заполнители: [X] и неизвестное направьте в вопрос Discovery, явную нерешённость или одобренное допущение.",
+  "authoring.designer.learningDesign.skipAssumption":
+    "Диагностика пропущена. Перед продолжением укажите хотя бы одно явное допущение; сервер отклонит пустой список.",
   "authoring.designer.action.cancelGeneration": "Отменить генерацию",
   "authoring.designer.action.configureAi": "Настроить AI или провайдера",
   "authoring.designer.action.continueManually": "Продолжить вручную",
