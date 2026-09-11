@@ -4,6 +4,11 @@ Local-first deliberate practice for durable technical skill.
 
 Aptiloop turns an authored Course into a finite sequence of evidence-producing activities: study, recall, explanation, implementation, trusted checks, correction, and review. It is designed for learners who want durable, inspectable progress rather than passive content completion. The deterministic Learning Kernel owns progression, evidence reduction, mastery, mistakes, review scheduling, and the next action; optional AI stays behind explicit, constrained roles.
 
+<p align="center">
+  <img src="docs/readme/course-overview-desktop.jpg" width="900" alt="Aptiloop Course overview with the next lesson, deterministic progress, and finite learning stages" />
+</p>
+<p align="center"><sub>A disposable development profile using repository fixture content, shown in Russian; no provider credential, account data, or private path is shown.</sub></p>
+
 **Implemented baseline**
 
 The current repository implements the Aptiloop application and its local SQLite learning store, Course and immutable revision workflows, deterministic learning and evidence rules, Adaptive Studio, constrained Provider Hub roles, and responsive `en-US`/`ru-RU` application surfaces. A fresh production or installed profile is intentionally empty: no Course is bundled, so the learner starts with **Create Course** or **Import Course Pack**. A fresh local development profile is different by design: `npm run dev` idempotently installs the two validated Aptiloop Dev Tour Course Packs; the legacy versioned development curriculum requires `APTILOOP_DEV_SEED_CURRICULUM=1` or an explicit seed command.
@@ -42,12 +47,6 @@ npm start
 ```
 
 Open <http://127.0.0.1:10101>. The documented launcher builds and starts the local production-mode web and orchestrator processes on loopback. No `.env` file or provider sidecar is required. The app is loopback-only and has no authentication or authorization; do not expose it to a LAN, tunnel, public proxy, or the Internet.
-
-<p align="center">
-  <img src="docs/readme/course-overview-desktop.jpg" width="900" alt="Aptiloop Course overview with the next lesson, deterministic progress, and finite learning stages" />
-</p>
-
-<p align="center"><sub>A disposable development profile using repository fixture content, shown in Russian; no provider credential, account data, or private path is shown.</sub></p>
 
 ## Capabilities
 
