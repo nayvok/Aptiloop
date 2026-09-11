@@ -223,7 +223,10 @@ jobs:
 
   draft-summary:
     name: Draft release handoff
-    needs: [validate, npm-package, bundle]
+    needs:
+      - validate
+      - npm-package
+      - bundle
     runs-on: ubuntu-latest
     if: ${{ always() }}
     timeout-minutes: 15
