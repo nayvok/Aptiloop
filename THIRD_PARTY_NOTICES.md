@@ -1,8 +1,8 @@
 # Third-Party Notices
 
-**Generated scope:** 2026-08-22, from the committed `package-lock.json` for
-Aptiloop 0.1.0 and inspection of the current production web standalone output
-and Debian-based container definitions.
+**Inventory scope:** Aptiloop 0.1.0 source dependencies and production runtime
+components. Versions follow the committed `package-lock.json`; exact artifact
+contents require the generated SBOM and retained upstream license files.
 
 This file is an attribution summary, not a replacement for the license files
 distributed with third-party components. Aptiloop does not relicense those
@@ -77,10 +77,10 @@ release modifies that data.
 
 ## Sharp and libvips
 
-- **Component:** `sharp` 0.35.3 — Apache License 2.0.
-- **Native binding for the verified Linux x64/glibc container target:**
-  `@img/sharp-linux-x64` 0.35.3 — Apache License 2.0.
-- **libvips bundle for that target:** `@img/sharp-libvips-linux-x64` 1.3.2 —
+- **Component:** `sharp` 0.35.4 — Apache License 2.0.
+- **Native binding for the Linux x64/glibc container target:**
+  `@img/sharp-linux-x64` 0.35.4 — Apache License 2.0.
+- **libvips bundle for that target:** `@img/sharp-libvips-linux-x64` 1.3.3 —
   GNU Lesser General Public License v3.0 or later (LGPL-3.0-or-later).
 - **Upstreams:** <https://github.com/lovell/sharp> and
   <https://github.com/libvips/libvips>.

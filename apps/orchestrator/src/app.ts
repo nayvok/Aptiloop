@@ -697,6 +697,9 @@ export function createApp(options: AppOptions = {}) {
     const release = releaseAdmission;
     let responseOwnsAdmission = false;
     try {
+      if (options.httpAdmissionTestHooks?.afterAcquire) {
+        await options.httpAdmissionTestHooks.afterAcquire();
+      }
       if (
         isMutation &&
         context.req.path !== "/api/course-packs/validate" &&
