@@ -77,4 +77,5 @@ JSON-pointer path, verified again inside the commit transaction by
 `replayTransferFacts`. No partial install and no silent skip: an envelope
 with any unknown type never validates and never commits. Evidence:
 `packages/learning-core/test/fact-shape.test.ts` (6/6) and the transfer
-route suite (9/9), plus the full gates recorded in `HANDOFF.md`.
+route suite (9/9). This dated evidence does not certify later trees; see the
+[Roadmap](../../ROADMAP.md) for current verification and release gates.

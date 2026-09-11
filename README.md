@@ -196,17 +196,14 @@ Useful repository commands:
 | `npm run data:export`                                     | Create a sanitized local-profile transfer bundle   |
 | `npm run data:restore -- --source <bundle.aptiloop-data>` | Restore one bundle offline; never overwrite        |
 
-### Implemented baseline: npm bootstrap smoke
+### Implemented baseline: local distribution evidence
 
-The npm bootstrap package and runtime bundle were verified in a disposable external
-prefix. The shebang-correct Windows `.bin/aptiloop.cmd` shim returned version
-`0.1.0` and help containing `Usage: aptiloop <command> [options]` from an
-unrelated working directory. The shim then started with spaced runtime and data
-paths; local loopback health, `/api/version`, HTML, and `/icon.svg` returned
-successfully, and `aptiloop stop` terminated the owned process tree. The intermediate
-bootstrap fixture artifact was removed with the release-readiness scaffolding; dated
-smoke evidence is recorded in `HANDOFF.md`, and a final release proof must repack the
-current tree. This remains a local smoke only, not publication to npm or GitHub.
+The npm bootstrap and runtime bundle have dated Windows smoke evidence for
+installation, loopback startup, and process-tree shutdown. This is not public
+npm/GitHub publication or cross-platform release acceptance. See
+[Deployment models](docs/architecture/deployment-models.md) for runtime
+boundaries and the [Roadmap](ROADMAP.md) for current verification and release
+gates. A release proof must repack the current tree.
 
 - [Product contract](PRODUCT.md)
 - [Architecture](ARCHITECTURE.md)

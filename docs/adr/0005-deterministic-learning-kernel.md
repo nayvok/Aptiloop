@@ -12,7 +12,7 @@ Approved Core Alpha target
 
 Mastery, progression, review scheduling, and completion are product state, not model opinion. They must be explainable and replayable from durable facts. The repository already contains pure progression, mastery, and day-summary rules, but persisted mastery reconstruction loses successful-day and repeated-error history, interview evidence does not establish technical correctness, and legacy routes can inject fixed outcomes.
 
-Related specifications: [Learning Kernel](../architecture/learning-kernel.md), [Lesson Engine](../architecture/lesson-engine.md), [Knowledge system](../architecture/knowledge-system.md), and [Learning methodology baseline](../learning-methodology.md).
+Related specifications: [Learning Kernel](../architecture/learning-kernel.md), [Lesson Engine](../architecture/lesson-engine.md), and [Knowledge system](../architecture/knowledge-system.md).
 
 ## Decision
 

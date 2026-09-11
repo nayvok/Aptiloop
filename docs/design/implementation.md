@@ -1,133 +1,51 @@
 # Design implementation reference
 
-## Status and direction
+## Purpose and status
 
-- **Implemented baseline** — repository seams that exist; this label is not visual acceptance evidence.
-- **Approved Core Alpha target** — required Core Alpha presentation and interaction behavior.
-- **Proposed pending owner approval** — an unresolved recommendation.
+This is a concise map from the canonical design contract to repository seams. It records implementation evidence and boundaries; it does not duplicate the visual specification or specialist route/component contracts.
+
+- **Implemented baseline** — repository seam or observed behavior; not visual or accessibility acceptance evidence.
+- **Approved Core Alpha target** — required behavior that implementation must preserve or complete.
+- **Proposed pending owner approval** — unresolved recommendation.
 - **Future** — outside Core Alpha.
 
-Calm Workshop — Clear Slate is the approved and implemented visual direction. Aptiloop is a quiet, precise learning workbench rather than a game, generic dashboard, chat clone, or IDE. The visual foundation is near-white cool neutral in light mode and low-chroma cool graphite in dark mode. Restrained evergreen is semantic emphasis, not an ambient surface tint.
+The canonical visual contract is [`../../DESIGN.md`](../../DESIGN.md). Route ownership and URL state are in [`information-architecture.md`](information-architecture.md); ActivityFrame behavior is in [`activity-renderers.md`](activity-renderers.md); Studio behavior is in [`adaptive-studio.md`](adaptive-studio.md); WCAG intent and evidence limits are in [`accessibility.md`](accessibility.md).
 
-## Semantic themes and tokens
+## Source-of-truth mapping
 
-**Implemented baseline**
+| Contract                                    | Repository seam                                                   | Boundary                                                                                                                                                                                        |
+| ------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Semantic theme roles and OKLCH tokens       | `apps/web/app/globals.css`; shared shadcn/Radix primitives        | Components consume semantic roles, never component-only raw palette values. Canonical values remain in [`../../DESIGN.md#color-roles`](../../DESIGN.md#color-roles).                            |
+| Theme preference and reduced motion         | `ThemeProvider`, `next-themes`, global motion rules               | `system \| light \| dark` applies through browser-local preference; reduced motion removes nonessential transitions, scrolling, and transforms.                                                 |
+| App shell and route title                   | `AppShell`, utility header, `PageHeader`                          | Shell owns rail, mobile navigation, skip link, main landmark, privacy-safe title, breadcrumb slot, and route-to-destination mapping. PageHeader owns title, description, and page actions only. |
+| Breadcrumb and meaningful destination state | shared breadcrumb; Radix Tabs/compact Select; URL query contracts | Entity labels stay honest while loading; ancestors are links and current item is text with `aria-current`. IA owns route and query semantics.                                                   |
+| Lesson orientation                          | `apps/web/components/day-plan.tsx`, ActivityFrame                 | Desktop rail and mobile Sheet expose the same semantic plan. ActivityFrame and renderer ownership remain in `activity-renderers.md`.                                                            |
+| Localized loading and feedback              | `LoadingState`, bounded skeletons, Sheet/Popover, toast region    | Loading, errors, empty states, and transient feedback are localized and layer-specific; consequential/persistent status remains in page context.                                                |
+| Text input and conversational surface       | `apps/web/components/ui/textarea.tsx`, `interview-chat-view.tsx`  | Enter/Shift+Enter behavior and one meaningful live-status boundary are preserved; unsupported chat tools are not implied.                                                                       |
 
-`apps/web/app/globals.css` owns semantic OKLCH variables for both themes and maps them to Tailwind roles. Existing components consume roles such as `bg-card`, `text-muted-foreground`, and `ring-ring` instead of raw palette values.
-
-**Implemented baseline**
-
-The exact canonical values and contrast intent are in [`../../DESIGN.md`](../../DESIGN.md#color-roles). `apps/web/app/globals.css` implements these token families:
-
-- neutral foundation: `background`, `foreground`, `card`, `popover`, `surface-raised`, `surface-soft`, `sidebar`, `secondary`, `muted`, `accent`, `border`, `input`, and `overlay`;
-- primary interaction: `primary`, `primary-hover`, `primary-foreground`, and `ring`;
-- feedback: `success`, `warning`, and `destructive`, each with an explicit foreground role;
-- activity accents and paired surfaces: `theory`, `study`, `recall`, `teacher`, `quiz`, `code-reading`, `practice`, `review`, `interview`, `summary`, and `ai`.
-
-`surface-soft` is the canonical recessed-band, quiet-well, query-state, and secondary-group surface. It replaces the obsolete `surface-subtle` name; documentation and components must not introduce a parallel alias. Cool-neutral surfaces never inherit the evergreen hue. Evergreen is reserved for primary action, success, progress, and focus. Warning, destructive, selection, and activity families retain independent roles. Activity color supplements a label, icon, border/marker, and state text; it is never the only distinction.
-
-`ThemeProvider` retains `system | light | dark`, defaults to system, applies `color-scheme`, and suppresses transition noise during theme changes. Theme changes apply and persist immediately through the shared browser-local `next-themes` state. Settings keeps UI-locale selection as an allowlisted browser-session draft until explicit Save or Cancel, preserving it across section changes, route exits, and reloads without applying it. Cancel restores the active locale; Save and Cancel clear the draft. Saving the locale uses browser-local persistence only and never requires Core or a database write. `prefers-reduced-motion` globally reduces nonessential animation, scrolling, and transforms.
-
-## Layout and navigation
+## Implemented seams to preserve
 
 **Implemented baseline**
 
-- Primary destinations are exactly Home, Courses, Review, Skills, and Settings.
-- The desktop rail is exactly 248px expanded and 72px collapsed. The collapsed width equals the utility-header height. Icon centers, 48px row heights, navigation order, and focus order remain stable between states; collapsed destinations use square hit fields and Radix tooltips and never render overlay labels into the content plane.
-- Expanded mode shows the neutral mark and wordmark; collapsed mode retains the centered mark in the same 72px rail. The icon-only collapse/expand control is in the utility header immediately before the breadcrumb, not in the brand row or a second strip. The browser-local collapse preference is restored before the interactive shell paints; rail geometry, labels, and transitions remain prepaint-controlled through hydration so cookie/local-storage reconciliation does not flash the wrong composition.
-- Home, Courses, Review, and Skills occupy the upper navigation; Settings is the final lower navigation item. The footer contains no AI/provider badge, theme switch, or ambiguous status pill.
-- The opaque 72px utility header contains the collapse/expand control and labeled breadcrumb on the left and coherent 44px outlined AI and theme controls on the right. Interface locale is changed only in Settings. Provider recovery remains in Settings or the affected workflow.
-- The shared header and main content use the full post-rail canvas with the same 16px mobile and 24px desktop gutters; prose and focused forms own their own readability limits.
-- The separate page header owns a compact responsive title, 16px description, and 44px page actions. It does not repeat the breadcrumb or substitute a top-level title for nested routes.
-- `/courses/*`, compatibility `/session?id=`, exercise, and lesson-linked interview contexts keep Courses active. Home is active only for Home.
-- Mobile uses one compact top context bar and one five-item bottom navigation with visible labels and safe-area padding. It has no second navigation row or squeezed desktop rail.
-- Reading surfaces use a 64–72ch measure; lists and Studio may use the available content width. Complete usable reflow at 320 CSS px remains an **Approved Core Alpha target** beyond the focused responsive paths already exercised.
+- Next.js App Router presentation remains in `apps/web`; Geist Sans and Geist Mono come from the installed `geist` package.
+- Existing shadcn/Radix primitives remain the component toolkit. `apps/web/app/globals.css` owns the semantic light/dark foundation and `surface-soft` is the recessed-band/quiet-well role; no parallel `surface-subtle` alias is introduced.
+- `AppShell`, `PageHeader`, query states, `ActivityFrame`, the closed renderer registry, Adaptive Studio, and provider connection management are existing seams.
+- Primary navigation remains Home, Courses, Review, Skills, and Settings. UI locale remains independent from Course locale and supports `en-US` and `ru-RU`.
+- Course library, Review destination, Studio workspace, chat role, and staged-intake confirmation retain separate URL contracts. Intake recovery is limited to the same orchestrator process and validation expiry; a Core restart requires file reselection and validation.
+- Browser requests retain typed API and domain contracts. Database, provider, filesystem, Git, and process authority do not move into the browser.
 
-## Route-owned composition
-
-**Implemented baseline**
-
-The design system owns reusable composition, not route semantics. The canonical route, query-state, breadcrumb, Course creation/intake, Review destination, and Studio ownership rules live in [`information-architecture.md`](information-architecture.md). Components must preserve those rules without duplicating them in local variants.
-
-## Component catalog
-
-### AppShell, utility header, and PageHeader
-
-**Implemented baseline**
-
-`AppShell` owns the 248px/72px rail, pre-hydration collapse restoration, collapsed tooltips, five-item mobile bottom navigation, utility header, privacy-safe route title, entity breadcrumb slot, route-to-primary-destination mapping, skip link, and main landmark. `PageHeader` owns only route title, description, and page actions. Neither owns lesson progression.
-
-### Breadcrumb
-
-**Implemented baseline**
-
-The breadcrumb is a labeled navigation landmark with an ordered list. Ancestors are links; the final item is non-link text with `aria-current="page"`. Entity-backed labels use an honest loading state and never fall back to a false Home location.
-
-### Tabs and compact destination selection
-
-**Implemented baseline**
-
-Desktop destination tabs use the shared Radix Tabs primitive with visible focus and selected semantics. Compact layouts may replace the same destination set with one labeled Select when all options and the current value remain available. Meaningful destination state belongs in the URL—for example Review's `?view=`—so Back, Forward, reload, and copied local links preserve intent.
-
-### Textarea and InterviewChatView
-
-**Implemented baseline**
-
-`apps/web/components/ui/textarea.tsx` is the multiline input primitive. `apps/web/components/interview-chat-view.tsx` composes the transcript and composer, preserves Enter/Shift+Enter behavior, and limits live status to one meaningful operation boundary at a time.
-
-### DayPlan rail and sheet
-
-**Implemented baseline**
-
-`apps/web/components/day-plan.tsx` presents one semantic lesson plan as a substantial, independently scrolling desktop rail when the lesson container has enough width and as a full-height Sheet below that threshold. The trigger belongs to lesson orientation, not the global utility header. Current, completed, and locked text, phase structure, and `aria-current` remain equivalent in both compositions.
-
-### LoadingState and stable skeletons
-
-**Implemented baseline**
-
-The shared localized `LoadingState` is the default for route and query boundaries whose eventual geometry is not yet known. Page loading is open and transparent; panel loading may retain one quiet `surface-soft` frame. Skeletons are limited to bounded regions whose approximate shape is stable; they do not invent a page structure or announce each pulse. Both patterns expose one concise status through the owning region.
-
-### Sheet, Popover, and toast feedback
+## Implementation boundaries
 
 **Approved Core Alpha target**
 
-Sheet is for plan, context, inspector, and bounded mobile navigation. Popover may disclose compact utility detail, including provider context, but provider state is never placed in the rail footer or presented as a global KPI. Toast feedback may acknowledge transient success, background completion, or a recoverable operation; validation errors, destructive consequences, uncertain commits, and failures requiring action remain in page context with preserved input and recovery.
+- Components preserve the shared 248px/72px shell, stable navigation semantics, 44px mobile targets, visible focus, named landmarks, and privacy-safe route identity from [`../../DESIGN.md`](../../DESIGN.md).
+- Loading, saving, validation, import, check, review, AI proposal, export, and publish status use bounded localized status/alert regions. Skeleton pulses and model tokens are not announced individually.
+- Published revisions are read-only. Clone, Apply, install/open-as-draft, Validate, Preview, Change review, and Publish remain distinct operations with preserved input and explicit recovery.
+- Technical values, diffs, paths, hashes, and check output wrap or use named contained scrolling. No page-level horizontal overflow is accepted at the responsive contract widths.
+- Provider and runtime failure remain distinct from Core/storage failure; AI Off is not an error and real-provider failure never silently selects Mock. Secrets are never rendered.
 
-## Component rules
+## Evidence boundary
 
-**Approved Core Alpha target**
+**Implemented baseline**
 
-- Primary mobile controls and icon buttons have at least a 44px target.
-- Buttons, inputs, badges, progress, loading states, bounded skeletons, sheets, dialogs, and toasts use shared semantic primitives.
-- Loading exposes `role="status"` or `aria-busy`; errors identify the failing layer and a recovery action; empty states explain what creates content.
-- Published revisions are read-only. Clone, Apply, install, and Publish are distinct explicit actions.
-- Destructive or irreversible operations require confirmation and state the consequence.
-- Long prompts, diffs, paths, hashes, and check output wrap or use a named contained scroll region rather than widening the page.
-- Sonner-style toasts are supplemental; persistent or consequential status is never toast-only.
-
-## Accessibility
-
-**Approved Core Alpha target**
-
-- The skip link targets `#main-content`; landmarks and navigation regions have names.
-- Current primary destination and breadcrumb item expose `aria-current`.
-- Collapse/expand exposes `aria-expanded`, preserves focus, and never removes accessible names. Collapsed icon destinations provide focus/hover tooltips.
-- `focus-visible` uses the semantic ring and offset across light and dark surfaces.
-- Icon-only buttons have accessible names; decorative icons are hidden from assistive technology.
-- Dynamic Teacher/interview output uses restrained polite live regions; progress includes accessible current/max text.
-- Forms associate label, help, and error through `aria-describedby` and `aria-invalid`.
-- Keyboard operation never depends on hover and focus is not covered by sticky headers, bottom navigation, or overlays.
-
-## UI change verification
-
-**Approved Core Alpha target**
-
-Automated component tests cover selected semantics, theme, and reduced-motion contracts; focused browser checks cover exercised responsive and interaction paths. Neither is a complete WCAG 2.2 AA certification. Ongoing acceptance requires:
-
-1. component states for loading, empty, error, success, offline, AI Off, and protected data;
-2. keyboard walkthrough through library → create, library → import/intake, Home → session → practice → summary, and Studio gates;
-3. light, dark, and system screenshots without hydration warnings;
-4. 248px/72px rail, pre-hydration collapsed restoration, collapsed tooltip, 1440×900 desktop, 390×844 mobile, and 320 CSS px reflow checks;
-5. reduced-motion and forced-colors checks;
-6. rendered contrast checks for text, focus, selected navigation, controls, statuses, and activity surfaces;
-7. the applicable repository format, lint, typecheck, web component, and E2E gates, reported separately from visual approval.
+Automated component checks and focused browser checks provide evidence only for exercised semantics, state transitions, themes, reduced motion, responsive paths, route separation, and interaction seams. They do not establish complete 320px reflow, all WCAG 2.2 A/AA criteria, manual assistive-technology acceptance, or certification. The complete acceptance matrix remains owned by [`accessibility.md`](accessibility.md), and design approval remains separate from implementation and Course publication approval.

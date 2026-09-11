@@ -1,8 +1,10 @@
 # Aptiloop Documentation Index
 
-This index identifies the current authority for product, architecture, design, security, operations, and dated evidence. A document can contain both **Implemented baseline** and **Approved Core Alpha target** sections; the nearest explicit status label governs.
+**Implemented baseline** — documentation organization, not release acceptance.
 
-Historical documents preserve decision and migration context. They are not current implementation or approval evidence unless a current specification links to an explicitly dated result. This current index supersedes document classifications recorded by older audits only for navigation and authority; the dated audit text remains unchanged evidence for its own cutoff.
+Start with the relevant entry below, then read only the documents needed for the task. Current specifications own contracts; ADRs own decisions; dated audits own evidence for their stated cutoff. A nearby **Implemented baseline**, **Approved Core Alpha target**, **Proposed pending owner approval**, or **Future** label governs each specification section.
+
+Superseded plans, closed session handoffs, and the retired Dev Learning Harness specifications are removed from the working tree. Their tracked history remains available in Git; they are not a second source of current instructions.
 
 ## Start here
 
@@ -10,7 +12,6 @@ Historical documents preserve decision and migration context. They are not curre
 - [Product contract](../PRODUCT.md) — normative product intent, users, boundaries, and release behavior.
 - [Roadmap](../ROADMAP.md) — mixed current milestone status ledger and release gate.
 - [Repository rules](../AGENTS.md) — mandatory engineering, security, data, language, and verification rules.
-- [Session handoff](../HANDOFF.md) — current slice, evidence boundaries, and paused checklist for the next session.
 
 ## Current product specifications
 
@@ -85,30 +86,14 @@ See the [ADR index](adr/README.md). ADR status records a decision at its stated 
 - [2026-08-08 M1 safety-boundary and private-data inventory](audits/2026-08-08-m1-safety-boundary-inventory.md)
 - [2026-08-08 M0 repository audit and approval gate](audits/2026-08-08-core-alpha-repository-audit.md)
 
-Dated audits are immutable evidence for their recorded cutoff. They do not make later working-tree changes, external-provider availability, accessibility certification, legal approval, or release acceptance implicit.
+Dated audits are retained for security, provenance, and migration evidence. Read them when investigating their specific findings, not as default implementation context. They do not make later changes, provider availability, accessibility certification, legal approval, or release acceptance implicit.
 
-## Historical baseline documents
-
-The following files describe the earlier Dev Learning Harness/versioned-MVP implementation and are preserved as history:
-
-- [Product specification v2](product-specification-v2.md)
-- [Acceptance audit](acceptance-audit.md)
-- [Implementation plan](implementation-plan.md)
-- [Guided-learning implementation plan](implementation-plan-guided-learning.md)
-- [Guided-learning UX](guided-learning-ux.md)
-- [Historical architecture](architecture.md)
-- [Historical security](security.md)
-- [Learning methodology](learning-methodology.md)
-- [Curriculum authoring](curriculum-authoring.md)
-
-The historical interview/chat plan and design are removed from the current tree. Do not execute removed methodology instructions or use historical material as current approval evidence. Exercise `README.md` files under `workspaces/exercises/**` document trusted development fixtures, not production Courses. Generated Markdown under `.data/**`, `.verify/**`, or test-result directories is runtime evidence, not normative documentation.
-
-The unembedded `docs/screenshots/**` set recorded by the 2026-08-02 historical implementation was removed from the current tree on 2026-08-12 because it showed the retired Dev Learning Harness identity, duplicated theme output, and local/private machine details. Git history preserves that dated evidence. Only newly reviewed Aptiloop captures may be used for current onboarding or release material.
+Exercise `README.md` files under `workspaces/exercises/**` document trusted development fixtures. Files under `.data/**`, `.verify/**`, and test-result directories are local runtime artifacts, not normative documentation.
 
 ## Documentation maintenance
 
 - Keep current repository prose in English unless editing an explicitly localized Course resource.
 - Update the current product, architecture, design, security, runtime, data, authoring, or roadmap specification whenever its behavior changes.
 - Use only the four repository status labels: **Implemented baseline**, **Approved Core Alpha target**, **Proposed pending owner approval**, and **Future**.
-- Preserve historical documents and dated evidence; do not silently rewrite their cutoff claims as current facts.
+- Keep one canonical home for each contract and link to it instead of copying its contents. Remove superseded plans and closed task diaries; retain necessary decisions in ADRs and dated safety/migration evidence in their dedicated directories.
 - Never place credentials, learner content, private paths, provider payloads, or valuable database contents in documentation.
