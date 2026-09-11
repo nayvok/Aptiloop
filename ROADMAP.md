@@ -2,7 +2,7 @@
 
 **Document status:** Current orientation for the implemented baseline, the approved Core Alpha target, and the remaining release gates.
 **Owner approval:** 2026-08-08 (Calm Workshop direction and Core Alpha order).
-**Most recent recorded full-run evidence:** commit `21d31ef`.
+**Most recent recorded full-run evidence:** release-preparation tree based on `cc51455`.
 
 ## Status rules
 
@@ -49,12 +49,14 @@ Owner decisions that remain authoritative:
 
 ## Verification and evidence boundaries
 
-The most recent recorded integrated result is for commit `21d31ef`, not a certification of later commits:
+**Implemented baseline:** the release-preparation tree based on `cc51455` has the following local evidence; this is not hosted CI or public-release acceptance:
 
-- format, lint, typecheck, and build pass;
-- E2E passes **8/8**;
-- `test:fast` retains **three existing** `apps/orchestrator/test/http-boundary.integration.test.ts` failures (capacity/shutdown timing/concurrency behavior); these are an unresolved quality-gate limitation, not a release waiver;
-- Turbo warns that workspace `packages/update-core` is missing from the lockfile; dependency consistency remains unresolved.
+- `npm run verify` passes format, lint, typecheck, fast tests, build, and production-content checks;
+- E2E passes **8/8**; the repaired HTTP-admission suite passes **52/52**, and the complete orchestrator suite passes **352/352**;
+- disposable `npm ci --ignore-scripts` passes with the reconciled lockfile, including `packages/update-core`;
+- Next.js **16.3.4** and Sharp **0.35.4** close the reported high/critical dependency blockers. Production audit has **0 critical, 0 high, 1 moderate (Hono), and 1 low (esbuild)** finding; the full audit also reports two dev-only moderate findings. No exception or security-gate waiver was added.
+
+The current Windows runtime archive has **9,344 verified file hashes**. The **16-file** npm tarball installs into a disposable prefix and runs `--version` (`0.1.0`) and `--help` against a locally prepared, hash-verified runtime. CycloneDX and SPDX SBOM generation passes. This smoke does not exercise public GitHub downloading, npm publication, or installed application startup; matching public runtime assets must exist before publishing the npm launcher.
 
 Older evidence is cutoff-specific. The 2026-08-10 M12 technical preflight covered clean install, local/Compose launch, migration and backup/restore rehearsal, trusted Node/Python checks, SBOM/dependency policy, browser QA, and a 4/4 E2E run for that tree. It is historical implementation evidence, not proof for later commits or release acceptance. The 2026-08-12 UI/runtime hardening audit and 2026-08-13 production-readiness audit likewise retain their own dated scope; neither claims WCAG 2.2 AA certification or acceptance of later changes.
 
@@ -80,7 +82,7 @@ Remaining release gates are grouped here for orientation:
 6. Provider auth/capability/tool/disclosure boundaries, explicit failure/no-fallback behavior, AI Off paths, and at least one qualifying authenticated real-provider typed role are proven for the exact candidate. A connected/catalog-visible provider alone is insufficient.
 7. Manual Studio, optional typed AI proposals, Preview, Change review, and explicit immutable Publish remain separate gates; no AI action publishes.
 8. Responsive desktop/mobile `en-US`/`ru-RU` journeys, keyboard/focus semantics, themes, honest empty/offline/Core/provider recovery states, and the accessibility target are verified. No complete WCAG 2.2 AA certification is currently claimed.
-9. Current format/lint/typecheck/build/E2E and fast-test quality evidence is clean; the three known HTTP-boundary failures and lockfile warning above remain open until resolved.
+9. Current format/lint/typecheck/build/E2E and fast-test quality evidence remains clean for the exact release candidate; the local passing result above must not be substituted for hosted or platform-specific release gates.
 10. Apache-2.0 project scope, third-party artifact compliance, content/fixture provenance and terms, notices/SBOM, trademark review, exact release artifact authorization, and owner sign-off are complete.
 11. The supported local-process and loopback-Compose deployment remains loopback-only, with current backup/restore, secret, volume, execution-label, and operator-runbook evidence. Public/LAN/authenticated self-hosting is not an Alpha shortcut.
 
