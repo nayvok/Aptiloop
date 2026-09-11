@@ -28,7 +28,7 @@
     "lint": "eslint src test --max-warnings=0",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "postinstall": "node ./dist/postinstall.cjs"
+    "postinstall": "node -e \"require('fs').existsSync('dist/postinstall.cjs') ? require('./dist/postinstall.cjs') : process.stdout.write('aptiloop: dist not built; skipping runtime prefetch\\n')\""
   },
   "devDependencies": {
     "@aptiloop/os-service": "0.1.0",
