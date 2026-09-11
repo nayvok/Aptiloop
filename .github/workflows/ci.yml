@@ -42,6 +42,8 @@ jobs:
           rm -rf -- .verify
           mkdir -p .verify/supply-chain
       - name: Verify pinned GitHub Actions
+        # Trusted-verifier allowlist covers ci.yml and release.yml, including
+        # actions/download-artifact v4.3.0 used for the release handoff.
         working-directory: source
         env:
           EXPECTED_SOURCE_COMMIT: ${{ github.sha }}

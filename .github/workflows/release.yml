@@ -240,7 +240,7 @@ jobs:
       - name: Download one npm package and all five runtime assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: aptiloop-runtime-*-${{ needs.validate.outputs.commit }}
+          pattern: "aptiloop-runtime-*-${{ needs.validate.outputs.commit }}"
           path: release-handoff/runtimes
           merge-multiple: true
       - name: Download npm package and SBOM handoff

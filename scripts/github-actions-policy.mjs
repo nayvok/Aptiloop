@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // https://api.github.com/repos/actions/checkout/git/ref/tags/v4.2.2
 // https://api.github.com/repos/actions/setup-node/git/ref/tags/v4.4.0
 // https://api.github.com/repos/actions/upload-artifact/git/ref/tags/v4.6.2
+// https://api.github.com/repos/actions/download-artifact/git/ref/tags/v4.3.0
 export const ACTION_ALLOWLIST = Object.freeze({
   "actions/checkout": Object.freeze({
     sha: "11bd71901bbe5b1630ceea73d27597364c9af683",
@@ -26,6 +27,10 @@ export const ACTION_ALLOWLIST = Object.freeze({
   "actions/upload-artifact": Object.freeze({
     sha: "ea165f8d65b6e75b540449e92b4886f43607fa02",
     release: "v4.6.2",
+  }),
+  "actions/download-artifact": Object.freeze({
+    sha: "d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    release: "v4.3.0",
   }),
 });
 

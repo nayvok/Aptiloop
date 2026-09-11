@@ -117,6 +117,7 @@ test("accepts only the exact reviewed action SHAs and records provenance", () =>
     step("actions/checkout"),
     step("actions/setup-node"),
     step("actions/upload-artifact"),
+    step("actions/download-artifact"),
   ].join("\n");
 
   const report = evaluateWorkflowSources(
