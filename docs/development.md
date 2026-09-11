@@ -20,7 +20,7 @@ npm ci
 npm run dev
 ```
 
-No `.env` file is required. The local launcher selects explicit development mode, and the orchestrator uses loopback-only defaults plus the fixed `.data/dev-learning-harness.sqlite` data path. On a genuinely fresh profile it creates the database, applies the current migrations, and seeds the development curriculum idempotently.
+No `.env` file is required. The local launcher selects explicit development mode, and the orchestrator uses loopback-only defaults plus the fixed `.data/dev-learning-harness.sqlite` data path. On a genuinely fresh development profile it creates the database, applies current migrations, and idempotently installs the two validated Aptiloop Dev Tour Course Packs. Set `APTILOOP_DEV_SEED_CURRICULUM=1` to additionally opt in to the legacy versioned development curriculum, or run `npm run db:seed` explicitly.
 
 Use `.env.example` only as a reference for optional local overrides. Do not copy it merely to start Aptiloop, and never commit a populated `.env` file.
 

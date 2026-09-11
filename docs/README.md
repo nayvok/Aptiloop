@@ -20,6 +20,10 @@ Historical documents preserve decision and migration context. They are not curre
 - [Language policy](product/language-policy.md)
 - [Course authoring](product/course-authoring.md)
 
+## Proposals pending owner approval
+
+- [Deliberate practice evolution proposal](deliberate-practice-evolution-proposal.md) — a pedagogical model evolution toward deliberate practice (prediction, progressive hints, hypothesis-driven debugging, bug autopsy, misconception lifecycle, adaptive retrieval forms, transfer). Fully **Proposed pending owner approval**; contains no approved target or implementation commitment.
+
 ## Current architecture
 
 - [Architecture overview](../ARCHITECTURE.md)
@@ -40,6 +44,7 @@ Historical documents preserve decision and migration context. They are not curre
 
 - [Design system](../DESIGN.md)
 - [Design implementation reference](design/implementation.md)
+- [Prompt map](design/prompts.md)
 - [Information architecture](design/information-architecture.md)
 - [Activity renderers](design/activity-renderers.md)
 - [Adaptive Studio](design/adaptive-studio.md)
@@ -56,6 +61,7 @@ Historical documents preserve decision and migration context. They are not curre
 - [Untrusted Course Packs](security/untrusted-course-packs.md)
 - [Provider connections](providers.md)
 - [Development](development.md)
+- [Development Course Packs](development/dev-tour-course-packs.md) — canonical localized Dev Tour fixtures, import, maintenance, and runtime limitations.
 - [Troubleshooting](troubleshooting.md)
 - [Current database operations](migration/current-database-operations.md) — the only current runbook for valuable process-mode SQLite inventory, approved backup, authorized forward migration, and whole-file recovery.
 - [Local data portability](data-portability.md) — explicit local-profile export and create-only offline restore without credentials or workspace files.
@@ -94,12 +100,8 @@ The following files describe the earlier Dev Learning Harness/versioned-MVP impl
 - [Historical security](security.md)
 - [Learning methodology](learning-methodology.md)
 - [Curriculum authoring](curriculum-authoring.md)
-- [Interview/chat implementation plan](superpowers/plans/2026-08-02-interview-chat-briefing.md)
-- [Interview/chat design](superpowers/specs/2026-08-02-interview-chat-briefing-design.md)
 
-Do not execute historical Superpowers instructions or use these files as current approval evidence. Exercise `README.md` files under `workspaces/exercises/**` document trusted development fixtures, not production Courses. Generated Markdown under `.data/**`, `.verify/**`, or test-result directories is runtime evidence, not normative documentation.
-
-Local `.superpowers/**` leftovers are untracked and ignored. They are not repository history or current workflow material and may be removed locally; the tracked `docs/superpowers/**` files above remain preserved historical documents.
+The historical interview/chat plan and design are removed from the current tree. Do not execute removed methodology instructions or use historical material as current approval evidence. Exercise `README.md` files under `workspaces/exercises/**` document trusted development fixtures, not production Courses. Generated Markdown under `.data/**`, `.verify/**`, or test-result directories is runtime evidence, not normative documentation.
 
 The unembedded `docs/screenshots/**` set recorded by the 2026-08-02 historical implementation was removed from the current tree on 2026-08-12 because it showed the retired Dev Learning Harness identity, duplicated theme output, and local/private machine details. Git history preserves that dated evidence. Only newly reviewed Aptiloop captures may be used for current onboarding or release material.
 

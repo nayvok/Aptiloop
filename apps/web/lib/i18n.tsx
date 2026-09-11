@@ -1632,15 +1632,15 @@ const enUS = {
   "authoring.designer.learningDesign.assumptions": "Assumptions (one per line)",
   "authoring.designer.learningDesign.guidanceTitle": "Learning Design guidance",
   "authoring.designer.learningDesign.guidanceSequence":
-    "Work in order: target capability → observable evidence → practice → feedback → instruction/review.",
+    "Work in order: target capability → observable evidence → practice → feedback → instruction/review. When level or prerequisites are uncertain, Diagnostic is mandatory unless the learner declines; record an explicit assumption if it is declined or skipped, never skip silently.",
   "authoring.designer.learningDesign.guidancePractice":
-    "Require an attempt before the answer, then explanation and a changed variant. For SWE decision practice, use decision classes and the naive → problem → observe → change → new trade-off loop.",
+    "Require an attempt before the answer, then explanation and a changed variant. For SWE decision practice, use decision classes and the naive → problem → observe → change → new trade-off loop. For example, ask the learner to predict async event order before explaining it, then transfer to rejection or parallel requests; ask them to choose API state ownership and defend it after a new requirement.",
   "authoring.designer.learningDesign.guidanceTransfer":
     "Add a changed-condition transfer check and name explicit mastery-evidence types such as reproduce-from-memory, novel-variant, causal-explain, diagnose-broken, design-under-constraints, or defend-tradeoffs.",
   "authoring.designer.learningDesign.guidanceObjectives":
     "Keep interview readiness separate from independent engineering capability, and record the time trade-off between them.",
   "authoring.designer.learningDesign.guidanceRuntime":
-    "If the runtime registry is empty, state runtime practice unavailable and degrade to recall, teacher dialogue, code reading, interview, or checkpoint; do not author an exercise requiring that runtime.",
+    "If either the environment or check registry has no entries, state runtime practice unavailable and degrade to recall, teacher dialogue, code reading, interview, or checkpoint; do not author an exercise requiring that runtime.",
   "authoring.designer.learningDesign.guidancePlaceholders":
     "Do not use silent placeholders: route [X] or unknowns to a Discovery question, explicit unresolved item, or approved assumption.",
   "authoring.designer.learningDesign.skipAssumption":
@@ -1664,11 +1664,11 @@ const enUS = {
   "authoring.designer.changeCount": "{count} proposed changes",
   "authoring.designer.description":
     "Optional AI reads this draft and returns a typed proposal. It cannot apply changes or publish a revision.",
-  "authoring.designer.diagnosticTitle": "Optional diagnostic",
+  "authoring.designer.diagnosticTitle": "Diagnostic (when needed)",
   "authoring.designer.disclosureApprove": "Approve and generate",
   "authoring.designer.disclosureCancel": "Cancel",
   "authoring.designer.disclosureDescription":
-    "Review the exact one-time scope before any data is sent.",
+    "Review the exact scope for one named operation before any data is sent. Approval is consumed once.",
   "authoring.designer.disclosureTitle": "External provider disclosure",
   "authoring.designer.disclosure.role": "AI role",
   "authoring.designer.disclosure.connection": "Connection ID",
@@ -3483,15 +3483,15 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.designer.learningDesign.guidanceTitle":
     "Рекомендации по проектированию обучения",
   "authoring.designer.learningDesign.guidanceSequence":
-    "Соблюдайте порядок: целевая способность → наблюдаемое свидетельство → практика → обратная связь → инструкция/повторение.",
+    "Соблюдайте порядок: целевая способность → наблюдаемое свидетельство → практика → обратная связь → инструкция/повторение. Если уровень или предварительные знания неизвестны, диагностика обязательна, если ученик не отказался; при отказе или пропуске укажите явное допущение и не пропускайте это молча.",
   "authoring.designer.learningDesign.guidancePractice":
-    "Сначала нужен ответ ученика, затем объяснение и изменённый вариант. Для практики инженерных решений используйте классы решений и цикл наивное решение → проблема → наблюдение → изменение → новый компромисс.",
+    "Сначала нужен ответ ученика, затем объяснение и изменённый вариант. Для практики инженерных решений используйте классы решений и цикл наивное решение → проблема → наблюдение → изменение → новый компромисс. Например, попросите предсказать порядок async-событий до объяснения, а затем перенесите проверку на отказ или параллельные запросы; попросите выбрать владельца состояния API и защитить границу после нового требования.",
   "authoring.designer.learningDesign.guidanceTransfer":
     "Добавьте проверку переноса при изменившихся условиях и назовите типы свидетельств мастерства: воспроизведение по памяти, новый вариант, причинное объяснение, диагностика поломки, проектирование при ограничениях или защита компромиссов.",
   "authoring.designer.learningDesign.guidanceObjectives":
     "Разделяйте готовность к собеседованию и независимую инженерную способность; зафиксируйте компромисс по времени между ними.",
   "authoring.designer.learningDesign.guidanceRuntime":
-    "Если реестр среды выполнения пуст, укажите недоступность практики в среде и деградируйте до воспроизведения, диалога с преподавателем, чтения кода, интервью или контрольной точки; не создавайте упражнение для этой среды.",
+    "Если в реестре среды или проверок нет записей, укажите недоступность практики в среде и деградируйте до воспроизведения, диалога с преподавателем, чтения кода, интервью или контрольной точки; не создавайте упражнение для этой среды.",
   "authoring.designer.learningDesign.guidancePlaceholders":
     "Не оставляйте тихие заполнители: [X] и неизвестное направьте в вопрос Discovery, явную нерешённость или одобренное допущение.",
   "authoring.designer.learningDesign.skipAssumption":
@@ -3511,11 +3511,11 @@ const ruRU: Record<MessageKey, string> = {
   "authoring.designer.changeCount": "Предложено изменений: {count}",
   "authoring.designer.description":
     "Необязательный ИИ читает этот черновик и возвращает типизированное предложение. Он не может применить изменения или опубликовать ревизию.",
-  "authoring.designer.diagnosticTitle": "Необязательная диагностика",
+  "authoring.designer.diagnosticTitle": "Диагностика (если нужна)",
   "authoring.designer.disclosureApprove": "Разрешить и сгенерировать",
   "authoring.designer.disclosureCancel": "Отмена",
   "authoring.designer.disclosureDescription":
-    "Проверьте точную одноразовую область передачи до отправки данных.",
+    "Проверьте точную область одной именованной операции до отправки данных. Разрешение действует один раз.",
   "authoring.designer.disclosureTitle": "Передача внешнему провайдеру",
   "authoring.designer.disclosure.role": "AI-роль",
   "authoring.designer.disclosure.connection": "ID подключения",

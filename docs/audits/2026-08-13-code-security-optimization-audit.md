@@ -186,7 +186,7 @@ Reviewer execution remains read-only and bounded to the immutable operation evid
 
 **Implemented baseline.** The standalone `/chat` page, generic `AgentChat`, client-side role selector, their tests, and associated route/navigation/localization references were removed. Tutor is presented only inside the active lesson workflow. The learning client aborts an active Tutor stream when its lesson unmounts without aborting an already completed stream; the Curriculum Editor applies the same lifecycle rule to active Designer generation.
 
-Course-authoring assets now use the package's public `@aptiloop/course-authoring-kit/authoring-assets` boundary instead of a deep relative import. Package manifests, the single lockfile, and Docker dependency graphs were aligned with the surviving runtime dependencies. The unused tracked `packages/testing` package and an orphaned legacy screenshot were removed. Required legacy provider adapter packages and tracked historical `docs/superpowers/**` evidence were deliberately retained; no user data, applied migration, or historical audit record was deleted.
+Course-authoring assets now use the package's public `@aptiloop/course-authoring-kit/authoring-assets` boundary instead of a deep relative import. Package manifests, the single lockfile, and Docker dependency graphs were aligned with the surviving runtime dependencies. The unused tracked `packages/testing` package and an orphaned legacy screenshot were removed. Required legacy provider adapter packages were deliberately retained; no user data, applied migration, or historical audit record was deleted.
 
 The final web lint, typecheck, fast-test, build, and Chromium E2E paths are included in the green combined verification above. Existing semantic HTML, keyboard/focus, reduced-motion, theme, and `en-US`/`ru-RU` catalog checks remain part of those repository suites; this audit does not claim a separate manual assistive-technology certification.
 
@@ -194,7 +194,7 @@ The final web lint, typecheck, fast-test, build, and Chromium E2E paths are incl
 
 **Implemented baseline.** Current architecture, Provider Hub/Pi runtime, AI/security boundaries, private-source handling, information architecture, development guidance, terminology, and user-journey documents were reconciled with the scoped Tutor/Interview/Reviewer runtime and the five-item primary navigation. Status and date language now separates the implemented M1-M11/runtime baseline from uncompleted Core Alpha release targets.
 
-The documentation index now links this dated audit. Non-authoritative local `.superpowers/**` leftovers are classified as removable local artifacts, while tracked `docs/superpowers/**` material remains preserved and explicitly historical. Stale generic Chat and deep-import references were removed, and documentation link checks found the current local Markdown targets resolvable. Repository documentation remains English and does not turn historical evidence into current approval authority.
+The documentation index now links this dated audit. Obsolete local methodology leftovers are removable and no longer part of the repository workflow; dated audits remain historical evidence. Stale generic Chat and deep-import references were removed, and documentation link checks found the current local Markdown targets resolvable. Repository documentation remains English and does not turn historical evidence into current approval authority.
 
 ## Final recommendation
 

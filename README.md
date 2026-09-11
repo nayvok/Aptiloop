@@ -6,7 +6,7 @@ Aptiloop turns an authored Course into a finite sequence of evidence-producing a
 
 **Implemented baseline**
 
-The current repository implements the Aptiloop application and its local SQLite learning store, Course and immutable revision workflows, deterministic learning and evidence rules, Adaptive Studio, constrained Provider Hub roles, and responsive `en-US`/`ru-RU` application surfaces. A fresh profile is intentionally empty: no Course is bundled, so the learner starts with **Create Course** or **Import Course Pack**.
+The current repository implements the Aptiloop application and its local SQLite learning store, Course and immutable revision workflows, deterministic learning and evidence rules, Adaptive Studio, constrained Provider Hub roles, and responsive `en-US`/`ru-RU` application surfaces. A fresh production or installed profile is intentionally empty: no Course is bundled, so the learner starts with **Create Course** or **Import Course Pack**. A fresh local development profile is different by design: `npm run dev` idempotently installs the two validated Aptiloop Dev Tour Course Packs; the legacy versioned development curriculum requires `APTILOOP_DEV_SEED_CURRICULUM=1` or an explicit seed command.
 
 ### Implemented now
 
@@ -60,7 +60,7 @@ Open <http://127.0.0.1:10101>. The documented launcher builds and starts the loc
 - Run due Review Items as typed free-response activities, retaining participation without asserting correctness or mastery when no verified evaluator exists.
 - Share one Course as a canonical declarative Course Pack, import Packs with precise code/path/entity diagnostics and a copy-for-AI repair payload, and move named Courses with learner progress to another computer; active exercise attempts restore as isolated workspaces with real Git learner commits carrying the source author identity.
 - Upgrade an installed Course to a newer upstream revision through an explicit safe-update or side-by-side dialog; safe-update preserves immutable history, replays only facts whose stable contracts survive, and refuses while an old-revision session is active.
-- Author through the guided order Initial Brief → Discovery → Diagnostic → Learning Design → Course Proposal → User Review, with the Learning Design stage enforcing target capability, observable evidence, practice, feedback, and explicit mastery evidence before proposal generation.
+- Author through the guided order Initial Brief → Discovery → Diagnostic when level or prerequisite knowledge is uncertain (a declined or skipped Diagnostic is recorded as an explicit assumption) → Learning Design → Course Proposal → User Review, with the Learning Design stage enforcing target capability, observable evidence, practice, feedback, and explicit mastery evidence before proposal generation.
 - Export a sanitized local profile and restore it offline into a fresh profile without overwriting or merging an active profile.
 
 Manual authoring is complete without AI. Applying a proposal changes only a Draft; validation, learner Preview, Change review, and explicit Publish are separate operations. Repository exercise fixtures are development evidence, not bundled production Courses. Course-level payloads (Pack share and transfer with progress) are separate explicit actions with a named scope; see [ADR 0012](docs/adr/0012-course-transfer-scope-and-version-contract.md) and [User journeys](docs/product/user-journeys.md).
@@ -146,6 +146,35 @@ Optional development stack with file watching and explicit development fixtures:
 ```sh
 npm run dev
 ```
+
+### Development preset: Aptiloop Dev Tour
+
+**Implemented baseline**
+
+The repository includes two importable development Course Pack JSON files for
+quickly exercising the application:
+
+- `packages/curriculum/fixtures/course-packs/aptiloop-dev-tour-en.course-pack.json`
+- `packages/curriculum/fixtures/course-packs/aptiloop-dev-tour-ru.course-pack.json`
+
+These are the files to select in **Courses → Import Course Pack** (or pass to
+`aptiloop courses import`). The `en` and `ru` files are separate Courses, each
+with its own primary locale; UI locale remains independent. A clean
+`npm run dev` profile automatically validates and installs both presets, so it
+contains the two Dev Tour Courses and does not automatically seed the legacy
+JavaScript/TypeScript curriculum. `APTILOOP_DEV_SEED_CURRICULUM=1` is an
+explicit opt-in for that legacy development curriculum, and `npm run db:seed`
+also remains an explicit seed command.
+
+The JSON files under `packages/curriculum/fixtures/course-packs/` are the
+canonical development fixtures. Maintain both locale variants directly;
+there is no separate root-level text-input or generator contract.
+
+The presets are development fixture content, not bundled or approved
+production Course content. Their validation/maintenance guard is
+`packages/curriculum/test/dev-tour-course-packs.test.ts`; update both packs and
+the guard in the same commit when activity structures change. See the full
+[Dev Tour maintenance and import runbook](docs/development/dev-tour-course-packs.md).
 
 Optional loopback-only container packaging:
 

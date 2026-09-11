@@ -17,7 +17,7 @@ Never claim a target is implemented without direct runtime evidence.
 
 - Use the Oh My Pi (OMP) harness and its repository tools.
 - Do not use, recommend, invoke, or recreate Superpowers, Caveman, or their planning/development methodologies.
-- Treat committed `.superpowers` and `docs/superpowers` material as historical, non-authoritative artifacts.
+- Superpowers tables, plans, and local artifacts have been removed and are not used; do not restore them or treat them as authoritative.
 - Reuse current repository conventions; do not introduce a second architecture beside an existing seam.
 - Prefer incremental migration with explicit compatibility and rollback over a big-bang rewrite.
 - Do not overwrite unrelated work or delete historical data to simplify a migration.

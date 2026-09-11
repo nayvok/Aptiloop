@@ -1,0 +1,435 @@
+{
+  "format": "aptiloop.course-pack",
+  "formatVersion": 1,
+  "formatMinorVersion": 1,
+  "revision": {
+    "revisionKey": "aptiloop-dev-tour-ru/v1",
+    "revisionNumber": 1,
+    "parentRevisionKey": null,
+    "branchKind": "upstream",
+    "basedOnContentHash": null,
+    "contentHash": "sha256:1fa943fac948ee55c7ed1ec726673e93bfd775657072d3e26f1275cbee59ff34"
+  },
+  "requirements": {
+    "activityTypes": [
+      "briefing",
+      "checkpoint",
+      "code-reading",
+      "interview",
+      "quiz",
+      "recall",
+      "spaced-review",
+      "study",
+      "summary",
+      "teacher-dialogue"
+    ],
+    "capabilities": [],
+    "environmentIds": [],
+    "checkIds": []
+  },
+  "course": {
+    "courseKey": "aptiloop-dev-tour-ru",
+    "title": "Aptiloop Dev Tour (RU)",
+    "description": "Dev-пресет, который за несколько минут проводит через все реализованные поверхности активностей Aptiloop. Это репозиторная фикстура, а не продакшн-содержимое курса.",
+    "primaryLocale": "ru",
+    "availableLocales": ["ru"],
+    "subjectTags": ["dev-tour"],
+    "provenance": {
+      "contentStatus": "development-fixture",
+      "author": "Aptiloop repository",
+      "origin": "original",
+      "ownership": "owned",
+      "licenseSpdx": "Apache-2.0",
+      "termsUrl": null,
+      "attribution": null,
+      "createdAt": "2026-09-11T00:00:00.000Z",
+      "notes": "Репозиторный dev-пресет для прогона приложения в dev-режиме. Обновляется в том же коммите, что и любое изменение структур активностей."
+    }
+  },
+  "knowledge": {
+    "nodes": [
+      {
+        "knowledgeNodeId": "dev-tour-app-surfaces",
+        "title": "Поверхности приложения",
+        "description": "Все реализованные поверхности активностей Aptiloop, которые проходит этот тур.",
+        "kind": "concept",
+        "prerequisiteKnowledgeNodeIds": [],
+        "relatedKnowledgeNodeIds": [],
+        "lifecycle": "active"
+      },
+      {
+        "knowledgeNodeId": "dev-tour-review-topics",
+        "title": "Темы повторения",
+        "description": "Ограниченные темы для активности интервального повторения в туре.",
+        "kind": "concept",
+        "prerequisiteKnowledgeNodeIds": [],
+        "relatedKnowledgeNodeIds": ["dev-tour-app-surfaces"],
+        "lifecycle": "active"
+      }
+    ],
+    "sourceSnapshots": [],
+    "capsules": []
+  },
+  "localizations": [],
+  "lessons": [
+    {
+      "lessonId": "aptiloop-dev-tour-ru/lesson-core-loop",
+      "order": 0,
+      "title": "Основной учебный цикл",
+      "description": "Брифинг, изучение, припоминание, диалог с преподавателем, квиз, чтение кода, итог и контрольная точка за один короткий проход.",
+      "goal": "Увидеть каждую основную учебную поверхность без длинного контента.",
+      "estimatedMinutes": 12,
+      "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+      "prerequisiteLessonIds": [],
+      "entryActivityIds": ["aptiloop-dev-tour-ru/01-briefing"],
+      "activities": [
+        {
+          "activityId": "aptiloop-dev-tour-ru/01-briefing",
+          "schemaVersion": 1,
+          "order": 0,
+          "type": "briefing",
+          "title": "Брифинг тура",
+          "description": "Что покрывает этот dev-тур.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": [],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "acknowledgement"
+            }
+          ],
+          "payload": {
+            "type": "briefing",
+            "scope": [
+              "Каждая реализованная поверхность активностей",
+              "Local-first dev-тур"
+            ],
+            "outOfScope": [
+              "Продакшн-содержимое курса",
+              "Оценки или сертификаты"
+            ]
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-ru/02-study",
+          "schemaVersion": 1,
+          "order": 1,
+          "type": "study",
+          "title": "Поверхность изучения",
+          "description": "Прочитайте учебный текст для учащегося.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-ru/01-briefing"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "acknowledgement"
+            }
+          ],
+          "payload": {
+            "type": "study",
+            "body": "Эта поверхность изучения показывает учебный текст. Подтвердите, чтобы продолжить тур."
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-ru/03-recall",
+          "schemaVersion": 1,
+          "order": 2,
+          "type": "recall",
+          "title": "Поверхность припоминания",
+          "description": "Ответьте по памяти до любого фидбека.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-ru/02-study"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "attempts",
+              "minimum": 1
+            }
+          ],
+          "payload": {
+            "type": "recall",
+            "prompt": "Назовите одну поверхность активностей, которую вы только что посетили."
+          },
+          "protectedMaterial": {
+            "referenceAnswer": "Любое название поверхности из тура, например поверхность изучения или квиза.",
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-ru/04-teacher-dialogue",
+          "schemaVersion": 1,
+          "order": 3,
+          "type": "teacher-dialogue",
+          "title": "Диалог с преподавателем",
+          "description": "Один ограниченный обмен с преподавателем.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-ru/03-recall"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "dialogue",
+              "minimumTurns": 1,
+              "requiresRevision": false
+            }
+          ],
+          "payload": {
+            "type": "teacher-dialogue",
+            "openingPrompt": "Спросите что угодно об этом dev-туре.",
+            "minimumTurns": 1,
+            "requiresRevision": false
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-ru/05-quiz",
+          "schemaVersion": 1,
+          "order": 4,
+          "type": "quiz",
+          "title": "Короткий квиз",
+          "description": "Два тривиальных вопроса с помеченными правильными ответами.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": [
+            "aptiloop-dev-tour-ru/04-teacher-dialogue"
+          ],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "score",
+              "minimum": 1,
+              "minimumAttempts": 1
+            }
+          ],
+          "payload": {
+            "type": "quiz",
+            "questionIds": [
+              "aptiloop-dev-tour-ru/quiz-q1",
+              "aptiloop-dev-tour-ru/quiz-q2"
+            ],
+            "minimumScore": 1
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": [
+              {
+                "id": "aptiloop-dev-tour-ru/quiz-q1",
+                "kind": "multiple-choice",
+                "prompt": "Сколько будет 2 + 2?",
+                "options": [
+                  {
+                    "id": "aptiloop-dev-tour-ru/quiz-q1-a",
+                    "label": "3"
+                  },
+                  {
+                    "id": "aptiloop-dev-tour-ru/quiz-q1-b",
+                    "label": "4"
+                  }
+                ],
+                "correctOptionIds": ["aptiloop-dev-tour-ru/quiz-q1-b"],
+                "referenceAnswer": null,
+                "evaluationPoints": ["Верная сумма"],
+                "commonMistakes": []
+              },
+              {
+                "id": "aptiloop-dev-tour-ru/quiz-q2",
+                "kind": "multiple-choice",
+                "prompt": "Где Aptiloop по умолчанию хранит данные учащегося?",
+                "options": [
+                  {
+                    "id": "aptiloop-dev-tour-ru/quiz-q2-a",
+                    "label": "Локально на этом устройстве"
+                  },
+                  {
+                    "id": "aptiloop-dev-tour-ru/quiz-q2-b",
+                    "label": "В облаке по умолчанию"
+                  }
+                ],
+                "correctOptionIds": ["aptiloop-dev-tour-ru/quiz-q2-a"],
+                "referenceAnswer": null,
+                "evaluationPoints": ["Local-first хранение"],
+                "commonMistakes": []
+              }
+            ]
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-ru/06-code-reading",
+          "schemaVersion": 1,
+          "order": 5,
+          "type": "code-reading",
+          "title": "Чтение кода",
+          "description": "Объясните, предскажите и опишите исправление крошечного фрагмента.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-ru/05-quiz"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "fields",
+              "required": ["explanation", "prediction", "verbalFix"]
+            }
+          ],
+          "payload": {
+            "type": "code-reading",
+            "snippet": "let sum = 2 + 2;\nconsole.log(sum);"
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-ru/07-summary",
+          "schemaVersion": 1,
+          "order": 6,
+          "type": "summary",
+          "title": "Итог",
+          "description": "Напишите итог одним предложением.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-ru/06-code-reading"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "fields",
+              "required": ["summaryId"]
+            }
+          ],
+          "payload": {
+            "type": "summary",
+            "prompts": ["Подведите итог тура одним предложением."]
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-ru/08-checkpoint",
+          "schemaVersion": 1,
+          "order": 7,
+          "type": "checkpoint",
+          "title": "Контрольная точка",
+          "description": "Подтвердите контрольную точку основного цикла.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-ru/07-summary"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "acknowledgement"
+            }
+          ],
+          "payload": {
+            "type": "checkpoint",
+            "label": "Основной цикл пройден"
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        }
+      ]
+    },
+    {
+      "lessonId": "aptiloop-dev-tour-ru/lesson-practice-review",
+      "order": 1,
+      "title": "Практика и повторение",
+      "description": "Поверхности интервью и интервального повторения за один короткий проход.",
+      "goal": "Увидеть поверхности интервью и интервального повторения.",
+      "estimatedMinutes": 5,
+      "knowledgeNodeIds": ["dev-tour-review-topics"],
+      "prerequisiteLessonIds": ["aptiloop-dev-tour-ru/lesson-core-loop"],
+      "entryActivityIds": ["aptiloop-dev-tour-ru/09-interview"],
+      "activities": [
+        {
+          "activityId": "aptiloop-dev-tour-ru/09-interview",
+          "schemaVersion": 1,
+          "order": 0,
+          "type": "interview",
+          "title": "Интервью",
+          "description": "Ограниченная поверхность интервью.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": [],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-review-topics"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "attempts",
+              "minimum": 1
+            }
+          ],
+          "payload": {
+            "type": "interview",
+            "topics": ["Поверхности активностей Aptiloop"]
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-ru/10-spaced-review",
+          "schemaVersion": 1,
+          "order": 1,
+          "type": "spaced-review",
+          "title": "Интервальное повторение",
+          "description": "Примите участие в одном цикле интервального повторения.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-ru/09-interview"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-review-topics"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "attempts",
+              "minimum": 1
+            }
+          ],
+          "payload": {
+            "type": "spaced-review",
+            "topicIds": ["dev-tour-app-surfaces", "dev-tour-review-topics"]
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        }
+      ]
+    }
+  ]
+}

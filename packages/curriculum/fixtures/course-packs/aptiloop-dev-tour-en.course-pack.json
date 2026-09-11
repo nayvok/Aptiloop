@@ -1,0 +1,435 @@
+{
+  "format": "aptiloop.course-pack",
+  "formatVersion": 1,
+  "formatMinorVersion": 1,
+  "revision": {
+    "revisionKey": "aptiloop-dev-tour-en/v1",
+    "revisionNumber": 1,
+    "parentRevisionKey": null,
+    "branchKind": "upstream",
+    "basedOnContentHash": null,
+    "contentHash": "sha256:4bd6f11cdb9e7f603ea9abf8030966308177a152c5c13db82d0ddfb663ce9100"
+  },
+  "requirements": {
+    "activityTypes": [
+      "briefing",
+      "checkpoint",
+      "code-reading",
+      "interview",
+      "quiz",
+      "recall",
+      "spaced-review",
+      "study",
+      "summary",
+      "teacher-dialogue"
+    ],
+    "capabilities": [],
+    "environmentIds": [],
+    "checkIds": []
+  },
+  "course": {
+    "courseKey": "aptiloop-dev-tour-en",
+    "title": "Aptiloop Dev Tour",
+    "description": "Development preset that walks through every implemented Aptiloop activity surface in a few minutes. It is repository fixture content, not production Course material.",
+    "primaryLocale": "en",
+    "availableLocales": ["en"],
+    "subjectTags": ["dev-tour"],
+    "provenance": {
+      "contentStatus": "development-fixture",
+      "author": "Aptiloop repository",
+      "origin": "original",
+      "ownership": "owned",
+      "licenseSpdx": "Apache-2.0",
+      "termsUrl": null,
+      "attribution": null,
+      "createdAt": "2026-09-11T00:00:00.000Z",
+      "notes": "Repository development preset for exercising the app in dev mode. Update it in the same commit as any activity structure change."
+    }
+  },
+  "knowledge": {
+    "nodes": [
+      {
+        "knowledgeNodeId": "dev-tour-app-surfaces",
+        "title": "App surfaces",
+        "description": "Every implemented Aptiloop activity surface visited by this tour.",
+        "kind": "concept",
+        "prerequisiteKnowledgeNodeIds": [],
+        "relatedKnowledgeNodeIds": [],
+        "lifecycle": "active"
+      },
+      {
+        "knowledgeNodeId": "dev-tour-review-topics",
+        "title": "Review topics",
+        "description": "Bounded topics used by the tour's spaced-review activity.",
+        "kind": "concept",
+        "prerequisiteKnowledgeNodeIds": [],
+        "relatedKnowledgeNodeIds": ["dev-tour-app-surfaces"],
+        "lifecycle": "active"
+      }
+    ],
+    "sourceSnapshots": [],
+    "capsules": []
+  },
+  "localizations": [],
+  "lessons": [
+    {
+      "lessonId": "aptiloop-dev-tour-en/lesson-core-loop",
+      "order": 0,
+      "title": "Core learning loop",
+      "description": "Briefing, study, recall, teacher dialogue, quiz, code reading, summary, and checkpoint in one short pass.",
+      "goal": "See every core learning surface without long content.",
+      "estimatedMinutes": 12,
+      "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+      "prerequisiteLessonIds": [],
+      "entryActivityIds": ["aptiloop-dev-tour-en/01-briefing"],
+      "activities": [
+        {
+          "activityId": "aptiloop-dev-tour-en/01-briefing",
+          "schemaVersion": 1,
+          "order": 0,
+          "type": "briefing",
+          "title": "Tour briefing",
+          "description": "What this dev tour covers.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": [],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "acknowledgement"
+            }
+          ],
+          "payload": {
+            "type": "briefing",
+            "scope": [
+              "Every implemented activity surface",
+              "Local-first development tour"
+            ],
+            "outOfScope": [
+              "Production Course content",
+              "Grades or certificates"
+            ]
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-en/02-study",
+          "schemaVersion": 1,
+          "order": 1,
+          "type": "study",
+          "title": "Study surface",
+          "description": "Read the learner-safe study text.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-en/01-briefing"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "acknowledgement"
+            }
+          ],
+          "payload": {
+            "type": "study",
+            "body": "This study surface renders learner-safe text. Acknowledge it to continue the tour."
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-en/03-recall",
+          "schemaVersion": 1,
+          "order": 2,
+          "type": "recall",
+          "title": "Recall surface",
+          "description": "Answer from memory before any feedback.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-en/02-study"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "attempts",
+              "minimum": 1
+            }
+          ],
+          "payload": {
+            "type": "recall",
+            "prompt": "Name one activity surface you just visited."
+          },
+          "protectedMaterial": {
+            "referenceAnswer": "Any surface name from the tour, such as the study or quiz surface.",
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-en/04-teacher-dialogue",
+          "schemaVersion": 1,
+          "order": 3,
+          "type": "teacher-dialogue",
+          "title": "Teacher dialogue",
+          "description": "One bounded teacher exchange.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-en/03-recall"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "dialogue",
+              "minimumTurns": 1,
+              "requiresRevision": false
+            }
+          ],
+          "payload": {
+            "type": "teacher-dialogue",
+            "openingPrompt": "Ask anything about this dev tour.",
+            "minimumTurns": 1,
+            "requiresRevision": false
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-en/05-quiz",
+          "schemaVersion": 1,
+          "order": 4,
+          "type": "quiz",
+          "title": "Short quiz",
+          "description": "Two trivial questions with marked correct answers.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": [
+            "aptiloop-dev-tour-en/04-teacher-dialogue"
+          ],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "score",
+              "minimum": 1,
+              "minimumAttempts": 1
+            }
+          ],
+          "payload": {
+            "type": "quiz",
+            "questionIds": [
+              "aptiloop-dev-tour-en/quiz-q1",
+              "aptiloop-dev-tour-en/quiz-q2"
+            ],
+            "minimumScore": 1
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": [
+              {
+                "id": "aptiloop-dev-tour-en/quiz-q1",
+                "kind": "multiple-choice",
+                "prompt": "What is 2 + 2?",
+                "options": [
+                  {
+                    "id": "aptiloop-dev-tour-en/quiz-q1-a",
+                    "label": "3"
+                  },
+                  {
+                    "id": "aptiloop-dev-tour-en/quiz-q1-b",
+                    "label": "4"
+                  }
+                ],
+                "correctOptionIds": ["aptiloop-dev-tour-en/quiz-q1-b"],
+                "referenceAnswer": null,
+                "evaluationPoints": ["Correct sum"],
+                "commonMistakes": []
+              },
+              {
+                "id": "aptiloop-dev-tour-en/quiz-q2",
+                "kind": "multiple-choice",
+                "prompt": "Where does Aptiloop keep learner data by default?",
+                "options": [
+                  {
+                    "id": "aptiloop-dev-tour-en/quiz-q2-a",
+                    "label": "Locally on this device"
+                  },
+                  {
+                    "id": "aptiloop-dev-tour-en/quiz-q2-b",
+                    "label": "In a cloud by default"
+                  }
+                ],
+                "correctOptionIds": ["aptiloop-dev-tour-en/quiz-q2-a"],
+                "referenceAnswer": null,
+                "evaluationPoints": ["Local-first storage"],
+                "commonMistakes": []
+              }
+            ]
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-en/06-code-reading",
+          "schemaVersion": 1,
+          "order": 5,
+          "type": "code-reading",
+          "title": "Code reading",
+          "description": "Explain, predict, and describe a fix for a tiny snippet.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-en/05-quiz"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "fields",
+              "required": ["explanation", "prediction", "verbalFix"]
+            }
+          ],
+          "payload": {
+            "type": "code-reading",
+            "snippet": "let sum = 2 + 2;\nconsole.log(sum);"
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-en/07-summary",
+          "schemaVersion": 1,
+          "order": 6,
+          "type": "summary",
+          "title": "Summary",
+          "description": "Write a one-sentence summary.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-en/06-code-reading"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "fields",
+              "required": ["summaryId"]
+            }
+          ],
+          "payload": {
+            "type": "summary",
+            "prompts": ["Summarize the tour in one sentence."]
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-en/08-checkpoint",
+          "schemaVersion": 1,
+          "order": 7,
+          "type": "checkpoint",
+          "title": "Checkpoint",
+          "description": "Acknowledge the core loop checkpoint.",
+          "estimatedMinutes": 1,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-en/07-summary"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-app-surfaces"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "acknowledgement"
+            }
+          ],
+          "payload": {
+            "type": "checkpoint",
+            "label": "Core loop complete"
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        }
+      ]
+    },
+    {
+      "lessonId": "aptiloop-dev-tour-en/lesson-practice-review",
+      "order": 1,
+      "title": "Practice and review",
+      "description": "Interview and spaced review surfaces in one short pass.",
+      "goal": "See the interview and spaced review surfaces.",
+      "estimatedMinutes": 5,
+      "knowledgeNodeIds": ["dev-tour-review-topics"],
+      "prerequisiteLessonIds": ["aptiloop-dev-tour-en/lesson-core-loop"],
+      "entryActivityIds": ["aptiloop-dev-tour-en/09-interview"],
+      "activities": [
+        {
+          "activityId": "aptiloop-dev-tour-en/09-interview",
+          "schemaVersion": 1,
+          "order": 0,
+          "type": "interview",
+          "title": "Interview",
+          "description": "A bounded interview surface.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": [],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-review-topics"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "attempts",
+              "minimum": 1
+            }
+          ],
+          "payload": {
+            "type": "interview",
+            "topics": ["Aptiloop activity surfaces"]
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        },
+        {
+          "activityId": "aptiloop-dev-tour-en/10-spaced-review",
+          "schemaVersion": 1,
+          "order": 1,
+          "type": "spaced-review",
+          "title": "Spaced review",
+          "description": "Participate in one spaced review cycle.",
+          "estimatedMinutes": 2,
+          "required": true,
+          "prerequisiteActivityIds": ["aptiloop-dev-tour-en/09-interview"],
+          "capabilityIds": [],
+          "knowledgeNodeIds": ["dev-tour-review-topics"],
+          "sourceSnapshotIds": [],
+          "completionCriteria": [
+            {
+              "type": "attempts",
+              "minimum": 1
+            }
+          ],
+          "payload": {
+            "type": "spaced-review",
+            "topicIds": ["dev-tour-app-surfaces", "dev-tour-review-topics"]
+          },
+          "protectedMaterial": {
+            "referenceAnswer": null,
+            "questions": []
+          }
+        }
+      ]
+    }
+  ]
+}
