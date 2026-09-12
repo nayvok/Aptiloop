@@ -198,7 +198,9 @@ function assertContained(
   }
   throw new WorkspacePathError(
     code,
-    "Resolved path escapes the workspace root.",
+    code === "REPARSE_ESCAPE"
+      ? "Resolved path escapes the workspace root through a reparse point or symlink."
+      : "Resolved path escapes the workspace root.",
   );
 }
 
