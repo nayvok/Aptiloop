@@ -51,6 +51,9 @@ jobs:
         env:
           NPM_CONFIG_IGNORE_SCRIPTS: true
         run: npm ci --ignore-scripts
+      - name: Install repository-pinned Playwright Chromium
+        shell: bash
+        run: npx --no-install playwright install --with-deps chromium
       - name: Validate tag, package version, and repository gates
         id: release
         shell: bash
